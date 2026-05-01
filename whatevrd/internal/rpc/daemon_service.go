@@ -69,6 +69,12 @@ func toProtoDaemonEvent(event app.DaemonEvent) *pb.DaemonEvent {
 				NewMessage: &pb.NewMessage{Message: toProtoMessage(event.Message)},
 			},
 		}
+	case app.DaemonEventMessageUpdated:
+		return &pb.DaemonEvent{
+			Payload: &pb.DaemonEvent_MessageUpdated{
+				MessageUpdated: &pb.MessageUpdated{Message: toProtoMessage(event.Message)},
+			},
+		}
 	case app.DaemonEventChatUpdated:
 		return &pb.DaemonEvent{
 			Payload: &pb.DaemonEvent_ChatUpdated{

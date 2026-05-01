@@ -67,6 +67,7 @@ type DaemonEventKind int
 const (
 	DaemonEventConnectionChanged DaemonEventKind = iota + 1
 	DaemonEventNewMessage
+	DaemonEventMessageUpdated
 	DaemonEventChatUpdated
 )
 
@@ -178,6 +179,10 @@ func (d *Daemon) broadcastDaemonEvent(event DaemonEvent) {
 func (d *Daemon) PublishNewMessage(message Message, chat Chat) {
 	d.broadcastDaemonEvent(DaemonEvent{Kind: DaemonEventNewMessage, Message: message})
 	d.broadcastDaemonEvent(DaemonEvent{Kind: DaemonEventChatUpdated, Chat: chat})
+}
+
+func (d *Daemon) PublishMessageUpdated(message Message) {
+	d.broadcastDaemonEvent(DaemonEvent{Kind: DaemonEventMessageUpdated, Message: message})
 }
 
 func (d *Daemon) PublishChatUpdated(chat Chat) {

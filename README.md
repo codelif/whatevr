@@ -51,7 +51,7 @@ If `XDG_DATA_HOME` or `XDG_CACHE_HOME` is unset, the daemon uses
 ## Current Status
 
 The current implementation establishes the daemon/GUI foundation, QR login,
-daemon-side text message ingestion, and a read-only native chat UI:
+daemon-side text message ingestion, and a native chat UI with text sending:
 
 ```txt
 - whatevrd starts
@@ -65,11 +65,13 @@ daemon-side text message ingestion, and a read-only native chat UI:
 - whatevrd receives WhatsApp text messages from whatsmeow
 - whatevrd stores text messages and chat summaries in SQLite
 - whatevrd exposes ChatService for listing chats, reading messages, and marking chats read
+- whatevrd exposes SendService for sending text messages through whatsmeow
+- whatevrd updates outgoing message status from WhatsApp receipts
 - whatevrd emits NewMessage and ChatUpdated daemon events
 - whatevr opens as a libadwaita app with ID in.codelif.Whatevr
 - whatevr renders QR login as a native libadwaita sign-in page
 - whatevr shows an adaptive sidebar/conversation layout with empty states and offline banners
-- whatevr lists chats, opens the latest 50 local messages, and keeps the composer hidden until sending exists
+- whatevr lists chats, opens the latest 50 local messages, and provides a native multiline composer
 - packaging/systemd/whatevrd.service provides a user service template
 ```
 
@@ -132,8 +134,20 @@ The GTK frontend now stays native to libadwaita:
 - composer remains hidden until sending is implemented
 ```
 
+## Text Sending
+
+The GTK frontend now exposes a multiline composer when a chat is selected and
+the daemon is online:
+
+```txt
+- Enter sends
+- Shift+Enter inserts a newline
+- immediate send failures are shown inline near the composer
+- outgoing messages are stored locally after successful SendText RPCs
+- delivery/read status updates arrive later from daemon events driven by WhatsApp receipts
+```
+
 ## MVP 1 Scope
 
-MVP 1 will add text sending and notification-click-to-open-chat. Media,
-stickers, reactions, search, calls, status, channels, CLI, and TUI are out of
-scope for MVP 1.
+MVP 1 will add notification-click-to-open-chat. Media, stickers, reactions,
+search, calls, status, channels, CLI, and TUI are out of scope for MVP 1.

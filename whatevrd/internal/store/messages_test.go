@@ -251,3 +251,51 @@ func TestMarkChatReadClearsUnreadCount(t *testing.T) {
 		t.Fatalf("expected unread_count 0, got %+v", chat)
 	}
 }
+
+func TestUpdateMessageStatusProgression(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	_, err = db.SaveTextMessage(ctx, TextMessageInput{
+		ID:          "chat-1:sent-1",
+		ChatID:      "chat-1",
+		ChatName:    "Test Chat",
+		SenderID:    "me",
+		Text:        "hello",
+		Timestamp:   time.Unix(100, 0),
+		Direction:   DirectionOutgoing,
+		Status:      StatusSent,
+		CountUnread: false,
+	})
+	if err != nil {
+		t.Fatalf("save outgoing message: %v", err)
+	}
+
+	message, changed, err := db.UpdateMessageStatus(ctx, "chat-1:sent-1", StatusDelivered)
+	if err != nil {
+		t.Fatalf("set delivered: %v", err)
+	}
+	if !changed || message.Status != StatusDelivered {
+		t.Fatalf("unexpected delivered update: %+v changed=%v", message, changed)
+	}
+
+	message, changed, err = db.UpdateMessageStatus(ctx, "chat-1:sent-1", StatusRead)
+	if err != nil {
+		t.Fatalf("set read: %v", err)
+	}
+	if !changed || message.Status != StatusRead {
+		t.Fatalf("unexpected read update: %+v changed=%v", message, changed)
+	}
+
+	message, changed, err = db.UpdateMessageStatus(ctx, "chat-1:sent-1", StatusDelivered)
+	if err != nil {
+		t.Fatalf("attempt downgrade: %v", err)
+	}
+	if changed || message.Status != StatusRead {
+		t.Fatalf("unexpected downgrade result: %+v changed=%v", message, changed)
+	}
+}

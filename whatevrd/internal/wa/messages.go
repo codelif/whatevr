@@ -2,7 +2,6 @@ package wa
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	waE2E "go.mau.fi/whatsmeow/proto/waE2E"
@@ -83,7 +82,7 @@ func textFromMessage(message *waE2E.Message) string {
 }
 
 func internalMessageID(info types.MessageInfo) string {
-	return fmt.Sprintf("%s:%s", info.Chat.String(), info.ID)
+	return internalMessageIDForChat(info.Chat.String(), info.ID)
 }
 
 func senderID(info types.MessageInfo) string {

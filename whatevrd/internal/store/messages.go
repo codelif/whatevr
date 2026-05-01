@@ -11,8 +11,12 @@ const (
 	DirectionIncoming = "incoming"
 	DirectionOutgoing = "outgoing"
 
-	StatusReceived = "delivered"
-	StatusSent     = "sent"
+	StatusPending   = "pending"
+	StatusDelivered = "delivered"
+	StatusRead      = "read"
+	StatusFailed    = "failed"
+	StatusReceived  = "delivered"
+	StatusSent      = "sent"
 )
 
 type Message struct {
@@ -218,6 +222,29 @@ func (db *DB) GetMessage(ctx context.Context, id string) (Message, error) {
 	return message, err
 }
 
+func (db *DB) UpdateMessageStatus(ctx context.Context, id, status string) (Message, bool, error) {
+	message, err := db.GetMessage(ctx, id)
+	if err != nil {
+		return Message{}, false, err
+	}
+
+	nextStatus, changed := nextMessageStatus(message.Status, status)
+	if !changed {
+		return message, false, nil
+	}
+
+	if _, err := db.conn.ExecContext(ctx, `
+		UPDATE messages
+		SET status = ?
+		WHERE id = ?
+	`, nextStatus, id); err != nil {
+		return Message{}, false, err
+	}
+
+	message.Status = nextStatus
+	return message, true, nil
+}
+
 func getChatRow(ctx context.Context, queryer interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }, id string) (Chat, error) {
@@ -275,6 +302,42 @@ func scanChat(scanner interface{ Scan(...any) error }) (Chat, error) {
 func reverseMessages(messages []Message) {
 	for left, right := 0, len(messages)-1; left < right; left, right = left+1, right-1 {
 		messages[left], messages[right] = messages[right], messages[left]
+	}
+}
+
+func nextMessageStatus(current, incoming string) (string, bool) {
+	if incoming == "" || incoming == current {
+		return current, false
+	}
+
+	if incoming == StatusFailed {
+		if current == StatusRead {
+			return current, false
+		}
+		return incoming, true
+	}
+
+	if messageStatusRank(incoming) > messageStatusRank(current) {
+		return incoming, true
+	}
+
+	return current, false
+}
+
+func messageStatusRank(status string) int {
+	switch status {
+	case StatusPending:
+		return 1
+	case StatusSent:
+		return 2
+	case StatusDelivered:
+		return 3
+	case StatusRead:
+		return 4
+	case StatusFailed:
+		return 5
+	default:
+		return 0
 	}
 }
 

@@ -30,5 +30,7 @@ func (c *Client) handleEvent(raw any) {
 		c.daemon.SetStateDetail(app.StateOffline, evt.String())
 	case *events.Message:
 		c.handleMessage(evt)
+	case *events.Receipt:
+		c.handleReceipt(evt)
 	}
 }

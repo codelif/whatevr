@@ -65,8 +65,16 @@ enum UiMessage {
         chat_id: String,
         error: String,
     },
+    SendSucceeded {
+        chat_id: String,
+    },
+    SendFailed {
+        chat_id: String,
+        error: String,
+    },
     DataChanged {
         chat_id: Option<String>,
+        refresh_chats: bool,
     },
     Notice(String),
 }
@@ -80,6 +88,8 @@ struct UiState {
     selected_chat_id: Option<String>,
     current_messages_chat_id: Option<String>,
     current_messages: Vec<proto::Message>,
+    composer_error: String,
+    send_in_flight: bool,
 }
 
 impl Default for UiState {
@@ -93,6 +103,8 @@ impl Default for UiState {
             selected_chat_id: None,
             current_messages_chat_id: None,
             current_messages: Vec::new(),
+            composer_error: String::new(),
+            send_in_flight: false,
         }
     }
 }
@@ -113,12 +125,16 @@ struct Widgets {
     sidebar_empty_page: adw::StatusPage,
     chat_list: gtk::ListBox,
     conversation_stack: gtk::Stack,
+    conversation_content_stack: gtk::Stack,
     conversation_loading_page: adw::StatusPage,
     conversation_avatar: adw::Avatar,
     conversation_title: gtk::Label,
     conversation_subtitle: gtk::Label,
     message_scroller: gtk::ScrolledWindow,
     message_box: gtk::Box,
+    composer_text_view: gtk::TextView,
+    composer_error_label: gtk::Label,
+    composer_send_button: gtk::Button,
     back_button: gtk::Button,
     syncing_chat_selection: Cell<bool>,
 }
@@ -266,13 +282,53 @@ fn build_ui(app: &adw::Application) {
         .vexpand(true)
         .child(&message_box)
         .build();
-    let conversation_body = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .vexpand(true)
+    let composer_buffer = gtk::TextBuffer::new(None);
+    let composer_text_view = gtk::TextView::with_buffer(&composer_buffer);
+    composer_text_view.set_wrap_mode(gtk::WrapMode::WordChar);
+    composer_text_view.set_top_margin(10);
+    composer_text_view.set_bottom_margin(10);
+    composer_text_view.set_left_margin(12);
+    composer_text_view.set_right_margin(12);
+    composer_text_view.set_accepts_tab(false);
+    let composer_scroller = gtk::ScrolledWindow::builder()
+        .child(&composer_text_view)
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .min_content_height(68)
+        .max_content_height(140)
         .build();
-    conversation_body.append(&conversation_header);
-    conversation_body.append(&header_separator);
-    conversation_body.append(&message_scroller);
+    let composer_frame = gtk::Frame::builder()
+        .child(&composer_scroller)
+        .hexpand(true)
+        .css_classes(["composer-frame"])
+        .build();
+    let composer_send_button = gtk::Button::builder()
+        .icon_name("mail-send-symbolic")
+        .tooltip_text("Send message")
+        .css_classes(["suggested-action"])
+        .valign(gtk::Align::End)
+        .build();
+    let composer_error_label = gtk::Label::builder()
+        .wrap(true)
+        .xalign(0.0)
+        .css_classes(["error"])
+        .visible(false)
+        .build();
+    let composer_row = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(12)
+        .build();
+    composer_row.append(&composer_frame);
+    composer_row.append(&composer_send_button);
+    let composer_box = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(8)
+        .margin_top(14)
+        .margin_bottom(18)
+        .margin_start(18)
+        .margin_end(18)
+        .build();
+    composer_box.append(&composer_error_label);
+    composer_box.append(&composer_row);
 
     let conversation_placeholder_page = adw::StatusPage::builder()
         .title("Select a chat")
@@ -292,14 +348,35 @@ fn build_ui(app: &adw::Application) {
         .icon_name("mail-message-symbolic")
         .build();
 
-    let conversation_stack = gtk::Stack::builder().vexpand(true).build();
+    let conversation_content_stack = gtk::Stack::builder().vexpand(true).build();
+
+    conversation_content_stack
+        .add_named(&conversation_loading_page, Some(CONVERSATION_LOADING_PAGE));
+
+    conversation_content_stack.add_named(&conversation_empty_page, Some(CONVERSATION_EMPTY_PAGE));
+    conversation_content_stack.add_named(&message_scroller, Some(CONVERSATION_MESSAGES_PAGE));
+    conversation_content_stack.set_visible_child_name(CONVERSATION_LOADING_PAGE);
+
+    let conversation_separator = gtk::Separator::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .build();
+    let selected_conversation_shell = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .vexpand(true)
+        .hexpand(true)
+        .build();
+    selected_conversation_shell.append(&conversation_header);
+    selected_conversation_shell.append(&header_separator);
+    selected_conversation_shell.append(&conversation_content_stack);
+    selected_conversation_shell.append(&conversation_separator);
+    selected_conversation_shell.append(&composer_box);
+
+    let conversation_stack = gtk::Stack::builder().vexpand(true).hexpand(true).build();
     conversation_stack.add_named(
         &conversation_placeholder_page,
         Some(CONVERSATION_PLACEHOLDER_PAGE),
     );
-    conversation_stack.add_named(&conversation_loading_page, Some(CONVERSATION_LOADING_PAGE));
-    conversation_stack.add_named(&conversation_empty_page, Some(CONVERSATION_EMPTY_PAGE));
-    conversation_stack.add_named(&conversation_body, Some(CONVERSATION_MESSAGES_PAGE));
+    conversation_stack.add_named(&selected_conversation_shell, Some("selected"));
     conversation_stack.set_visible_child_name(CONVERSATION_PLACEHOLDER_PAGE);
 
     let sidebar_page = adw::NavigationPage::new(&sidebar_stack, "Chats");
@@ -355,12 +432,16 @@ fn build_ui(app: &adw::Application) {
         sidebar_empty_page,
         chat_list,
         conversation_stack,
+        conversation_content_stack,
         conversation_loading_page,
         conversation_avatar,
         conversation_title,
         conversation_subtitle,
         message_scroller,
         message_box,
+        composer_text_view,
+        composer_error_label,
+        composer_send_button,
         back_button,
         syncing_chat_selection: Cell::new(false),
     });
@@ -457,6 +538,33 @@ fn connect_signals(
             &activate_sender,
         );
     });
+
+    let send_widgets = widgets.clone();
+    let send_state = state.clone();
+    let send_sender = sender.clone();
+    widgets.composer_send_button.connect_clicked(move |_| {
+        submit_composer_message(&send_widgets, &send_state, &send_sender);
+    });
+
+    let key_widgets = widgets.clone();
+    let key_state = state.clone();
+    let key_sender = sender.clone();
+    let composer_key_controller = gtk::EventControllerKey::new();
+    composer_key_controller.connect_key_pressed(move |_, key, _, modifiers| {
+        if key == gdk::Key::Return || key == gdk::Key::KP_Enter {
+            if modifiers.contains(gdk::ModifierType::SHIFT_MASK) {
+                return glib::Propagation::Proceed;
+            }
+
+            submit_composer_message(&key_widgets, &key_state, &key_sender);
+            return glib::Propagation::Stop;
+        }
+
+        glib::Propagation::Proceed
+    });
+    widgets
+        .composer_text_view
+        .add_controller(composer_key_controller);
 }
 
 fn handle_ui_message(
@@ -557,11 +665,57 @@ fn handle_ui_message(
                 .conversation_loading_page
                 .set_description(Some(&error));
             widgets
-                .conversation_stack
+                .conversation_content_stack
                 .set_visible_child_name(CONVERSATION_LOADING_PAGE);
         }
-        UiMessage::DataChanged { chat_id } => {
+        UiMessage::SendSucceeded { chat_id } => {
+            let should_clear_composer = {
+                let state = state.borrow();
+                state.selected_chat_id.as_deref() == Some(chat_id.as_str())
+            };
+
+            {
+                let mut state = state.borrow_mut();
+                state.send_in_flight = false;
+                if should_clear_composer {
+                    state.composer_error.clear();
+                }
+            }
+
+            if should_clear_composer {
+                clear_composer(&widgets.composer_text_view);
+            }
             request_chats(sender.clone());
+            if should_clear_composer {
+                request_messages(sender.clone(), chat_id);
+            }
+
+            let state = state.borrow();
+            render_conversation(widgets, &state);
+        }
+        UiMessage::SendFailed { chat_id, error } => {
+            let mut should_render = false;
+            {
+                let mut state = state.borrow_mut();
+                state.send_in_flight = false;
+                if state.selected_chat_id.as_deref() == Some(chat_id.as_str()) {
+                    state.composer_error = error;
+                    should_render = true;
+                }
+            }
+
+            if should_render {
+                let state = state.borrow();
+                render_conversation(widgets, &state);
+            }
+        }
+        UiMessage::DataChanged {
+            chat_id,
+            refresh_chats,
+        } => {
+            if refresh_chats {
+                request_chats(sender.clone());
+            }
             if let Some(selected_chat_id) = state.borrow().selected_chat_id.clone() {
                 if chat_id.as_deref().is_none()
                     || chat_id.as_deref() == Some(selected_chat_id.as_str())
@@ -745,6 +899,7 @@ fn render_conversation(widgets: &Widgets, state: &UiState) {
         widgets
             .conversation_stack
             .set_visible_child_name(CONVERSATION_PLACEHOLDER_PAGE);
+        render_composer_state(widgets, state);
         return;
     };
 
@@ -752,8 +907,13 @@ fn render_conversation(widgets: &Widgets, state: &UiState) {
         widgets
             .conversation_stack
             .set_visible_child_name(CONVERSATION_PLACEHOLDER_PAGE);
+        render_composer_state(widgets, state);
         return;
     };
+
+    widgets
+        .conversation_stack
+        .set_visible_child_name("selected");
 
     widgets
         .conversation_avatar
@@ -773,15 +933,17 @@ fn render_conversation(widgets: &Widgets, state: &UiState) {
             .conversation_loading_page
             .set_description(Some("Reading the latest 50 messages from the local store."));
         widgets
-            .conversation_stack
+            .conversation_content_stack
             .set_visible_child_name(CONVERSATION_LOADING_PAGE);
+        render_composer_state(widgets, state);
         return;
     }
 
     if state.current_messages.is_empty() {
         widgets
-            .conversation_stack
+            .conversation_content_stack
             .set_visible_child_name(CONVERSATION_EMPTY_PAGE);
+        render_composer_state(widgets, state);
         return;
     }
 
@@ -791,8 +953,9 @@ fn render_conversation(widgets: &Widgets, state: &UiState) {
     }
 
     widgets
-        .conversation_stack
+        .conversation_content_stack
         .set_visible_child_name(CONVERSATION_MESSAGES_PAGE);
+    render_composer_state(widgets, state);
 }
 
 fn open_chat_at_index(
@@ -819,10 +982,12 @@ fn open_chat_at_index(
         let mut state = state.borrow_mut();
         let already_selected = state.selected_chat_id.as_deref() == Some(chat_id.as_str());
         state.selected_chat_id = Some(chat_id.clone());
+        state.composer_error.clear();
 
         if !already_selected {
             state.current_messages_chat_id = None;
             state.current_messages.clear();
+            clear_composer(&widgets.composer_text_view);
         }
 
         if already_selected
@@ -853,8 +1018,73 @@ fn sync_selected_chat_after_reload(state: &mut UiState) {
             state.selected_chat_id = None;
             state.current_messages_chat_id = None;
             state.current_messages.clear();
+            state.composer_error.clear();
+            state.send_in_flight = false;
         }
     }
+}
+
+fn render_composer_state(widgets: &Widgets, state: &UiState) {
+    let has_selected_chat = state.selected_chat_id.is_some();
+    let enabled =
+        has_selected_chat && state.daemon_state == DaemonState::Online && !state.send_in_flight;
+
+    widgets.composer_text_view.set_sensitive(enabled);
+    widgets.composer_send_button.set_sensitive(enabled);
+    widgets.composer_text_view.set_visible(has_selected_chat);
+    widgets.composer_send_button.set_visible(has_selected_chat);
+
+    if state.composer_error.is_empty() || !has_selected_chat {
+        widgets.composer_error_label.set_visible(false);
+        widgets.composer_error_label.set_text("");
+    } else {
+        widgets.composer_error_label.set_visible(true);
+        widgets.composer_error_label.set_text(&state.composer_error);
+    }
+}
+
+fn submit_composer_message(
+    widgets: &Rc<Widgets>,
+    state: &Rc<RefCell<UiState>>,
+    sender: &mpsc::Sender<UiMessage>,
+) {
+    let text = composer_text(&widgets.composer_text_view);
+    if text.trim().is_empty() {
+        return;
+    }
+
+    let chat_id = {
+        let mut state = state.borrow_mut();
+        if state.daemon_state != DaemonState::Online || state.send_in_flight {
+            return;
+        }
+
+        let Some(chat_id) = state.selected_chat_id.clone() else {
+            return;
+        };
+
+        state.send_in_flight = true;
+        state.composer_error.clear();
+        chat_id
+    };
+
+    {
+        let state = state.borrow();
+        render_composer_state(widgets, &state);
+    }
+
+    request_send_text(sender.clone(), chat_id, text);
+}
+
+fn composer_text(text_view: &gtk::TextView) -> String {
+    let buffer = text_view.buffer();
+    buffer
+        .text(&buffer.start_iter(), &buffer.end_iter(), false)
+        .to_string()
+}
+
+fn clear_composer(text_view: &gtk::TextView) {
+    text_view.buffer().set_text("");
 }
 
 fn request_status(sender: mpsc::Sender<UiMessage>) {
@@ -921,6 +1151,22 @@ fn request_mark_chat_read(sender: mpsc::Sender<UiMessage>, chat_id: String) {
             let _ = sender.send(UiMessage::Notice(format!(
                 "Unable to mark chat read: {error}"
             )));
+        }
+    });
+}
+
+fn request_send_text(sender: mpsc::Sender<UiMessage>, chat_id: String, text: String) {
+    spawn_async(async move {
+        match send_text(chat_id.clone(), text).await {
+            Ok(()) => {
+                let _ = sender.send(UiMessage::SendSucceeded { chat_id });
+            }
+            Err(error) => {
+                let _ = sender.send(UiMessage::SendFailed {
+                    chat_id,
+                    error: error.to_string(),
+                });
+            }
         }
     });
 }
@@ -1002,11 +1248,24 @@ async fn stream_daemon_events(
             }
             Some(daemon_event::Payload::NewMessage(new_message)) => {
                 let chat_id = new_message.message.map(|message| message.chat_id);
-                let _ = sender.send(UiMessage::DataChanged { chat_id });
+                let _ = sender.send(UiMessage::DataChanged {
+                    chat_id,
+                    refresh_chats: true,
+                });
+            }
+            Some(daemon_event::Payload::MessageUpdated(message_updated)) => {
+                let chat_id = message_updated.message.map(|message| message.chat_id);
+                let _ = sender.send(UiMessage::DataChanged {
+                    chat_id,
+                    refresh_chats: false,
+                });
             }
             Some(daemon_event::Payload::ChatUpdated(chat_updated)) => {
                 let chat_id = chat_updated.chat.map(|chat| chat.id);
-                let _ = sender.send(UiMessage::DataChanged { chat_id });
+                let _ = sender.send(UiMessage::DataChanged {
+                    chat_id,
+                    refresh_chats: true,
+                });
             }
             _ => {}
         }
@@ -1049,6 +1308,18 @@ async fn mark_chat_read(chat_id: String) -> Result<(), Box<dyn std::error::Error
     let mut client = ChatServiceClient::new(channel);
     client
         .mark_chat_read(MarkChatReadRequest { chat_id })
+        .await?;
+    Ok(())
+}
+
+async fn send_text(
+    chat_id: String,
+    text: String,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let channel = connect_channel().await?;
+    let mut client = proto::send_service_client::SendServiceClient::new(channel);
+    client
+        .send_text(proto::SendTextRequest { chat_id, text })
         .await?;
     Ok(())
 }
@@ -1148,21 +1419,25 @@ fn build_chat_row(chat: &proto::Chat) -> gtk::ListBoxRow {
 
 fn build_message_row(message: &proto::Message) -> gtk::Box {
     let outgoing = message.direction == proto::MessageDirection::Outgoing as i32;
-    let label = gtk::Label::builder()
-        .label(&message.text)
-        .xalign(0.0)
-        .wrap(true)
-        .wrap_mode(pango::WrapMode::WordChar)
-        .selectable(true)
-        .focusable(false)
-        .max_width_chars(48)
-        .build();
 
-    let bubble = gtk::Frame::builder().child(&label).build();
+    let message_label = gtk::Label::new(Some(message.text.as_str()));
+    message_label.set_xalign(0.0);
+    message_label.set_wrap(true);
+    message_label.set_wrap_mode(pango::WrapMode::WordChar);
+    message_label.set_max_width_chars(62);
+    message_label.set_selectable(true);
+    message_label.add_css_class("message-text");
+
+    let bubble = gtk::Box::new(gtk::Orientation::Vertical, 0);
     bubble.add_css_class("message-bubble");
+
     if outgoing {
         bubble.add_css_class("outgoing");
+    } else {
+        bubble.add_css_class("incoming");
     }
+
+    bubble.append(&message_label);
 
     let meta = gtk::Label::builder()
         .label(format_message_meta(message))
@@ -1173,20 +1448,27 @@ fn build_message_row(message: &proto::Message) -> gtk::Box {
     let column = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .spacing(4)
-        .halign(if outgoing {
-            gtk::Align::End
-        } else {
-            gtk::Align::Start
-        })
         .build();
+
     column.append(&bubble);
     column.append(&meta);
+
+    let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    spacer.set_hexpand(true);
 
     let row = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
         .hexpand(true)
         .build();
-    row.append(&column);
+
+    if outgoing {
+        row.append(&spacer);
+        row.append(&column);
+    } else {
+        row.append(&column);
+        row.append(&spacer);
+    }
+
     row
 }
 
@@ -1371,13 +1653,32 @@ fn install_css() {
     provider.load_from_data(
         r#"
         .message-bubble {
+            color: @window_fg_color;
+            border-radius: 12px;
+            padding: 8px 12px;
+            border: 1px solid alpha(@window_fg_color, 0.12);
+        }
+
+        .message-bubble.incoming {
             background-color: @card_bg_color;
-            border-radius: 18px;
-            padding: 10px 14px;
+            border-color: alpha(@window_fg_color, 0.16);
+            border-bottom-left-radius: 5px;
         }
 
         .message-bubble.outgoing {
-            background-color: alpha(@accent_bg_color, 0.14);
+            background-color: alpha(@accent_bg_color, 0.18);
+            border-color: alpha(@accent_bg_color, 0.28);
+            border-bottom-right-radius: 5px;
+        }
+
+        label.message-text {
+            background-color: transparent;
+            color: inherit;
+            padding: 0;
+        }
+
+        .composer-frame {
+            border-radius: 16px;
         }
 
         .unread-badge {
@@ -1388,7 +1689,7 @@ fn install_css() {
             padding: 2px 8px;
             min-width: 26px;
         }
-        "#,
+    "#,
     );
 
     if let Some(display) = gdk::Display::default() {
