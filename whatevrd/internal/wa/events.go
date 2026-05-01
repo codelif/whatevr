@@ -28,5 +28,7 @@ func (c *Client) handleEvent(raw any) {
 		c.daemon.SetStateDetail(app.StateOffline, "WhatsApp client is outdated")
 	case *events.TemporaryBan:
 		c.daemon.SetStateDetail(app.StateOffline, evt.String())
+	case *events.Message:
+		c.handleMessage(evt)
 	}
 }

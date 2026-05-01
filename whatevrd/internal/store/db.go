@@ -16,6 +16,7 @@ func Open(ctx context.Context, path string) (*DB, error) {
 	if err != nil {
 		return nil, err
 	}
+	conn.SetMaxOpenConns(1)
 
 	db := &DB{conn: conn}
 	if err := db.migrate(ctx); err != nil {
@@ -32,6 +33,7 @@ func (db *DB) Close() error {
 
 func (db *DB) migrate(ctx context.Context) error {
 	statements := []string{
+		`PRAGMA busy_timeout = 5000`,
 		`PRAGMA journal_mode = WAL`,
 		`PRAGMA foreign_keys = ON`,
 		`CREATE TABLE IF NOT EXISTS app_state (

@@ -2,6 +2,7 @@ package wa
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"path/filepath"
 	"sync"
@@ -13,10 +14,12 @@ import (
 	waLog "go.mau.fi/whatsmeow/util/log"
 
 	"whatevrd/internal/app"
+	appstore "whatevrd/internal/store"
 )
 
 type Client struct {
 	daemon    *app.Daemon
+	store     *appstore.DB
 	container *sqlstore.Container
 	log       waLog.Logger
 
@@ -24,15 +27,16 @@ type Client struct {
 	client *whatsmeow.Client
 }
 
-func New(ctx context.Context, paths app.Paths, daemon *app.Daemon) (*Client, error) {
+func New(ctx context.Context, paths app.Paths, daemon *app.Daemon, store *appstore.DB) (*Client, error) {
 	log := waLog.Stdout("whatevrd/wa", "WARN", false)
-	container, err := sqlstore.New(ctx, "sqlite", sqliteDSN(paths.SessionDBPath), log.Sub("DB"))
+	container, err := openSessionStore(ctx, paths.SessionDBPath, log.Sub("DB"))
 	if err != nil {
 		return nil, err
 	}
 
 	c := &Client{
 		daemon:    daemon,
+		store:     store,
 		container: container,
 		log:       log,
 	}
@@ -83,5 +87,25 @@ func (c *Client) currentClient() *whatsmeow.Client {
 }
 
 func sqliteDSN(path string) string {
-	return fmt.Sprintf("file:%s?_pragma=foreign_keys(1)", filepath.ToSlash(path))
+	return fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)", filepath.ToSlash(path))
+}
+
+func openSessionStore(ctx context.Context, path string, log waLog.Logger) (*sqlstore.Container, error) {
+	db, err := sql.Open("sqlite", sqliteDSN(path))
+	if err != nil {
+		return nil, err
+	}
+
+	// whatsmeow writes session metadata from multiple event handlers. Keep SQLite
+	// serialized to avoid SQLITE_BUSY during bursts such as push-name updates.
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+
+	container := sqlstore.NewWithDB(db, "sqlite", log)
+	if err := container.Upgrade(ctx); err != nil {
+		db.Close()
+		return nil, err
+	}
+
+	return container, nil
 }

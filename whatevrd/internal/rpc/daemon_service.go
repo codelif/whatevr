@@ -38,19 +38,96 @@ func (s *DaemonService) SubscribeEvents(_ *pb.SubscribeEventsRequest, stream pb.
 	for {
 		select {
 		case event := <-events:
-			if err := stream.Send(&pb.DaemonEvent{
-				Payload: &pb.DaemonEvent_ConnectionChanged{
-					ConnectionChanged: &pb.ConnectionChanged{
-						State:  toProtoState(event.State),
-						Detail: event.Detail,
-					},
-				},
-			}); err != nil {
+			protoEvent := toProtoDaemonEvent(event)
+			if protoEvent == nil {
+				continue
+			}
+
+			if err := stream.Send(protoEvent); err != nil {
 				return err
 			}
 		case <-stream.Context().Done():
 			return nil
 		}
+	}
+}
+
+func toProtoDaemonEvent(event app.DaemonEvent) *pb.DaemonEvent {
+	switch event.Kind {
+	case app.DaemonEventConnectionChanged:
+		return &pb.DaemonEvent{
+			Payload: &pb.DaemonEvent_ConnectionChanged{
+				ConnectionChanged: &pb.ConnectionChanged{
+					State:  toProtoState(event.State),
+					Detail: event.Detail,
+				},
+			},
+		}
+	case app.DaemonEventNewMessage:
+		return &pb.DaemonEvent{
+			Payload: &pb.DaemonEvent_NewMessage{
+				NewMessage: &pb.NewMessage{Message: toProtoMessage(event.Message)},
+			},
+		}
+	case app.DaemonEventChatUpdated:
+		return &pb.DaemonEvent{
+			Payload: &pb.DaemonEvent_ChatUpdated{
+				ChatUpdated: &pb.ChatUpdated{Chat: toProtoChat(event.Chat)},
+			},
+		}
+	default:
+		return nil
+	}
+}
+
+func toProtoChat(chat app.Chat) *pb.Chat {
+	return &pb.Chat{
+		Id:                  chat.ID,
+		Name:                chat.Name,
+		LastMessage:         chat.LastMessage,
+		LastMessageTimeUnix: chat.LastMessageTime,
+		UnreadCount:         chat.UnreadCount,
+		IsGroup:             chat.IsGroup,
+	}
+}
+
+func toProtoMessage(message app.Message) *pb.Message {
+	return &pb.Message{
+		Id:            message.ID,
+		ChatId:        message.ChatID,
+		SenderId:      message.SenderID,
+		Text:          message.Text,
+		TimestampUnix: message.TimestampUnix,
+		Direction:     toProtoMessageDirection(message.Direction),
+		Status:        toProtoMessageStatus(message.Status),
+	}
+}
+
+func toProtoMessageDirection(direction string) pb.MessageDirection {
+	switch direction {
+	case "incoming":
+		return pb.MessageDirection_MESSAGE_DIRECTION_INCOMING
+	case "outgoing":
+		return pb.MessageDirection_MESSAGE_DIRECTION_OUTGOING
+	default:
+		return pb.MessageDirection_MESSAGE_DIRECTION_UNSPECIFIED
+	}
+}
+
+func toProtoMessageStatus(status string) pb.MessageStatus {
+	switch status {
+	case "sent":
+		return pb.MessageStatus_MESSAGE_STATUS_SENT
+	case "delivered":
+		return pb.MessageStatus_MESSAGE_STATUS_DELIVERED
+	case "read":
+		return pb.MessageStatus_MESSAGE_STATUS_READ
+	case "failed":
+		return pb.MessageStatus_MESSAGE_STATUS_FAILED
+	case "pending":
+		return pb.MessageStatus_MESSAGE_STATUS_PENDING
+	default:
+		return pb.MessageStatus_MESSAGE_STATUS_UNSPECIFIED
 	}
 }
 

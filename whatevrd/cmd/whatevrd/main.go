@@ -25,6 +25,12 @@ func main() {
 		log.Fatalf("create runtime/data directories: %v", err)
 	}
 
+	processLock, err := app.AcquireProcessLock(paths.LockPath)
+	if err != nil {
+		log.Fatalf("acquire process lock: %v", err)
+	}
+	defer processLock.Close()
+
 	db, err := store.Open(ctx, paths.DatabasePath)
 	if err != nil {
 		log.Fatalf("open sqlite database: %v", err)
@@ -33,7 +39,7 @@ func main() {
 
 	daemon := app.NewDaemon(paths)
 
-	waClient, err := wa.New(ctx, paths, daemon)
+	waClient, err := wa.New(ctx, paths, daemon, db)
 	if err != nil {
 		log.Fatalf("initialize WhatsApp client: %v", err)
 	}

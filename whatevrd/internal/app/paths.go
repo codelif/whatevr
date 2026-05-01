@@ -10,6 +10,7 @@ type Paths struct {
 	RuntimeDir    string
 	SocketDir     string
 	SocketPath    string
+	LockPath      string
 	DataDir       string
 	CacheDir      string
 	DatabasePath  string
@@ -47,6 +48,7 @@ func ResolvePaths() (Paths, error) {
 		RuntimeDir:    runtimeBase,
 		SocketDir:     socketDir,
 		SocketPath:    filepath.Join(socketDir, "whatevrd.sock"),
+		LockPath:      filepath.Join(socketDir, "whatevrd.lock"),
 		DataDir:       dataDir,
 		CacheDir:      cacheDir,
 		DatabasePath:  filepath.Join(dataDir, "whatevrd.db"),

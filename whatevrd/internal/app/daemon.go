@@ -43,7 +43,7 @@ func (d *Daemon) SetStateDetail(state State, detail string) {
 	d.lastDetail = detail
 	d.subMu.Unlock()
 
-	d.broadcastDaemonEvent(DaemonEvent{State: state, Detail: detail})
+	d.broadcastDaemonEvent(DaemonEvent{Kind: DaemonEventConnectionChanged, State: state, Detail: detail})
 	d.broadcastLoginEvent(LoginEvent{Kind: LoginEventState, State: state, Detail: detail})
 }
 
@@ -55,8 +55,38 @@ func (d *Daemon) Status() Status {
 }
 
 type DaemonEvent struct {
-	State  State
-	Detail string
+	Kind    DaemonEventKind
+	State   State
+	Detail  string
+	Message Message
+	Chat    Chat
+}
+
+type DaemonEventKind int
+
+const (
+	DaemonEventConnectionChanged DaemonEventKind = iota + 1
+	DaemonEventNewMessage
+	DaemonEventChatUpdated
+)
+
+type Chat struct {
+	ID              string
+	Name            string
+	LastMessage     string
+	LastMessageTime int64
+	UnreadCount     int32
+	IsGroup         bool
+}
+
+type Message struct {
+	ID            string
+	ChatID        string
+	SenderID      string
+	Text          string
+	TimestampUnix int64
+	Direction     string
+	Status        string
 }
 
 type LoginEventKind int
@@ -97,7 +127,7 @@ func (d *Daemon) SubscribeDaemonEvents() (<-chan DaemonEvent, func()) {
 	detail := d.lastDetail
 	d.subMu.Unlock()
 
-	ch <- DaemonEvent{State: state, Detail: detail}
+	ch <- DaemonEvent{Kind: DaemonEventConnectionChanged, State: state, Detail: detail}
 
 	return ch, func() {
 		d.subMu.Lock()
@@ -143,6 +173,11 @@ func (d *Daemon) broadcastDaemonEvent(event DaemonEvent) {
 		default:
 		}
 	}
+}
+
+func (d *Daemon) PublishNewMessage(message Message, chat Chat) {
+	d.broadcastDaemonEvent(DaemonEvent{Kind: DaemonEventNewMessage, Message: message})
+	d.broadcastDaemonEvent(DaemonEvent{Kind: DaemonEventChatUpdated, Chat: chat})
 }
 
 func (d *Daemon) broadcastLoginEvent(event LoginEvent) {

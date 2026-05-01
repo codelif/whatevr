@@ -38,6 +38,7 @@ whatevr/
 
 ```txt
 Socket:     $XDG_RUNTIME_DIR/whatevrd/whatevrd.sock
+Lock:       $XDG_RUNTIME_DIR/whatevrd/whatevrd.lock
 App DB:     $XDG_DATA_HOME/whatevrd/whatevrd.db
 Session DB: $XDG_DATA_HOME/whatevrd/session/whatsmeow.db
 Session:    $XDG_DATA_HOME/whatevrd/session/
@@ -49,16 +50,21 @@ If `XDG_DATA_HOME` or `XDG_CACHE_HOME` is unset, the daemon uses
 
 ## Current Status
 
-The current implementation establishes the daemon/GUI foundation and QR login:
+The current implementation establishes the daemon/GUI foundation, QR login, and
+daemon-side text message ingestion:
 
 ```txt
 - whatevrd starts
 - whatevrd creates runtime/data/cache directories
+- whatevrd holds a runtime process lock to prevent duplicate daemon instances
 - whatevrd initializes SQLite MVP tables
 - whatevrd exposes GetStatus over gRPC on a Unix socket
 - whatevrd initializes whatsmeow with a persisted SQLite session store
 - whatevrd exposes LoginService.SubscribeLoginEvents
 - whatevrd emits QR login codes and login state changes
+- whatevrd receives WhatsApp text messages from whatsmeow
+- whatevrd stores text messages and chat summaries in SQLite
+- whatevrd emits NewMessage and ChatUpdated daemon events
 - whatevr opens as a libadwaita app with ID in.codelif.Whatevr
 - whatevr connects to whatevrd and displays daemon status
 - whatevr subscribes to login events and renders QR codes
@@ -99,8 +105,19 @@ subscribes to `LoginService.SubscribeLoginEvents` and renders the QR code from
 the daemon. After pairing succeeds, the whatsmeow session is persisted in
 `$XDG_DATA_HOME/whatevrd/session/whatsmeow.db`.
 
+## Message Ingestion
+
+For MVP 1, `whatevrd` stores only text messages from `events.Message`. Plain
+conversation text and extended text are supported. Media, stickers, reactions,
+quoted replies, and edits are ignored for now.
+
+Stored messages update the `chats` summary row in the same SQLite transaction.
+Duplicate WhatsApp message IDs are ignored so reconnects/history replays do not
+double-count unread messages. History-sync messages are stored but do not
+increment unread counts.
+
 ## MVP 1 Scope
 
-MVP 1 will add local text chat storage, live message events, text sending, and
+MVP 1 will add GUI chat list/message views, text sending, and
 notification-click-to-open-chat. Media, stickers, reactions, search, calls,
 status, channels, CLI, and TUI are out of scope for MVP 1.
