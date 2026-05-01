@@ -1,0 +1,14 @@
+[Unit]
+Description=whatevr background daemon
+After=graphical-session.target network-online.target
+Wants=network-online.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/whatevrd
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,19 @@
+[package]
+name = "whatevr"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+adw = { package = "libadwaita", version = "0.8" }
+async-channel = "2"
+gtk = { package = "gtk4", version = "0.10" }
+http = "1"
+hyper-util = { version = "0.1", features = ["tokio"] }
+prost = "0.13"
+tokio = { version = "1", features = ["net", "rt-multi-thread", "time"] }
+tonic = { version = "0.12", features = ["transport"] }
+tower = "0.4"
+
+[build-dependencies]
+protoc-bin-vendored = "3"
+tonic-build = "0.12"

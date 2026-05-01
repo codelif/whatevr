@@ -1,0 +1,167 @@
+syntax = "proto3";
+
+package whatevr.v1;
+
+option go_package = "whatevrd/internal/rpc/pb;pb";
+
+enum DaemonState {
+  DAEMON_STATE_UNSPECIFIED = 0;
+  DAEMON_STATE_STARTING = 1;
+  DAEMON_STATE_NEED_LOGIN = 2;
+  DAEMON_STATE_CONNECTING = 3;
+  DAEMON_STATE_ONLINE = 4;
+  DAEMON_STATE_RECONNECTING = 5;
+  DAEMON_STATE_OFFLINE = 6;
+}
+
+enum MessageDirection {
+  MESSAGE_DIRECTION_UNSPECIFIED = 0;
+  MESSAGE_DIRECTION_INCOMING = 1;
+  MESSAGE_DIRECTION_OUTGOING = 2;
+}
+
+enum MessageStatus {
+  MESSAGE_STATUS_UNSPECIFIED = 0;
+  MESSAGE_STATUS_PENDING = 1;
+  MESSAGE_STATUS_SENT = 2;
+  MESSAGE_STATUS_DELIVERED = 3;
+  MESSAGE_STATUS_READ = 4;
+  MESSAGE_STATUS_FAILED = 5;
+}
+
+service DaemonService {
+  rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
+  rpc SubscribeEvents(SubscribeEventsRequest) returns (stream DaemonEvent);
+}
+
+service LoginService {
+  rpc SubscribeLoginEvents(SubscribeLoginEventsRequest) returns (stream LoginEvent);
+  rpc Logout(LogoutRequest) returns (LogoutResponse);
+}
+
+service ChatService {
+  rpc ListChats(ListChatsRequest) returns (ListChatsResponse);
+  rpc GetMessages(GetMessagesRequest) returns (GetMessagesResponse);
+  rpc MarkChatRead(MarkChatReadRequest) returns (MarkChatReadResponse);
+}
+
+service SendService {
+  rpc SendText(SendTextRequest) returns (SendTextResponse);
+}
+
+message GetStatusRequest {}
+
+message GetStatusResponse {
+  DaemonState state = 1;
+  string state_label = 2;
+  string socket_path = 3;
+  string data_dir = 4;
+  string cache_dir = 5;
+  string database_path = 6;
+  string version = 7;
+}
+
+message SubscribeEventsRequest {}
+
+message DaemonEvent {
+  oneof payload {
+    ConnectionChanged connection_changed = 1;
+    LoginStateChanged login_state_changed = 2;
+    NewMessage new_message = 3;
+    MessageUpdated message_updated = 4;
+    ChatUpdated chat_updated = 5;
+  }
+}
+
+message ConnectionChanged {
+  DaemonState state = 1;
+  string detail = 2;
+}
+
+message LoginStateChanged {
+  DaemonState state = 1;
+  string detail = 2;
+}
+
+message NewMessage {
+  Message message = 1;
+}
+
+message MessageUpdated {
+  Message message = 1;
+}
+
+message ChatUpdated {
+  Chat chat = 1;
+}
+
+message SubscribeLoginEventsRequest {}
+
+message LoginEvent {
+  oneof payload {
+    QrCode qr_code = 1;
+    LoginStateChanged login_state_changed = 2;
+  }
+}
+
+message QrCode {
+  string code = 1;
+  int64 expires_at_unix = 2;
+}
+
+message LogoutRequest {}
+
+message LogoutResponse {}
+
+message ListChatsRequest {
+  int32 limit = 1;
+  int32 offset = 2;
+}
+
+message ListChatsResponse {
+  repeated Chat chats = 1;
+}
+
+message GetMessagesRequest {
+  string chat_id = 1;
+  int32 limit = 2;
+  string before_message_id = 3;
+}
+
+message GetMessagesResponse {
+  repeated Message messages = 1;
+}
+
+message MarkChatReadRequest {
+  string chat_id = 1;
+}
+
+message MarkChatReadResponse {}
+
+message SendTextRequest {
+  string chat_id = 1;
+  string text = 2;
+}
+
+message SendTextResponse {
+  Message message = 1;
+}
+
+message Chat {
+  string id = 1;
+  string name = 2;
+  string last_message = 3;
+  int64 last_message_time_unix = 4;
+  int32 unread_count = 5;
+  bool is_group = 6;
+}
+
+message Message {
+  string id = 1;
+  string chat_id = 2;
+  string sender_id = 3;
+  string text = 4;
+  int64 timestamp_unix = 5;
+  MessageDirection direction = 6;
+  MessageStatus status = 7;
+}
