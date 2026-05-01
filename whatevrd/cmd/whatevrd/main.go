@@ -9,6 +9,7 @@ import (
 	"whatevrd/internal/app"
 	daemonrpc "whatevrd/internal/rpc"
 	"whatevrd/internal/store"
+	"whatevrd/internal/wa"
 )
 
 func main() {
@@ -31,12 +32,18 @@ func main() {
 	defer db.Close()
 
 	daemon := app.NewDaemon(paths)
-	daemon.SetState(app.StateNeedLogin)
 
-	server, err := daemonrpc.Start(ctx, paths.SocketPath, daemon)
+	waClient, err := wa.New(ctx, paths, daemon)
+	if err != nil {
+		log.Fatalf("initialize WhatsApp client: %v", err)
+	}
+	defer waClient.Close()
+
+	server, err := daemonrpc.Start(ctx, paths.SocketPath, daemon, waClient)
 	if err != nil {
 		log.Fatalf("start rpc server: %v", err)
 	}
+	waClient.Start(ctx)
 
 	log.Printf("whatevrd listening on %s", paths.SocketPath)
 

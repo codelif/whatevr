@@ -14,6 +14,7 @@ type Paths struct {
 	CacheDir      string
 	DatabasePath  string
 	SessionDir    string
+	SessionDBPath string
 	MediaCacheDir string
 }
 
@@ -50,6 +51,7 @@ func ResolvePaths() (Paths, error) {
 		CacheDir:      cacheDir,
 		DatabasePath:  filepath.Join(dataDir, "whatevrd.db"),
 		SessionDir:    filepath.Join(dataDir, "session"),
+		SessionDBPath: filepath.Join(dataDir, "session", "whatsmeow.db"),
 		MediaCacheDir: filepath.Join(cacheDir, "media"),
 	}, nil
 }

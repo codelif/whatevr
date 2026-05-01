@@ -3,9 +3,6 @@ package rpc
 import (
 	"context"
 
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
-
 	"whatevrd/internal/app"
 	"whatevrd/internal/rpc/pb"
 )
@@ -34,8 +31,27 @@ func (s *DaemonService) GetStatus(context.Context, *pb.GetStatusRequest) (*pb.Ge
 	}, nil
 }
 
-func (s *DaemonService) SubscribeEvents(*pb.SubscribeEventsRequest, pb.DaemonService_SubscribeEventsServer) error {
-	return status.Error(codes.Unimplemented, "event streaming is planned after status plumbing")
+func (s *DaemonService) SubscribeEvents(_ *pb.SubscribeEventsRequest, stream pb.DaemonService_SubscribeEventsServer) error {
+	events, cancel := s.daemon.SubscribeDaemonEvents()
+	defer cancel()
+
+	for {
+		select {
+		case event := <-events:
+			if err := stream.Send(&pb.DaemonEvent{
+				Payload: &pb.DaemonEvent_ConnectionChanged{
+					ConnectionChanged: &pb.ConnectionChanged{
+						State:  toProtoState(event.State),
+						Detail: event.Detail,
+					},
+				},
+			}); err != nil {
+				return err
+			}
+		case <-stream.Context().Done():
+			return nil
+		}
+	}
 }
 
 func toProtoState(state app.State) pb.DaemonState {

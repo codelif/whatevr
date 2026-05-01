@@ -19,7 +19,7 @@ type Server struct {
 	errCh      chan error
 }
 
-func Start(ctx context.Context, socketPath string, daemon *app.Daemon) (*Server, error) {
+func Start(ctx context.Context, socketPath string, daemon *app.Daemon, login LoginController) (*Server, error) {
 	if err := os.Remove(socketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
@@ -36,6 +36,7 @@ func Start(ctx context.Context, socketPath string, daemon *app.Daemon) (*Server,
 
 	grpcServer := grpc.NewServer()
 	pb.RegisterDaemonServiceServer(grpcServer, NewDaemonService(daemon))
+	pb.RegisterLoginServiceServer(grpcServer, NewLoginService(daemon, login))
 
 	server := &Server{
 		grpcServer: grpcServer,
@@ -55,7 +56,7 @@ func (s *Server) Err() <-chan error {
 func (s *Server) serve(ctx context.Context) {
 	go func() {
 		<-ctx.Done()
-		s.grpcServer.GracefulStop()
+		s.grpcServer.Stop()
 		s.listener.Close()
 		_ = os.Remove(s.socketPath)
 	}()

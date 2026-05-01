@@ -10,6 +10,7 @@ gtk = { package = "gtk4", version = "0.10" }
 http = "1"
 hyper-util = { version = "0.1", features = ["tokio"] }
 prost = "0.13"
+qrcode = "0.14"
 tokio = { version = "1", features = ["net", "rt-multi-thread", "time"] }
 tonic = { version = "0.12", features = ["transport"] }
 tower = "0.4"
