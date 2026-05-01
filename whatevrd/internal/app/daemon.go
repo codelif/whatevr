@@ -180,6 +180,10 @@ func (d *Daemon) PublishNewMessage(message Message, chat Chat) {
 	d.broadcastDaemonEvent(DaemonEvent{Kind: DaemonEventChatUpdated, Chat: chat})
 }
 
+func (d *Daemon) PublishChatUpdated(chat Chat) {
+	d.broadcastDaemonEvent(DaemonEvent{Kind: DaemonEventChatUpdated, Chat: chat})
+}
+
 func (d *Daemon) broadcastLoginEvent(event LoginEvent) {
 	d.subMu.Lock()
 	subs := make([]chan LoginEvent, 0, len(d.loginSubs))

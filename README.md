@@ -50,8 +50,8 @@ If `XDG_DATA_HOME` or `XDG_CACHE_HOME` is unset, the daemon uses
 
 ## Current Status
 
-The current implementation establishes the daemon/GUI foundation, QR login, and
-daemon-side text message ingestion:
+The current implementation establishes the daemon/GUI foundation, QR login,
+daemon-side text message ingestion, and a read-only native chat UI:
 
 ```txt
 - whatevrd starts
@@ -64,10 +64,12 @@ daemon-side text message ingestion:
 - whatevrd emits QR login codes and login state changes
 - whatevrd receives WhatsApp text messages from whatsmeow
 - whatevrd stores text messages and chat summaries in SQLite
+- whatevrd exposes ChatService for listing chats, reading messages, and marking chats read
 - whatevrd emits NewMessage and ChatUpdated daemon events
 - whatevr opens as a libadwaita app with ID in.codelif.Whatevr
-- whatevr connects to whatevrd and displays daemon status
-- whatevr subscribes to login events and renders QR codes
+- whatevr renders QR login as a native libadwaita sign-in page
+- whatevr shows an adaptive sidebar/conversation layout with empty states and offline banners
+- whatevr lists chats, opens the latest 50 local messages, and keeps the composer hidden until sending exists
 - packaging/systemd/whatevrd.service provides a user service template
 ```
 
@@ -116,8 +118,22 @@ Duplicate WhatsApp message IDs are ignored so reconnects/history replays do not
 double-count unread messages. History-sync messages are stored but do not
 increment unread counts.
 
+## Read-Only Chat UI
+
+The GTK frontend now stays native to libadwaita:
+
+```txt
+- responsive split navigation on wide layouts
+- stacked sidebar/conversation flow on narrow layouts
+- QR login, loading, empty, and offline states use AdwStatusPage/AdwBanner
+- chat list reads from local SQLite via ChatService.ListChats
+- conversation view reads the latest 50 local messages via ChatService.GetMessages
+- selecting a chat clears unread count via ChatService.MarkChatRead
+- composer remains hidden until sending is implemented
+```
+
 ## MVP 1 Scope
 
-MVP 1 will add GUI chat list/message views, text sending, and
-notification-click-to-open-chat. Media, stickers, reactions, search, calls,
-status, channels, CLI, and TUI are out of scope for MVP 1.
+MVP 1 will add text sending and notification-click-to-open-chat. Media,
+stickers, reactions, search, calls, status, channels, CLI, and TUI are out of
+scope for MVP 1.

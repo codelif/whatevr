@@ -120,3 +120,134 @@ func TestSaveTextMessageDoesNotRegressChatSummary(t *testing.T) {
 		t.Fatalf("older message regressed chat summary: %+v", older.Chat)
 	}
 }
+
+func TestListChatsSortsByMostRecentMessage(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	_, err = db.SaveTextMessage(ctx, TextMessageInput{
+		ID:          "chat-a:1",
+		ChatID:      "chat-a",
+		ChatName:    "Alpha",
+		SenderID:    "sender-a",
+		Text:        "older",
+		Timestamp:   time.Unix(100, 0),
+		Direction:   DirectionIncoming,
+		Status:      StatusReceived,
+		CountUnread: true,
+	})
+	if err != nil {
+		t.Fatalf("save alpha: %v", err)
+	}
+
+	_, err = db.SaveTextMessage(ctx, TextMessageInput{
+		ID:          "chat-b:1",
+		ChatID:      "chat-b",
+		ChatName:    "Beta",
+		SenderID:    "sender-b",
+		Text:        "newer",
+		Timestamp:   time.Unix(200, 0),
+		Direction:   DirectionIncoming,
+		Status:      StatusReceived,
+		CountUnread: true,
+	})
+	if err != nil {
+		t.Fatalf("save beta: %v", err)
+	}
+
+	chats, err := db.ListChats(ctx, 10, 0)
+	if err != nil {
+		t.Fatalf("list chats: %v", err)
+	}
+	if len(chats) != 2 {
+		t.Fatalf("expected 2 chats, got %d", len(chats))
+	}
+	if chats[0].ID != "chat-b" || chats[1].ID != "chat-a" {
+		t.Fatalf("unexpected chat order: %+v", chats)
+	}
+}
+
+func TestListMessagesReturnsAscendingOrderAndPagination(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	for _, item := range []struct {
+		id string
+		ts int64
+	}{
+		{id: "chat-1:1", ts: 100},
+		{id: "chat-1:2", ts: 200},
+		{id: "chat-1:3", ts: 300},
+	} {
+		_, err := db.SaveTextMessage(ctx, TextMessageInput{
+			ID:          item.id,
+			ChatID:      "chat-1",
+			ChatName:    "Test Chat",
+			SenderID:    "sender-1",
+			Text:        item.id,
+			Timestamp:   time.Unix(item.ts, 0),
+			Direction:   DirectionIncoming,
+			Status:      StatusReceived,
+			CountUnread: true,
+		})
+		if err != nil {
+			t.Fatalf("save %s: %v", item.id, err)
+		}
+	}
+
+	latestTwo, err := db.ListMessages(ctx, "chat-1", 2, "")
+	if err != nil {
+		t.Fatalf("list latest messages: %v", err)
+	}
+	if len(latestTwo) != 2 || latestTwo[0].ID != "chat-1:2" || latestTwo[1].ID != "chat-1:3" {
+		t.Fatalf("unexpected latest messages: %+v", latestTwo)
+	}
+
+	older, err := db.ListMessages(ctx, "chat-1", 2, "chat-1:2")
+	if err != nil {
+		t.Fatalf("list paginated messages: %v", err)
+	}
+	if len(older) != 1 || older[0].ID != "chat-1:1" {
+		t.Fatalf("unexpected paginated messages: %+v", older)
+	}
+}
+
+func TestMarkChatReadClearsUnreadCount(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	_, err = db.SaveTextMessage(ctx, TextMessageInput{
+		ID:          "chat-1:1",
+		ChatID:      "chat-1",
+		ChatName:    "Test Chat",
+		SenderID:    "sender-1",
+		Text:        "hello",
+		Timestamp:   time.Unix(100, 0),
+		Direction:   DirectionIncoming,
+		Status:      StatusReceived,
+		CountUnread: true,
+	})
+	if err != nil {
+		t.Fatalf("save message: %v", err)
+	}
+
+	chat, err := db.MarkChatRead(ctx, "chat-1")
+	if err != nil {
+		t.Fatalf("mark chat read: %v", err)
+	}
+	if chat.UnreadCount != 0 {
+		t.Fatalf("expected unread_count 0, got %+v", chat)
+	}
+}

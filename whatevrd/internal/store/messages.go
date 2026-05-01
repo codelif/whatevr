@@ -143,26 +143,87 @@ func upsertChat(ctx context.Context, tx *sql.Tx, input TextMessageInput) error {
 
 func getMessageTx(ctx context.Context, tx *sql.Tx, id string) (Message, error) {
 	var message Message
-	err := tx.QueryRowContext(ctx, `
-		SELECT id, chat_id, sender_id, text, timestamp, direction, status
-		FROM messages
-		WHERE id = ?
-	`, id).Scan(
-		&message.ID,
-		&message.ChatID,
-		&message.SenderID,
-		&message.Text,
-		&message.TimestampUnix,
-		&message.Direction,
-		&message.Status,
-	)
+	err := getMessageRow(ctx, tx, id, &message)
 	return message, err
 }
 
 func getChatTx(ctx context.Context, tx *sql.Tx, id string) (Chat, error) {
+	return getChatRow(ctx, tx, id)
+}
+
+func (db *DB) ListMessages(ctx context.Context, chatID string, limit int, beforeMessageID string) ([]Message, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+
+	query := `
+		SELECT id, chat_id, sender_id, text, timestamp, direction, status
+		FROM messages
+		WHERE chat_id = ?
+	`
+	args := []any{chatID}
+
+	if beforeMessageID != "" {
+		beforeMessage, err := db.GetMessage(ctx, beforeMessageID)
+		if err != nil {
+			return nil, err
+		}
+
+		query += `
+			AND (timestamp < ? OR (timestamp = ? AND id < ?))
+		`
+		args = append(args, beforeMessage.TimestampUnix, beforeMessage.TimestampUnix, beforeMessage.ID)
+	}
+
+	query += `
+		ORDER BY timestamp DESC, id DESC
+		LIMIT ?
+	`
+	args = append(args, limit)
+
+	rows, err := db.conn.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	messages := make([]Message, 0, limit)
+	for rows.Next() {
+		var message Message
+		if err := rows.Scan(
+			&message.ID,
+			&message.ChatID,
+			&message.SenderID,
+			&message.Text,
+			&message.TimestampUnix,
+			&message.Direction,
+			&message.Status,
+		); err != nil {
+			return nil, err
+		}
+		messages = append(messages, message)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	reverseMessages(messages)
+	return messages, nil
+}
+
+func (db *DB) GetMessage(ctx context.Context, id string) (Message, error) {
+	var message Message
+	err := getMessageRow(ctx, db.conn, id, &message)
+	return message, err
+}
+
+func getChatRow(ctx context.Context, queryer interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}, id string) (Chat, error) {
 	var chat Chat
 	var isGroup int
-	err := tx.QueryRowContext(ctx, `
+	err := queryer.QueryRowContext(ctx, `
 		SELECT id, name, last_message, last_message_time, unread_count, is_group
 		FROM chats
 		WHERE id = ?
@@ -176,6 +237,45 @@ func getChatTx(ctx context.Context, tx *sql.Tx, id string) (Chat, error) {
 	)
 	chat.IsGroup = isGroup != 0
 	return chat, err
+}
+
+func getMessageRow(ctx context.Context, queryer interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}, id string, message *Message) error {
+	return queryer.QueryRowContext(ctx, `
+		SELECT id, chat_id, sender_id, text, timestamp, direction, status
+		FROM messages
+		WHERE id = ?
+	`, id).Scan(
+		&message.ID,
+		&message.ChatID,
+		&message.SenderID,
+		&message.Text,
+		&message.TimestampUnix,
+		&message.Direction,
+		&message.Status,
+	)
+}
+
+func scanChat(scanner interface{ Scan(...any) error }) (Chat, error) {
+	var chat Chat
+	var isGroup int
+	err := scanner.Scan(
+		&chat.ID,
+		&chat.Name,
+		&chat.LastMessage,
+		&chat.LastMessageTime,
+		&chat.UnreadCount,
+		&isGroup,
+	)
+	chat.IsGroup = isGroup != 0
+	return chat, err
+}
+
+func reverseMessages(messages []Message) {
+	for left, right := 0, len(messages)-1; left < right; left, right = left+1, right-1 {
+		messages[left], messages[right] = messages[right], messages[left]
+	}
 }
 
 func boolToInt(value bool) int {

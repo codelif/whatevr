@@ -29,7 +29,7 @@ func (c *Client) handleMessage(evt *events.Message) {
 	}
 
 	c.log.Infof("Stored text message %s from %s", saved.Message.ID, saved.Message.SenderID)
-	c.daemon.PublishNewMessage(toAppMessage(saved.Message), toAppChat(saved.Chat))
+	c.daemon.PublishNewMessage(toDaemonMessage(saved.Message), toDaemonChat(saved.Chat))
 }
 
 func (c *Client) textMessageInput(evt *events.Message) (appstore.TextMessageInput, bool) {
@@ -109,7 +109,7 @@ func chatName(info types.MessageInfo) string {
 	return info.Chat.String()
 }
 
-func toAppMessage(message appstore.Message) app.Message {
+func toDaemonMessage(message appstore.Message) app.Message {
 	return app.Message{
 		ID:            message.ID,
 		ChatID:        message.ChatID,
@@ -121,7 +121,7 @@ func toAppMessage(message appstore.Message) app.Message {
 	}
 }
 
-func toAppChat(chat appstore.Chat) app.Chat {
+func toDaemonChat(chat appstore.Chat) app.Chat {
 	return app.Chat{
 		ID:              chat.ID,
 		Name:            chat.Name,

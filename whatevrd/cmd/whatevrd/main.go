@@ -45,7 +45,7 @@ func main() {
 	}
 	defer waClient.Close()
 
-	server, err := daemonrpc.Start(ctx, paths.SocketPath, daemon, waClient)
+	server, err := daemonrpc.Start(ctx, paths.SocketPath, daemon, waClient, db)
 	if err != nil {
 		log.Fatalf("start rpc server: %v", err)
 	}

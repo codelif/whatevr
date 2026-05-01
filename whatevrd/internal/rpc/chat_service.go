@@ -1,0 +1,115 @@
+package rpc
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	"whatevrd/internal/app"
+	"whatevrd/internal/rpc/pb"
+	appstore "whatevrd/internal/store"
+)
+
+type ChatStore interface {
+	ListChats(context.Context, int, int) ([]appstore.Chat, error)
+	ListMessages(context.Context, string, int, string) ([]appstore.Message, error)
+	MarkChatRead(context.Context, string) (appstore.Chat, error)
+}
+
+type ChatService struct {
+	pb.UnimplementedChatServiceServer
+	daemon *app.Daemon
+	store  ChatStore
+}
+
+func NewChatService(daemon *app.Daemon, store ChatStore) *ChatService {
+	return &ChatService{daemon: daemon, store: store}
+}
+
+func (s *ChatService) ListChats(ctx context.Context, req *pb.ListChatsRequest) (*pb.ListChatsResponse, error) {
+	if s.store == nil {
+		return nil, status.Error(codes.Unimplemented, "chat store is not available")
+	}
+
+	chats, err := s.store.ListChats(ctx, int(req.GetLimit()), int(req.GetOffset()))
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &pb.ListChatsResponse{Chats: make([]*pb.Chat, 0, len(chats))}
+	for _, chat := range chats {
+		resp.Chats = append(resp.Chats, toProtoChat(toAppChat(chat)))
+	}
+
+	return resp, nil
+}
+
+func (s *ChatService) GetMessages(ctx context.Context, req *pb.GetMessagesRequest) (*pb.GetMessagesResponse, error) {
+	if s.store == nil {
+		return nil, status.Error(codes.Unimplemented, "chat store is not available")
+	}
+	if req.GetChatId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "chat_id is required")
+	}
+
+	messages, err := s.store.ListMessages(ctx, req.GetChatId(), int(req.GetLimit()), req.GetBeforeMessageId())
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, status.Error(codes.NotFound, "message not found")
+		}
+		return nil, err
+	}
+
+	resp := &pb.GetMessagesResponse{Messages: make([]*pb.Message, 0, len(messages))}
+	for _, message := range messages {
+		resp.Messages = append(resp.Messages, toProtoMessage(toAppMessage(message)))
+	}
+
+	return resp, nil
+}
+
+func (s *ChatService) MarkChatRead(ctx context.Context, req *pb.MarkChatReadRequest) (*pb.MarkChatReadResponse, error) {
+	if s.store == nil {
+		return nil, status.Error(codes.Unimplemented, "chat store is not available")
+	}
+	if req.GetChatId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "chat_id is required")
+	}
+
+	chat, err := s.store.MarkChatRead(ctx, req.GetChatId())
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, status.Error(codes.NotFound, "chat not found")
+		}
+		return nil, err
+	}
+
+	s.daemon.PublishChatUpdated(toAppChat(chat))
+	return &pb.MarkChatReadResponse{}, nil
+}
+
+func toAppChat(chat appstore.Chat) app.Chat {
+	return app.Chat{
+		ID:              chat.ID,
+		Name:            chat.Name,
+		LastMessage:     chat.LastMessage,
+		LastMessageTime: chat.LastMessageTime,
+		UnreadCount:     chat.UnreadCount,
+		IsGroup:         chat.IsGroup,
+	}
+}
+
+func toAppMessage(message appstore.Message) app.Message {
+	return app.Message{
+		ID:            message.ID,
+		ChatID:        message.ChatID,
+		SenderID:      message.SenderID,
+		Text:          message.Text,
+		TimestampUnix: message.TimestampUnix,
+		Direction:     message.Direction,
+		Status:        message.Status,
+	}
+}
