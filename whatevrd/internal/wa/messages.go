@@ -33,18 +33,18 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 				c.log.Warnf("Failed to parse history sync message: %v", err)
 				continue
 			}
-			c.handleMessage(parsedEvt)
+			c.handleMessage(context.Background(), parsedEvt)
 		}
 	}
 }
 
-func (c *Client) handleMessage(evt *events.Message) {
-	input, ok := c.textMessageInput(evt)
+func (c *Client) handleMessage(ctx context.Context, evt *events.Message) {
+	input, ok := c.textMessageInput(ctx, evt)
 	if !ok {
 		return
 	}
 
-	saved, err := c.store.SaveTextMessage(context.Background(), input)
+	saved, err := c.store.SaveTextMessage(ctx, input)
 	if err != nil {
 		c.log.Errorf("Failed to store message %s: %v", input.ID, err)
 		return
@@ -57,7 +57,25 @@ func (c *Client) handleMessage(evt *events.Message) {
 	c.daemon.PublishNewMessage(toDaemonMessage(saved.Message), toDaemonChat(saved.Chat))
 }
 
-func (c *Client) textMessageInput(evt *events.Message) (appstore.TextMessageInput, bool) {
+func (c *Client) normalizeJIDForChat(ctx context.Context, jid types.JID) types.JID {
+	if jid.Server != types.HiddenUserServer {
+		return jid
+	}
+
+	client := c.currentClient()
+	if client == nil || client.Store.LIDs == nil {
+		return jid
+	}
+
+	pn, err := client.Store.LIDs.GetPNForLID(ctx, jid)
+	if err != nil || pn.IsEmpty() {
+		return jid
+	}
+
+	return pn
+}
+
+func (c *Client) textMessageInput(ctx context.Context, evt *events.Message) (appstore.TextMessageInput, bool) {
 	if evt == nil || evt.Message == nil {
 		return appstore.TextMessageInput{}, false
 	}
@@ -68,7 +86,8 @@ func (c *Client) textMessageInput(evt *events.Message) (appstore.TextMessageInpu
 	}
 
 	info := evt.Info
-	chatID := info.Chat.String()
+	chatJID := c.normalizeJIDForChat(ctx, info.Chat)
+	chatID := chatJID.String()
 	if chatID == "" {
 		return appstore.TextMessageInput{}, false
 	}
@@ -84,7 +103,7 @@ func (c *Client) textMessageInput(evt *events.Message) (appstore.TextMessageInpu
 	}
 
 	return appstore.TextMessageInput{
-		ID:          internalMessageID(info),
+		ID:          internalMessageIDForChat(chatID, info.ID),
 		ChatID:      chatID,
 		ChatName:    chatName(info),
 		SenderID:    senderID(info),
@@ -105,10 +124,6 @@ func textFromMessage(message *waE2E.Message) string {
 		return text
 	}
 	return ""
-}
-
-func internalMessageID(info types.MessageInfo) string {
-	return internalMessageIDForChat(info.Chat.String(), info.ID)
 }
 
 func senderID(info types.MessageInfo) string {

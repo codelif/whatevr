@@ -55,11 +55,12 @@ func (d *Daemon) Status() Status {
 }
 
 type DaemonEvent struct {
-	Kind    DaemonEventKind
-	State   State
-	Detail  string
-	Message Message
-	Chat    Chat
+	Kind           DaemonEventKind
+	State          State
+	Detail         string
+	Message        Message
+	Chat           Chat
+	PreviousChatID string
 }
 
 type DaemonEventKind int
@@ -192,6 +193,10 @@ type FrontendSessionController interface {
 
 func (d *Daemon) PublishChatUpdated(chat Chat) {
 	d.broadcastDaemonEvent(DaemonEvent{Kind: DaemonEventChatUpdated, Chat: chat})
+}
+
+func (d *Daemon) PublishChatMigrated(previousChatID string, chat Chat) {
+	d.broadcastDaemonEvent(DaemonEvent{Kind: DaemonEventChatUpdated, Chat: chat, PreviousChatID: previousChatID})
 }
 
 func (d *Daemon) broadcastLoginEvent(event LoginEvent) {

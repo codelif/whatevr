@@ -78,7 +78,7 @@ func toProtoDaemonEvent(event app.DaemonEvent) *pb.DaemonEvent {
 	case app.DaemonEventChatUpdated:
 		return &pb.DaemonEvent{
 			Payload: &pb.DaemonEvent_ChatUpdated{
-				ChatUpdated: &pb.ChatUpdated{Chat: toProtoChat(event.Chat)},
+				ChatUpdated: &pb.ChatUpdated{Chat: toProtoChat(event.Chat), PreviousChatId: event.PreviousChatID},
 			},
 		}
 	default:

@@ -75,6 +75,7 @@ enum UiMessage {
     },
     DataChanged {
         chat_id: Option<String>,
+        previous_chat_id: Option<String>,
         refresh_chats: bool,
         mark_read_if_focused: bool,
     },
@@ -732,9 +733,22 @@ fn handle_ui_message(
         }
         UiMessage::DataChanged {
             chat_id,
+            previous_chat_id,
             refresh_chats,
             mark_read_if_focused,
         } => {
+            if let (Some(previous_chat_id), Some(new_chat_id)) =
+                (previous_chat_id.as_deref(), chat_id.as_deref())
+            {
+                let mut state = state.borrow_mut();
+                if state.selected_chat_id.as_deref() == Some(previous_chat_id) {
+                    state.selected_chat_id = Some(new_chat_id.to_string());
+                    state.current_messages_chat_id = None;
+                    state.current_messages.clear();
+                    state.composer_error.clear();
+                }
+            }
+
             if refresh_chats {
                 request_chats(sender.clone());
             }
@@ -1137,11 +1151,13 @@ fn subscribe_login_events(sender: mpsc::Sender<UiMessage>) {
 }
 
 fn hold_frontend_session(sender: mpsc::Sender<UiMessage>) {
-	spawn_async(async move {
-		if let Err(error) = stream_frontend_session(sender.clone()).await {
-			let _ = sender.send(UiMessage::Notice(format!("Frontend session ended: {error}")));
-		}
-	});
+    spawn_async(async move {
+        if let Err(error) = stream_frontend_session(sender.clone()).await {
+            let _ = sender.send(UiMessage::Notice(format!(
+                "Frontend session ended: {error}"
+            )));
+        }
+    });
 }
 
 fn subscribe_daemon_events(sender: mpsc::Sender<UiMessage>) {
@@ -1194,7 +1210,7 @@ fn request_mark_chat_read(sender: mpsc::Sender<UiMessage>, chat_id: String) {
 fn request_send_text(sender: mpsc::Sender<UiMessage>, chat_id: String, text: String) {
     spawn_async(async move {
         match send_text(chat_id.clone(), text).await {
-            Ok(()) => {
+            Ok(chat_id) => {
                 let _ = sender.send(UiMessage::SendSucceeded { chat_id });
             }
             Err(error) => {
@@ -1264,20 +1280,20 @@ async fn stream_login_events(
 }
 
 async fn stream_frontend_session(
-	_sender: mpsc::Sender<UiMessage>,
+    _sender: mpsc::Sender<UiMessage>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-	let channel = connect_channel().await?;
-	let mut client = FrontendServiceClient::new(channel);
-	let mut stream = client
-		.hold_session(proto::HoldSessionRequest {
-			client_name: "whatevr".to_string(),
-		})
-		.await?
-		.into_inner();
+    let channel = connect_channel().await?;
+    let mut client = FrontendServiceClient::new(channel);
+    let mut stream = client
+        .hold_session(proto::HoldSessionRequest {
+            client_name: "whatevr".to_string(),
+        })
+        .await?
+        .into_inner();
 
-	while stream.message().await?.is_some() {}
+    while stream.message().await?.is_some() {}
 
-	Ok(())
+    Ok(())
 }
 
 async fn stream_daemon_events(
@@ -1303,6 +1319,7 @@ async fn stream_daemon_events(
                 let chat_id = new_message.message.map(|message| message.chat_id);
                 let _ = sender.send(UiMessage::DataChanged {
                     chat_id,
+                    previous_chat_id: None,
                     refresh_chats: true,
                     mark_read_if_focused: true,
                 });
@@ -1311,14 +1328,21 @@ async fn stream_daemon_events(
                 let chat_id = message_updated.message.map(|message| message.chat_id);
                 let _ = sender.send(UiMessage::DataChanged {
                     chat_id,
+                    previous_chat_id: None,
                     refresh_chats: false,
                     mark_read_if_focused: false,
                 });
             }
             Some(daemon_event::Payload::ChatUpdated(chat_updated)) => {
+                let previous_chat_id = if chat_updated.previous_chat_id.is_empty() {
+                    None
+                } else {
+                    Some(chat_updated.previous_chat_id)
+                };
                 let chat_id = chat_updated.chat.map(|chat| chat.id);
                 let _ = sender.send(UiMessage::DataChanged {
                     chat_id,
+                    previous_chat_id,
                     refresh_chats: true,
                     mark_read_if_focused: false,
                 });
@@ -1371,13 +1395,22 @@ async fn mark_chat_read(chat_id: String) -> Result<(), Box<dyn std::error::Error
 async fn send_text(
     chat_id: String,
     text: String,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     let channel = connect_channel().await?;
     let mut client = proto::send_service_client::SendServiceClient::new(channel);
-    client
-        .send_text(proto::SendTextRequest { chat_id, text })
-        .await?;
-    Ok(())
+    let request_chat_id = chat_id.clone();
+    let response = client
+        .send_text(proto::SendTextRequest {
+            chat_id: request_chat_id,
+            text,
+        })
+        .await?
+        .into_inner();
+    Ok(response
+        .message
+        .map(|message| message.chat_id)
+        .filter(|chat_id| !chat_id.is_empty())
+        .unwrap_or(chat_id))
 }
 
 async fn connect_channel() -> Result<Channel, Box<dyn std::error::Error + Send + Sync>> {

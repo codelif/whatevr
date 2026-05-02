@@ -97,6 +97,7 @@ message MessageUpdated {
 
 message ChatUpdated {
   Chat chat = 1;
+  string previous_chat_id = 2;
 }
 
 message SubscribeLoginEventsRequest {}

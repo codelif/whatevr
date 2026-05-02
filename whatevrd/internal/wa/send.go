@@ -41,6 +41,8 @@ func (c *Client) SendText(ctx context.Context, chatID, text string) (appstore.Sa
 	if err != nil {
 		return appstore.SavedTextMessage{}, grpcstatus.Errorf(codes.InvalidArgument, "invalid chat_id: %v", err)
 	}
+	targetJID = c.normalizeJIDForChat(ctx, targetJID)
+	chatID = targetJID.String()
 
 	messageID := client.GenerateMessageID()
 	resp, err := client.SendMessage(ctx, targetJID, &waE2E.Message{
@@ -82,7 +84,8 @@ func (c *Client) handleReceipt(evt *events.Receipt) {
 		return
 	}
 
-	chatID := evt.Chat.String()
+	normalizedChat := c.normalizeJIDForChat(context.Background(), evt.Chat)
+	chatID := normalizedChat.String()
 	if chatID == "" {
 		return
 	}
@@ -110,6 +113,8 @@ func (c *Client) MarkChatRead(ctx context.Context, chatID string) (appstore.Chat
 	if err != nil {
 		return appstore.Chat{}, grpcstatus.Errorf(codes.InvalidArgument, "invalid chat_id: %v", err)
 	}
+	chat = c.normalizeJIDForChat(ctx, chat)
+	chatID = chat.String()
 
 	readCandidates, err := c.store.ReadCandidatesForChat(ctx, chatID)
 	if err != nil {

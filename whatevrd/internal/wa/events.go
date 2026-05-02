@@ -14,6 +14,7 @@ func (c *Client) handleEvent(raw any) {
 	case *events.Connected:
 		c.daemon.SetStateDetail(app.StateOnline, "connected to WhatsApp")
 		c.syncPresence(context.Background(), true)
+		go c.migrateLIDChats(context.Background())
 	case *events.AppStateSyncComplete:
 		c.syncPresence(context.Background(), true)
 	case *events.Disconnected:
@@ -34,7 +35,7 @@ func (c *Client) handleEvent(raw any) {
 	case *events.TemporaryBan:
 		c.daemon.SetStateDetail(app.StateOffline, evt.String())
 	case *events.Message:
-		c.handleMessage(evt)
+		c.handleMessage(context.Background(), evt)
 	case *events.Receipt:
 		c.handleReceipt(evt)
 	case *events.HistorySync:

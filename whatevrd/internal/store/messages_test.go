@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -360,5 +362,227 @@ func TestUpdateMessageStatusProgression(t *testing.T) {
 	}
 	if changed || message.Status != StatusRead {
 		t.Fatalf("unexpected downgrade result: %+v changed=%v", message, changed)
+	}
+}
+
+func TestListLIDChats(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	for _, input := range []TextMessageInput{
+		{
+			ID:          "30413133201647@lid:lid-1",
+			ChatID:      "30413133201647@lid",
+			ChatName:    "LID Chat",
+			SenderID:    "30413133201647@lid",
+			Text:        "lid",
+			Timestamp:   time.Unix(100, 0),
+			Direction:   DirectionIncoming,
+			Status:      StatusDelivered,
+			CountUnread: true,
+		},
+		{
+			ID:          "917060029183@s.whatsapp.net:pn-1",
+			ChatID:      "917060029183@s.whatsapp.net",
+			ChatName:    "PN Chat",
+			SenderID:    "917060029183@s.whatsapp.net",
+			Text:        "pn",
+			Timestamp:   time.Unix(200, 0),
+			Direction:   DirectionIncoming,
+			Status:      StatusDelivered,
+			CountUnread: true,
+		},
+		{
+			ID:          "12345-67890@g.us:group-1",
+			ChatID:      "12345-67890@g.us",
+			ChatName:    "Group",
+			SenderID:    "917060029183@s.whatsapp.net",
+			Text:        "group",
+			Timestamp:   time.Unix(300, 0),
+			Direction:   DirectionIncoming,
+			Status:      StatusDelivered,
+			CountUnread: true,
+			IsGroup:     true,
+		},
+	} {
+		if _, err := db.SaveTextMessage(ctx, input); err != nil {
+			t.Fatalf("save %s: %v", input.ID, err)
+		}
+	}
+
+	lidChats, err := db.ListLIDChats(ctx)
+	if err != nil {
+		t.Fatalf("list lid chats: %v", err)
+	}
+
+	want := []string{"30413133201647@lid"}
+	if !reflect.DeepEqual(lidChats, want) {
+		t.Fatalf("unexpected lid chats: got %v want %v", lidChats, want)
+	}
+}
+
+func TestMigrateChatIDReturnsFalseWhenSourceMissing(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	chat, migrated, err := db.MigrateChatID(ctx, "30413133201647@lid", "917060029183@s.whatsapp.net")
+	if err != nil {
+		t.Fatalf("migrate missing chat: %v", err)
+	}
+	if migrated {
+		t.Fatal("expected migration to be skipped")
+	}
+	if chat != (Chat{}) {
+		t.Fatalf("expected zero chat on skipped migration, got %+v", chat)
+	}
+}
+
+func TestMigrateChatIDMovesMessagesToTarget(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	fromChatID := "30413133201647@lid"
+	toChatID := "917060029183@s.whatsapp.net"
+
+	for _, input := range []TextMessageInput{
+		{
+			ID:          fromChatID + ":msg-1",
+			ChatID:      fromChatID,
+			ChatName:    "Alice",
+			SenderID:    fromChatID,
+			Text:        "hello",
+			Timestamp:   time.Unix(100, 0),
+			Direction:   DirectionIncoming,
+			Status:      StatusDelivered,
+			CountUnread: true,
+		},
+		{
+			ID:          fromChatID + ":msg-2",
+			ChatID:      fromChatID,
+			ChatName:    "Alice",
+			SenderID:    fromChatID,
+			Text:        "history",
+			Timestamp:   time.Unix(90, 0),
+			Direction:   DirectionIncoming,
+			Status:      StatusDelivered,
+			CountUnread: false,
+		},
+	} {
+		if _, err := db.SaveTextMessage(ctx, input); err != nil {
+			t.Fatalf("save %s: %v", input.ID, err)
+		}
+	}
+
+	chat, migrated, err := db.MigrateChatID(ctx, fromChatID, toChatID)
+	if err != nil {
+		t.Fatalf("migrate chat: %v", err)
+	}
+	if !migrated {
+		t.Fatal("expected migration to happen")
+	}
+	if chat.ID != toChatID || chat.Name != "Alice" || chat.LastMessage != "hello" || chat.LastMessageTime != 100 || chat.UnreadCount != 1 {
+		t.Fatalf("unexpected migrated chat: %+v", chat)
+	}
+
+	if _, err := db.GetChat(ctx, fromChatID); err != sql.ErrNoRows {
+		t.Fatalf("expected source chat to be deleted, got %v", err)
+	}
+
+	messages, err := db.ListMessages(ctx, toChatID, 10, "")
+	if err != nil {
+		t.Fatalf("list migrated messages: %v", err)
+	}
+	if len(messages) != 2 {
+		t.Fatalf("expected 2 migrated messages, got %d", len(messages))
+	}
+	if messages[0].ID != toChatID+":msg-2" || messages[0].ChatID != toChatID {
+		t.Fatalf("unexpected first migrated message: %+v", messages[0])
+	}
+	if messages[1].ID != toChatID+":msg-1" || messages[1].ChatID != toChatID {
+		t.Fatalf("unexpected second migrated message: %+v", messages[1])
+	}
+
+	if _, err := db.GetMessage(ctx, fromChatID+":msg-1"); err != sql.ErrNoRows {
+		t.Fatalf("expected source message to be deleted, got %v", err)
+	}
+	if _, err := db.GetMessage(ctx, toChatID+":msg-1"); err != nil {
+		t.Fatalf("expected rewritten message to exist: %v", err)
+	}
+}
+
+func TestMigrateChatIDMergesExistingTargetWithoutDoubleCountingUnread(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	fromChatID := "30413133201647@lid"
+	toChatID := "917060029183@s.whatsapp.net"
+
+	if _, err := db.SaveTextMessage(ctx, TextMessageInput{
+		ID:          fromChatID + ":dup-1",
+		ChatID:      fromChatID,
+		ChatName:    "Alice",
+		SenderID:    fromChatID,
+		Text:        "duplicate",
+		Timestamp:   time.Unix(100, 0),
+		Direction:   DirectionIncoming,
+		Status:      StatusDelivered,
+		CountUnread: true,
+	}); err != nil {
+		t.Fatalf("save lid message: %v", err)
+	}
+
+	if _, err := db.SaveTextMessage(ctx, TextMessageInput{
+		ID:          toChatID + ":dup-1",
+		ChatID:      toChatID,
+		ChatName:    "",
+		SenderID:    toChatID,
+		Text:        "newer target",
+		Timestamp:   time.Unix(200, 0),
+		Direction:   DirectionIncoming,
+		Status:      StatusDelivered,
+		CountUnread: true,
+	}); err != nil {
+		t.Fatalf("save target message: %v", err)
+	}
+
+	chat, migrated, err := db.MigrateChatID(ctx, fromChatID, toChatID)
+	if err != nil {
+		t.Fatalf("migrate chat: %v", err)
+	}
+	if !migrated {
+		t.Fatal("expected migration to happen")
+	}
+	if chat.Name != "Alice" {
+		t.Fatalf("expected target name to be replaced from default id, got %+v", chat)
+	}
+	if chat.LastMessage != "newer target" || chat.LastMessageTime != 200 {
+		t.Fatalf("expected newer target summary to win, got %+v", chat)
+	}
+	if chat.UnreadCount != 1 {
+		t.Fatalf("expected unread count to be recomputed to 1, got %+v", chat)
+	}
+
+	messages, err := db.ListMessages(ctx, toChatID, 10, "")
+	if err != nil {
+		t.Fatalf("list merged messages: %v", err)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("expected duplicate message to be deduped, got %d", len(messages))
 	}
 }

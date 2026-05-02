@@ -676,10 +676,11 @@ func (x *MessageUpdated) GetMessage() *Message {
 }
 
 type ChatUpdated struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Chat          *Chat                  `protobuf:"bytes,1,opt,name=chat,proto3" json:"chat,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Chat           *Chat                  `protobuf:"bytes,1,opt,name=chat,proto3" json:"chat,omitempty"`
+	PreviousChatId string                 `protobuf:"bytes,2,opt,name=previous_chat_id,json=previousChatId,proto3" json:"previous_chat_id,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *ChatUpdated) Reset() {
@@ -717,6 +718,13 @@ func (x *ChatUpdated) GetChat() *Chat {
 		return x.Chat
 	}
 	return nil
+}
+
+func (x *ChatUpdated) GetPreviousChatId() string {
+	if x != nil {
+		return x.PreviousChatId
+	}
+	return ""
 }
 
 type SubscribeLoginEventsRequest struct {
@@ -1637,9 +1645,10 @@ const file_proto_whatevr_proto_rawDesc = "" +
 	"NewMessage\x12-\n" +
 	"\amessage\x18\x01 \x01(\v2\x13.whatevr.v1.MessageR\amessage\"?\n" +
 	"\x0eMessageUpdated\x12-\n" +
-	"\amessage\x18\x01 \x01(\v2\x13.whatevr.v1.MessageR\amessage\"3\n" +
+	"\amessage\x18\x01 \x01(\v2\x13.whatevr.v1.MessageR\amessage\"]\n" +
 	"\vChatUpdated\x12$\n" +
-	"\x04chat\x18\x01 \x01(\v2\x10.whatevr.v1.ChatR\x04chat\"\x1d\n" +
+	"\x04chat\x18\x01 \x01(\v2\x10.whatevr.v1.ChatR\x04chat\x12(\n" +
+	"\x10previous_chat_id\x18\x02 \x01(\tR\x0epreviousChatId\"\x1d\n" +
 	"\x1bSubscribeLoginEventsRequest\"\x97\x01\n" +
 	"\n" +
 	"LoginEvent\x12-\n" +

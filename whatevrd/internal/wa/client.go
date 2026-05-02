@@ -142,6 +142,42 @@ func (c *Client) syncPresence(ctx context.Context, force bool) {
 	}
 }
 
+func (c *Client) migrateLIDChats(ctx context.Context) {
+	client := c.currentClient()
+	if client == nil || client.Store.LIDs == nil {
+		return
+	}
+
+	lidChats, err := c.store.ListLIDChats(ctx)
+	if err != nil {
+		c.log.Warnf("Failed to list LID chats: %v", err)
+		return
+	}
+
+	for _, lidChatID := range lidChats {
+		lidJID, err := types.ParseJID(lidChatID)
+		if err != nil {
+			continue
+		}
+
+		pnJID, err := client.Store.LIDs.GetPNForLID(ctx, lidJID)
+		if err != nil || pnJID.IsEmpty() {
+			continue
+		}
+
+		chat, migrated, err := c.store.MigrateChatID(ctx, lidChatID, pnJID.String())
+		if err != nil {
+			c.log.Warnf("Failed to migrate LID chat %s -> %s: %v", lidChatID, pnJID, err)
+			continue
+		}
+
+		if migrated {
+			c.log.Infof("Migrated LID chat %s -> %s", lidChatID, pnJID)
+			c.daemon.PublishChatMigrated(lidChatID, toDaemonChat(chat))
+		}
+	}
+}
+
 func sqliteDSN(path string) string {
 	return fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)", filepath.ToSlash(path))
 }
