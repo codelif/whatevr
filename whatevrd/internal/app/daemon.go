@@ -185,6 +185,11 @@ func (d *Daemon) PublishMessageUpdated(message Message) {
 	d.broadcastDaemonEvent(DaemonEvent{Kind: DaemonEventMessageUpdated, Message: message})
 }
 
+type FrontendSessionController interface {
+	FrontendSessionStarted()
+	FrontendSessionEnded()
+}
+
 func (d *Daemon) PublishChatUpdated(chat Chat) {
 	d.broadcastDaemonEvent(DaemonEvent{Kind: DaemonEventChatUpdated, Chat: chat})
 }

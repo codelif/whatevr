@@ -23,7 +23,7 @@ func TestSaveTextMessageInsertsOnceAndUpdatesChat(t *testing.T) {
 		Text:        "hello",
 		Timestamp:   time.Unix(100, 0),
 		Direction:   DirectionIncoming,
-		Status:      StatusReceived,
+		Status:      StatusDelivered,
 		CountUnread: true,
 	}
 
@@ -92,7 +92,7 @@ func TestSaveTextMessageDoesNotRegressChatSummary(t *testing.T) {
 		Text:        "latest",
 		Timestamp:   time.Unix(200, 0),
 		Direction:   DirectionIncoming,
-		Status:      StatusReceived,
+		Status:      StatusDelivered,
 		CountUnread: true,
 	})
 	if err != nil {
@@ -110,7 +110,7 @@ func TestSaveTextMessageDoesNotRegressChatSummary(t *testing.T) {
 		Text:        "older",
 		Timestamp:   time.Unix(100, 0),
 		Direction:   DirectionIncoming,
-		Status:      StatusReceived,
+		Status:      StatusDelivered,
 		CountUnread: true,
 	})
 	if err != nil {
@@ -137,7 +137,7 @@ func TestListChatsSortsByMostRecentMessage(t *testing.T) {
 		Text:        "older",
 		Timestamp:   time.Unix(100, 0),
 		Direction:   DirectionIncoming,
-		Status:      StatusReceived,
+		Status:      StatusDelivered,
 		CountUnread: true,
 	})
 	if err != nil {
@@ -152,7 +152,7 @@ func TestListChatsSortsByMostRecentMessage(t *testing.T) {
 		Text:        "newer",
 		Timestamp:   time.Unix(200, 0),
 		Direction:   DirectionIncoming,
-		Status:      StatusReceived,
+		Status:      StatusDelivered,
 		CountUnread: true,
 	})
 	if err != nil {
@@ -195,7 +195,7 @@ func TestListMessagesReturnsAscendingOrderAndPagination(t *testing.T) {
 			Text:        item.id,
 			Timestamp:   time.Unix(item.ts, 0),
 			Direction:   DirectionIncoming,
-			Status:      StatusReceived,
+			Status:      StatusDelivered,
 			CountUnread: true,
 		})
 		if err != nil {
@@ -236,7 +236,7 @@ func TestMarkChatReadClearsUnreadCount(t *testing.T) {
 		Text:        "hello",
 		Timestamp:   time.Unix(100, 0),
 		Direction:   DirectionIncoming,
-		Status:      StatusReceived,
+		Status:      StatusDelivered,
 		CountUnread: true,
 	})
 	if err != nil {
@@ -249,6 +249,69 @@ func TestMarkChatReadClearsUnreadCount(t *testing.T) {
 	}
 	if chat.UnreadCount != 0 {
 		t.Fatalf("expected unread_count 0, got %+v", chat)
+	}
+}
+
+func TestReadCandidatesAndMarkMessagesRead(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	_, err = db.SaveTextMessage(ctx, TextMessageInput{
+		ID:          "chat-1:incoming-1",
+		ChatID:      "chat-1",
+		ChatName:    "Test Chat",
+		SenderID:    "123@s.whatsapp.net",
+		Text:        "hello",
+		Timestamp:   time.Unix(100, 0),
+		Direction:   DirectionIncoming,
+		Status:      StatusDelivered,
+		CountUnread: true,
+	})
+	if err != nil {
+		t.Fatalf("save incoming unread: %v", err)
+	}
+
+	_, err = db.SaveTextMessage(ctx, TextMessageInput{
+		ID:          "chat-1:incoming-history",
+		ChatID:      "chat-1",
+		ChatName:    "Test Chat",
+		SenderID:    "123@s.whatsapp.net",
+		Text:        "history",
+		Timestamp:   time.Unix(90, 0),
+		Direction:   DirectionIncoming,
+		Status:      StatusDelivered,
+		CountUnread: false,
+	})
+	if err != nil {
+		t.Fatalf("save incoming history: %v", err)
+	}
+
+	candidates, err := db.ReadCandidatesForChat(ctx, "chat-1")
+	if err != nil {
+		t.Fatalf("read candidates: %v", err)
+	}
+	if len(candidates) != 1 || candidates[0].ExternalID != "incoming-1" {
+		t.Fatalf("unexpected read candidates: %+v", candidates)
+	}
+
+	chat, err := db.MarkMessagesRead(ctx, "chat-1")
+	if err != nil {
+		t.Fatalf("mark messages read: %v", err)
+	}
+	if chat.UnreadCount != 0 {
+		t.Fatalf("expected unread count 0 after mark read, got %+v", chat)
+	}
+
+	message, err := db.GetMessage(ctx, "chat-1:incoming-1")
+	if err != nil {
+		t.Fatalf("get message after mark read: %v", err)
+	}
+	if !message.IsRead {
+		t.Fatalf("expected message to be read after mark read: %+v", message)
 	}
 }
 

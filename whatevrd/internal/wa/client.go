@@ -11,6 +11,7 @@ import (
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/store/sqlstore"
+	"go.mau.fi/whatsmeow/types"
 	waLog "go.mau.fi/whatsmeow/util/log"
 
 	"whatevrd/internal/app"
@@ -25,6 +26,10 @@ type Client struct {
 
 	mu     sync.Mutex
 	client *whatsmeow.Client
+
+	presenceMu       sync.Mutex
+	frontendSessions int
+	lastPresence     types.Presence
 }
 
 func New(ctx context.Context, paths app.Paths, daemon *app.Daemon, store *appstore.DB) (*Client, error) {
@@ -71,6 +76,10 @@ func (c *Client) resetClient(ctx context.Context) error {
 
 	client := whatsmeow.NewClient(device, c.log.Sub("Client"))
 	client.BackgroundEventCtx = ctx
+	client.EnableAutoReconnect = true
+	client.AutoTrustIdentity = true
+	client.SetForceActiveDeliveryReceipts(true)
+	client.UseRetryMessageStore = true
 	client.AddEventHandler(c.handleEvent)
 
 	c.mu.Lock()
@@ -84,6 +93,53 @@ func (c *Client) currentClient() *whatsmeow.Client {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.client
+}
+
+func (c *Client) FrontendSessionStarted() {
+	c.presenceMu.Lock()
+	c.frontendSessions++
+	shouldSync := c.frontendSessions == 1
+	c.presenceMu.Unlock()
+
+	if shouldSync {
+		c.syncPresence(context.Background(), true)
+	}
+}
+
+func (c *Client) FrontendSessionEnded() {
+	c.presenceMu.Lock()
+	if c.frontendSessions > 0 {
+		c.frontendSessions--
+	}
+	shouldSync := c.frontendSessions == 0
+	c.presenceMu.Unlock()
+
+	if shouldSync {
+		c.syncPresence(context.Background(), true)
+	}
+}
+
+func (c *Client) syncPresence(ctx context.Context, force bool) {
+	client := c.currentClient()
+	if client == nil || !client.IsLoggedIn() {
+		return
+	}
+
+	c.presenceMu.Lock()
+	desired := types.PresenceUnavailable
+	if c.frontendSessions > 0 {
+		desired = types.PresenceAvailable
+	}
+	if !force && c.lastPresence == desired {
+		c.presenceMu.Unlock()
+		return
+	}
+	c.lastPresence = desired
+	c.presenceMu.Unlock()
+
+	if err := client.SendPresence(ctx, desired); err != nil {
+		c.log.Warnf("Failed to update presence to %s: %v", desired, err)
+	}
 }
 
 func sqliteDSN(path string) string {

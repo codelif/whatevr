@@ -18,6 +18,11 @@ import (
 	appstore "whatevrd/internal/store"
 )
 
+type readBatch struct {
+	sender     types.JID
+	messageIDs []types.MessageID
+}
+
 func (c *Client) SendText(ctx context.Context, chatID, text string) (appstore.SavedTextMessage, error) {
 	client := c.currentClient()
 	if client == nil {
@@ -100,6 +105,40 @@ func (c *Client) handleReceipt(evt *events.Receipt) {
 	}
 }
 
+func (c *Client) MarkChatRead(ctx context.Context, chatID string) (appstore.Chat, error) {
+	chat, err := types.ParseJID(chatID)
+	if err != nil {
+		return appstore.Chat{}, grpcstatus.Errorf(codes.InvalidArgument, "invalid chat_id: %v", err)
+	}
+
+	readCandidates, err := c.store.ReadCandidatesForChat(ctx, chatID)
+	if err != nil {
+		return appstore.Chat{}, err
+	}
+
+	if len(readCandidates) > 0 {
+		client := c.currentClient()
+		if client != nil && client.IsLoggedIn() {
+			for _, batch := range buildReadBatches(chat, readCandidates) {
+				if len(batch.messageIDs) == 0 {
+					continue
+				}
+				if err := client.MarkRead(ctx, batch.messageIDs, time.Now(), chat, batch.sender); err != nil {
+					c.log.Warnf("Failed to send read receipt for %s: %v", chatID, err)
+				}
+			}
+		}
+	}
+
+	updatedChat, err := c.store.MarkMessagesRead(ctx, chatID)
+	if err != nil {
+		return appstore.Chat{}, err
+	}
+
+	c.daemon.PublishChatUpdated(toDaemonChat(updatedChat))
+	return updatedChat, nil
+}
+
 func receiptStatus(receiptType types.ReceiptType) (string, bool) {
 	switch receiptType {
 	case types.ReceiptTypeDelivered, types.ReceiptTypeSender:
@@ -118,6 +157,47 @@ func ownSenderID(sender types.JID) string {
 		return sender.String()
 	}
 	return "me"
+}
+
+func buildReadBatches(chat types.JID, candidates []appstore.ReadCandidate) []readBatch {
+	grouped := make(map[string]*readBatch)
+	order := make([]string, 0)
+
+	for _, candidate := range candidates {
+		sender, err := senderForReadReceipt(chat, candidate.SenderID)
+		if err != nil {
+			continue
+		}
+
+		key := sender.String()
+		batch, ok := grouped[key]
+		if !ok {
+			batch = &readBatch{sender: sender, messageIDs: make([]types.MessageID, 0, 8)}
+			grouped[key] = batch
+			order = append(order, key)
+		}
+
+		batch.messageIDs = append(batch.messageIDs, types.MessageID(candidate.ExternalID))
+	}
+
+	batches := make([]readBatch, 0, len(order))
+	for _, key := range order {
+		batches = append(batches, *grouped[key])
+	}
+
+	return batches
+}
+
+func senderForReadReceipt(chat types.JID, senderID string) (types.JID, error) {
+	if chat.Server == types.GroupServer || chat.Server == types.BroadcastServer {
+		return types.ParseJID(senderID)
+	}
+
+	if senderID != "" && senderID != "me" {
+		return types.ParseJID(senderID)
+	}
+
+	return chat, nil
 }
 
 func internalMessageIDForChat(chatID string, messageID types.MessageID) string {

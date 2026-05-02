@@ -12,6 +12,32 @@ import (
 	appstore "whatevrd/internal/store"
 )
 
+func (c *Client) handleHistorySync(evt *events.HistorySync) {
+	client := c.currentClient()
+	if client == nil {
+		return
+	}
+	for _, conv := range evt.Data.GetConversations() {
+		chatJID, err := types.ParseJID(conv.GetID())
+		if err != nil {
+			c.log.Warnf("Failed to parse chat JID in history sync: %v", err)
+			continue
+		}
+		for _, msg := range conv.GetMessages() {
+			webMsg := msg.GetMessage()
+			if webMsg == nil {
+				continue
+			}
+			parsedEvt, err := client.ParseWebMessage(chatJID, webMsg)
+			if err != nil {
+				c.log.Warnf("Failed to parse history sync message: %v", err)
+				continue
+			}
+			c.handleMessage(parsedEvt)
+		}
+	}
+}
+
 func (c *Client) handleMessage(evt *events.Message) {
 	input, ok := c.textMessageInput(evt)
 	if !ok {
@@ -51,7 +77,7 @@ func (c *Client) textMessageInput(evt *events.Message) (appstore.TextMessageInpu
 	}
 
 	direction := appstore.DirectionIncoming
-	status := appstore.StatusReceived
+	status := appstore.StatusDelivered
 	if info.IsFromMe {
 		direction = appstore.DirectionOutgoing
 		status = appstore.StatusSent

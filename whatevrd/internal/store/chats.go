@@ -47,15 +47,7 @@ func (db *DB) ListChats(ctx context.Context, limit, offset int) ([]Chat, error) 
 }
 
 func (db *DB) MarkChatRead(ctx context.Context, chatID string) (Chat, error) {
-	if _, err := db.conn.ExecContext(ctx, `
-		UPDATE chats
-		SET unread_count = 0
-		WHERE id = ?
-	`, chatID); err != nil {
-		return Chat{}, err
-	}
-
-	return db.GetChat(ctx, chatID)
+	return db.MarkMessagesRead(ctx, chatID)
 }
 
 func (db *DB) GetChat(ctx context.Context, chatID string) (Chat, error) {

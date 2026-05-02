@@ -307,6 +307,111 @@ var LoginService_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
+	FrontendService_HoldSession_FullMethodName = "/whatevr.v1.FrontendService/HoldSession"
+)
+
+// FrontendServiceClient is the client API for FrontendService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+type FrontendServiceClient interface {
+	HoldSession(ctx context.Context, in *HoldSessionRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[FrontendSessionEvent], error)
+}
+
+type frontendServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewFrontendServiceClient(cc grpc.ClientConnInterface) FrontendServiceClient {
+	return &frontendServiceClient{cc}
+}
+
+func (c *frontendServiceClient) HoldSession(ctx context.Context, in *HoldSessionRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[FrontendSessionEvent], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &FrontendService_ServiceDesc.Streams[0], FrontendService_HoldSession_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[HoldSessionRequest, FrontendSessionEvent]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type FrontendService_HoldSessionClient = grpc.ServerStreamingClient[FrontendSessionEvent]
+
+// FrontendServiceServer is the server API for FrontendService service.
+// All implementations must embed UnimplementedFrontendServiceServer
+// for forward compatibility.
+type FrontendServiceServer interface {
+	HoldSession(*HoldSessionRequest, grpc.ServerStreamingServer[FrontendSessionEvent]) error
+	mustEmbedUnimplementedFrontendServiceServer()
+}
+
+// UnimplementedFrontendServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedFrontendServiceServer struct{}
+
+func (UnimplementedFrontendServiceServer) HoldSession(*HoldSessionRequest, grpc.ServerStreamingServer[FrontendSessionEvent]) error {
+	return status.Error(codes.Unimplemented, "method HoldSession not implemented")
+}
+func (UnimplementedFrontendServiceServer) mustEmbedUnimplementedFrontendServiceServer() {}
+func (UnimplementedFrontendServiceServer) testEmbeddedByValue()                         {}
+
+// UnsafeFrontendServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to FrontendServiceServer will
+// result in compilation errors.
+type UnsafeFrontendServiceServer interface {
+	mustEmbedUnimplementedFrontendServiceServer()
+}
+
+func RegisterFrontendServiceServer(s grpc.ServiceRegistrar, srv FrontendServiceServer) {
+	// If the following call panics, it indicates UnimplementedFrontendServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&FrontendService_ServiceDesc, srv)
+}
+
+func _FrontendService_HoldSession_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(HoldSessionRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(FrontendServiceServer).HoldSession(m, &grpc.GenericServerStream[HoldSessionRequest, FrontendSessionEvent]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type FrontendService_HoldSessionServer = grpc.ServerStreamingServer[FrontendSessionEvent]
+
+// FrontendService_ServiceDesc is the grpc.ServiceDesc for FrontendService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var FrontendService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "whatevr.v1.FrontendService",
+	HandlerType: (*FrontendServiceServer)(nil),
+	Methods:     []grpc.MethodDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "HoldSession",
+			Handler:       _FrontendService_HoldSession_Handler,
+			ServerStreams: true,
+		},
+	},
+	Metadata: "proto/whatevr.proto",
+}
+
+const (
 	ChatService_ListChats_FullMethodName    = "/whatevr.v1.ChatService/ListChats"
 	ChatService_GetMessages_FullMethodName  = "/whatevr.v1.ChatService/GetMessages"
 	ChatService_MarkChatRead_FullMethodName = "/whatevr.v1.ChatService/MarkChatRead"

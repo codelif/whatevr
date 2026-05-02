@@ -24,6 +24,7 @@ mod proto {
 use proto::chat_service_client::ChatServiceClient;
 use proto::daemon_event;
 use proto::daemon_service_client::DaemonServiceClient;
+use proto::frontend_service_client::FrontendServiceClient;
 use proto::login_event;
 use proto::login_service_client::LoginServiceClient;
 use proto::{
@@ -75,6 +76,7 @@ enum UiMessage {
     DataChanged {
         chat_id: Option<String>,
         refresh_chats: bool,
+        mark_read_if_focused: bool,
     },
     Notice(String),
 }
@@ -90,6 +92,7 @@ struct UiState {
     current_messages: Vec<proto::Message>,
     composer_error: String,
     send_in_flight: bool,
+    window_focused: bool,
 }
 
 impl Default for UiState {
@@ -105,6 +108,7 @@ impl Default for UiState {
             current_messages: Vec::new(),
             composer_error: String::new(),
             send_in_flight: false,
+            window_focused: false,
         }
     }
 }
@@ -451,6 +455,22 @@ fn build_ui(app: &adw::Application) {
 
     connect_signals(&widgets, &state, &sender, &refresh_button);
 
+    let focus_state = state.clone();
+    let focus_sender = sender.clone();
+    window.connect_is_active_notify(move |win| {
+        let focused = win.is_active();
+        let selected = {
+            let mut s = focus_state.borrow_mut();
+            s.window_focused = focused;
+            s.selected_chat_id.clone()
+        };
+        if focused {
+            if let Some(chat_id) = selected {
+                request_mark_chat_read(focus_sender.clone(), chat_id);
+            }
+        }
+    });
+
     let widgets_for_receiver = widgets.clone();
     let state_for_receiver = state.clone();
     let sender_for_receiver = sender.clone();
@@ -467,6 +487,7 @@ fn build_ui(app: &adw::Application) {
     });
 
     request_status(sender.clone());
+    hold_frontend_session(sender.clone());
     subscribe_login_events(sender.clone());
     subscribe_daemon_events(sender.clone());
 
@@ -712,15 +733,22 @@ fn handle_ui_message(
         UiMessage::DataChanged {
             chat_id,
             refresh_chats,
+            mark_read_if_focused,
         } => {
             if refresh_chats {
                 request_chats(sender.clone());
             }
             if let Some(selected_chat_id) = state.borrow().selected_chat_id.clone() {
-                if chat_id.as_deref().is_none()
-                    || chat_id.as_deref() == Some(selected_chat_id.as_str())
-                {
-                    request_messages(sender.clone(), selected_chat_id);
+                let chat_matches = chat_id.as_deref().is_none()
+                    || chat_id.as_deref() == Some(selected_chat_id.as_str());
+                if chat_matches {
+                    request_messages(sender.clone(), selected_chat_id.clone());
+                }
+                let should_mark = mark_read_if_focused
+                    && state.borrow().window_focused
+                    && chat_id.as_deref() == Some(selected_chat_id.as_str());
+                if should_mark {
+                    request_mark_chat_read(sender.clone(), selected_chat_id);
                 }
             }
         }
@@ -1108,6 +1136,14 @@ fn subscribe_login_events(sender: mpsc::Sender<UiMessage>) {
     });
 }
 
+fn hold_frontend_session(sender: mpsc::Sender<UiMessage>) {
+	spawn_async(async move {
+		if let Err(error) = stream_frontend_session(sender.clone()).await {
+			let _ = sender.send(UiMessage::Notice(format!("Frontend session ended: {error}")));
+		}
+	});
+}
+
 fn subscribe_daemon_events(sender: mpsc::Sender<UiMessage>) {
     spawn_async(async move {
         if let Err(error) = stream_daemon_events(sender.clone()).await {
@@ -1227,6 +1263,23 @@ async fn stream_login_events(
     Ok(())
 }
 
+async fn stream_frontend_session(
+	_sender: mpsc::Sender<UiMessage>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+	let channel = connect_channel().await?;
+	let mut client = FrontendServiceClient::new(channel);
+	let mut stream = client
+		.hold_session(proto::HoldSessionRequest {
+			client_name: "whatevr".to_string(),
+		})
+		.await?
+		.into_inner();
+
+	while stream.message().await?.is_some() {}
+
+	Ok(())
+}
+
 async fn stream_daemon_events(
     sender: mpsc::Sender<UiMessage>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -1251,6 +1304,7 @@ async fn stream_daemon_events(
                 let _ = sender.send(UiMessage::DataChanged {
                     chat_id,
                     refresh_chats: true,
+                    mark_read_if_focused: true,
                 });
             }
             Some(daemon_event::Payload::MessageUpdated(message_updated)) => {
@@ -1258,6 +1312,7 @@ async fn stream_daemon_events(
                 let _ = sender.send(UiMessage::DataChanged {
                     chat_id,
                     refresh_chats: false,
+                    mark_read_if_focused: false,
                 });
             }
             Some(daemon_event::Payload::ChatUpdated(chat_updated)) => {
@@ -1265,6 +1320,7 @@ async fn stream_daemon_events(
                 let _ = sender.send(UiMessage::DataChanged {
                     chat_id,
                     refresh_chats: true,
+                    mark_read_if_focused: false,
                 });
             }
             _ => {}

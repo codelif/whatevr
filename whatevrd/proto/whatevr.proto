@@ -39,6 +39,10 @@ service LoginService {
   rpc Logout(LogoutRequest) returns (LogoutResponse);
 }
 
+service FrontendService {
+  rpc HoldSession(HoldSessionRequest) returns (stream FrontendSessionEvent);
+}
+
 service ChatService {
   rpc ListChats(ListChatsRequest) returns (ListChatsResponse);
   rpc GetMessages(GetMessagesRequest) returns (GetMessagesResponse);
@@ -112,6 +116,14 @@ message QrCode {
 message LogoutRequest {}
 
 message LogoutResponse {}
+
+message HoldSessionRequest {
+  string client_name = 1;
+}
+
+message FrontendSessionEvent {
+  string detail = 1;
+}
 
 message ListChatsRequest {
   int32 limit = 1;

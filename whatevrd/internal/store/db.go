@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"fmt"
 
 	_ "modernc.org/sqlite"
 )
@@ -56,6 +57,7 @@ func (db *DB) migrate(ctx context.Context) error {
 			text TEXT NOT NULL DEFAULT '',
 			timestamp INTEGER NOT NULL,
 			direction TEXT NOT NULL,
+			is_read INTEGER NOT NULL DEFAULT 1,
 			status TEXT NOT NULL,
 			FOREIGN KEY(chat_id) REFERENCES chats(id) ON DELETE CASCADE
 		)`,
@@ -67,6 +69,47 @@ func (db *DB) migrate(ctx context.Context) error {
 		if _, err := db.conn.ExecContext(ctx, statement); err != nil {
 			return err
 		}
+	}
+
+	if err := db.ensureMessageReadColumn(ctx); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (db *DB) ensureMessageReadColumn(ctx context.Context) error {
+	rows, err := db.conn.QueryContext(ctx, `PRAGMA table_info(messages)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	hasReadColumn := false
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull, pk int
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			return err
+		}
+		if name == "is_read" {
+			hasReadColumn = true
+			break
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	if hasReadColumn {
+		return nil
+	}
+
+	if _, err := db.conn.ExecContext(ctx, `ALTER TABLE messages ADD COLUMN is_read INTEGER NOT NULL DEFAULT 1`); err != nil {
+		return fmt.Errorf("add messages.is_read column: %w", err)
 	}
 
 	return nil

@@ -12,6 +12,12 @@ import (
 )
 
 func (c *Client) start(ctx context.Context) {
+	if latestVer, err := whatsmeow.GetLatestVersion(ctx, nil); err != nil {
+		c.log.Warnf("Failed to fetch latest WhatsApp version: %v", err)
+	} else {
+		store.SetWAVersion(*latestVer)
+	}
+
 	client := c.currentClient()
 	if client == nil {
 		c.daemon.SetStateDetail(app.StateOffline, "WhatsApp client is not initialized")
@@ -75,6 +81,29 @@ func (c *Client) startQRLogin(ctx context.Context, client *whatsmeow.Client) {
 			}
 		}
 	}
+}
+
+func (c *Client) resetAfterExternalLogout() {
+	ctx := context.Background()
+
+	c.mu.Lock()
+	old := c.client
+	c.mu.Unlock()
+
+	if old != nil {
+		old.Disconnect()
+		if old.Store.ID != nil {
+			if err := old.Store.Delete(ctx); err != nil {
+				c.log.Warnf("Failed to delete device store after remote logout: %v", err)
+			}
+		}
+	}
+
+	if err := c.resetClient(ctx); err != nil {
+		c.log.Errorf("Failed to reset client after remote logout: %v", err)
+		return
+	}
+	c.Start(ctx)
 }
 
 func (c *Client) Logout(ctx context.Context) error {

@@ -64,8 +64,12 @@ daemon-side text message ingestion, and a native chat UI with text sending:
 - whatevrd emits QR login codes and login state changes
 - whatevrd receives WhatsApp text messages from whatsmeow
 - whatevrd stores text messages and chat summaries in SQLite
+- whatevrd tracks active frontend sessions separately from background sync
+- whatevrd marks the account online only while a frontend session is attached
+- whatevrd forces visible delivery receipts even when the GUI is closed
 - whatevrd exposes ChatService for listing chats, reading messages, and marking chats read
 - whatevrd exposes SendService for sending text messages through whatsmeow
+- whatevrd sends real WhatsApp read receipts when chats are opened
 - whatevrd updates outgoing message status from WhatsApp receipts
 - whatevrd emits NewMessage and ChatUpdated daemon events
 - whatevr opens as a libadwaita app with ID in.codelif.Whatevr
@@ -132,6 +136,18 @@ The GTK frontend now stays native to libadwaita:
 - conversation view reads the latest 50 local messages via ChatService.GetMessages
 - selecting a chat clears unread count via ChatService.MarkChatRead
 - composer remains hidden until sending is implemented
+```
+
+## Presence And Read State
+
+`whatevrd` stays connected in the background for sync, but WhatsApp presence is
+now tied to real GUI attachment state:
+
+```txt
+- when at least one whatevr frontend session is connected, the daemon sends PresenceAvailable
+- when no frontend sessions are connected, the daemon sends PresenceUnavailable
+- active delivery receipts are forced so senders still see visible delivered ticks even while the GUI is closed
+- opening a chat clears local unread state and also sends real WhatsApp MarkRead receipts
 ```
 
 ## Text Sending

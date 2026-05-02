@@ -1,6 +1,7 @@
 package wa
 
 import (
+	"context"
 	"fmt"
 
 	"go.mau.fi/whatsmeow/types/events"
@@ -12,6 +13,9 @@ func (c *Client) handleEvent(raw any) {
 	switch evt := raw.(type) {
 	case *events.Connected:
 		c.daemon.SetStateDetail(app.StateOnline, "connected to WhatsApp")
+		c.syncPresence(context.Background(), true)
+	case *events.AppStateSyncComplete:
+		c.syncPresence(context.Background(), true)
 	case *events.Disconnected:
 		c.daemon.SetStateDetail(app.StateReconnecting, "WhatsApp connection dropped; reconnecting")
 	case *events.PairSuccess:
@@ -22,6 +26,7 @@ func (c *Client) handleEvent(raw any) {
 		c.daemon.SetStateDetail(app.StateNeedLogin, "enable multi-device on phone and scan again")
 	case *events.LoggedOut:
 		c.daemon.SetStateDetail(app.StateNeedLogin, fmt.Sprintf("logged out: %s", evt.Reason.String()))
+		go c.resetAfterExternalLogout()
 	case *events.ConnectFailure:
 		c.daemon.SetStateDetail(app.StateOffline, fmt.Sprintf("connect failed: %s", evt.Reason.String()))
 	case *events.ClientOutdated:
@@ -32,5 +37,7 @@ func (c *Client) handleEvent(raw any) {
 		c.handleMessage(evt)
 	case *events.Receipt:
 		c.handleReceipt(evt)
+	case *events.HistorySync:
+		c.handleHistorySync(evt)
 	}
 }

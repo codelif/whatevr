@@ -19,14 +19,19 @@ type ChatStore interface {
 	MarkChatRead(context.Context, string) (appstore.Chat, error)
 }
 
-type ChatService struct {
-	pb.UnimplementedChatServiceServer
-	daemon *app.Daemon
-	store  ChatStore
+type ChatActionController interface {
+	MarkChatRead(context.Context, string) (appstore.Chat, error)
 }
 
-func NewChatService(daemon *app.Daemon, store ChatStore) *ChatService {
-	return &ChatService{daemon: daemon, store: store}
+type ChatService struct {
+	pb.UnimplementedChatServiceServer
+	daemon  *app.Daemon
+	store   ChatStore
+	actions ChatActionController
+}
+
+func NewChatService(daemon *app.Daemon, store ChatStore, actions ChatActionController) *ChatService {
+	return &ChatService{daemon: daemon, store: store, actions: actions}
 }
 
 func (s *ChatService) ListChats(ctx context.Context, req *pb.ListChatsRequest) (*pb.ListChatsResponse, error) {
@@ -79,7 +84,14 @@ func (s *ChatService) MarkChatRead(ctx context.Context, req *pb.MarkChatReadRequ
 		return nil, status.Error(codes.InvalidArgument, "chat_id is required")
 	}
 
-	chat, err := s.store.MarkChatRead(ctx, req.GetChatId())
+	markRead := s.store.MarkChatRead
+	publishUpdate := true
+	if s.actions != nil {
+		markRead = s.actions.MarkChatRead
+		publishUpdate = false
+	}
+
+	chat, err := markRead(ctx, req.GetChatId())
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, status.Error(codes.NotFound, "chat not found")
@@ -87,7 +99,9 @@ func (s *ChatService) MarkChatRead(ctx context.Context, req *pb.MarkChatReadRequ
 		return nil, err
 	}
 
-	s.daemon.PublishChatUpdated(toAppChat(chat))
+	if publishUpdate {
+		s.daemon.PublishChatUpdated(toAppChat(chat))
+	}
 	return &pb.MarkChatReadResponse{}, nil
 }
 

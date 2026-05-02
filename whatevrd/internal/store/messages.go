@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -15,7 +16,6 @@ const (
 	StatusDelivered = "delivered"
 	StatusRead      = "read"
 	StatusFailed    = "failed"
-	StatusReceived  = "delivered"
 	StatusSent      = "sent"
 )
 
@@ -26,7 +26,16 @@ type Message struct {
 	Text          string
 	TimestampUnix int64
 	Direction     string
+	IsRead        bool
 	Status        string
+}
+
+type ReadCandidate struct {
+	InternalID    string
+	ExternalID    string
+	ChatID        string
+	SenderID      string
+	TimestampUnix int64
 }
 
 type TextMessageInput struct {
@@ -65,7 +74,7 @@ func (db *DB) SaveTextMessage(ctx context.Context, input TextMessageInput) (Save
 		input.Direction = DirectionIncoming
 	}
 	if input.Status == "" {
-		input.Status = StatusReceived
+		input.Status = StatusDelivered
 	}
 
 	tx, err := db.conn.BeginTx(ctx, nil)
@@ -79,10 +88,10 @@ func (db *DB) SaveTextMessage(ctx context.Context, input TextMessageInput) (Save
 	}
 
 	result, err := tx.ExecContext(ctx, `
-		INSERT INTO messages (id, chat_id, sender_id, text, timestamp, direction, status)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO messages (id, chat_id, sender_id, text, timestamp, direction, is_read, status)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO NOTHING
-	`, input.ID, input.ChatID, input.SenderID, input.Text, input.Timestamp.Unix(), input.Direction, input.Status)
+	`, input.ID, input.ChatID, input.SenderID, input.Text, input.Timestamp.Unix(), input.Direction, boolToInt(!input.CountUnread), input.Status)
 	if err != nil {
 		return SavedTextMessage{}, err
 	}
@@ -161,7 +170,7 @@ func (db *DB) ListMessages(ctx context.Context, chatID string, limit int, before
 	}
 
 	query := `
-		SELECT id, chat_id, sender_id, text, timestamp, direction, status
+		SELECT id, chat_id, sender_id, text, timestamp, direction, is_read, status
 		FROM messages
 		WHERE chat_id = ?
 	`
@@ -201,6 +210,7 @@ func (db *DB) ListMessages(ctx context.Context, chatID string, limit int, before
 			&message.Text,
 			&message.TimestampUnix,
 			&message.Direction,
+			&message.IsRead,
 			&message.Status,
 		); err != nil {
 			return nil, err
@@ -245,6 +255,70 @@ func (db *DB) UpdateMessageStatus(ctx context.Context, id, status string) (Messa
 	return message, true, nil
 }
 
+func (db *DB) ReadCandidatesForChat(ctx context.Context, chatID string) ([]ReadCandidate, error) {
+	rows, err := db.conn.QueryContext(ctx, `
+		SELECT id, chat_id, sender_id, timestamp
+		FROM messages
+		WHERE chat_id = ? AND direction = ? AND is_read = 0
+		ORDER BY timestamp ASC, id ASC
+	`, chatID, DirectionIncoming)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	candidates := make([]ReadCandidate, 0)
+	for rows.Next() {
+		var candidate ReadCandidate
+		if err := rows.Scan(&candidate.InternalID, &candidate.ChatID, &candidate.SenderID, &candidate.TimestampUnix); err != nil {
+			return nil, err
+		}
+		candidate.ExternalID = ExternalMessageID(chatID, candidate.InternalID)
+		candidates = append(candidates, candidate)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return candidates, nil
+}
+
+func (db *DB) MarkMessagesRead(ctx context.Context, chatID string) (Chat, error) {
+	tx, err := db.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return Chat{}, err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE messages
+		SET is_read = 1
+		WHERE chat_id = ? AND direction = ? AND is_read = 0
+	`, chatID, DirectionIncoming); err != nil {
+		return Chat{}, err
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE chats
+		SET unread_count = 0
+		WHERE id = ?
+	`, chatID); err != nil {
+		return Chat{}, err
+	}
+
+	chat, err := getChatTx(ctx, tx, chatID)
+	if err != nil {
+		return Chat{}, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return Chat{}, err
+	}
+
+	return chat, nil
+}
+
 func getChatRow(ctx context.Context, queryer interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }, id string) (Chat, error) {
@@ -270,7 +344,7 @@ func getMessageRow(ctx context.Context, queryer interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }, id string, message *Message) error {
 	return queryer.QueryRowContext(ctx, `
-		SELECT id, chat_id, sender_id, text, timestamp, direction, status
+		SELECT id, chat_id, sender_id, text, timestamp, direction, is_read, status
 		FROM messages
 		WHERE id = ?
 	`, id).Scan(
@@ -280,8 +354,17 @@ func getMessageRow(ctx context.Context, queryer interface {
 		&message.Text,
 		&message.TimestampUnix,
 		&message.Direction,
+		&message.IsRead,
 		&message.Status,
 	)
+}
+
+func ExternalMessageID(chatID, internalID string) string {
+	prefix := chatID + ":"
+	if strings.HasPrefix(internalID, prefix) {
+		return strings.TrimPrefix(internalID, prefix)
+	}
+	return internalID
 }
 
 func scanChat(scanner interface{ Scan(...any) error }) (Chat, error) {
