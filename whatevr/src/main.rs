@@ -1453,6 +1453,7 @@ fn build_chat_row(chat: &proto::Chat) -> gtk::ListBoxRow {
         .ellipsize(pango::EllipsizeMode::End)
         .css_classes(["dim-label"])
         .build();
+    preview.set_single_line_mode(true);
     let text_box = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .spacing(4)
@@ -1614,11 +1615,14 @@ fn display_chat_name(chat: &proto::Chat) -> &str {
     }
 }
 
-fn chat_preview(chat: &proto::Chat) -> &str {
+fn chat_preview(chat: &proto::Chat) -> String {
     if chat.last_message.trim().is_empty() {
-        "No text messages yet"
+        "No text messages yet".to_string()
     } else {
-        &chat.last_message
+        chat.last_message
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 }
 
