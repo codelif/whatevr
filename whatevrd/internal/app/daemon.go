@@ -20,6 +20,10 @@ type Daemon struct {
 	loginSubs  map[uint64]chan LoginEvent
 	latestQR   *QRCode
 	lastDetail string
+
+	retryAttempt  atomic.Int32
+	nextRetryUnix atomic.Int64
+	canReconnect  atomic.Bool
 }
 
 func NewDaemon(paths Paths) *Daemon {
@@ -43,8 +47,23 @@ func (d *Daemon) SetStateDetail(state State, detail string) {
 	d.lastDetail = detail
 	d.subMu.Unlock()
 
-	d.broadcastDaemonEvent(DaemonEvent{Kind: DaemonEventConnectionChanged, State: state, Detail: detail})
+	d.broadcastDaemonEvent(DaemonEvent{
+		Kind:          DaemonEventConnectionChanged,
+		State:         state,
+		Detail:        detail,
+		RetryAttempt:  d.retryAttempt.Load(),
+		NextRetryUnix: d.nextRetryUnix.Load(),
+		CanReconnect:  d.canReconnect.Load(),
+	})
 	d.broadcastLoginEvent(LoginEvent{Kind: LoginEventState, State: state, Detail: detail})
+}
+
+// SetConnMeta updates retry/reconnect metadata without changing state.
+// Call before SetStateDetail so the next broadcast includes the new values.
+func (d *Daemon) SetConnMeta(attempt int32, nextRetryUnix int64, canReconnect bool) {
+	d.retryAttempt.Store(attempt)
+	d.nextRetryUnix.Store(nextRetryUnix)
+	d.canReconnect.Store(canReconnect)
 }
 
 func (d *Daemon) Status() Status {
@@ -63,6 +82,9 @@ type DaemonEvent struct {
 	PreviousChatID string
 	SenderID       string
 	IsComposing    bool
+	RetryAttempt   int32
+	NextRetryUnix  int64
+	CanReconnect   bool
 }
 
 type DaemonEventKind int

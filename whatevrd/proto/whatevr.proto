@@ -32,6 +32,7 @@ enum MessageStatus {
 service DaemonService {
   rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
   rpc SubscribeEvents(SubscribeEventsRequest) returns (stream DaemonEvent);
+  rpc Reconnect(ReconnectRequest) returns (ReconnectResponse);
 }
 
 service LoginService {
@@ -89,7 +90,15 @@ message ChatPresenceChanged {
 message ConnectionChanged {
   DaemonState state = 1;
   string detail = 2;
+  bool retrying = 3;
+  int32 retry_attempt = 4;
+  int64 next_retry_unix = 5;
+  bool can_reconnect = 6;
+  int32 pending_outgoing_count = 7;
 }
+
+message ReconnectRequest {}
+message ReconnectResponse {}
 
 message LoginStateChanged {
   DaemonState state = 1;

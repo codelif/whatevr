@@ -562,7 +562,7 @@ func TestListPendingOutgoingMessages(t *testing.T) {
 		}
 	}
 
-	messages, err := db.ListPendingOutgoingMessages(ctx, 10)
+	messages, err := db.ListPendingOutgoingMessages(ctx, 10, time.Now())
 	if err != nil {
 		t.Fatalf("list pending outgoing: %v", err)
 	}

@@ -3,6 +3,7 @@ package wa
 import (
 	"context"
 	"fmt"
+	"math/rand/v2"
 	"os"
 	"time"
 
@@ -12,7 +13,73 @@ import (
 	"whatevrd/internal/app"
 )
 
-func (c *Client) start(ctx context.Context) {
+const (
+	connBackoffBase = 5 * time.Second
+	connBackoffMax  = 60 * time.Second
+)
+
+// runConnectionSupervisor replaces the old one-shot start(). It loops
+// forever (until ctx is cancelled), connecting and retrying with
+// exponential backoff on any failure.
+func (c *Client) runConnectionSupervisor(ctx context.Context) {
+	attempt := 0
+
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+
+		// Drain any stale reconnect signal before each attempt.
+		select {
+		case <-c.reconnectCh:
+		default:
+		}
+
+		err := c.connectOnce(ctx)
+		if ctx.Err() != nil {
+			return
+		}
+
+		if err != nil {
+			attempt++
+			delay := connBackoffDelay(attempt)
+			nextRetry := time.Now().Add(delay)
+			c.daemon.SetConnMeta(int32(attempt), nextRetry.Unix(), true)
+			c.daemon.SetStateDetail(app.StateOffline, retryDetail(attempt, delay))
+
+			select {
+			case <-ctx.Done():
+				return
+			case <-c.reconnectCh:
+				attempt = 0
+			case <-time.After(delay):
+			}
+			continue
+		}
+
+		// Successful connect — reset backoff, clear retry meta.
+		attempt = 0
+		c.daemon.SetConnMeta(0, 0, false)
+
+		// Park until a reconnect is signalled.
+		select {
+		case <-ctx.Done():
+			return
+		case <-c.reconnectCh:
+			// Brief pause so whatsmeow can finish cleanup.
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(300 * time.Millisecond):
+			}
+		}
+	}
+}
+
+// connectOnce performs a single connection attempt. For QR-login sessions it
+// blocks until the QR flow concludes (success or failure). Returns nil on a
+// successful connect; the supervisor will then park until signalled.
+func (c *Client) connectOnce(ctx context.Context) error {
 	if latestVer, err := whatsmeow.GetLatestVersion(ctx, nil); err != nil {
 		c.log.Warnf("Failed to fetch latest WhatsApp version: %v", err)
 	} else {
@@ -21,47 +88,39 @@ func (c *Client) start(ctx context.Context) {
 
 	client := c.currentClient()
 	if client == nil {
-		c.daemon.SetStateDetail(app.StateOffline, "WhatsApp client is not initialized")
-		return
+		return fmt.Errorf("WhatsApp client is not initialized")
 	}
 
 	if client.Store.ID == nil {
-		c.startQRLogin(ctx, client)
-		return
+		return c.startQRLogin(ctx, client)
 	}
 
-	c.daemon.SetStateDetail(app.StateConnecting, "connecting to WhatsApp")
+	c.daemon.SetStateDetail(app.StateConnecting, "Connecting to WhatsApp...")
 	if err := client.ConnectContext(ctx); err != nil {
-		c.daemon.SetStateDetail(app.StateOffline, fmt.Sprintf("connect failed: %v", err))
-		return
+		return fmt.Errorf("connect: %w", err)
 	}
-
-	if client.IsLoggedIn() {
-		c.daemon.SetStateDetail(app.StateOnline, "connected to WhatsApp")
-	}
+	return nil
 }
 
-func (c *Client) startQRLogin(ctx context.Context, client *whatsmeow.Client) {
-	c.daemon.SetStateDetail(app.StateNeedLogin, "waiting for WhatsApp QR scan")
+func (c *Client) startQRLogin(ctx context.Context, client *whatsmeow.Client) error {
+	c.daemon.SetStateDetail(app.StateNeedLogin, "Waiting for WhatsApp QR scan")
 
 	qrChan, err := client.GetQRChannel(ctx)
 	if err != nil {
-		c.daemon.SetStateDetail(app.StateOffline, fmt.Sprintf("create QR channel: %v", err))
-		return
+		return fmt.Errorf("create QR channel: %w", err)
 	}
 
 	if err := client.ConnectContext(ctx); err != nil {
-		c.daemon.SetStateDetail(app.StateOffline, fmt.Sprintf("connect for QR login failed: %v", err))
-		return
+		return fmt.Errorf("connect for QR login: %w", err)
 	}
 
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return ctx.Err()
 		case item, ok := <-qrChan:
 			if !ok {
-				return
+				return fmt.Errorf("QR channel closed unexpectedly")
 			}
 
 			switch item.Event {
@@ -69,16 +128,20 @@ func (c *Client) startQRLogin(ctx context.Context, client *whatsmeow.Client) {
 				c.daemon.PublishQRCode(item.Code, time.Now().Add(item.Timeout))
 			case whatsmeow.QRChannelSuccess.Event:
 				c.daemon.SetStateDetail(app.StateConnecting, "QR scanned; completing login")
+				return nil
 			case whatsmeow.QRChannelTimeout.Event:
-				c.daemon.SetStateDetail(app.StateNeedLogin, "QR login timed out; restart daemon to try again")
+				c.daemon.SetStateDetail(app.StateNeedLogin, "QR login timed out; scan a new code")
+				return fmt.Errorf("QR login timed out")
 			case whatsmeow.QRChannelClientOutdated.Event:
-				c.daemon.SetStateDetail(app.StateOffline, "WhatsApp client is outdated")
+				c.daemon.SetConnMeta(0, 0, false)
+				c.daemon.SetStateDetail(app.StateOffline, "WhatsApp client is outdated. Update whatevr/whatevrd.")
+				return fmt.Errorf("client outdated")
 			case whatsmeow.QRChannelScannedWithoutMultidevice.Event:
-				c.daemon.SetStateDetail(app.StateNeedLogin, "enable multi-device on phone and scan again")
+				c.daemon.SetStateDetail(app.StateNeedLogin, "Enable multi-device on your phone and scan again")
+				return fmt.Errorf("multi-device not enabled")
 			case whatsmeow.QRChannelEventError:
 				c.daemon.SetStateDetail(app.StateNeedLogin, fmt.Sprintf("QR login error: %v", item.Error))
-			default:
-				c.daemon.SetStateDetail(app.StateNeedLogin, fmt.Sprintf("QR login event: %s", item.Event))
+				return item.Error
 			}
 		}
 	}
@@ -109,7 +172,7 @@ func (c *Client) resetAfterExternalLogout() {
 }
 
 func (c *Client) Logout(ctx context.Context) error {
-	c.daemon.SetStateDetail(app.StateConnecting, "logging out and clearing local session data")
+	c.daemon.SetStateDetail(app.StateConnecting, "Logging out and clearing local session data")
 
 	client := c.currentClient()
 	if client != nil {
@@ -172,7 +235,32 @@ func (c *Client) Logout(ctx context.Context) error {
 		return err
 	}
 
-	c.daemon.SetStateDetail(app.StateNeedLogin, "logged out")
+	c.daemon.SetStateDetail(app.StateNeedLogin, "Logged out")
 	c.Start(context.Background())
 	return nil
+}
+
+func connBackoffDelay(attempt int) time.Duration {
+	if attempt <= 0 {
+		attempt = 1
+	}
+	shift := attempt - 1
+	if shift > 4 {
+		shift = 4
+	}
+	delay := connBackoffBase * (1 << uint(shift))
+	if delay > connBackoffMax {
+		delay = connBackoffMax
+	}
+	// Add up to 20% jitter.
+	jitter := time.Duration(rand.Int64N(int64(delay / 5)))
+	return delay + jitter
+}
+
+func retryDetail(attempt int, delay time.Duration) string {
+	secs := int(delay.Round(time.Second).Seconds())
+	if attempt <= 2 {
+		return fmt.Sprintf("Connection lost. Retrying in %ds.", secs)
+	}
+	return fmt.Sprintf("Still offline. Check your internet connection. Retrying in %ds.", secs)
 }

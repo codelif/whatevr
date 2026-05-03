@@ -21,6 +21,7 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	DaemonService_GetStatus_FullMethodName       = "/whatevr.v1.DaemonService/GetStatus"
 	DaemonService_SubscribeEvents_FullMethodName = "/whatevr.v1.DaemonService/SubscribeEvents"
+	DaemonService_Reconnect_FullMethodName       = "/whatevr.v1.DaemonService/Reconnect"
 )
 
 // DaemonServiceClient is the client API for DaemonService service.
@@ -29,6 +30,7 @@ const (
 type DaemonServiceClient interface {
 	GetStatus(ctx context.Context, in *GetStatusRequest, opts ...grpc.CallOption) (*GetStatusResponse, error)
 	SubscribeEvents(ctx context.Context, in *SubscribeEventsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[DaemonEvent], error)
+	Reconnect(ctx context.Context, in *ReconnectRequest, opts ...grpc.CallOption) (*ReconnectResponse, error)
 }
 
 type daemonServiceClient struct {
@@ -68,12 +70,23 @@ func (c *daemonServiceClient) SubscribeEvents(ctx context.Context, in *Subscribe
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type DaemonService_SubscribeEventsClient = grpc.ServerStreamingClient[DaemonEvent]
 
+func (c *daemonServiceClient) Reconnect(ctx context.Context, in *ReconnectRequest, opts ...grpc.CallOption) (*ReconnectResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReconnectResponse)
+	err := c.cc.Invoke(ctx, DaemonService_Reconnect_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // DaemonServiceServer is the server API for DaemonService service.
 // All implementations must embed UnimplementedDaemonServiceServer
 // for forward compatibility.
 type DaemonServiceServer interface {
 	GetStatus(context.Context, *GetStatusRequest) (*GetStatusResponse, error)
 	SubscribeEvents(*SubscribeEventsRequest, grpc.ServerStreamingServer[DaemonEvent]) error
+	Reconnect(context.Context, *ReconnectRequest) (*ReconnectResponse, error)
 	mustEmbedUnimplementedDaemonServiceServer()
 }
 
@@ -89,6 +102,9 @@ func (UnimplementedDaemonServiceServer) GetStatus(context.Context, *GetStatusReq
 }
 func (UnimplementedDaemonServiceServer) SubscribeEvents(*SubscribeEventsRequest, grpc.ServerStreamingServer[DaemonEvent]) error {
 	return status.Error(codes.Unimplemented, "method SubscribeEvents not implemented")
+}
+func (UnimplementedDaemonServiceServer) Reconnect(context.Context, *ReconnectRequest) (*ReconnectResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Reconnect not implemented")
 }
 func (UnimplementedDaemonServiceServer) mustEmbedUnimplementedDaemonServiceServer() {}
 func (UnimplementedDaemonServiceServer) testEmbeddedByValue()                       {}
@@ -140,6 +156,24 @@ func _DaemonService_SubscribeEvents_Handler(srv interface{}, stream grpc.ServerS
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type DaemonService_SubscribeEventsServer = grpc.ServerStreamingServer[DaemonEvent]
 
+func _DaemonService_Reconnect_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReconnectRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DaemonServiceServer).Reconnect(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DaemonService_Reconnect_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DaemonServiceServer).Reconnect(ctx, req.(*ReconnectRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // DaemonService_ServiceDesc is the grpc.ServiceDesc for DaemonService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -150,6 +184,10 @@ var DaemonService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetStatus",
 			Handler:    _DaemonService_GetStatus_Handler,
+		},
+		{
+			MethodName: "Reconnect",
+			Handler:    _DaemonService_Reconnect_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

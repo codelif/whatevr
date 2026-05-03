@@ -13,7 +13,8 @@ import (
 func (c *Client) handleEvent(raw any) {
 	switch evt := raw.(type) {
 	case *events.Connected:
-		c.daemon.SetStateDetail(app.StateOnline, "connected to WhatsApp")
+		c.daemon.SetConnMeta(0, 0, false)
+		c.daemon.SetStateDetail(app.StateOnline, "Connected to WhatsApp")
 		ctx := c.backgroundContext()
 		c.syncPresence(ctx, true)
 		c.signalSendQueue()
@@ -22,21 +23,27 @@ func (c *Client) handleEvent(raw any) {
 	case *events.AppStateSyncComplete:
 		c.syncPresence(c.backgroundContext(), true)
 	case *events.Disconnected:
-		c.daemon.SetStateDetail(app.StateReconnecting, "WhatsApp connection dropped; reconnecting")
+		c.daemon.SetConnMeta(0, 0, true)
+		c.daemon.SetStateDetail(app.StateReconnecting, "Connection lost. Reconnecting...")
+		c.signalReconnect()
 	case *events.PairSuccess:
 		c.daemon.SetStateDetail(app.StateConnecting, "QR scanned; pairing succeeded")
 	case *events.PairError:
-		c.daemon.SetStateDetail(app.StateNeedLogin, fmt.Sprintf("pairing failed: %v", evt.Error))
+		c.daemon.SetStateDetail(app.StateNeedLogin, fmt.Sprintf("Pairing failed: %v", evt.Error))
 	case *events.QRScannedWithoutMultidevice:
-		c.daemon.SetStateDetail(app.StateNeedLogin, "enable multi-device on phone and scan again")
+		c.daemon.SetStateDetail(app.StateNeedLogin, "Enable multi-device on your phone and scan again")
 	case *events.LoggedOut:
-		c.daemon.SetStateDetail(app.StateNeedLogin, fmt.Sprintf("logged out: %s", evt.Reason.String()))
+		c.daemon.SetStateDetail(app.StateNeedLogin, fmt.Sprintf("Logged out: %s", evt.Reason.String()))
 		go c.resetAfterExternalLogout()
 	case *events.ConnectFailure:
-		c.daemon.SetStateDetail(app.StateOffline, fmt.Sprintf("connect failed: %s", evt.Reason.String()))
+		c.daemon.SetConnMeta(0, 0, true)
+		c.daemon.SetStateDetail(app.StateOffline, fmt.Sprintf("WhatsApp connection failed: %s", evt.Reason.String()))
+		c.signalReconnect()
 	case *events.ClientOutdated:
-		c.daemon.SetStateDetail(app.StateOffline, "WhatsApp client is outdated")
+		c.daemon.SetConnMeta(0, 0, false)
+		c.daemon.SetStateDetail(app.StateOffline, "WhatsApp client is outdated. Update whatevr/whatevrd.")
 	case *events.TemporaryBan:
+		c.daemon.SetConnMeta(0, 0, false)
 		c.daemon.SetStateDetail(app.StateOffline, evt.String())
 	case *events.Message:
 		c.handleMessage(c.backgroundContext(), evt)

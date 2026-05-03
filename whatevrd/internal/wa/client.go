@@ -41,6 +41,7 @@ type Client struct {
 	avatarRefreshQueued  bool
 
 	sendQueueWake chan struct{}
+	reconnectCh   chan struct{} // supervisor wakeup: reconnect immediately
 }
 
 func New(ctx context.Context, paths app.Paths, daemon *app.Daemon, store *appstore.DB) (*Client, error) {
@@ -57,6 +58,7 @@ func New(ctx context.Context, paths app.Paths, daemon *app.Daemon, store *appsto
 		paths:         paths,
 		log:           log,
 		sendQueueWake: make(chan struct{}, 1),
+		reconnectCh:   make(chan struct{}, 1),
 	}
 
 	if err := c.resetClient(ctx); err != nil {
@@ -69,8 +71,23 @@ func New(ctx context.Context, paths app.Paths, daemon *app.Daemon, store *appsto
 
 func (c *Client) Start(ctx context.Context) {
 	runCtx := c.replaceRunContext(ctx)
-	go c.start(runCtx)
+	go c.runConnectionSupervisor(runCtx)
 	go c.runSendQueue(runCtx)
+}
+
+func (c *Client) Reconnect(ctx context.Context) error {
+	if client := c.currentClient(); client != nil {
+		client.Disconnect()
+	}
+	c.signalReconnect()
+	return nil
+}
+
+func (c *Client) signalReconnect() {
+	select {
+	case c.reconnectCh <- struct{}{}:
+	default:
+	}
 }
 
 func (c *Client) Close() error {
@@ -131,7 +148,7 @@ func (c *Client) resetClient(ctx context.Context) error {
 
 	client := whatsmeow.NewClient(device, c.log.Sub("Client"))
 	client.BackgroundEventCtx = ctx
-	client.EnableAutoReconnect = true
+	client.EnableAutoReconnect = false
 	client.AutoTrustIdentity = true
 	client.SetForceActiveDeliveryReceipts(true)
 	client.UseRetryMessageStore = true

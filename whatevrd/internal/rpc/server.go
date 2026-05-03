@@ -19,7 +19,7 @@ type Server struct {
 	errCh      chan error
 }
 
-func Start(ctx context.Context, socketPath string, daemon *app.Daemon, login LoginController, frontend FrontendSessionController, chatStore ChatStore, chatActions ChatActionController, sendController SendController) (*Server, error) {
+func Start(ctx context.Context, socketPath string, daemon *app.Daemon, login LoginController, frontend FrontendSessionController, chatStore ChatStore, chatActions ChatActionController, sendController SendController, reconnector ReconnectController) (*Server, error) {
 	if err := os.Remove(socketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
@@ -35,7 +35,7 @@ func Start(ctx context.Context, socketPath string, daemon *app.Daemon, login Log
 	}
 
 	grpcServer := grpc.NewServer()
-	pb.RegisterDaemonServiceServer(grpcServer, NewDaemonService(daemon))
+	pb.RegisterDaemonServiceServer(grpcServer, NewDaemonService(daemon, reconnector))
 	pb.RegisterLoginServiceServer(grpcServer, NewLoginService(daemon, login))
 	pb.RegisterFrontendServiceServer(grpcServer, NewFrontendService(frontend))
 	pb.RegisterChatServiceServer(grpcServer, NewChatService(daemon, chatStore, chatActions))

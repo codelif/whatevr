@@ -3,19 +3,37 @@ package rpc
 import (
 	"context"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"whatevrd/internal/app"
 	"whatevrd/internal/rpc/pb"
 )
 
 const Version = "dev"
 
-type DaemonService struct {
-	pb.UnimplementedDaemonServiceServer
-	daemon *app.Daemon
+type ReconnectController interface {
+	Reconnect(context.Context) error
 }
 
-func NewDaemonService(daemon *app.Daemon) *DaemonService {
-	return &DaemonService{daemon: daemon}
+type DaemonService struct {
+	pb.UnimplementedDaemonServiceServer
+	daemon      *app.Daemon
+	reconnector ReconnectController
+}
+
+func NewDaemonService(daemon *app.Daemon, reconnector ReconnectController) *DaemonService {
+	return &DaemonService{daemon: daemon, reconnector: reconnector}
+}
+
+func (s *DaemonService) Reconnect(ctx context.Context, _ *pb.ReconnectRequest) (*pb.ReconnectResponse, error) {
+	if s.reconnector == nil {
+		return nil, status.Error(codes.Unimplemented, "reconnect not available")
+	}
+	if err := s.reconnector.Reconnect(ctx); err != nil {
+		return nil, err
+	}
+	return &pb.ReconnectResponse{}, nil
 }
 
 func (s *DaemonService) GetStatus(context.Context, *pb.GetStatusRequest) (*pb.GetStatusResponse, error) {
@@ -58,8 +76,12 @@ func toProtoDaemonEvent(event app.DaemonEvent) *pb.DaemonEvent {
 		return &pb.DaemonEvent{
 			Payload: &pb.DaemonEvent_ConnectionChanged{
 				ConnectionChanged: &pb.ConnectionChanged{
-					State:  toProtoState(event.State),
-					Detail: event.Detail,
+					State:         toProtoState(event.State),
+					Detail:        event.Detail,
+					Retrying:      event.RetryAttempt > 0,
+					RetryAttempt:  event.RetryAttempt,
+					NextRetryUnix: event.NextRetryUnix,
+					CanReconnect:  event.CanReconnect,
 				},
 			},
 		}

@@ -83,6 +83,10 @@ func (db *DB) migrate(ctx context.Context) error {
 		return err
 	}
 
+	if err := db.ensureSendRetryColumns(ctx); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -157,6 +161,47 @@ func (db *DB) ensureMediaColumns(ctx context.Context) error {
 		{"media_local_path", `ALTER TABLE messages ADD COLUMN media_local_path TEXT NOT NULL DEFAULT ''`},
 		{"media_width", `ALTER TABLE messages ADD COLUMN media_width INTEGER NOT NULL DEFAULT 0`},
 		{"media_height", `ALTER TABLE messages ADD COLUMN media_height INTEGER NOT NULL DEFAULT 0`},
+	}
+	for _, a := range alterations {
+		if existing[a.col] {
+			continue
+		}
+		if _, err := db.conn.ExecContext(ctx, a.def); err != nil {
+			return fmt.Errorf("add messages.%s: %w", a.col, err)
+		}
+	}
+	return nil
+}
+
+func (db *DB) ensureSendRetryColumns(ctx context.Context) error {
+	rows, err := db.conn.QueryContext(ctx, `PRAGMA table_info(messages)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	existing := make(map[string]bool)
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull, pk int
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			return err
+		}
+		existing[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	alterations := []struct {
+		col string
+		def string
+	}{
+		{"send_attempts", `ALTER TABLE messages ADD COLUMN send_attempts INTEGER NOT NULL DEFAULT 0`},
+		{"last_send_error", `ALTER TABLE messages ADD COLUMN last_send_error TEXT NOT NULL DEFAULT ''`},
+		{"next_send_attempt", `ALTER TABLE messages ADD COLUMN next_send_attempt INTEGER NOT NULL DEFAULT 0`},
 	}
 	for _, a := range alterations {
 		if existing[a.col] {

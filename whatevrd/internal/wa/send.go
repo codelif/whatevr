@@ -171,7 +171,6 @@ func (c *Client) runSendQueue(ctx context.Context) {
 		for {
 			processed, err := c.drainSendQueue(ctx)
 			if err != nil {
-				c.log.Warnf("Send queue paused: %v", err)
 				select {
 				case <-ctx.Done():
 					return
@@ -187,13 +186,32 @@ func (c *Client) runSendQueue(ctx context.Context) {
 	}
 }
 
+// sendQueueBackoff returns how long to wait before retrying a message
+// that has failed attempt times.
+func sendQueueBackoff(attempt int32) time.Duration {
+	const base = 10 * time.Second
+	const max = 5 * time.Minute
+	if attempt <= 0 {
+		attempt = 1
+	}
+	shift := attempt - 1
+	if shift > 5 {
+		shift = 5
+	}
+	delay := base * (1 << uint(shift))
+	if delay > max {
+		delay = max
+	}
+	return delay
+}
+
 func (c *Client) drainSendQueue(ctx context.Context) (bool, error) {
 	client := c.currentClient()
 	if client == nil || !client.IsLoggedIn() {
 		return false, fmt.Errorf("WhatsApp client is not online")
 	}
 
-	pending, err := c.store.ListPendingOutgoingMessages(ctx, 25)
+	pending, err := c.store.ListPendingOutgoingMessages(ctx, 25, time.Now())
 	if err != nil {
 		return false, err
 	}
@@ -216,7 +234,7 @@ func (c *Client) drainSendQueue(ctx context.Context) (bool, error) {
 func (c *Client) sendPendingMessage(ctx context.Context, client *whatsmeow.Client, message appstore.Message) error {
 	targetJID, err := types.ParseJID(message.ChatID)
 	if err != nil {
-		c.markPendingMessageFailed(ctx, message.ID, fmt.Errorf("invalid chat_id: %w", err))
+		c.markPendingMessageFailed(ctx, message.ID, "invalid chat ID")
 		return nil
 	}
 
@@ -228,6 +246,13 @@ func (c *Client) sendPendingMessage(ctx context.Context, client *whatsmeow.Clien
 	if _, err := client.SendMessage(ctx, targetJID, &waE2E.Message{
 		Conversation: proto.String(message.Text),
 	}, whatsmeow.SendRequestExtra{ID: externalID}); err != nil {
+		// Transient: back off and retry.
+		newAttempts := message.SendAttempts + 1
+		delay := sendQueueBackoff(newAttempts)
+		c.log.Warnf("Failed to send message %s (attempt %d), retry in %s: %v", message.ID, newAttempts, delay, err)
+		if dbErr := c.store.UpdateMessageSendAttempt(ctx, message.ID, newAttempts, err.Error(), time.Now().Add(delay)); dbErr != nil {
+			c.log.Warnf("Failed to record send attempt for %s: %v", message.ID, dbErr)
+		}
 		return fmt.Errorf("send text %s: %w", message.ID, err)
 	}
 
@@ -238,7 +263,7 @@ func (c *Client) sendPendingMessage(ctx context.Context, client *whatsmeow.Clien
 func (c *Client) sendPendingMediaMessage(ctx context.Context, client *whatsmeow.Client, targetJID types.JID, externalID types.MessageID, message appstore.Message) error {
 	data, err := os.ReadFile(message.MediaLocalPath)
 	if err != nil {
-		c.markPendingMessageFailed(ctx, message.ID, fmt.Errorf("read queued media: %w", err))
+		c.markPendingMessageFailed(ctx, message.ID, "cached media file missing or unreadable")
 		return nil
 	}
 
@@ -264,6 +289,12 @@ func (c *Client) sendPendingMediaMessage(ctx context.Context, client *whatsmeow.
 	}
 
 	if _, err := client.SendMessage(ctx, targetJID, &waE2E.Message{ImageMessage: imgMsg}, whatsmeow.SendRequestExtra{ID: externalID}); err != nil {
+		newAttempts := message.SendAttempts + 1
+		delay := sendQueueBackoff(newAttempts)
+		c.log.Warnf("Failed to send media %s (attempt %d), retry in %s: %v", message.ID, newAttempts, delay, err)
+		if dbErr := c.store.UpdateMessageSendAttempt(ctx, message.ID, newAttempts, err.Error(), time.Now().Add(delay)); dbErr != nil {
+			c.log.Warnf("Failed to record send attempt for %s: %v", message.ID, dbErr)
+		}
 		return fmt.Errorf("send media %s: %w", message.ID, err)
 	}
 
@@ -282,13 +313,13 @@ func (c *Client) markPendingMessageSent(ctx context.Context, messageID string) {
 	}
 }
 
-func (c *Client) markPendingMessageFailed(ctx context.Context, messageID string, cause error) {
+func (c *Client) markPendingMessageFailed(ctx context.Context, messageID string, reason string) {
 	message, changed, err := c.store.UpdateMessageStatus(ctx, messageID, appstore.StatusFailed)
 	if err != nil {
 		c.log.Warnf("Failed to mark queued message %s failed: %v", messageID, err)
 		return
 	}
-	c.log.Warnf("Queued message %s failed: %v", messageID, cause)
+	c.log.Warnf("Queued message %s permanently failed: %s", messageID, reason)
 	if changed {
 		c.daemon.PublishMessageUpdated(toDaemonMessage(message))
 	}
