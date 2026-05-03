@@ -63,11 +63,17 @@ enum UiMessage {
     ChatsFailed(String),
     MessagesLoaded {
         chat_id: String,
+        generation: u64,
         messages: Vec<proto::Message>,
     },
     MessagesFailed {
         chat_id: String,
+        generation: u64,
         error: String,
+    },
+    ShowConversationLoading {
+        chat_id: String,
+        generation: u64,
     },
     SendSucceeded {
         chat_id: String,
@@ -107,6 +113,9 @@ struct UiState {
     chats_loaded: bool,
     initial_chat_request_started: bool,
     selected_chat_id: Option<String>,
+    pending_chat_id: Option<String>,
+    loading_chat_id: Option<String>,
+    message_request_generation: u64,
     current_messages_chat_id: Option<String>,
     current_messages: Vec<proto::Message>,
     composer_error: String,
@@ -125,6 +134,9 @@ impl Default for UiState {
             chats_loaded: false,
             initial_chat_request_started: false,
             selected_chat_id: None,
+            pending_chat_id: None,
+            loading_chat_id: None,
+            message_request_generation: 0,
             current_messages_chat_id: None,
             current_messages: Vec::new(),
             composer_error: String::new(),
@@ -173,6 +185,7 @@ struct Widgets {
     back_button: gtk::Button,
     logout_button: gtk::Button,
     syncing_chat_selection: Cell<bool>,
+    message_scroll_generation: Rc<Cell<u64>>,
     rendered_chat_id: RefCell<Option<String>>,
     rendered_messages: RefCell<Vec<RenderedMessage>>,
 }
@@ -498,6 +511,7 @@ fn build_ui(app: &adw::Application) {
         back_button,
         logout_button,
         syncing_chat_selection: Cell::new(false),
+        message_scroll_generation: Rc::new(Cell::new(0)),
         rendered_chat_id: RefCell::new(None),
         rendered_messages: RefCell::new(Vec::new()),
     });
@@ -559,7 +573,8 @@ fn connect_signals(
         request_chats(refresh_sender.clone());
 
         if let Some(chat_id) = refresh_state.borrow().selected_chat_id.clone() {
-            request_messages(refresh_sender.clone(), chat_id);
+            let generation = next_message_request_generation(&refresh_state);
+            request_messages(refresh_sender.clone(), chat_id, generation);
         }
     });
 
@@ -775,27 +790,70 @@ fn handle_ui_message(
                     .set_visible_child_name(SIDEBAR_LOADING_PAGE);
             }
         }
-        UiMessage::MessagesLoaded { chat_id, messages } => {
-            {
+        UiMessage::MessagesLoaded {
+            chat_id,
+            generation,
+            messages,
+        } => {
+            let should_mark_read = {
                 let mut state = state.borrow_mut();
-                if state.selected_chat_id.as_deref() != Some(chat_id.as_str()) {
+                if state.message_request_generation != generation {
                     return;
                 }
-
-                state.current_messages_chat_id = Some(chat_id);
-                state.current_messages = messages;
-            }
+                if state.pending_chat_id.as_deref() == Some(chat_id.as_str()) {
+                    commit_pending_chat(&mut state, &widgets.composer_text_view, chat_id.clone());
+                    state.current_messages_chat_id = Some(chat_id.clone());
+                    state.current_messages = messages;
+                    state.loading_chat_id = None;
+                    true
+                } else if state.selected_chat_id.as_deref() == Some(chat_id.as_str()) {
+                    state.current_messages_chat_id = Some(chat_id.clone());
+                    state.current_messages = messages;
+                    state.loading_chat_id = None;
+                    false
+                } else {
+                    return;
+                }
+            };
 
             let state = state.borrow();
+            render_chat_list(widgets, &state);
             render_conversation(widgets, &state);
-            scroll_messages_to_bottom(widgets);
+            update_navigation_state(widgets, &state);
+            if should_mark_read {
+                request_mark_chat_read(sender.clone(), chat_id);
+            }
         }
-        UiMessage::MessagesFailed { chat_id, error } => {
-            let state = state.borrow();
-            if state.selected_chat_id.as_deref() != Some(chat_id.as_str()) {
+        UiMessage::MessagesFailed {
+            chat_id,
+            generation,
+            error,
+        } => {
+            let should_show_error = {
+                let mut state = state.borrow_mut();
+                if state.message_request_generation != generation {
+                    return;
+                }
+                if state.pending_chat_id.as_deref() == Some(chat_id.as_str()) {
+                    commit_pending_chat(&mut state, &widgets.composer_text_view, chat_id.clone());
+                    state.loading_chat_id = Some(chat_id.clone());
+                    true
+                } else {
+                    state.selected_chat_id.as_deref() == Some(chat_id.as_str())
+                }
+            };
+
+            if !should_show_error {
                 return;
             }
 
+            let state = state.borrow();
+            render_chat_list(widgets, &state);
+            update_navigation_state(widgets, &state);
+            widgets
+                .conversation_stack
+                .set_visible_child_name("selected");
+            render_conversation_header(widgets, &state);
             widgets
                 .conversation_loading_page
                 .set_title("Unable to load messages");
@@ -805,6 +863,31 @@ fn handle_ui_message(
             widgets
                 .conversation_content_stack
                 .set_visible_child_name(CONVERSATION_LOADING_PAGE);
+        }
+        UiMessage::ShowConversationLoading {
+            chat_id,
+            generation,
+        } => {
+            let should_mark_read = {
+                let mut state = state.borrow_mut();
+                if state.message_request_generation != generation
+                    || state.pending_chat_id.as_deref() != Some(chat_id.as_str())
+                {
+                    return;
+                }
+
+                commit_pending_chat(&mut state, &widgets.composer_text_view, chat_id.clone());
+                state.loading_chat_id = Some(chat_id.clone());
+                true
+            };
+
+            let state = state.borrow();
+            render_chat_list(widgets, &state);
+            render_conversation(widgets, &state);
+            update_navigation_state(widgets, &state);
+            if should_mark_read {
+                request_mark_chat_read(sender.clone(), chat_id);
+            }
         }
         UiMessage::SendSucceeded { chat_id } => {
             let should_clear_composer = {
@@ -1105,10 +1188,32 @@ fn show_banner_notice(widgets: &Widgets, text: &str) {
     widgets.banner.set_revealed(true);
 }
 
+fn next_message_request_generation(state: &Rc<RefCell<UiState>>) -> u64 {
+    let mut state = state.borrow_mut();
+    state.message_request_generation = state.message_request_generation.wrapping_add(1);
+    state.message_request_generation
+}
+
+fn commit_pending_chat(state: &mut UiState, composer: &gtk::TextView, chat_id: String) {
+    let was_selected = state.selected_chat_id.as_deref() == Some(chat_id.as_str());
+    state.selected_chat_id = Some(chat_id.clone());
+    state.pending_chat_id = None;
+    state.composer_error.clear();
+
+    if !was_selected {
+        state.current_messages_chat_id = None;
+        state.current_messages.clear();
+        state.last_sent_composing = false;
+        clear_composer(composer);
+    }
+}
+
 fn clear_local_ui_state(state: &mut UiState) {
     state.chats.clear();
     state.chats_loaded = true;
     state.selected_chat_id = None;
+    state.pending_chat_id = None;
+    state.loading_chat_id = None;
     state.current_messages_chat_id = None;
     state.current_messages.clear();
     state.composer_error.clear();
@@ -1187,12 +1292,16 @@ fn render_chat_list(widgets: &Widgets, state: &UiState) {
         return;
     }
 
+    let effective_selected_chat_id = state
+        .pending_chat_id
+        .as_deref()
+        .or(state.selected_chat_id.as_deref());
     let mut selected_index = None;
     for (index, chat) in state.chats.iter().enumerate() {
         let row = build_chat_row(chat);
         widgets.chat_list.append(&row);
 
-        if state.selected_chat_id.as_deref() == Some(chat.id.as_str()) {
+        if effective_selected_chat_id == Some(chat.id.as_str()) {
             selected_index = Some(index);
         }
     }
@@ -1266,7 +1375,7 @@ fn render_conversation(widgets: &Widgets, state: &UiState) {
 
     render_conversation_header(widgets, state);
 
-    if state.current_messages_chat_id.as_deref() != Some(selected_chat_id) {
+    if state.loading_chat_id.as_deref() == Some(selected_chat_id) {
         widgets
             .conversation_loading_page
             .set_title("Loading messages");
@@ -1281,6 +1390,11 @@ fn render_conversation(widgets: &Widgets, state: &UiState) {
         return;
     }
 
+    if state.current_messages_chat_id.as_deref() != Some(selected_chat_id) {
+        render_composer_state(widgets, state);
+        return;
+    }
+
     if state.current_messages.is_empty() {
         widgets
             .conversation_content_stack
@@ -1290,11 +1404,24 @@ fn render_conversation(widgets: &Widgets, state: &UiState) {
         return;
     }
 
+    let is_newly_rendered_chat = widgets
+        .rendered_chat_id
+        .borrow()
+        .as_deref()
+        .map(|rendered_chat_id| rendered_chat_id != selected_chat_id)
+        .unwrap_or(true);
+
     sync_message_rows(widgets, selected_chat_id, &state.current_messages);
 
-    widgets
-        .conversation_content_stack
-        .set_visible_child_name(CONVERSATION_MESSAGES_PAGE);
+    if is_newly_rendered_chat {
+        reveal_messages_at_bottom(widgets);
+    } else {
+        widgets.message_scroller.set_opacity(1.0);
+        scroll_messages_to_bottom(widgets);
+        widgets
+            .conversation_content_stack
+            .set_visible_child_name(CONVERSATION_MESSAGES_PAGE);
+    }
     render_composer_state(widgets, state);
 }
 
@@ -1449,8 +1576,6 @@ fn open_chat_at_index(
     state: &Rc<RefCell<UiState>>,
     sender: &mpsc::Sender<UiMessage>,
 ) {
-    let mut should_request = true;
-
     let chat = {
         let state = state.borrow();
         state.chats.get(index).cloned()
@@ -1461,46 +1586,56 @@ fn open_chat_at_index(
     };
 
     let chat_id = chat.id.clone();
+    let mut should_request = true;
+    let generation;
 
     {
         let mut state = state.borrow_mut();
         let already_selected = state.selected_chat_id.as_deref() == Some(chat_id.as_str());
-        state.selected_chat_id = Some(chat_id.clone());
-        state.composer_error.clear();
-
-        if !already_selected {
-            state.current_messages_chat_id = None;
-            state.current_messages.clear();
-            state.last_sent_composing = false;
-            clear_composer(&widgets.composer_text_view);
-        }
 
         if already_selected
             && state.current_messages_chat_id.as_deref() == Some(chat_id.as_str())
             && !force_reload
         {
             should_request = false;
+            generation = state.message_request_generation;
+        } else if already_selected && force_reload {
+            state.message_request_generation = state.message_request_generation.wrapping_add(1);
+            generation = state.message_request_generation;
+            state.loading_chat_id = Some(chat_id.clone());
+            state.composer_error.clear();
+        } else {
+            state.message_request_generation = state.message_request_generation.wrapping_add(1);
+            generation = state.message_request_generation;
+            state.pending_chat_id = Some(chat_id.clone());
+            state.loading_chat_id = None;
+            state.composer_error.clear();
         }
     }
 
-    {
+    if !should_request || force_reload {
         let state = state.borrow();
         render_conversation(widgets, &state);
         update_navigation_state(widgets, &state);
+    } else {
+        let state = state.borrow();
+        render_composer_state(widgets, &state);
     }
 
     if !should_request {
         return;
     }
 
-    request_messages(sender.clone(), chat_id.clone());
-    request_mark_chat_read(sender.clone(), chat_id);
+    schedule_conversation_loading(sender.clone(), chat_id.clone(), generation);
+    request_messages(sender.clone(), chat_id, generation);
 }
 
 fn sync_selected_chat_after_reload(state: &mut UiState) {
     if let Some(selected_chat_id) = state.selected_chat_id.clone() {
         if !state.chats.iter().any(|chat| chat.id == selected_chat_id) {
             state.selected_chat_id = None;
+            state.pending_chat_id = None;
+            state.loading_chat_id = None;
             state.current_messages_chat_id = None;
             state.current_messages.clear();
             state.composer_error.clear();
@@ -1628,15 +1763,34 @@ fn request_chats(sender: mpsc::Sender<UiMessage>) {
     });
 }
 
-fn request_messages(sender: mpsc::Sender<UiMessage>, chat_id: String) {
+fn schedule_conversation_loading(
+    sender: mpsc::Sender<UiMessage>,
+    chat_id: String,
+    generation: u64,
+) {
+    thread::spawn(move || {
+        thread::sleep(Duration::from_secs(1));
+        let _ = sender.send(UiMessage::ShowConversationLoading {
+            chat_id,
+            generation,
+        });
+    });
+}
+
+fn request_messages(sender: mpsc::Sender<UiMessage>, chat_id: String, generation: u64) {
     spawn_async(async move {
         match load_messages(chat_id.clone()).await {
             Ok(messages) => {
-                let _ = sender.send(UiMessage::MessagesLoaded { chat_id, messages });
+                let _ = sender.send(UiMessage::MessagesLoaded {
+                    chat_id,
+                    generation,
+                    messages,
+                });
             }
             Err(error) => {
                 let _ = sender.send(UiMessage::MessagesFailed {
                     chat_id,
+                    generation,
                     error: error.to_string(),
                 });
             }
@@ -2292,11 +2446,99 @@ fn state_name(state: DaemonState) -> &'static str {
 }
 
 fn scroll_messages_to_bottom(widgets: &Widgets) {
-    let scroller = widgets.message_scroller.clone();
-    glib::idle_add_local_once(move || {
-        let adjustment = scroller.vadjustment();
-        adjustment.set_value(adjustment.upper() - adjustment.page_size());
+    keep_messages_at_bottom(widgets, false);
+}
+
+fn reveal_messages_at_bottom(widgets: &Widgets) {
+    widgets.message_scroller.set_opacity(0.0);
+    widgets
+        .conversation_content_stack
+        .set_visible_child_name(CONVERSATION_MESSAGES_PAGE);
+
+    keep_messages_at_bottom(widgets, true);
+}
+
+fn keep_messages_at_bottom(widgets: &Widgets, reveal_after_layout: bool) {
+    let scroll_generation = widgets.message_scroll_generation.get().wrapping_add(1);
+    widgets.message_scroll_generation.set(scroll_generation);
+
+    let adjustment = widgets.message_scroller.vadjustment();
+    scroll_adjustment_to_bottom(&adjustment);
+
+    let adjustment_for_tick = adjustment.clone();
+    let tick_state = Rc::new(RefCell::new((0usize, 0usize, f64::NAN, f64::NAN, f64::NAN)));
+    let tick_state_for_callback = tick_state.clone();
+    let generation_for_tick = widgets.message_scroll_generation.clone();
+    let message_scroller_for_tick = widgets.message_scroller.clone();
+    widgets.message_scroller.add_tick_callback(move |_, _| {
+        if generation_for_tick.get() != scroll_generation {
+            return glib::ControlFlow::Break;
+        }
+
+        scroll_adjustment_to_bottom(&adjustment_for_tick);
+
+        let upper = adjustment_for_tick.upper();
+        let page_size = adjustment_for_tick.page_size();
+        let value = adjustment_for_tick.value();
+        let max = (upper - page_size).max(0.0);
+        let mut tick_state = tick_state_for_callback.borrow_mut();
+        let count = tick_state.0 + 1;
+        let stable_count = if nearly_equal(tick_state.2, upper)
+            && nearly_equal(tick_state.3, page_size)
+            && nearly_equal(tick_state.4, max)
+            && value >= max - 0.5
+        {
+            tick_state.1 + 1
+        } else {
+            0
+        };
+        *tick_state = (count, stable_count, upper, page_size, max);
+
+        if count >= 90 || (count >= 6 && stable_count >= 4) {
+            if reveal_after_layout {
+                scroll_adjustment_to_bottom(&adjustment_for_tick);
+                message_scroller_for_tick.set_opacity(1.0);
+            }
+            glib::ControlFlow::Break
+        } else {
+            glib::ControlFlow::Continue
+        }
     });
+
+    let adjustment_for_idle = adjustment.clone();
+    let generation_for_idle = widgets.message_scroll_generation.clone();
+    glib::idle_add_local_once(move || {
+        if generation_for_idle.get() != scroll_generation {
+            return;
+        }
+
+        scroll_adjustment_to_bottom(&adjustment_for_idle);
+    });
+
+    if reveal_after_layout {
+        let generation_for_timeout = widgets.message_scroll_generation.clone();
+        let message_scroller_for_timeout = widgets.message_scroller.clone();
+        glib::timeout_add_local_once(Duration::from_secs(4), move || {
+            if generation_for_timeout.get() != scroll_generation {
+                return;
+            }
+
+            message_scroller_for_timeout.set_opacity(1.0);
+        });
+    }
+}
+
+fn nearly_equal(left: f64, right: f64) -> bool {
+    if left.is_nan() || right.is_nan() {
+        false
+    } else {
+        (left - right).abs() <= 0.5
+    }
+}
+
+fn scroll_adjustment_to_bottom(adjustment: &gtk::Adjustment) {
+    let max = adjustment.upper() - adjustment.page_size();
+    adjustment.set_value(max.max(0.0));
 }
 
 fn is_scroller_near_bottom(widgets: &Widgets) -> bool {
