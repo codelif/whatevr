@@ -344,6 +344,52 @@ func (db *DB) GetMessage(ctx context.Context, id string) (Message, error) {
 	return message, err
 }
 
+func (db *DB) ListPendingOutgoingMessages(ctx context.Context, limit int) ([]Message, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+
+	rows, err := db.conn.QueryContext(ctx, `
+		SELECT id, chat_id, sender_id, text, timestamp, direction, is_read, status, media_mime_type, media_local_path, media_width, media_height
+		FROM messages
+		WHERE direction = ? AND status = ?
+		ORDER BY timestamp ASC, id ASC
+		LIMIT ?
+	`, DirectionOutgoing, StatusPending, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	messages := make([]Message, 0, limit)
+	for rows.Next() {
+		var message Message
+		if err := rows.Scan(
+			&message.ID,
+			&message.ChatID,
+			&message.SenderID,
+			&message.Text,
+			&message.TimestampUnix,
+			&message.Direction,
+			&message.IsRead,
+			&message.Status,
+			&message.MediaMimeType,
+			&message.MediaLocalPath,
+			&message.MediaWidth,
+			&message.MediaHeight,
+		); err != nil {
+			return nil, err
+		}
+		messages = append(messages, message)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return messages, nil
+}
+
 func (db *DB) UpdateMessageStatus(ctx context.Context, id, status string) (Message, bool, error) {
 	message, err := db.GetMessage(ctx, id)
 	if err != nil {

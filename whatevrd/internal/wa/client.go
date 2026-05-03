@@ -39,6 +39,8 @@ type Client struct {
 	avatarMu             sync.Mutex
 	avatarRefreshRunning bool
 	avatarRefreshQueued  bool
+
+	sendQueueWake chan struct{}
 }
 
 func New(ctx context.Context, paths app.Paths, daemon *app.Daemon, store *appstore.DB) (*Client, error) {
@@ -49,11 +51,12 @@ func New(ctx context.Context, paths app.Paths, daemon *app.Daemon, store *appsto
 	}
 
 	c := &Client{
-		daemon:    daemon,
-		store:     store,
-		container: container,
-		paths:     paths,
-		log:       log,
+		daemon:        daemon,
+		store:         store,
+		container:     container,
+		paths:         paths,
+		log:           log,
+		sendQueueWake: make(chan struct{}, 1),
 	}
 
 	if err := c.resetClient(ctx); err != nil {
@@ -67,6 +70,7 @@ func New(ctx context.Context, paths app.Paths, daemon *app.Daemon, store *appsto
 func (c *Client) Start(ctx context.Context) {
 	runCtx := c.replaceRunContext(ctx)
 	go c.start(runCtx)
+	go c.runSendQueue(runCtx)
 }
 
 func (c *Client) Close() error {

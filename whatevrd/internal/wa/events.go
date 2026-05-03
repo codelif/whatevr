@@ -16,6 +16,7 @@ func (c *Client) handleEvent(raw any) {
 		c.daemon.SetStateDetail(app.StateOnline, "connected to WhatsApp")
 		ctx := c.backgroundContext()
 		c.syncPresence(ctx, true)
+		c.signalSendQueue()
 		go c.migrateLIDChats(ctx)
 		c.scheduleAvatarRefresh(ctx, 5*time.Second)
 	case *events.AppStateSyncComplete:

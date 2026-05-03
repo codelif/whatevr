@@ -501,6 +501,82 @@ func TestUpdateMessageStatusProgression(t *testing.T) {
 	}
 }
 
+func TestListPendingOutgoingMessages(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	inputs := []TextMessageInput{
+		{
+			ID:          "chat-1:pending-2",
+			ChatID:      "chat-1",
+			ChatName:    "Test Chat",
+			SenderID:    "me",
+			Text:        "second",
+			Timestamp:   time.Unix(200, 0),
+			Direction:   DirectionOutgoing,
+			Status:      StatusPending,
+			CountUnread: false,
+		},
+		{
+			ID:          "chat-1:sent-1",
+			ChatID:      "chat-1",
+			ChatName:    "Test Chat",
+			SenderID:    "me",
+			Text:        "already sent",
+			Timestamp:   time.Unix(150, 0),
+			Direction:   DirectionOutgoing,
+			Status:      StatusSent,
+			CountUnread: false,
+		},
+		{
+			ID:          "chat-1:pending-1",
+			ChatID:      "chat-1",
+			ChatName:    "Test Chat",
+			SenderID:    "me",
+			Text:        "first",
+			Timestamp:   time.Unix(100, 0),
+			Direction:   DirectionOutgoing,
+			Status:      StatusPending,
+			CountUnread: false,
+		},
+		{
+			ID:          "chat-1:incoming-pending",
+			ChatID:      "chat-1",
+			ChatName:    "Test Chat",
+			SenderID:    "sender-1",
+			Text:        "incoming",
+			Timestamp:   time.Unix(50, 0),
+			Direction:   DirectionIncoming,
+			Status:      StatusPending,
+			CountUnread: true,
+		},
+	}
+
+	for _, input := range inputs {
+		if _, err := db.SaveTextMessage(ctx, input); err != nil {
+			t.Fatalf("save %s: %v", input.ID, err)
+		}
+	}
+
+	messages, err := db.ListPendingOutgoingMessages(ctx, 10)
+	if err != nil {
+		t.Fatalf("list pending outgoing: %v", err)
+	}
+
+	got := make([]string, 0, len(messages))
+	for _, message := range messages {
+		got = append(got, message.ID)
+	}
+	want := []string{"chat-1:pending-1", "chat-1:pending-2"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected pending outgoing order: got %v want %v", got, want)
+	}
+}
+
 func TestListLIDChats(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))

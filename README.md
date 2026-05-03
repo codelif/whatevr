@@ -159,7 +159,8 @@ the daemon is online:
 - Enter sends
 - Shift+Enter inserts a newline
 - immediate send failures are shown inline near the composer
-- outgoing messages are stored locally after successful SendText RPCs
+- outgoing messages are stored locally as pending before WhatsApp send attempts
+- whatevrd sends queued outgoing messages in the background without blocking the composer on network delivery
 - delivery/read status updates arrive later from daemon events driven by WhatsApp receipts
 ```
 

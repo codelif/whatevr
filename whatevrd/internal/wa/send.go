@@ -31,8 +31,8 @@ func (c *Client) SendText(ctx context.Context, chatID, text string) (appstore.Sa
 	if client == nil {
 		return appstore.SavedTextMessage{}, grpcstatus.Error(codes.Unavailable, "WhatsApp client is not initialized")
 	}
-	if !client.IsLoggedIn() {
-		return appstore.SavedTextMessage{}, grpcstatus.Error(codes.FailedPrecondition, "whatevrd is not online")
+	if client.Store.ID == nil {
+		return appstore.SavedTextMessage{}, grpcstatus.Error(codes.FailedPrecondition, "WhatsApp session is not logged in")
 	}
 
 	trimmedText := strings.TrimSpace(text)
@@ -48,27 +48,15 @@ func (c *Client) SendText(ctx context.Context, chatID, text string) (appstore.Sa
 	chatID = targetJID.String()
 
 	messageID := client.GenerateMessageID()
-	resp, err := client.SendMessage(ctx, targetJID, &waE2E.Message{
-		Conversation: proto.String(trimmedText),
-	}, whatsmeow.SendRequestExtra{ID: messageID})
-	if err != nil {
-		return appstore.SavedTextMessage{}, grpcstatus.Errorf(codes.Unavailable, "send failed: %v", err)
-	}
-
-	timestamp := resp.Timestamp
-	if timestamp.IsZero() {
-		timestamp = time.Now()
-	}
-
 	saved, err := c.store.SaveTextMessage(ctx, appstore.TextMessageInput{
 		ID:          internalMessageIDForChat(chatID, messageID),
 		ChatID:      chatID,
 		ChatName:    "",
-		SenderID:    ownSenderID(resp.Sender),
+		SenderID:    "me",
 		Text:        trimmedText,
-		Timestamp:   timestamp,
+		Timestamp:   time.Now(),
 		Direction:   appstore.DirectionOutgoing,
-		Status:      appstore.StatusSent,
+		Status:      appstore.StatusPending,
 		IsGroup:     targetJID.Server == types.GroupServer || targetJID.Server == types.BroadcastServer,
 		CountUnread: false,
 	})
@@ -76,8 +64,11 @@ func (c *Client) SendText(ctx context.Context, chatID, text string) (appstore.Sa
 		return appstore.SavedTextMessage{}, err
 	}
 
-	c.log.Infof("Sent text message %s to %s", saved.Message.ID, chatID)
-	c.daemon.PublishNewMessage(toDaemonMessage(saved.Message), toDaemonChat(saved.Chat))
+	if saved.Inserted {
+		c.log.Infof("Queued text message %s to %s", saved.Message.ID, chatID)
+		c.daemon.PublishNewMessage(toDaemonMessage(saved.Message), toDaemonChat(saved.Chat))
+	}
+	c.signalSendQueue()
 	return saved, nil
 }
 
@@ -105,8 +96,8 @@ func (c *Client) SendMedia(ctx context.Context, chatID, filePath, caption string
 	if client == nil {
 		return appstore.SavedTextMessage{}, grpcstatus.Error(codes.Unavailable, "WhatsApp client is not initialized")
 	}
-	if !client.IsLoggedIn() {
-		return appstore.SavedTextMessage{}, grpcstatus.Error(codes.FailedPrecondition, "whatevrd is not online")
+	if client.Store.ID == nil {
+		return appstore.SavedTextMessage{}, grpcstatus.Error(codes.FailedPrecondition, "WhatsApp session is not logged in")
 	}
 
 	data, err := os.ReadFile(filePath)
@@ -123,52 +114,25 @@ func (c *Client) SendMedia(ctx context.Context, chatID, filePath, caption string
 	targetJID = c.normalizeJIDForChat(ctx, targetJID)
 	chatID = targetJID.String()
 
-	resp, err := client.Upload(ctx, data, whatsmeow.MediaImage)
-	if err != nil {
-		return appstore.SavedTextMessage{}, grpcstatus.Errorf(codes.Unavailable, "upload failed: %v", err)
-	}
-
 	messageID := client.GenerateMessageID()
-	imgMsg := &waE2E.ImageMessage{
-		Caption:       proto.String(caption),
-		Mimetype:      proto.String(mimeType),
-		URL:           &resp.URL,
-		DirectPath:    &resp.DirectPath,
-		MediaKey:      resp.MediaKey,
-		FileEncSHA256: resp.FileEncSHA256,
-		FileSHA256:    resp.FileSHA256,
-		FileLength:    &resp.FileLength,
-	}
-
-	sendResp, err := client.SendMessage(ctx, targetJID, &waE2E.Message{ImageMessage: imgMsg}, whatsmeow.SendRequestExtra{ID: messageID})
-	if err != nil {
-		return appstore.SavedTextMessage{}, grpcstatus.Errorf(codes.Unavailable, "send failed: %v", err)
-	}
-
-	timestamp := sendResp.Timestamp
-	if timestamp.IsZero() {
-		timestamp = time.Now()
-	}
-
 	mediaDir := filepath.Join(c.paths.MediaCacheDir, "messages", chatID)
 	if err := os.MkdirAll(mediaDir, 0o700); err != nil {
-		c.log.Warnf("Failed to create media dir: %v", err)
+		return appstore.SavedTextMessage{}, err
 	}
 	localPath := filepath.Join(mediaDir, fmt.Sprintf("%s.jpg", messageID))
 	if err := os.WriteFile(localPath, data, 0o600); err != nil {
-		c.log.Warnf("Failed to cache sent media: %v", err)
-		localPath = ""
+		return appstore.SavedTextMessage{}, err
 	}
 
 	saved, err := c.store.SaveMediaMessage(ctx, appstore.MediaMessageInput{
 		TextMessageInput: appstore.TextMessageInput{
 			ID:          internalMessageIDForChat(chatID, messageID),
 			ChatID:      chatID,
-			SenderID:    ownSenderID(sendResp.Sender),
+			SenderID:    "me",
 			Text:        caption,
-			Timestamp:   timestamp,
+			Timestamp:   time.Now(),
 			Direction:   appstore.DirectionOutgoing,
-			Status:      appstore.StatusSent,
+			Status:      appstore.StatusPending,
 			IsGroup:     targetJID.Server == types.GroupServer || targetJID.Server == types.BroadcastServer,
 			CountUnread: false,
 		},
@@ -179,9 +143,155 @@ func (c *Client) SendMedia(ctx context.Context, chatID, filePath, caption string
 		return appstore.SavedTextMessage{}, err
 	}
 
-	c.log.Infof("Sent media message %s to %s", saved.Message.ID, chatID)
-	c.daemon.PublishNewMessage(toDaemonMessage(saved.Message), toDaemonChat(saved.Chat))
+	if saved.Inserted {
+		c.log.Infof("Queued media message %s to %s", saved.Message.ID, chatID)
+		c.daemon.PublishNewMessage(toDaemonMessage(saved.Message), toDaemonChat(saved.Chat))
+	}
+	c.signalSendQueue()
 	return saved, nil
+}
+
+func (c *Client) signalSendQueue() {
+	select {
+	case c.sendQueueWake <- struct{}{}:
+	default:
+	}
+}
+
+func (c *Client) runSendQueue(ctx context.Context) {
+	c.signalSendQueue()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-c.sendQueueWake:
+		}
+
+		for {
+			processed, err := c.drainSendQueue(ctx)
+			if err != nil {
+				c.log.Warnf("Send queue paused: %v", err)
+				select {
+				case <-ctx.Done():
+					return
+				case <-c.sendQueueWake:
+				case <-time.After(5 * time.Second):
+				}
+				continue
+			}
+			if !processed {
+				break
+			}
+		}
+	}
+}
+
+func (c *Client) drainSendQueue(ctx context.Context) (bool, error) {
+	client := c.currentClient()
+	if client == nil || !client.IsLoggedIn() {
+		return false, fmt.Errorf("WhatsApp client is not online")
+	}
+
+	pending, err := c.store.ListPendingOutgoingMessages(ctx, 25)
+	if err != nil {
+		return false, err
+	}
+	if len(pending) == 0 {
+		return false, nil
+	}
+
+	for _, message := range pending {
+		if ctx.Err() != nil {
+			return true, ctx.Err()
+		}
+		if err := c.sendPendingMessage(ctx, client, message); err != nil {
+			return true, err
+		}
+	}
+
+	return true, nil
+}
+
+func (c *Client) sendPendingMessage(ctx context.Context, client *whatsmeow.Client, message appstore.Message) error {
+	targetJID, err := types.ParseJID(message.ChatID)
+	if err != nil {
+		c.markPendingMessageFailed(ctx, message.ID, fmt.Errorf("invalid chat_id: %w", err))
+		return nil
+	}
+
+	externalID := types.MessageID(appstore.ExternalMessageID(message.ChatID, message.ID))
+	if message.MediaMimeType != "" || message.MediaLocalPath != "" {
+		return c.sendPendingMediaMessage(ctx, client, targetJID, externalID, message)
+	}
+
+	if _, err := client.SendMessage(ctx, targetJID, &waE2E.Message{
+		Conversation: proto.String(message.Text),
+	}, whatsmeow.SendRequestExtra{ID: externalID}); err != nil {
+		return fmt.Errorf("send text %s: %w", message.ID, err)
+	}
+
+	c.markPendingMessageSent(ctx, message.ID)
+	return nil
+}
+
+func (c *Client) sendPendingMediaMessage(ctx context.Context, client *whatsmeow.Client, targetJID types.JID, externalID types.MessageID, message appstore.Message) error {
+	data, err := os.ReadFile(message.MediaLocalPath)
+	if err != nil {
+		c.markPendingMessageFailed(ctx, message.ID, fmt.Errorf("read queued media: %w", err))
+		return nil
+	}
+
+	mimeType := message.MediaMimeType
+	if mimeType == "" {
+		mimeType = http.DetectContentType(data)
+	}
+
+	resp, err := client.Upload(ctx, data, whatsmeow.MediaImage)
+	if err != nil {
+		return fmt.Errorf("upload media %s: %w", message.ID, err)
+	}
+
+	imgMsg := &waE2E.ImageMessage{
+		Caption:       proto.String(message.Text),
+		Mimetype:      proto.String(mimeType),
+		URL:           &resp.URL,
+		DirectPath:    &resp.DirectPath,
+		MediaKey:      resp.MediaKey,
+		FileEncSHA256: resp.FileEncSHA256,
+		FileSHA256:    resp.FileSHA256,
+		FileLength:    &resp.FileLength,
+	}
+
+	if _, err := client.SendMessage(ctx, targetJID, &waE2E.Message{ImageMessage: imgMsg}, whatsmeow.SendRequestExtra{ID: externalID}); err != nil {
+		return fmt.Errorf("send media %s: %w", message.ID, err)
+	}
+
+	c.markPendingMessageSent(ctx, message.ID)
+	return nil
+}
+
+func (c *Client) markPendingMessageSent(ctx context.Context, messageID string) {
+	message, changed, err := c.store.UpdateMessageStatus(ctx, messageID, appstore.StatusSent)
+	if err != nil {
+		c.log.Warnf("Failed to mark queued message %s sent: %v", messageID, err)
+		return
+	}
+	if changed {
+		c.daemon.PublishMessageUpdated(toDaemonMessage(message))
+	}
+}
+
+func (c *Client) markPendingMessageFailed(ctx context.Context, messageID string, cause error) {
+	message, changed, err := c.store.UpdateMessageStatus(ctx, messageID, appstore.StatusFailed)
+	if err != nil {
+		c.log.Warnf("Failed to mark queued message %s failed: %v", messageID, err)
+		return
+	}
+	c.log.Warnf("Queued message %s failed: %v", messageID, cause)
+	if changed {
+		c.daemon.PublishMessageUpdated(toDaemonMessage(message))
+	}
 }
 
 func (c *Client) handleReceipt(evt *events.Receipt) {
@@ -261,13 +371,6 @@ func receiptStatus(receiptType types.ReceiptType) (string, bool) {
 	default:
 		return "", false
 	}
-}
-
-func ownSenderID(sender types.JID) string {
-	if !sender.IsEmpty() {
-		return sender.String()
-	}
-	return "me"
 }
 
 func buildReadBatches(chat types.JID, candidates []appstore.ReadCandidate) []readBatch {
