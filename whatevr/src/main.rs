@@ -572,7 +572,8 @@ fn connect_signals(
         request_status(refresh_sender.clone());
         request_chats(refresh_sender.clone());
 
-        if let Some(chat_id) = refresh_state.borrow().selected_chat_id.clone() {
+        let selected_chat_id = refresh_state.borrow().selected_chat_id.clone();
+        if let Some(chat_id) = selected_chat_id {
             let generation = next_message_request_generation(&refresh_state);
             request_messages(refresh_sender.clone(), chat_id, generation);
         }
