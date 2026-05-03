@@ -7,7 +7,7 @@ edition = "2024"
 adw = { package = "libadwaita", version = "0.8", features = ["v1_4"] }
 async-channel = "2"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
-gtk = { package = "gtk4", version = "0.10" }
+gtk = { package = "gtk4", version = "0.10", features = ["v4_10"] }
 http = "1"
 hyper-util = { version = "0.1", features = ["tokio"] }
 prost = "0.13"

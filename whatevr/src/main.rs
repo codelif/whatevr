@@ -1,5 +1,6 @@
 use std::{
     cell::{Cell, RefCell},
+    collections::{HashMap, VecDeque},
     path::PathBuf,
     rc::Rc,
     sync::mpsc,
@@ -9,7 +10,7 @@ use std::{
 
 use adw::prelude::*;
 use chrono::{Local, TimeZone};
-use gtk::{gdk, glib, pango};
+use gtk::{gdk, gio, glib, pango};
 use http::Uri;
 use hyper_util::rt::TokioIo;
 use qrcode::{QrCode, types::Color};
@@ -27,9 +28,10 @@ use proto::daemon_service_client::DaemonServiceClient;
 use proto::frontend_service_client::FrontendServiceClient;
 use proto::login_event;
 use proto::login_service_client::LoginServiceClient;
+use proto::send_service_client::SendServiceClient;
 use proto::{
     DaemonState, GetMessagesRequest, GetStatusRequest, ListChatsRequest, MarkChatReadRequest,
-    SubscribeEventsRequest, SubscribeLoginEventsRequest,
+    SendMediaRequest, SetChatPresenceRequest, SubscribeEventsRequest, SubscribeLoginEventsRequest,
 };
 
 const APP_ID: &str = "in.codelif.Whatevr";
@@ -73,11 +75,24 @@ enum UiMessage {
         chat_id: String,
         error: String,
     },
-    DataChanged {
-        chat_id: Option<String>,
+    MediaSendSucceeded,
+    MediaSendFailed {
+        chat_id: String,
+        error: String,
+    },
+    ChatPresence {
+        chat_id: String,
+        is_composing: bool,
+    },
+    NewMessage {
+        message: proto::Message,
+    },
+    MessageUpdated {
+        message: proto::Message,
+    },
+    ChatUpdated {
+        chat: proto::Chat,
         previous_chat_id: Option<String>,
-        refresh_chats: bool,
-        mark_read_if_focused: bool,
     },
     Notice(String),
 }
@@ -94,6 +109,8 @@ struct UiState {
     composer_error: String,
     send_in_flight: bool,
     window_focused: bool,
+    composing_peers: HashMap<String, bool>,
+    last_sent_composing: bool,
 }
 
 impl Default for UiState {
@@ -110,8 +127,18 @@ impl Default for UiState {
             composer_error: String::new(),
             send_in_flight: false,
             window_focused: false,
+            composing_peers: HashMap::new(),
+            last_sent_composing: false,
         }
     }
+}
+
+#[derive(Clone)]
+struct RenderedMessage {
+    id: String,
+    status: i32,
+    row: gtk::Box,
+    meta_label: gtk::Label,
 }
 
 #[derive(Clone)]
@@ -122,7 +149,6 @@ struct Widgets {
     qr_picture: gtk::Picture,
     qr_error_label: gtk::Label,
     qr_expiry_label: gtk::Label,
-    window_title: adw::WindowTitle,
     banner: adw::Banner,
     split_view: adw::NavigationSplitView,
     sidebar_stack: gtk::Stack,
@@ -132,16 +158,19 @@ struct Widgets {
     conversation_stack: gtk::Stack,
     conversation_content_stack: gtk::Stack,
     conversation_loading_page: adw::StatusPage,
+    conversation_header: gtk::Box,
     conversation_avatar: adw::Avatar,
     conversation_title: gtk::Label,
-    conversation_subtitle: gtk::Label,
     message_scroller: gtk::ScrolledWindow,
     message_box: gtk::Box,
     composer_text_view: gtk::TextView,
     composer_error_label: gtk::Label,
     composer_send_button: gtk::Button,
+    composer_attach_button: gtk::Button,
     back_button: gtk::Button,
     syncing_chat_selection: Cell<bool>,
+    rendered_chat_id: RefCell<Option<String>>,
+    rendered_messages: RefCell<Vec<RenderedMessage>>,
 }
 
 fn main() -> glib::ExitCode {
@@ -163,12 +192,6 @@ fn build_ui(app: &adw::Application) {
         .tooltip_text("Back to chats")
         .visible(false)
         .build();
-
-    let window_title = adw::WindowTitle::new("whatevr", "Starting");
-    let header = adw::HeaderBar::new();
-    header.pack_start(&back_button);
-    header.set_title_widget(Some(&window_title));
-    header.pack_end(&refresh_button);
 
     let loading_page = adw::StatusPage::builder()
         .icon_name("network-transmit-receive-symbolic")
@@ -244,36 +267,48 @@ fn build_ui(app: &adw::Application) {
     sidebar_stack.add_named(&chat_scroller, Some(SIDEBAR_LIST_PAGE));
     sidebar_stack.set_visible_child_name(SIDEBAR_LOADING_PAGE);
 
-    let conversation_avatar = adw::Avatar::new(40, Some(""), true);
-    let conversation_title = gtk::Label::builder()
-        .xalign(0.0)
-        .css_classes(["title-4"])
-        .ellipsize(pango::EllipsizeMode::End)
+    let sidebar_header = adw::HeaderBar::new();
+    sidebar_header.set_title_widget(Some(&gtk::Box::new(gtk::Orientation::Horizontal, 0)));
+    sidebar_header.pack_end(&refresh_button);
+
+    let sidebar_toolbar = adw::ToolbarView::new();
+    sidebar_toolbar.add_top_bar(&sidebar_header);
+    let sidebar_content = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .vexpand(true)
         .build();
-    let conversation_subtitle = gtk::Label::builder()
-        .xalign(0.0)
-        .css_classes(["dim-label"])
+    sidebar_content.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+    sidebar_content.append(&sidebar_stack);
+    sidebar_toolbar.set_content(Some(&sidebar_content));
+
+    let conversation_avatar = adw::Avatar::new(32, Some(""), true);
+    let conversation_title = gtk::Label::builder()
+        .xalign(0.5)
+        .valign(gtk::Align::Center)
+        .css_classes(["conversation-header-name"])
         .ellipsize(pango::EllipsizeMode::End)
         .build();
     let conversation_title_box = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
-        .spacing(2)
+        .valign(gtk::Align::Center)
         .build();
     conversation_title_box.append(&conversation_title);
-    conversation_title_box.append(&conversation_subtitle);
     let conversation_header = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
-        .spacing(12)
-        .margin_top(18)
-        .margin_bottom(18)
-        .margin_start(18)
-        .margin_end(18)
+        .spacing(8)
+        .margin_top(6)
+        .margin_bottom(6)
+        .margin_start(10)
+        .margin_end(10)
+        .valign(gtk::Align::Center)
+        .visible(false)
         .build();
     conversation_header.append(&conversation_avatar);
     conversation_header.append(&conversation_title_box);
-    let header_separator = gtk::Separator::builder()
-        .orientation(gtk::Orientation::Horizontal)
-        .build();
+
+    let content_header = adw::HeaderBar::new();
+    content_header.pack_start(&back_button);
+    content_header.set_title_widget(Some(&conversation_header));
     let message_box = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .spacing(12)
@@ -312,6 +347,11 @@ fn build_ui(app: &adw::Application) {
         .css_classes(["suggested-action"])
         .valign(gtk::Align::End)
         .build();
+    let composer_attach_button = gtk::Button::builder()
+        .icon_name("mail-attachment-symbolic")
+        .tooltip_text("Attach image")
+        .valign(gtk::Align::End)
+        .build();
     let composer_error_label = gtk::Label::builder()
         .wrap(true)
         .xalign(0.0)
@@ -322,6 +362,7 @@ fn build_ui(app: &adw::Application) {
         .orientation(gtk::Orientation::Horizontal)
         .spacing(12)
         .build();
+    composer_row.append(&composer_attach_button);
     composer_row.append(&composer_frame);
     composer_row.append(&composer_send_button);
     let composer_box = gtk::Box::builder()
@@ -370,8 +411,6 @@ fn build_ui(app: &adw::Application) {
         .vexpand(true)
         .hexpand(true)
         .build();
-    selected_conversation_shell.append(&conversation_header);
-    selected_conversation_shell.append(&header_separator);
     selected_conversation_shell.append(&conversation_content_stack);
     selected_conversation_shell.append(&conversation_separator);
     selected_conversation_shell.append(&composer_box);
@@ -384,8 +423,12 @@ fn build_ui(app: &adw::Application) {
     conversation_stack.add_named(&selected_conversation_shell, Some("selected"));
     conversation_stack.set_visible_child_name(CONVERSATION_PLACEHOLDER_PAGE);
 
-    let sidebar_page = adw::NavigationPage::new(&sidebar_stack, "Chats");
-    let content_page = adw::NavigationPage::new(&conversation_stack, "Conversation");
+    let content_toolbar = adw::ToolbarView::new();
+    content_toolbar.add_top_bar(&content_header);
+    content_toolbar.set_content(Some(&conversation_stack));
+
+    let sidebar_page = adw::NavigationPage::new(&sidebar_toolbar, "Chats");
+    let content_page = adw::NavigationPage::new(&content_toolbar, "Conversation");
     let split_view = adw::NavigationSplitView::new();
     split_view.set_sidebar(Some(&sidebar_page));
     split_view.set_content(Some(&content_page));
@@ -410,16 +453,12 @@ fn build_ui(app: &adw::Application) {
     root_stack.add_named(&main_page, Some(ROOT_MAIN_PAGE));
     root_stack.set_visible_child_name(ROOT_LOADING_PAGE);
 
-    let toolbar_view = adw::ToolbarView::new();
-    toolbar_view.add_top_bar(&header);
-    toolbar_view.set_content(Some(&root_stack));
-
     let window = adw::ApplicationWindow::builder()
         .application(app)
         .title("whatevr")
         .default_width(1080)
         .default_height(760)
-        .content(&toolbar_view)
+        .content(&root_stack)
         .build();
 
     let widgets = Rc::new(Widgets {
@@ -429,7 +468,6 @@ fn build_ui(app: &adw::Application) {
         qr_picture,
         qr_error_label,
         qr_expiry_label,
-        window_title,
         banner,
         split_view,
         sidebar_stack,
@@ -439,16 +477,19 @@ fn build_ui(app: &adw::Application) {
         conversation_stack,
         conversation_content_stack,
         conversation_loading_page,
+        conversation_header,
         conversation_avatar,
         conversation_title,
-        conversation_subtitle,
         message_scroller,
         message_box,
         composer_text_view,
         composer_error_label,
         composer_send_button,
+        composer_attach_button,
         back_button,
         syncing_chat_selection: Cell::new(false),
+        rendered_chat_id: RefCell::new(None),
+        rendered_messages: RefCell::new(Vec::new()),
     });
 
     let state = Rc::new(RefCell::new(UiState::default()));
@@ -566,6 +607,65 @@ fn connect_signals(
     let send_sender = sender.clone();
     widgets.composer_send_button.connect_clicked(move |_| {
         submit_composer_message(&send_widgets, &send_state, &send_sender);
+    });
+
+    // Typing indicator: fire when composer buffer content changes
+    let typing_state = state.clone();
+    let typing_sender = sender.clone();
+    widgets
+        .composer_text_view
+        .buffer()
+        .connect_changed(move |buf| {
+            let non_empty = buf.char_count() > 0;
+            let (chat_id, should_send) = {
+                let mut s = typing_state.borrow_mut();
+                let id = s.selected_chat_id.clone();
+                let changed = non_empty != s.last_sent_composing;
+                if changed {
+                    s.last_sent_composing = non_empty;
+                }
+                (id, changed)
+            };
+            if should_send {
+                if let Some(chat_id) = chat_id {
+                    request_set_chat_presence(typing_sender.clone(), chat_id, non_empty);
+                }
+            }
+        });
+
+    // Attach button: open file picker for images
+    let attach_widgets = widgets.clone();
+    let attach_state = state.clone();
+    let attach_sender = sender.clone();
+    widgets.composer_attach_button.connect_clicked(move |_| {
+        let chat_id = attach_state.borrow().selected_chat_id.clone();
+        let Some(chat_id) = chat_id else { return };
+
+        let window = attach_widgets
+            .conversation_stack
+            .root()
+            .and_downcast::<gtk::Window>();
+
+        let dialog = gtk::FileDialog::new();
+        dialog.set_title("Choose an image");
+        let filter = gtk::FileFilter::new();
+        filter.add_mime_type("image/*");
+        filter.set_name(Some("Images"));
+        let filters = gio::ListStore::new::<gtk::FileFilter>();
+        filters.append(&filter);
+        dialog.set_filters(Some(&filters));
+        dialog.set_default_filter(Some(&filter));
+
+        let sender = attach_sender.clone();
+        dialog.open(window.as_ref(), None::<&gio::Cancellable>, move |result| {
+            if let Ok(file) = result {
+                if let Some(path) = file.path() {
+                    if let Some(path_str) = path.to_str() {
+                        request_send_media(sender.clone(), chat_id.clone(), path_str.to_string());
+                    }
+                }
+            }
+        });
     });
 
     let key_widgets = widgets.clone();
@@ -692,28 +792,21 @@ fn handle_ui_message(
         }
         UiMessage::SendSucceeded { chat_id } => {
             let should_clear_composer = {
-                let state = state.borrow();
-                state.selected_chat_id.as_deref() == Some(chat_id.as_str())
-            };
-
-            {
                 let mut state = state.borrow_mut();
                 state.send_in_flight = false;
-                if should_clear_composer {
+                let selected = state.selected_chat_id.as_deref() == Some(chat_id.as_str());
+                if selected {
                     state.composer_error.clear();
                 }
-            }
+                selected
+            };
 
             if should_clear_composer {
                 clear_composer(&widgets.composer_text_view);
             }
-            request_chats(sender.clone());
-            if should_clear_composer {
-                request_messages(sender.clone(), chat_id);
-            }
 
             let state = state.borrow();
-            render_conversation(widgets, &state);
+            render_composer_state(widgets, &state);
         }
         UiMessage::SendFailed { chat_id, error } => {
             let mut should_render = false;
@@ -731,39 +824,156 @@ fn handle_ui_message(
                 render_conversation(widgets, &state);
             }
         }
-        UiMessage::DataChanged {
-            chat_id,
-            previous_chat_id,
-            refresh_chats,
-            mark_read_if_focused,
-        } => {
-            if let (Some(previous_chat_id), Some(new_chat_id)) =
-                (previous_chat_id.as_deref(), chat_id.as_deref())
+        UiMessage::MediaSendSucceeded => {}
+        UiMessage::MediaSendFailed { chat_id, error } => {
+            let mut should_render = false;
             {
                 let mut state = state.borrow_mut();
-                if state.selected_chat_id.as_deref() == Some(previous_chat_id) {
-                    state.selected_chat_id = Some(new_chat_id.to_string());
-                    state.current_messages_chat_id = None;
-                    state.current_messages.clear();
-                    state.composer_error.clear();
+                if state.selected_chat_id.as_deref() == Some(chat_id.as_str()) {
+                    state.composer_error = error;
+                    should_render = true;
                 }
             }
+            if should_render {
+                let state = state.borrow();
+                render_conversation(widgets, &state);
+            }
+        }
+        UiMessage::ChatPresence {
+            chat_id,
+            is_composing,
+        } => {
+            let selected_matches = {
+                let mut s = state.borrow_mut();
+                s.composing_peers.insert(chat_id.clone(), is_composing);
+                s.selected_chat_id.as_deref() == Some(chat_id.as_str())
+            };
+            if selected_matches {
+                render_conversation_header(widgets, &state.borrow());
+            }
+        }
+        UiMessage::NewMessage { message } => {
+            let chat_id = message.chat_id.clone();
+            let was_near_bottom = is_scroller_near_bottom(widgets);
+            let (is_for_selected, mark_read) = {
+                let mut s = state.borrow_mut();
+                let selected = s.selected_chat_id.as_deref() == Some(chat_id.as_str());
+                let mark_read = selected && s.window_focused;
+                if selected && s.current_messages_chat_id.as_deref() == Some(chat_id.as_str()) {
+                    if let Some(existing) = s
+                        .current_messages
+                        .iter_mut()
+                        .find(|existing| existing.id == message.id)
+                    {
+                        *existing = message;
+                    } else {
+                        s.current_messages.push(message);
+                    }
+                }
+                (selected, mark_read)
+            };
 
-            if refresh_chats {
-                request_chats(sender.clone());
+            if is_for_selected {
+                let state = state.borrow();
+                render_conversation(widgets, &state);
+                if was_near_bottom {
+                    scroll_messages_to_bottom(widgets);
+                }
             }
-            if let Some(selected_chat_id) = state.borrow().selected_chat_id.clone() {
-                let chat_matches = chat_id.as_deref().is_none()
-                    || chat_id.as_deref() == Some(selected_chat_id.as_str());
-                if chat_matches {
-                    request_messages(sender.clone(), selected_chat_id.clone());
+            if mark_read {
+                request_mark_chat_read(sender.clone(), chat_id);
+            }
+        }
+        UiMessage::MessageUpdated { message } => {
+            let chat_id = message.chat_id.clone();
+            let updated = {
+                let mut s = state.borrow_mut();
+                if s.selected_chat_id.as_deref() != Some(chat_id.as_str()) {
+                    false
+                } else if let Some(existing) = s
+                    .current_messages
+                    .iter_mut()
+                    .find(|existing| existing.id == message.id)
+                {
+                    *existing = message;
+                    true
+                } else {
+                    false
                 }
-                let should_mark = mark_read_if_focused
-                    && state.borrow().window_focused
-                    && chat_id.as_deref() == Some(selected_chat_id.as_str());
-                if should_mark {
-                    request_mark_chat_read(sender.clone(), selected_chat_id);
+            };
+
+            if updated {
+                let state = state.borrow();
+                render_conversation(widgets, &state);
+            }
+        }
+        UiMessage::ChatUpdated {
+            chat,
+            previous_chat_id,
+        } => {
+            let (header_changed, updated_row_index) = {
+                let mut s = state.borrow_mut();
+                let new_chat_id = chat.id.clone();
+                let old_chat_id = previous_chat_id
+                    .clone()
+                    .unwrap_or_else(|| new_chat_id.clone());
+                let old_index = s
+                    .chats
+                    .iter()
+                    .position(|existing| existing.id == old_chat_id);
+
+                if let Some(prev_id) = previous_chat_id.as_deref() {
+                    if s.selected_chat_id.as_deref() == Some(prev_id) {
+                        s.selected_chat_id = Some(chat.id.clone());
+                        if s.current_messages_chat_id.as_deref() == Some(prev_id) {
+                            s.current_messages_chat_id = Some(chat.id.clone());
+                            for message in s.current_messages.iter_mut() {
+                                message.chat_id = chat.id.clone();
+                            }
+                        }
+                        if let Some(value) = s.composing_peers.remove(prev_id) {
+                            s.composing_peers.insert(chat.id.clone(), value);
+                        }
+                    }
+                    s.chats.retain(|existing| existing.id != prev_id);
                 }
+
+                let header_changed = s
+                    .selected_chat_id
+                    .as_deref()
+                    .map(|selected| selected == chat.id)
+                    .unwrap_or(false)
+                    && {
+                        let prev = s.chats.iter().find(|existing| existing.id == chat.id);
+                        match prev {
+                            Some(existing) => {
+                                existing.name != chat.name
+                                    || existing.is_group != chat.is_group
+                                    || existing.avatar_local_path != chat.avatar_local_path
+                            }
+                            None => true,
+                        }
+                    };
+
+                upsert_chat(&mut s.chats, chat);
+                let new_index = s
+                    .chats
+                    .iter()
+                    .position(|existing| existing.id == new_chat_id);
+                let updated_row_index = old_index.filter(|old_index| Some(*old_index) == new_index);
+                (header_changed, updated_row_index)
+            };
+
+            let state_borrow = state.borrow();
+            if let Some(index) = updated_row_index {
+                if let Some(chat) = state_borrow.chats.get(index) {
+                    update_chat_row_at_index(&widgets.chat_list, index, chat);
+                }
+            } else {
+                render_chat_list(widgets, &state_borrow);
+            }
+            if header_changed {
+                render_conversation_header(widgets, &state_borrow);
             }
         }
         UiMessage::Notice(text) => {
@@ -822,9 +1032,6 @@ fn apply_daemon_state(
     widgets
         .login_status_label
         .set_text(&format_login_state(daemon_state, &detail));
-    widgets
-        .window_title
-        .set_subtitle(window_subtitle(daemon_state));
     update_banner(widgets, daemon_state, &detail);
 }
 
@@ -936,36 +1143,59 @@ fn render_chat_list(widgets: &Widgets, state: &UiState) {
     widgets.syncing_chat_selection.set(false);
 }
 
+fn upsert_chat(chats: &mut Vec<proto::Chat>, chat: proto::Chat) {
+    if let Some(existing) = chats.iter_mut().find(|existing| existing.id == chat.id) {
+        *existing = chat;
+    } else {
+        chats.push(chat);
+    }
+    chats.sort_by_key(|chat| std::cmp::Reverse(chat.last_message_time_unix));
+}
+
+fn render_conversation_header(widgets: &Widgets, state: &UiState) {
+    let Some(selected_chat_id) = state.selected_chat_id.as_deref() else {
+        widgets.conversation_header.set_visible(false);
+        return;
+    };
+    let Some(chat) = state.chats.iter().find(|chat| chat.id == selected_chat_id) else {
+        widgets.conversation_header.set_visible(false);
+        return;
+    };
+
+    widgets.conversation_header.set_visible(true);
+    widgets
+        .conversation_avatar
+        .set_text(Some(display_chat_name(chat)));
+    set_avatar_image(&widgets.conversation_avatar, &chat.avatar_local_path);
+    widgets.conversation_title.set_text(display_chat_name(chat));
+}
+
 fn render_conversation(widgets: &Widgets, state: &UiState) {
     let Some(selected_chat_id) = state.selected_chat_id.as_deref() else {
         widgets
             .conversation_stack
             .set_visible_child_name(CONVERSATION_PLACEHOLDER_PAGE);
+        render_conversation_header(widgets, state);
+        reset_rendered_messages(widgets);
         render_composer_state(widgets, state);
         return;
     };
 
-    let Some(chat) = state.chats.iter().find(|chat| chat.id == selected_chat_id) else {
+    if !state.chats.iter().any(|chat| chat.id == selected_chat_id) {
         widgets
             .conversation_stack
             .set_visible_child_name(CONVERSATION_PLACEHOLDER_PAGE);
+        render_conversation_header(widgets, state);
+        reset_rendered_messages(widgets);
         render_composer_state(widgets, state);
         return;
-    };
+    }
 
     widgets
         .conversation_stack
         .set_visible_child_name("selected");
 
-    widgets
-        .conversation_avatar
-        .set_text(Some(display_chat_name(chat)));
-    widgets.conversation_title.set_text(display_chat_name(chat));
-    widgets.conversation_subtitle.set_text(if chat.is_group {
-        "Group chat"
-    } else {
-        "Direct chat"
-    });
+    render_conversation_header(widgets, state);
 
     if state.current_messages_chat_id.as_deref() != Some(selected_chat_id) {
         widgets
@@ -977,6 +1207,7 @@ fn render_conversation(widgets: &Widgets, state: &UiState) {
         widgets
             .conversation_content_stack
             .set_visible_child_name(CONVERSATION_LOADING_PAGE);
+        reset_rendered_messages(widgets);
         render_composer_state(widgets, state);
         return;
     }
@@ -985,19 +1216,161 @@ fn render_conversation(widgets: &Widgets, state: &UiState) {
         widgets
             .conversation_content_stack
             .set_visible_child_name(CONVERSATION_EMPTY_PAGE);
+        reset_rendered_messages(widgets);
         render_composer_state(widgets, state);
         return;
     }
 
-    clear_box(&widgets.message_box);
-    for message in &state.current_messages {
-        widgets.message_box.append(&build_message_row(message));
-    }
+    sync_message_rows(widgets, selected_chat_id, &state.current_messages);
 
     widgets
         .conversation_content_stack
         .set_visible_child_name(CONVERSATION_MESSAGES_PAGE);
     render_composer_state(widgets, state);
+}
+
+fn reset_rendered_messages(widgets: &Widgets) {
+    let mut rendered = widgets.rendered_messages.borrow_mut();
+    for entry in rendered.drain(..) {
+        widgets.message_box.remove(&entry.row);
+    }
+    *widgets.rendered_chat_id.borrow_mut() = None;
+}
+
+fn sync_message_rows(widgets: &Widgets, chat_id: &str, messages: &[proto::Message]) {
+    let same_chat = widgets
+        .rendered_chat_id
+        .borrow()
+        .as_deref()
+        .map(|prev| prev == chat_id)
+        .unwrap_or(false);
+
+    if !same_chat {
+        reset_rendered_messages(widgets);
+        *widgets.rendered_chat_id.borrow_mut() = Some(chat_id.to_string());
+    }
+
+    let mut rendered = widgets.rendered_messages.borrow_mut();
+
+    let mut common = 0;
+    while common < messages.len() && common < rendered.len() {
+        if rendered[common].id != messages[common].id {
+            break;
+        }
+        common += 1;
+    }
+
+    for i in 0..common {
+        let new_status = messages[i].status;
+        if rendered[i].status != new_status {
+            rendered[i]
+                .meta_label
+                .set_text(&format_message_meta(&messages[i]));
+            rendered[i].status = new_status;
+        }
+    }
+
+    while rendered.len() > common {
+        if let Some(entry) = rendered.pop() {
+            widgets.message_box.remove(&entry.row);
+        }
+    }
+
+    for new_msg in &messages[common..] {
+        let (row, meta_label) = build_message_row(new_msg);
+        widgets.message_box.append(&row);
+        rendered.push(RenderedMessage {
+            id: new_msg.id.clone(),
+            status: new_msg.status,
+            row,
+            meta_label,
+        });
+    }
+}
+
+fn set_avatar_image(avatar: &adw::Avatar, path: &str) {
+    if path.is_empty() {
+        avatar.set_custom_image(None::<&gdk::Texture>);
+        return;
+    }
+    match load_texture_cached(path) {
+        Some(texture) => avatar.set_custom_image(Some(&texture)),
+        None => avatar.set_custom_image(None::<&gdk::Texture>),
+    }
+}
+
+const TEXTURE_CACHE_CAP: usize = 256;
+
+#[derive(Default)]
+struct TextureCache {
+    entries: HashMap<String, gdk::Texture>,
+    order: VecDeque<String>,
+}
+
+thread_local! {
+    static TEXTURE_CACHE: RefCell<TextureCache> = RefCell::new(TextureCache::default());
+}
+
+fn cached_texture(path: &str) -> Option<gdk::Texture> {
+    TEXTURE_CACHE.with(|cache| cache.borrow().entries.get(path).cloned())
+}
+
+fn store_cached_texture(path: String, texture: gdk::Texture) {
+    TEXTURE_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if cache.entries.contains_key(&path) {
+            return;
+        }
+        cache.entries.insert(path.clone(), texture);
+        cache.order.push_back(path);
+        while cache.order.len() > TEXTURE_CACHE_CAP {
+            if let Some(evicted) = cache.order.pop_front() {
+                cache.entries.remove(&evicted);
+            }
+        }
+    });
+}
+
+fn load_texture_cached(path: &str) -> Option<gdk::Texture> {
+    if let Some(texture) = cached_texture(path) {
+        return Some(texture);
+    }
+    let texture = gdk::Texture::from_file(&gio::File::for_path(path)).ok()?;
+    store_cached_texture(path.to_string(), texture.clone());
+    Some(texture)
+}
+
+fn schedule_async_image_load(picture: gtk::Picture, path: String, display_w: i32, display_h: i32) {
+    let (tx, rx) = std::sync::mpsc::channel::<Option<Vec<u8>>>();
+    let path_for_thread = path.clone();
+    thread::spawn(move || {
+        let _ = tx.send(std::fs::read(&path_for_thread).ok());
+    });
+
+    let picture_weak = picture.downgrade();
+    glib::idle_add_local(move || match rx.try_recv() {
+        Ok(Some(bytes)) => {
+            let glib_bytes = glib::Bytes::from(&bytes);
+            let stream = gio::MemoryInputStream::from_bytes(&glib_bytes);
+            if let Ok(pixbuf) = gdk::gdk_pixbuf::Pixbuf::from_stream_at_scale(
+                &stream,
+                display_w,
+                display_h,
+                false,
+                None::<&gio::Cancellable>,
+            ) {
+                let texture = gdk::Texture::for_pixbuf(&pixbuf);
+                store_cached_texture(path.clone(), texture.clone());
+                if let Some(pic) = picture_weak.upgrade() {
+                    pic.set_paintable(Some(&texture));
+                }
+            }
+            glib::ControlFlow::Break
+        }
+        Ok(None) => glib::ControlFlow::Break,
+        Err(std::sync::mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+        Err(std::sync::mpsc::TryRecvError::Disconnected) => glib::ControlFlow::Break,
+    });
 }
 
 fn open_chat_at_index(
@@ -1029,6 +1402,7 @@ fn open_chat_at_index(
         if !already_selected {
             state.current_messages_chat_id = None;
             state.current_messages.clear();
+            state.last_sent_composing = false;
             clear_composer(&widgets.composer_text_view);
         }
 
@@ -1073,8 +1447,12 @@ fn render_composer_state(widgets: &Widgets, state: &UiState) {
 
     widgets.composer_text_view.set_sensitive(enabled);
     widgets.composer_send_button.set_sensitive(enabled);
+    widgets.composer_attach_button.set_sensitive(enabled);
     widgets.composer_text_view.set_visible(has_selected_chat);
     widgets.composer_send_button.set_visible(has_selected_chat);
+    widgets
+        .composer_attach_button
+        .set_visible(has_selected_chat);
 
     if state.composer_error.is_empty() || !has_selected_chat {
         widgets.composer_error_label.set_visible(false);
@@ -1223,6 +1601,32 @@ fn request_send_text(sender: mpsc::Sender<UiMessage>, chat_id: String, text: Str
     });
 }
 
+fn request_send_media(sender: mpsc::Sender<UiMessage>, chat_id: String, file_path: String) {
+    spawn_async(async move {
+        match send_media(chat_id.clone(), file_path).await {
+            Ok(()) => {
+                let _ = sender.send(UiMessage::MediaSendSucceeded);
+            }
+            Err(error) => {
+                let _ = sender.send(UiMessage::MediaSendFailed {
+                    chat_id,
+                    error: error.to_string(),
+                });
+            }
+        }
+    });
+}
+
+fn request_set_chat_presence(sender: mpsc::Sender<UiMessage>, chat_id: String, composing: bool) {
+    spawn_async(async move {
+        if let Err(error) = set_chat_presence(chat_id, composing).await {
+            let _ = sender.send(UiMessage::Notice(format!(
+                "Unable to set chat presence: {error}"
+            )));
+        }
+    });
+}
+
 fn spawn_async<Fut>(future: Fut)
 where
     Fut: std::future::Future<Output = ()> + Send + 'static,
@@ -1316,22 +1720,14 @@ async fn stream_daemon_events(
                 });
             }
             Some(daemon_event::Payload::NewMessage(new_message)) => {
-                let chat_id = new_message.message.map(|message| message.chat_id);
-                let _ = sender.send(UiMessage::DataChanged {
-                    chat_id,
-                    previous_chat_id: None,
-                    refresh_chats: true,
-                    mark_read_if_focused: true,
-                });
+                if let Some(message) = new_message.message {
+                    let _ = sender.send(UiMessage::NewMessage { message });
+                }
             }
             Some(daemon_event::Payload::MessageUpdated(message_updated)) => {
-                let chat_id = message_updated.message.map(|message| message.chat_id);
-                let _ = sender.send(UiMessage::DataChanged {
-                    chat_id,
-                    previous_chat_id: None,
-                    refresh_chats: false,
-                    mark_read_if_focused: false,
-                });
+                if let Some(message) = message_updated.message {
+                    let _ = sender.send(UiMessage::MessageUpdated { message });
+                }
             }
             Some(daemon_event::Payload::ChatUpdated(chat_updated)) => {
                 let previous_chat_id = if chat_updated.previous_chat_id.is_empty() {
@@ -1339,12 +1735,17 @@ async fn stream_daemon_events(
                 } else {
                     Some(chat_updated.previous_chat_id)
                 };
-                let chat_id = chat_updated.chat.map(|chat| chat.id);
-                let _ = sender.send(UiMessage::DataChanged {
-                    chat_id,
-                    previous_chat_id,
-                    refresh_chats: true,
-                    mark_read_if_focused: false,
+                if let Some(chat) = chat_updated.chat {
+                    let _ = sender.send(UiMessage::ChatUpdated {
+                        chat,
+                        previous_chat_id,
+                    });
+                }
+            }
+            Some(daemon_event::Payload::ChatPresenceChanged(presence)) => {
+                let _ = sender.send(UiMessage::ChatPresence {
+                    chat_id: presence.chat_id,
+                    is_composing: presence.is_composing,
                 });
             }
             _ => {}
@@ -1413,6 +1814,34 @@ async fn send_text(
         .unwrap_or(chat_id))
 }
 
+async fn send_media(
+    chat_id: String,
+    file_path: String,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let channel = connect_channel().await?;
+    let mut client = SendServiceClient::new(channel);
+    client
+        .send_media(SendMediaRequest {
+            chat_id,
+            file_path,
+            caption: String::new(),
+        })
+        .await?;
+    Ok(())
+}
+
+async fn set_chat_presence(
+    chat_id: String,
+    composing: bool,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let channel = connect_channel().await?;
+    let mut client = ChatServiceClient::new(channel);
+    client
+        .set_chat_presence(SetChatPresenceRequest { chat_id, composing })
+        .await?;
+    Ok(())
+}
+
 async fn connect_channel() -> Result<Channel, Box<dyn std::error::Error + Send + Sync>> {
     let socket_path = socket_path()?;
     let endpoint = Endpoint::try_from("http://[::]:50051")?;
@@ -1440,7 +1869,24 @@ fn socket_path() -> Result<PathBuf, String> {
 }
 
 fn build_chat_row(chat: &proto::Chat) -> gtk::ListBoxRow {
+    let row_box = build_chat_row_content(chat);
+    let row = gtk::ListBoxRow::builder()
+        .activatable(true)
+        .selectable(true)
+        .build();
+    row.set_child(Some(&row_box));
+    row
+}
+
+fn update_chat_row_at_index(chat_list: &gtk::ListBox, index: usize, chat: &proto::Chat) {
+    if let Some(row) = chat_list.row_at_index(index as i32) {
+        row.set_child(Some(&build_chat_row_content(chat)));
+    }
+}
+
+fn build_chat_row_content(chat: &proto::Chat) -> gtk::Box {
     let avatar = adw::Avatar::new(36, Some(display_chat_name(chat)), true);
+    set_avatar_image(&avatar, &chat.avatar_local_path);
     let title = gtk::Label::builder()
         .label(display_chat_name(chat))
         .xalign(0.0)
@@ -1499,26 +1945,13 @@ fn build_chat_row(chat: &proto::Chat) -> gtk::ListBoxRow {
     row_box.append(&text_box);
     row_box.append(&trailing);
 
-    let row = gtk::ListBoxRow::builder()
-        .activatable(true)
-        .selectable(true)
-        .build();
-    row.set_child(Some(&row_box));
-    row
+    row_box
 }
 
-fn build_message_row(message: &proto::Message) -> gtk::Box {
+fn build_message_row(message: &proto::Message) -> (gtk::Box, gtk::Label) {
     let outgoing = message.direction == proto::MessageDirection::Outgoing as i32;
 
-    let message_label = gtk::Label::new(Some(message.text.as_str()));
-    message_label.set_xalign(0.0);
-    message_label.set_wrap(true);
-    message_label.set_wrap_mode(pango::WrapMode::WordChar);
-    message_label.set_max_width_chars(62);
-    message_label.set_selectable(true);
-    message_label.add_css_class("message-text");
-
-    let bubble = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let bubble = gtk::Box::new(gtk::Orientation::Vertical, 4);
     bubble.add_css_class("message-bubble");
 
     if outgoing {
@@ -1527,7 +1960,66 @@ fn build_message_row(message: &proto::Message) -> gtk::Box {
         bubble.add_css_class("incoming");
     }
 
-    bubble.append(&message_label);
+    // Show image if present
+    let has_image =
+        !message.media_local_path.is_empty() && message.media_mime_type.starts_with("image/");
+    if has_image {
+        const MAX_IMG_W: i32 = 280;
+        const MAX_IMG_H: i32 = 360;
+
+        let raw_dims = if message.media_width > 0 && message.media_height > 0 {
+            Some((message.media_width, message.media_height))
+        } else {
+            gdk::gdk_pixbuf::Pixbuf::file_info(&message.media_local_path).map(|(_, w, h)| (w, h))
+        };
+
+        if let Some((raw_w, raw_h)) = raw_dims {
+            let scale_w = MAX_IMG_W as f64 / raw_w as f64;
+            let tentative_h = (raw_h as f64 * scale_w).round() as i32;
+            let (display_w, display_h) = if tentative_h <= MAX_IMG_H {
+                (MAX_IMG_W, tentative_h.max(1))
+            } else {
+                let scale_h = MAX_IMG_H as f64 / raw_h as f64;
+                (((raw_w as f64 * scale_h).round() as i32).max(1), MAX_IMG_H)
+            };
+
+            let picture = gtk::Picture::new();
+            picture.set_size_request(display_w, display_h);
+            picture.set_can_shrink(false);
+            picture.set_content_fit(gtk::ContentFit::Fill);
+            picture.add_css_class("image-placeholder");
+
+            if let Some(texture) = cached_texture(&message.media_local_path) {
+                picture.set_paintable(Some(&texture));
+            } else {
+                schedule_async_image_load(
+                    picture.clone(),
+                    message.media_local_path.clone(),
+                    display_w,
+                    display_h,
+                );
+            }
+
+            bubble.append(&picture);
+        }
+    }
+
+    // Show text/caption if present
+    if !message.text.is_empty() {
+        let message_label = gtk::Label::new(Some(message.text.as_str()));
+        message_label.set_xalign(0.0);
+        message_label.set_wrap(true);
+        message_label.set_wrap_mode(pango::WrapMode::WordChar);
+        message_label.set_max_width_chars(62);
+        message_label.set_selectable(true);
+        message_label.add_css_class("message-text");
+        bubble.append(&message_label);
+    } else if !has_image {
+        // Fallback: show empty text label so bubble isn't empty
+        let message_label = gtk::Label::new(Some(""));
+        message_label.add_css_class("message-text");
+        bubble.append(&message_label);
+    }
 
     let meta = gtk::Label::builder()
         .label(format_message_meta(message))
@@ -1559,7 +2051,7 @@ fn build_message_row(message: &proto::Message) -> gtk::Box {
         row.append(&spacer);
     }
 
-    row
+    (row, meta)
 }
 
 fn render_qr_texture(code: &str) -> Result<gdk::MemoryTexture, String> {
@@ -1698,17 +2190,6 @@ fn format_message_meta(message: &proto::Message) -> String {
     }
 }
 
-fn window_subtitle(state: DaemonState) -> &'static str {
-    match state {
-        DaemonState::Starting | DaemonState::Unspecified => "Starting",
-        DaemonState::NeedLogin => "Waiting for sign in",
-        DaemonState::Connecting => "Connecting",
-        DaemonState::Online => "Ready",
-        DaemonState::Reconnecting => "Reconnecting",
-        DaemonState::Offline => "Offline",
-    }
-}
-
 fn state_name(state: DaemonState) -> &'static str {
     match state {
         DaemonState::Unspecified => "UNSPECIFIED",
@@ -1729,10 +2210,13 @@ fn scroll_messages_to_bottom(widgets: &Widgets) {
     });
 }
 
-fn clear_box(container: &gtk::Box) {
-    while let Some(child) = container.first_child() {
-        container.remove(&child);
+fn is_scroller_near_bottom(widgets: &Widgets) -> bool {
+    let adjustment = widgets.message_scroller.vadjustment();
+    let max = adjustment.upper() - adjustment.page_size();
+    if max <= 0.0 {
+        return true;
     }
+    adjustment.value() >= max - 40.0
 }
 
 fn clear_list_box(list_box: &gtk::ListBox) {
@@ -1781,6 +2265,16 @@ fn install_css() {
             font-weight: 700;
             padding: 2px 8px;
             min-width: 26px;
+        }
+
+        picture.image-placeholder {
+            background-color: alpha(@window_fg_color, 0.06);
+            border-radius: 8px;
+        }
+
+        .conversation-header-name {
+            color: alpha(@window_fg_color, 0.82);
+            font-weight: 700;
         }
     "#,
     );
