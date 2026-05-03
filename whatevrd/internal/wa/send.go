@@ -4,6 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -74,6 +77,109 @@ func (c *Client) SendText(ctx context.Context, chatID, text string) (appstore.Sa
 	}
 
 	c.log.Infof("Sent text message %s to %s", saved.Message.ID, chatID)
+	c.daemon.PublishNewMessage(toDaemonMessage(saved.Message), toDaemonChat(saved.Chat))
+	return saved, nil
+}
+
+func (c *Client) SetChatPresence(ctx context.Context, chatID string, composing bool) error {
+	client := c.currentClient()
+	if client == nil || !client.IsLoggedIn() {
+		return nil
+	}
+
+	jid, err := types.ParseJID(chatID)
+	if err != nil {
+		return grpcstatus.Errorf(codes.InvalidArgument, "invalid chat_id: %v", err)
+	}
+
+	state := types.ChatPresencePaused
+	if composing {
+		state = types.ChatPresenceComposing
+	}
+
+	return client.SendChatPresence(ctx, jid, state, types.ChatPresenceMediaText)
+}
+
+func (c *Client) SendMedia(ctx context.Context, chatID, filePath, caption string) (appstore.SavedTextMessage, error) {
+	client := c.currentClient()
+	if client == nil {
+		return appstore.SavedTextMessage{}, grpcstatus.Error(codes.Unavailable, "WhatsApp client is not initialized")
+	}
+	if !client.IsLoggedIn() {
+		return appstore.SavedTextMessage{}, grpcstatus.Error(codes.FailedPrecondition, "whatevrd is not online")
+	}
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return appstore.SavedTextMessage{}, grpcstatus.Errorf(codes.InvalidArgument, "cannot read file: %v", err)
+	}
+
+	mimeType := http.DetectContentType(data)
+
+	targetJID, err := types.ParseJID(chatID)
+	if err != nil {
+		return appstore.SavedTextMessage{}, grpcstatus.Errorf(codes.InvalidArgument, "invalid chat_id: %v", err)
+	}
+	targetJID = c.normalizeJIDForChat(ctx, targetJID)
+	chatID = targetJID.String()
+
+	resp, err := client.Upload(ctx, data, whatsmeow.MediaImage)
+	if err != nil {
+		return appstore.SavedTextMessage{}, grpcstatus.Errorf(codes.Unavailable, "upload failed: %v", err)
+	}
+
+	messageID := client.GenerateMessageID()
+	imgMsg := &waE2E.ImageMessage{
+		Caption:       proto.String(caption),
+		Mimetype:      proto.String(mimeType),
+		URL:           &resp.URL,
+		DirectPath:    &resp.DirectPath,
+		MediaKey:      resp.MediaKey,
+		FileEncSHA256: resp.FileEncSHA256,
+		FileSHA256:    resp.FileSHA256,
+		FileLength:    &resp.FileLength,
+	}
+
+	sendResp, err := client.SendMessage(ctx, targetJID, &waE2E.Message{ImageMessage: imgMsg}, whatsmeow.SendRequestExtra{ID: messageID})
+	if err != nil {
+		return appstore.SavedTextMessage{}, grpcstatus.Errorf(codes.Unavailable, "send failed: %v", err)
+	}
+
+	timestamp := sendResp.Timestamp
+	if timestamp.IsZero() {
+		timestamp = time.Now()
+	}
+
+	mediaDir := filepath.Join(c.paths.MediaCacheDir, "messages", chatID)
+	if err := os.MkdirAll(mediaDir, 0o700); err != nil {
+		c.log.Warnf("Failed to create media dir: %v", err)
+	}
+	localPath := filepath.Join(mediaDir, fmt.Sprintf("%s.jpg", messageID))
+	if err := os.WriteFile(localPath, data, 0o600); err != nil {
+		c.log.Warnf("Failed to cache sent media: %v", err)
+		localPath = ""
+	}
+
+	saved, err := c.store.SaveMediaMessage(ctx, appstore.MediaMessageInput{
+		TextMessageInput: appstore.TextMessageInput{
+			ID:          internalMessageIDForChat(chatID, messageID),
+			ChatID:      chatID,
+			SenderID:    ownSenderID(sendResp.Sender),
+			Text:        caption,
+			Timestamp:   timestamp,
+			Direction:   appstore.DirectionOutgoing,
+			Status:      appstore.StatusSent,
+			IsGroup:     targetJID.Server == types.GroupServer || targetJID.Server == types.BroadcastServer,
+			CountUnread: false,
+		},
+		MediaMimeType:  mimeType,
+		MediaLocalPath: localPath,
+	})
+	if err != nil {
+		return appstore.SavedTextMessage{}, err
+	}
+
+	c.log.Infof("Sent media message %s to %s", saved.Message.ID, chatID)
 	c.daemon.PublishNewMessage(toDaemonMessage(saved.Message), toDaemonChat(saved.Chat))
 	return saved, nil
 }

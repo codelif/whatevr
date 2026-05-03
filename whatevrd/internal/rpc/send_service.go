@@ -13,6 +13,7 @@ import (
 
 type SendController interface {
 	SendText(context.Context, string, string) (appstore.SavedTextMessage, error)
+	SendMedia(context.Context, string, string, string) (appstore.SavedTextMessage, error)
 }
 
 type SendService struct {
@@ -41,4 +42,23 @@ func (s *SendService) SendText(ctx context.Context, req *pb.SendTextRequest) (*p
 	}
 
 	return &pb.SendTextResponse{Message: toProtoMessage(toAppMessage(saved.Message))}, nil
+}
+
+func (s *SendService) SendMedia(ctx context.Context, req *pb.SendMediaRequest) (*pb.SendMediaResponse, error) {
+	if s.sender == nil {
+		return nil, status.Error(codes.Unimplemented, "send controller is not available")
+	}
+	if strings.TrimSpace(req.GetChatId()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "chat_id is required")
+	}
+	if strings.TrimSpace(req.GetFilePath()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "file_path is required")
+	}
+
+	saved, err := s.sender.SendMedia(ctx, req.GetChatId(), req.GetFilePath(), req.GetCaption())
+	if err != nil {
+		return nil, err
+	}
+
+	return &pb.SendMediaResponse{Message: toProtoMessage(toAppMessage(saved.Message))}, nil
 }

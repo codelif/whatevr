@@ -61,6 +61,8 @@ type DaemonEvent struct {
 	Message        Message
 	Chat           Chat
 	PreviousChatID string
+	SenderID       string
+	IsComposing    bool
 }
 
 type DaemonEventKind int
@@ -70,6 +72,7 @@ const (
 	DaemonEventNewMessage
 	DaemonEventMessageUpdated
 	DaemonEventChatUpdated
+	DaemonEventChatPresence
 )
 
 type Chat struct {
@@ -79,16 +82,21 @@ type Chat struct {
 	LastMessageTime int64
 	UnreadCount     int32
 	IsGroup         bool
+	AvatarLocalPath string
 }
 
 type Message struct {
-	ID            string
-	ChatID        string
-	SenderID      string
-	Text          string
-	TimestampUnix int64
-	Direction     string
-	Status        string
+	ID             string
+	ChatID         string
+	SenderID       string
+	Text           string
+	TimestampUnix  int64
+	Direction      string
+	Status         string
+	MediaMimeType  string
+	MediaLocalPath string
+	MediaWidth     int32
+	MediaHeight    int32
 }
 
 type LoginEventKind int
@@ -197,6 +205,15 @@ func (d *Daemon) PublishChatUpdated(chat Chat) {
 
 func (d *Daemon) PublishChatMigrated(previousChatID string, chat Chat) {
 	d.broadcastDaemonEvent(DaemonEvent{Kind: DaemonEventChatUpdated, Chat: chat, PreviousChatID: previousChatID})
+}
+
+func (d *Daemon) PublishChatPresence(chatID, senderID string, isComposing bool) {
+	d.broadcastDaemonEvent(DaemonEvent{
+		Kind:        DaemonEventChatPresence,
+		Chat:        Chat{ID: chatID},
+		SenderID:    senderID,
+		IsComposing: isComposing,
+	})
 }
 
 func (d *Daemon) broadcastLoginEvent(event LoginEvent) {

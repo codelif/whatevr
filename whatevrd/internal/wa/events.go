@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 
 	"whatevrd/internal/app"
@@ -15,6 +16,7 @@ func (c *Client) handleEvent(raw any) {
 		c.daemon.SetStateDetail(app.StateOnline, "connected to WhatsApp")
 		c.syncPresence(context.Background(), true)
 		go c.migrateLIDChats(context.Background())
+		go c.refreshAvatarsBackground(context.Background())
 	case *events.AppStateSyncComplete:
 		c.syncPresence(context.Background(), true)
 	case *events.Disconnected:
@@ -40,5 +42,9 @@ func (c *Client) handleEvent(raw any) {
 		c.handleReceipt(evt)
 	case *events.HistorySync:
 		c.handleHistorySync(evt)
+	case *events.ChatPresence:
+		chatJID := c.normalizeJIDForChat(context.Background(), evt.Chat)
+		isComposing := evt.State == types.ChatPresenceComposing
+		c.daemon.PublishChatPresence(chatJID.String(), evt.Sender.String(), isComposing)
 	}
 }

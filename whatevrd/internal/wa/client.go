@@ -22,6 +22,7 @@ type Client struct {
 	daemon    *app.Daemon
 	store     *appstore.DB
 	container *sqlstore.Container
+	paths     app.Paths
 	log       waLog.Logger
 
 	mu     sync.Mutex
@@ -43,6 +44,7 @@ func New(ctx context.Context, paths app.Paths, daemon *app.Daemon, store *appsto
 		daemon:    daemon,
 		store:     store,
 		container: container,
+		paths:     paths,
 		log:       log,
 	}
 

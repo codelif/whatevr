@@ -2,6 +2,9 @@ package wa
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	waE2E "go.mau.fi/whatsmeow/proto/waE2E"
@@ -39,22 +42,100 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 }
 
 func (c *Client) handleMessage(ctx context.Context, evt *events.Message) {
-	input, ok := c.textMessageInput(ctx, evt)
-	if !ok {
+	if textInput, ok := c.textMessageInput(ctx, evt); ok {
+		saved, err := c.store.SaveTextMessage(ctx, textInput)
+		if err != nil {
+			c.log.Errorf("Failed to store text message %s: %v", textInput.ID, err)
+			return
+		}
+		if !saved.Inserted {
+			return
+		}
+		c.log.Infof("Stored text message %s from %s", saved.Message.ID, saved.Message.SenderID)
+		c.daemon.PublishNewMessage(toDaemonMessage(saved.Message), toDaemonChat(saved.Chat))
 		return
 	}
 
-	saved, err := c.store.SaveTextMessage(ctx, input)
+	if mediaInput, ok := c.imageMessageInput(ctx, evt); ok {
+		saved, err := c.store.SaveMediaMessage(ctx, mediaInput)
+		if err != nil {
+			c.log.Errorf("Failed to store media message %s: %v", mediaInput.ID, err)
+			return
+		}
+		if !saved.Inserted {
+			return
+		}
+		c.log.Infof("Stored media message %s from %s", saved.Message.ID, saved.Message.SenderID)
+		c.daemon.PublishNewMessage(toDaemonMessage(saved.Message), toDaemonChat(saved.Chat))
+	}
+}
+
+func (c *Client) imageMessageInput(ctx context.Context, evt *events.Message) (appstore.MediaMessageInput, bool) {
+	if evt == nil || evt.Message == nil {
+		return appstore.MediaMessageInput{}, false
+	}
+
+	imgMsg := evt.Message.GetImageMessage()
+	if imgMsg == nil {
+		return appstore.MediaMessageInput{}, false
+	}
+
+	info := evt.Info
+	chatJID := c.normalizeJIDForChat(ctx, info.Chat)
+	chatID := chatJID.String()
+	if chatID == "" || info.ID == "" {
+		return appstore.MediaMessageInput{}, false
+	}
+
+	direction := appstore.DirectionIncoming
+	status := appstore.StatusDelivered
+	if info.IsFromMe {
+		direction = appstore.DirectionOutgoing
+		status = appstore.StatusSent
+	}
+
+	client := c.currentClient()
+	if client == nil {
+		return appstore.MediaMessageInput{}, false
+	}
+
+	data, err := client.Download(ctx, imgMsg)
 	if err != nil {
-		c.log.Errorf("Failed to store message %s: %v", input.ID, err)
-		return
-	}
-	if !saved.Inserted {
-		return
+		c.log.Warnf("Failed to download image for message %s: %v", info.ID, err)
+		return appstore.MediaMessageInput{}, false
 	}
 
-	c.log.Infof("Stored text message %s from %s", saved.Message.ID, saved.Message.SenderID)
-	c.daemon.PublishNewMessage(toDaemonMessage(saved.Message), toDaemonChat(saved.Chat))
+	mediaDir := filepath.Join(c.paths.MediaCacheDir, "messages", chatID)
+	if err := os.MkdirAll(mediaDir, 0o700); err != nil {
+		c.log.Warnf("Failed to create media dir for %s: %v", chatID, err)
+		return appstore.MediaMessageInput{}, false
+	}
+
+	localPath := filepath.Join(mediaDir, fmt.Sprintf("%s.jpg", info.ID))
+	if err := os.WriteFile(localPath, data, 0o600); err != nil {
+		c.log.Warnf("Failed to write image for message %s: %v", info.ID, err)
+		return appstore.MediaMessageInput{}, false
+	}
+
+	caption := imgMsg.GetCaption()
+	return appstore.MediaMessageInput{
+		TextMessageInput: appstore.TextMessageInput{
+			ID:          internalMessageIDForChat(chatID, info.ID),
+			ChatID:      chatID,
+			ChatName:    chatName(info),
+			SenderID:    senderID(info),
+			Text:        caption,
+			Timestamp:   info.Timestamp,
+			Direction:   direction,
+			Status:      status,
+			IsGroup:     info.IsGroup,
+			CountUnread: !info.IsFromMe && evt.SourceWebMsg == nil,
+		},
+		MediaMimeType:  "image/jpeg",
+		MediaLocalPath: localPath,
+		MediaWidth:     int32(imgMsg.GetWidth()),
+		MediaHeight:    int32(imgMsg.GetHeight()),
+	}, true
 }
 
 func (c *Client) normalizeJIDForChat(ctx context.Context, jid types.JID) types.JID {
@@ -151,13 +232,17 @@ func chatName(info types.MessageInfo) string {
 
 func toDaemonMessage(message appstore.Message) app.Message {
 	return app.Message{
-		ID:            message.ID,
-		ChatID:        message.ChatID,
-		SenderID:      message.SenderID,
-		Text:          message.Text,
-		TimestampUnix: message.TimestampUnix,
-		Direction:     message.Direction,
-		Status:        message.Status,
+		ID:             message.ID,
+		ChatID:         message.ChatID,
+		SenderID:       message.SenderID,
+		Text:           message.Text,
+		TimestampUnix:  message.TimestampUnix,
+		Direction:      message.Direction,
+		Status:         message.Status,
+		MediaMimeType:  message.MediaMimeType,
+		MediaLocalPath: message.MediaLocalPath,
+		MediaWidth:     message.MediaWidth,
+		MediaHeight:    message.MediaHeight,
 	}
 }
 
@@ -169,5 +254,6 @@ func toDaemonChat(chat appstore.Chat) app.Chat {
 		LastMessageTime: chat.LastMessageTime,
 		UnreadCount:     chat.UnreadCount,
 		IsGroup:         chat.IsGroup,
+		AvatarLocalPath: chat.AvatarLocalPath,
 	}
 }
