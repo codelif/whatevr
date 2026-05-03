@@ -1,8 +1,8 @@
 package wa
 
 import (
-	"context"
 	"fmt"
+	"time"
 
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
@@ -14,11 +14,12 @@ func (c *Client) handleEvent(raw any) {
 	switch evt := raw.(type) {
 	case *events.Connected:
 		c.daemon.SetStateDetail(app.StateOnline, "connected to WhatsApp")
-		c.syncPresence(context.Background(), true)
-		go c.migrateLIDChats(context.Background())
-		go c.refreshAvatarsBackground(context.Background())
+		ctx := c.backgroundContext()
+		c.syncPresence(ctx, true)
+		go c.migrateLIDChats(ctx)
+		c.scheduleAvatarRefresh(ctx, 5*time.Second)
 	case *events.AppStateSyncComplete:
-		c.syncPresence(context.Background(), true)
+		c.syncPresence(c.backgroundContext(), true)
 	case *events.Disconnected:
 		c.daemon.SetStateDetail(app.StateReconnecting, "WhatsApp connection dropped; reconnecting")
 	case *events.PairSuccess:
@@ -37,13 +38,13 @@ func (c *Client) handleEvent(raw any) {
 	case *events.TemporaryBan:
 		c.daemon.SetStateDetail(app.StateOffline, evt.String())
 	case *events.Message:
-		c.handleMessage(context.Background(), evt)
+		c.handleMessage(c.backgroundContext(), evt)
 	case *events.Receipt:
 		c.handleReceipt(evt)
 	case *events.HistorySync:
 		c.handleHistorySync(evt)
 	case *events.ChatPresence:
-		chatJID := c.normalizeJIDForChat(context.Background(), evt.Chat)
+		chatJID := c.normalizeJIDForChat(c.backgroundContext(), evt.Chat)
 		isComposing := evt.State == types.ChatPresenceComposing
 		c.daemon.PublishChatPresence(chatJID.String(), evt.Sender.String(), isComposing)
 	}

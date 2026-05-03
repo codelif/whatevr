@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"strings"
 )
 
 type Chat struct {
@@ -57,6 +58,56 @@ func (db *DB) MarkChatRead(ctx context.Context, chatID string) (Chat, error) {
 
 func (db *DB) GetChat(ctx context.Context, chatID string) (Chat, error) {
 	return getChatRow(ctx, db.conn, chatID)
+}
+
+func (db *DB) ClearSessionData(ctx context.Context) error {
+	tx, err := db.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	for _, statement := range []string{
+		`DELETE FROM messages`,
+		`DELETE FROM chats`,
+		`DELETE FROM app_state`,
+	} {
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
+func (db *DB) UpdateChatName(ctx context.Context, chatID, name string) (Chat, bool, error) {
+	name = strings.TrimSpace(name)
+	if chatID == "" || name == "" {
+		return Chat{}, false, nil
+	}
+
+	result, err := db.conn.ExecContext(ctx, `
+		UPDATE chats
+		SET name = ?
+		WHERE id = ? AND name != ?
+	`, name, chatID, name)
+	if err != nil {
+		return Chat{}, false, err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return Chat{}, false, err
+	}
+	if rowsAffected == 0 {
+		return Chat{}, false, nil
+	}
+
+	chat, err := db.GetChat(ctx, chatID)
+	if err != nil {
+		return Chat{}, false, err
+	}
+	return chat, true, nil
 }
 
 func (db *DB) ListLIDChats(ctx context.Context) ([]string, error) {

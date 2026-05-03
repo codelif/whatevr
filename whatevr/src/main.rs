@@ -30,8 +30,9 @@ use proto::login_event;
 use proto::login_service_client::LoginServiceClient;
 use proto::send_service_client::SendServiceClient;
 use proto::{
-    DaemonState, GetMessagesRequest, GetStatusRequest, ListChatsRequest, MarkChatReadRequest,
-    SendMediaRequest, SetChatPresenceRequest, SubscribeEventsRequest, SubscribeLoginEventsRequest,
+    DaemonState, GetMessagesRequest, GetStatusRequest, ListChatsRequest, LogoutRequest,
+    MarkChatReadRequest, SendMediaRequest, SetChatPresenceRequest, SubscribeEventsRequest,
+    SubscribeLoginEventsRequest,
 };
 
 const APP_ID: &str = "in.codelif.Whatevr";
@@ -94,6 +95,8 @@ enum UiMessage {
         chat: proto::Chat,
         previous_chat_id: Option<String>,
     },
+    LogoutSucceeded,
+    LogoutFailed(String),
     Notice(String),
 }
 
@@ -168,6 +171,7 @@ struct Widgets {
     composer_send_button: gtk::Button,
     composer_attach_button: gtk::Button,
     back_button: gtk::Button,
+    logout_button: gtk::Button,
     syncing_chat_selection: Cell<bool>,
     rendered_chat_id: RefCell<Option<String>>,
     rendered_messages: RefCell<Vec<RenderedMessage>>,
@@ -186,6 +190,10 @@ fn build_ui(app: &adw::Application) {
     let refresh_button = gtk::Button::builder()
         .icon_name("view-refresh-symbolic")
         .tooltip_text("Refresh chats and connection state")
+        .build();
+    let logout_button = gtk::Button::builder()
+        .icon_name("system-log-out-symbolic")
+        .tooltip_text("Log out and delete local session data")
         .build();
     let back_button = gtk::Button::builder()
         .icon_name("go-previous-symbolic")
@@ -269,6 +277,7 @@ fn build_ui(app: &adw::Application) {
 
     let sidebar_header = adw::HeaderBar::new();
     sidebar_header.set_title_widget(Some(&gtk::Box::new(gtk::Orientation::Horizontal, 0)));
+    sidebar_header.pack_end(&logout_button);
     sidebar_header.pack_end(&refresh_button);
 
     let sidebar_toolbar = adw::ToolbarView::new();
@@ -487,6 +496,7 @@ fn build_ui(app: &adw::Application) {
         composer_send_button,
         composer_attach_button,
         back_button,
+        logout_button,
         syncing_chat_selection: Cell::new(false),
         rendered_chat_id: RefCell::new(None),
         rendered_messages: RefCell::new(Vec::new()),
@@ -551,6 +561,12 @@ fn connect_signals(
         if let Some(chat_id) = refresh_state.borrow().selected_chat_id.clone() {
             request_messages(refresh_sender.clone(), chat_id);
         }
+    });
+
+    let logout_widgets = widgets.clone();
+    let logout_sender = sender.clone();
+    widgets.logout_button.connect_clicked(move |_| {
+        show_logout_confirmation(&logout_widgets, &logout_sender);
     });
 
     let back_widgets = widgets.clone();
@@ -976,6 +992,23 @@ fn handle_ui_message(
                 render_conversation_header(widgets, &state_borrow);
             }
         }
+        UiMessage::LogoutSucceeded => {
+            {
+                let mut state = state.borrow_mut();
+                clear_local_ui_state(&mut state);
+            }
+            clear_composer(&widgets.composer_text_view);
+            let state = state.borrow();
+            widgets.root_stack.set_visible_child_name(ROOT_LOGIN_PAGE);
+            render_chat_list(widgets, &state);
+            render_conversation(widgets, &state);
+            update_navigation_state(widgets, &state);
+            show_banner_notice(widgets, "Logged out and deleted local session data");
+            request_status(sender.clone());
+        }
+        UiMessage::LogoutFailed(error) => {
+            show_banner_notice(widgets, &format!("Logout failed: {error}"));
+        }
         UiMessage::Notice(text) => {
             show_banner_notice(widgets, &text);
         }
@@ -997,6 +1030,7 @@ fn apply_daemon_state(
         state.daemon_detail = detail.clone();
         if matches!(daemon_state, DaemonState::NeedLogin) {
             state.initial_chat_request_started = false;
+            clear_local_ui_state(&mut state);
         }
 
         match daemon_state {
@@ -1069,6 +1103,41 @@ fn update_banner(widgets: &Widgets, daemon_state: DaemonState, detail: &str) {
 fn show_banner_notice(widgets: &Widgets, text: &str) {
     widgets.banner.set_title(text);
     widgets.banner.set_revealed(true);
+}
+
+fn clear_local_ui_state(state: &mut UiState) {
+    state.chats.clear();
+    state.chats_loaded = true;
+    state.selected_chat_id = None;
+    state.current_messages_chat_id = None;
+    state.current_messages.clear();
+    state.composer_error.clear();
+    state.send_in_flight = false;
+    state.composing_peers.clear();
+    state.last_sent_composing = false;
+}
+
+fn show_logout_confirmation(widgets: &Rc<Widgets>, sender: &mpsc::Sender<UiMessage>) {
+    let Some(window) = widgets.root_stack.root().and_downcast::<gtk::Window>() else {
+        request_logout(sender.clone());
+        return;
+    };
+
+    let dialog = gtk::AlertDialog::builder()
+        .message("Log out?")
+        .detail("This will delete the WhatsApp session, local chats, messages, and cached media from this device.")
+        .modal(true)
+        .buttons(["Cancel", "Log out"])
+        .cancel_button(0)
+        .default_button(0)
+        .build();
+
+    let sender = sender.clone();
+    dialog.choose(Some(&window), None::<&gio::Cancellable>, move |response| {
+        if response == Ok(1) {
+            request_logout(sender.clone());
+        }
+    });
 }
 
 fn update_navigation_state(widgets: &Widgets, state: &UiState) {
@@ -1627,6 +1696,19 @@ fn request_set_chat_presence(sender: mpsc::Sender<UiMessage>, chat_id: String, c
     });
 }
 
+fn request_logout(sender: mpsc::Sender<UiMessage>) {
+    spawn_async(async move {
+        match logout().await {
+            Ok(()) => {
+                let _ = sender.send(UiMessage::LogoutSucceeded);
+            }
+            Err(error) => {
+                let _ = sender.send(UiMessage::LogoutFailed(error.to_string()));
+            }
+        }
+    });
+}
+
 fn spawn_async<Fut>(future: Fut)
 where
     Fut: std::future::Future<Output = ()> + Send + 'static,
@@ -1839,6 +1921,13 @@ async fn set_chat_presence(
     client
         .set_chat_presence(SetChatPresenceRequest { chat_id, composing })
         .await?;
+    Ok(())
+}
+
+async fn logout() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let channel = connect_channel().await?;
+    let mut client = LoginServiceClient::new(channel);
+    client.logout(LogoutRequest {}).await?;
     Ok(())
 }
 

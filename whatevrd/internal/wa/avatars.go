@@ -8,10 +8,52 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/types"
 )
+
+func (c *Client) scheduleAvatarRefresh(ctx context.Context, delay time.Duration) {
+	go func() {
+		if delay > 0 {
+			timer := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+		}
+
+		c.runAvatarRefresh(ctx)
+	}()
+}
+
+func (c *Client) runAvatarRefresh(ctx context.Context) {
+	c.avatarMu.Lock()
+	if c.avatarRefreshRunning {
+		c.avatarRefreshQueued = true
+		c.avatarMu.Unlock()
+		return
+	}
+	c.avatarRefreshRunning = true
+	c.avatarMu.Unlock()
+
+	for {
+		c.refreshAvatarsBackground(ctx)
+
+		c.avatarMu.Lock()
+		if !c.avatarRefreshQueued || ctx.Err() != nil {
+			c.avatarRefreshRunning = false
+			c.avatarRefreshQueued = false
+			c.avatarMu.Unlock()
+			return
+		}
+		c.avatarRefreshQueued = false
+		c.avatarMu.Unlock()
+	}
+}
 
 func (c *Client) refreshAvatarsBackground(ctx context.Context) {
 	client := c.currentClient()
@@ -34,9 +76,18 @@ func (c *Client) refreshAvatarsBackground(ctx context.Context) {
 		if err != nil {
 			continue
 		}
+		if shouldSkipAvatarJID(jid) {
+			continue
+		}
 
 		picID, localPath, err := c.fetchAndCacheAvatar(ctx, jid, chat.AvatarPictureID)
 		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			if isTransientAvatarError(err) {
+				continue
+			}
 			c.log.Warnf("Avatar refresh: failed for %s: %v", chat.ID, err)
 			continue
 		}
@@ -57,9 +108,19 @@ func (c *Client) refreshAvatarsBackground(ctx context.Context) {
 	}
 }
 
+func shouldSkipAvatarJID(jid types.JID) bool {
+	return jid.IsEmpty() || jid.Server == types.BroadcastServer || jid.Server == types.NewsletterServer
+}
+
+func isTransientAvatarError(err error) bool {
+	message := err.Error()
+	return strings.Contains(message, "websocket not connected") ||
+		strings.Contains(message, "websocket disconnected before info query returned response")
+}
+
 func (c *Client) fetchAndCacheAvatar(ctx context.Context, jid types.JID, existingPicID string) (picID, localPath string, err error) {
 	client := c.currentClient()
-	if client == nil {
+	if client == nil || !client.IsLoggedIn() || ctx.Err() != nil {
 		return "", "", nil
 	}
 

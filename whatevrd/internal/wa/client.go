@@ -28,9 +28,17 @@ type Client struct {
 	mu     sync.Mutex
 	client *whatsmeow.Client
 
+	runMu     sync.Mutex
+	runCtx    context.Context
+	runCancel context.CancelFunc
+
 	presenceMu       sync.Mutex
 	frontendSessions int
 	lastPresence     types.Presence
+
+	avatarMu             sync.Mutex
+	avatarRefreshRunning bool
+	avatarRefreshQueued  bool
 }
 
 func New(ctx context.Context, paths app.Paths, daemon *app.Daemon, store *appstore.DB) (*Client, error) {
@@ -57,17 +65,58 @@ func New(ctx context.Context, paths app.Paths, daemon *app.Daemon, store *appsto
 }
 
 func (c *Client) Start(ctx context.Context) {
-	go c.start(ctx)
+	runCtx := c.replaceRunContext(ctx)
+	go c.start(runCtx)
 }
 
 func (c *Client) Close() error {
+	c.cancelRunContext()
+
 	c.mu.Lock()
 	if c.client != nil {
 		c.client.Disconnect()
 	}
+	container := c.container
 	c.mu.Unlock()
 
-	return c.container.Close()
+	if container == nil {
+		return nil
+	}
+	return container.Close()
+}
+
+func (c *Client) replaceRunContext(parent context.Context) context.Context {
+	c.runMu.Lock()
+	defer c.runMu.Unlock()
+
+	if c.runCancel != nil {
+		c.runCancel()
+	}
+
+	if parent == nil {
+		parent = context.Background()
+	}
+	c.runCtx, c.runCancel = context.WithCancel(parent)
+	return c.runCtx
+}
+
+func (c *Client) cancelRunContext() {
+	c.runMu.Lock()
+	if c.runCancel != nil {
+		c.runCancel()
+		c.runCancel = nil
+	}
+	c.runCtx = nil
+	c.runMu.Unlock()
+}
+
+func (c *Client) backgroundContext() context.Context {
+	c.runMu.Lock()
+	defer c.runMu.Unlock()
+	if c.runCtx != nil {
+		return c.runCtx
+	}
+	return context.Background()
 }
 
 func (c *Client) resetClient(ctx context.Context) error {
@@ -131,6 +180,10 @@ func (c *Client) syncPresence(ctx context.Context, force bool) {
 	desired := types.PresenceUnavailable
 	if c.frontendSessions > 0 {
 		desired = types.PresenceAvailable
+	}
+	if desired == types.PresenceAvailable && client.Store.PushName == "" {
+		c.presenceMu.Unlock()
+		return
 	}
 	if !force && c.lastPresence == desired {
 		c.presenceMu.Unlock()

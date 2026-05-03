@@ -123,6 +123,93 @@ func TestSaveTextMessageDoesNotRegressChatSummary(t *testing.T) {
 	}
 }
 
+func TestSaveTextMessageUpdatesChatNameAfterNumericFallback(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	chatID := "917060029183@s.whatsapp.net"
+	first, err := db.SaveTextMessage(ctx, TextMessageInput{
+		ID:          chatID + ":msg-1",
+		ChatID:      chatID,
+		SenderID:    chatID,
+		Text:        "hello",
+		Timestamp:   time.Unix(100, 0),
+		Direction:   DirectionIncoming,
+		Status:      StatusDelivered,
+		CountUnread: false,
+	})
+	if err != nil {
+		t.Fatalf("save fallback message: %v", err)
+	}
+	if first.Chat.Name != chatID {
+		t.Fatalf("expected fallback chat name %q, got %+v", chatID, first.Chat)
+	}
+
+	second, err := db.SaveTextMessage(ctx, TextMessageInput{
+		ID:          chatID + ":msg-2",
+		ChatID:      chatID,
+		ChatName:    "Alice",
+		SenderID:    chatID,
+		Text:        "history",
+		Timestamp:   time.Unix(90, 0),
+		Direction:   DirectionIncoming,
+		Status:      StatusDelivered,
+		CountUnread: false,
+	})
+	if err != nil {
+		t.Fatalf("save named message: %v", err)
+	}
+	if second.Chat.Name != "Alice" {
+		t.Fatalf("expected chat name to update, got %+v", second.Chat)
+	}
+	if second.Chat.LastMessage != "hello" || second.Chat.LastMessageTime != 100 {
+		t.Fatalf("older named message regressed chat summary: %+v", second.Chat)
+	}
+}
+
+func TestUpdateChatNameUpdatesExistingChat(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	chatID := "917060029183@s.whatsapp.net"
+	if _, err := db.SaveTextMessage(ctx, TextMessageInput{
+		ID:          chatID + ":msg-1",
+		ChatID:      chatID,
+		SenderID:    chatID,
+		Text:        "hello",
+		Timestamp:   time.Unix(100, 0),
+		Direction:   DirectionIncoming,
+		Status:      StatusDelivered,
+		CountUnread: false,
+	}); err != nil {
+		t.Fatalf("save message: %v", err)
+	}
+
+	chat, changed, err := db.UpdateChatName(ctx, chatID, "Alice")
+	if err != nil {
+		t.Fatalf("update chat name: %v", err)
+	}
+	if !changed || chat.Name != "Alice" {
+		t.Fatalf("expected changed chat name, got changed=%v chat=%+v", changed, chat)
+	}
+
+	_, changed, err = db.UpdateChatName(ctx, chatID, "Alice")
+	if err != nil {
+		t.Fatalf("update same chat name: %v", err)
+	}
+	if changed {
+		t.Fatal("expected same chat name update to be ignored")
+	}
+}
+
 func TestListChatsSortsByMostRecentMessage(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
@@ -251,6 +338,55 @@ func TestMarkChatReadClearsUnreadCount(t *testing.T) {
 	}
 	if chat.UnreadCount != 0 {
 		t.Fatalf("expected unread_count 0, got %+v", chat)
+	}
+}
+
+func TestClearSessionDataDeletesChatsMessagesAndAppState(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	if _, err := db.SaveTextMessage(ctx, TextMessageInput{
+		ID:          "chat-1:1",
+		ChatID:      "chat-1",
+		ChatName:    "Test Chat",
+		SenderID:    "sender-1",
+		Text:        "hello",
+		Timestamp:   time.Unix(100, 0),
+		Direction:   DirectionIncoming,
+		Status:      StatusDelivered,
+		CountUnread: true,
+	}); err != nil {
+		t.Fatalf("save message: %v", err)
+	}
+	if _, err := db.conn.ExecContext(ctx, `INSERT INTO app_state (key, value) VALUES ('k', 'v')`); err != nil {
+		t.Fatalf("insert app state: %v", err)
+	}
+
+	if err := db.ClearSessionData(ctx); err != nil {
+		t.Fatalf("clear session data: %v", err)
+	}
+
+	chats, err := db.ListChats(ctx, 10, 0)
+	if err != nil {
+		t.Fatalf("list chats: %v", err)
+	}
+	if len(chats) != 0 {
+		t.Fatalf("expected no chats after clear, got %+v", chats)
+	}
+	if _, err := db.GetMessage(ctx, "chat-1:1"); err != sql.ErrNoRows {
+		t.Fatalf("expected message to be deleted, got %v", err)
+	}
+
+	var stateCount int
+	if err := db.conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM app_state`).Scan(&stateCount); err != nil {
+		t.Fatalf("count app state: %v", err)
+	}
+	if stateCount != 0 {
+		t.Fatalf("expected app_state to be empty, got %d rows", stateCount)
 	}
 }
 

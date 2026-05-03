@@ -3,6 +3,7 @@ package wa
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"go.mau.fi/whatsmeow"
@@ -85,6 +86,7 @@ func (c *Client) startQRLogin(ctx context.Context, client *whatsmeow.Client) {
 
 func (c *Client) resetAfterExternalLogout() {
 	ctx := context.Background()
+	c.cancelRunContext()
 
 	c.mu.Lock()
 	old := c.client
@@ -103,28 +105,74 @@ func (c *Client) resetAfterExternalLogout() {
 		c.log.Errorf("Failed to reset client after remote logout: %v", err)
 		return
 	}
-	c.Start(ctx)
+	c.Start(context.Background())
 }
 
 func (c *Client) Logout(ctx context.Context) error {
+	c.daemon.SetStateDetail(app.StateConnecting, "logging out and clearing local session data")
+
 	client := c.currentClient()
-	if client == nil {
-		return nil
+	if client != nil {
+		if client.Store.ID != nil {
+			logoutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			if err := client.Logout(logoutCtx); err != nil && err != store.ErrDeviceDeleted {
+				c.log.Warnf("Remote WhatsApp logout failed; clearing local session anyway: %v", err)
+			}
+			cancel()
+		} else {
+			client.Disconnect()
+		}
+	}
+	c.cancelRunContext()
+
+	localCtx := context.Background()
+
+	if err := c.store.ClearSessionData(localCtx); err != nil {
+		return err
 	}
 
-	if client.Store.ID != nil {
-		if err := client.Logout(ctx); err != nil && err != store.ErrDeviceDeleted {
+	if err := os.RemoveAll(c.paths.MediaCacheDir); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(c.paths.MediaCacheDir, 0o700); err != nil {
+		return err
+	}
+
+	c.mu.Lock()
+	if c.client != nil {
+		c.client.Disconnect()
+		c.client = nil
+	}
+	oldContainer := c.container
+	c.container = nil
+	c.mu.Unlock()
+
+	if oldContainer != nil {
+		if err := oldContainer.Close(); err != nil {
 			return err
 		}
-	} else {
-		client.Disconnect()
 	}
 
-	if err := c.resetClient(ctx); err != nil {
+	if err := os.RemoveAll(c.paths.SessionDir); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(c.paths.SessionDir, 0o700); err != nil {
+		return err
+	}
+
+	container, err := openSessionStore(localCtx, c.paths.SessionDBPath, c.log.Sub("DB"))
+	if err != nil {
+		return err
+	}
+	c.mu.Lock()
+	c.container = container
+	c.mu.Unlock()
+
+	if err := c.resetClient(localCtx); err != nil {
 		return err
 	}
 
 	c.daemon.SetStateDetail(app.StateNeedLogin, "logged out")
-	c.Start(ctx)
+	c.Start(context.Background())
 	return nil
 }

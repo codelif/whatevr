@@ -6,8 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	waE2E "go.mau.fi/whatsmeow/proto/waE2E"
+	waHistorySync "go.mau.fi/whatsmeow/proto/waHistorySync"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 
@@ -20,12 +22,16 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 	if client == nil {
 		return
 	}
+	ctx := c.backgroundContext()
+	c.updateChatNamesFromHistorySync(ctx, evt)
+	storedAny := false
 	for _, conv := range evt.Data.GetConversations() {
 		chatJID, err := types.ParseJID(conv.GetID())
 		if err != nil {
 			c.log.Warnf("Failed to parse chat JID in history sync: %v", err)
 			continue
 		}
+		chatNameOverride := historySyncChatName(conv)
 		for _, msg := range conv.GetMessages() {
 			webMsg := msg.GetMessage()
 			if webMsg == nil {
@@ -36,41 +42,61 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 				c.log.Warnf("Failed to parse history sync message: %v", err)
 				continue
 			}
-			c.handleMessage(context.Background(), parsedEvt)
+			if c.handleMessageWithChatName(ctx, parsedEvt, chatNameOverride) {
+				storedAny = true
+			}
 		}
+	}
+	if storedAny {
+		c.scheduleAvatarRefresh(ctx, 2*time.Second)
 	}
 }
 
 func (c *Client) handleMessage(ctx context.Context, evt *events.Message) {
-	if textInput, ok := c.textMessageInput(ctx, evt); ok {
-		saved, err := c.store.SaveTextMessage(ctx, textInput)
-		if err != nil {
-			c.log.Errorf("Failed to store text message %s: %v", textInput.ID, err)
-			return
-		}
-		if !saved.Inserted {
-			return
-		}
-		c.log.Infof("Stored text message %s from %s", saved.Message.ID, saved.Message.SenderID)
-		c.daemon.PublishNewMessage(toDaemonMessage(saved.Message), toDaemonChat(saved.Chat))
-		return
-	}
-
-	if mediaInput, ok := c.imageMessageInput(ctx, evt); ok {
-		saved, err := c.store.SaveMediaMessage(ctx, mediaInput)
-		if err != nil {
-			c.log.Errorf("Failed to store media message %s: %v", mediaInput.ID, err)
-			return
-		}
-		if !saved.Inserted {
-			return
-		}
-		c.log.Infof("Stored media message %s from %s", saved.Message.ID, saved.Message.SenderID)
-		c.daemon.PublishNewMessage(toDaemonMessage(saved.Message), toDaemonChat(saved.Chat))
+	if c.handleMessageWithChatName(ctx, evt, "") {
+		c.scheduleAvatarRefresh(ctx, 2*time.Second)
 	}
 }
 
-func (c *Client) imageMessageInput(ctx context.Context, evt *events.Message) (appstore.MediaMessageInput, bool) {
+func (c *Client) handleMessageWithChatName(ctx context.Context, evt *events.Message, chatNameOverride string) bool {
+	if textInput, ok := c.textMessageInput(ctx, evt, chatNameOverride); ok {
+		saved, err := c.store.SaveTextMessage(ctx, textInput)
+		if err != nil {
+			c.log.Errorf("Failed to store text message %s: %v", textInput.ID, err)
+			return false
+		}
+		if !saved.Inserted {
+			if chatNameOverride != "" {
+				c.daemon.PublishChatUpdated(toDaemonChat(saved.Chat))
+			}
+			return false
+		}
+		c.log.Infof("Stored text message %s from %s", saved.Message.ID, saved.Message.SenderID)
+		c.daemon.PublishNewMessage(toDaemonMessage(saved.Message), toDaemonChat(saved.Chat))
+		return true
+	}
+
+	if mediaInput, ok := c.imageMessageInput(ctx, evt, chatNameOverride); ok {
+		saved, err := c.store.SaveMediaMessage(ctx, mediaInput)
+		if err != nil {
+			c.log.Errorf("Failed to store media message %s: %v", mediaInput.ID, err)
+			return false
+		}
+		if !saved.Inserted {
+			if chatNameOverride != "" {
+				c.daemon.PublishChatUpdated(toDaemonChat(saved.Chat))
+			}
+			return false
+		}
+		c.log.Infof("Stored media message %s from %s", saved.Message.ID, saved.Message.SenderID)
+		c.daemon.PublishNewMessage(toDaemonMessage(saved.Message), toDaemonChat(saved.Chat))
+		return true
+	}
+
+	return false
+}
+
+func (c *Client) imageMessageInput(ctx context.Context, evt *events.Message, chatNameOverride string) (appstore.MediaMessageInput, bool) {
 	if evt == nil || evt.Message == nil {
 		return appstore.MediaMessageInput{}, false
 	}
@@ -122,7 +148,7 @@ func (c *Client) imageMessageInput(ctx context.Context, evt *events.Message) (ap
 		TextMessageInput: appstore.TextMessageInput{
 			ID:          internalMessageIDForChat(chatID, info.ID),
 			ChatID:      chatID,
-			ChatName:    chatName(info),
+			ChatName:    c.chatName(ctx, info, chatNameOverride),
 			SenderID:    senderID(info),
 			Text:        caption,
 			Timestamp:   info.Timestamp,
@@ -156,7 +182,7 @@ func (c *Client) normalizeJIDForChat(ctx context.Context, jid types.JID) types.J
 	return pn
 }
 
-func (c *Client) textMessageInput(ctx context.Context, evt *events.Message) (appstore.TextMessageInput, bool) {
+func (c *Client) textMessageInput(ctx context.Context, evt *events.Message, chatNameOverride string) (appstore.TextMessageInput, bool) {
 	if evt == nil || evt.Message == nil {
 		return appstore.TextMessageInput{}, false
 	}
@@ -186,7 +212,7 @@ func (c *Client) textMessageInput(ctx context.Context, evt *events.Message) (app
 	return appstore.TextMessageInput{
 		ID:          internalMessageIDForChat(chatID, info.ID),
 		ChatID:      chatID,
-		ChatName:    chatName(info),
+		ChatName:    c.chatName(ctx, info, chatNameOverride),
 		SenderID:    senderID(info),
 		Text:        text,
 		Timestamp:   info.Timestamp,
@@ -217,9 +243,24 @@ func senderID(info types.MessageInfo) string {
 	return info.Chat.String()
 }
 
-func chatName(info types.MessageInfo) string {
+func historySyncChatName(conv *waHistorySync.Conversation) string {
+	for _, name := range []string{conv.GetDisplayName(), conv.GetName()} {
+		if trimmed := strings.TrimSpace(name); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func (c *Client) chatName(ctx context.Context, info types.MessageInfo, override string) string {
+	if override != "" {
+		return override
+	}
 	if info.IsFromMe {
 		return ""
+	}
+	if name := c.contactNameForJID(ctx, info.Chat); name != "" && !info.IsGroup {
+		return name
 	}
 	if !info.IsGroup && info.PushName != "" {
 		return info.PushName
@@ -228,6 +269,85 @@ func chatName(info types.MessageInfo) string {
 		return info.Chat.User
 	}
 	return info.Chat.String()
+}
+
+func (c *Client) updateChatNamesFromHistorySync(ctx context.Context, evt *events.HistorySync) {
+	if evt == nil || evt.Data == nil {
+		return
+	}
+	client := c.currentClient()
+
+	for _, contact := range evt.Data.GetInlineContacts() {
+		name := firstNonEmpty(contact.GetFullName(), contact.GetFirstName(), contact.GetUsername())
+		if name == "" {
+			continue
+		}
+		for _, rawJID := range []string{contact.GetPnJID(), contact.GetLidJID()} {
+			if rawJID == "" {
+				continue
+			}
+			jid, err := types.ParseJID(rawJID)
+			if err != nil {
+				continue
+			}
+			if client != nil && client.Store.Contacts != nil {
+				if err := client.Store.Contacts.PutContactName(ctx, jid, contact.GetFirstName(), contact.GetFullName()); err != nil {
+					c.log.Warnf("Failed to store contact name for %s: %v", jid, err)
+				}
+			}
+			c.updateChatName(ctx, jid.String(), name)
+		}
+	}
+
+	for _, push := range evt.Data.GetPushnames() {
+		name := strings.TrimSpace(push.GetPushname())
+		if name == "" || name == "-" {
+			continue
+		}
+		jid, err := types.ParseJID(push.GetID())
+		if err != nil {
+			continue
+		}
+		if client != nil && client.Store.Contacts != nil {
+			if _, _, err := client.Store.Contacts.PutPushName(ctx, jid, name); err != nil {
+				c.log.Warnf("Failed to store push name for %s: %v", jid, err)
+			}
+		}
+		c.updateChatName(ctx, jid.String(), name)
+	}
+}
+
+func (c *Client) contactNameForJID(ctx context.Context, jid types.JID) string {
+	client := c.currentClient()
+	if client == nil || client.Store.Contacts == nil || jid.IsEmpty() {
+		return ""
+	}
+
+	contact, err := client.Store.Contacts.GetContact(ctx, jid.ToNonAD())
+	if err != nil {
+		return ""
+	}
+	return firstNonEmpty(contact.FullName, contact.FirstName, contact.BusinessName, contact.PushName)
+}
+
+func (c *Client) updateChatName(ctx context.Context, chatID, name string) {
+	chat, changed, err := c.store.UpdateChatName(ctx, chatID, name)
+	if err != nil {
+		c.log.Warnf("Failed to update chat name for %s: %v", chatID, err)
+		return
+	}
+	if changed {
+		c.daemon.PublishChatUpdated(toDaemonChat(chat))
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func toDaemonMessage(message appstore.Message) app.Message {
