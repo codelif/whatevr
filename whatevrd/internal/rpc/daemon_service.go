@@ -81,6 +81,16 @@ func toProtoDaemonEvent(event app.DaemonEvent) *pb.DaemonEvent {
 				ChatUpdated: &pb.ChatUpdated{Chat: toProtoChat(event.Chat), PreviousChatId: event.PreviousChatID},
 			},
 		}
+	case app.DaemonEventChatPresence:
+		return &pb.DaemonEvent{
+			Payload: &pb.DaemonEvent_ChatPresenceChanged{
+				ChatPresenceChanged: &pb.ChatPresenceChanged{
+					ChatId:      event.Chat.ID,
+					SenderId:    event.SenderID,
+					IsComposing: event.IsComposing,
+				},
+			},
+		}
 	default:
 		return nil
 	}
@@ -94,18 +104,23 @@ func toProtoChat(chat app.Chat) *pb.Chat {
 		LastMessageTimeUnix: chat.LastMessageTime,
 		UnreadCount:         chat.UnreadCount,
 		IsGroup:             chat.IsGroup,
+		AvatarLocalPath:     chat.AvatarLocalPath,
 	}
 }
 
 func toProtoMessage(message app.Message) *pb.Message {
 	return &pb.Message{
-		Id:            message.ID,
-		ChatId:        message.ChatID,
-		SenderId:      message.SenderID,
-		Text:          message.Text,
-		TimestampUnix: message.TimestampUnix,
-		Direction:     toProtoMessageDirection(message.Direction),
-		Status:        toProtoMessageStatus(message.Status),
+		Id:             message.ID,
+		ChatId:         message.ChatID,
+		SenderId:       message.SenderID,
+		Text:           message.Text,
+		TimestampUnix:  message.TimestampUnix,
+		Direction:      toProtoMessageDirection(message.Direction),
+		Status:         toProtoMessageStatus(message.Status),
+		MediaMimeType:  message.MediaMimeType,
+		MediaLocalPath: message.MediaLocalPath,
+		MediaWidth:     message.MediaWidth,
+		MediaHeight:    message.MediaHeight,
 	}
 }
 

@@ -20,14 +20,26 @@ const (
 )
 
 type Message struct {
-	ID            string
-	ChatID        string
-	SenderID      string
-	Text          string
-	TimestampUnix int64
-	Direction     string
-	IsRead        bool
-	Status        string
+	ID             string
+	ChatID         string
+	SenderID       string
+	Text           string
+	TimestampUnix  int64
+	Direction      string
+	IsRead         bool
+	Status         string
+	MediaMimeType  string
+	MediaLocalPath string
+	MediaWidth     int32
+	MediaHeight    int32
+}
+
+type MediaMessageInput struct {
+	TextMessageInput
+	MediaMimeType  string
+	MediaLocalPath string
+	MediaWidth     int32
+	MediaHeight    int32
 }
 
 type ReadCandidate struct {
@@ -164,13 +176,109 @@ func getChatTx(ctx context.Context, tx *sql.Tx, id string) (Chat, error) {
 	return getChatRow(ctx, tx, id)
 }
 
+func (db *DB) SaveMediaMessage(ctx context.Context, input MediaMessageInput) (SavedTextMessage, error) {
+	if input.ID == "" {
+		return SavedTextMessage{}, errors.New("message id is required")
+	}
+	if input.ChatID == "" {
+		return SavedTextMessage{}, errors.New("chat id is required")
+	}
+	if input.SenderID == "" {
+		input.SenderID = input.ChatID
+	}
+	if input.Timestamp.IsZero() {
+		input.Timestamp = time.Now()
+	}
+	if input.Direction == "" {
+		input.Direction = DirectionIncoming
+	}
+	if input.Status == "" {
+		input.Status = StatusDelivered
+	}
+
+	lastMessage := input.Text
+	if lastMessage == "" {
+		switch {
+		case input.MediaMimeType == "image/jpeg" || input.MediaMimeType == "image/png" || input.MediaMimeType == "image/webp":
+			lastMessage = "[Image]"
+		case input.MediaMimeType == "video/mp4" || input.MediaMimeType == "video/webm":
+			lastMessage = "[Video]"
+		case input.MediaMimeType == "audio/ogg" || input.MediaMimeType == "audio/mpeg":
+			lastMessage = "[Audio]"
+		default:
+			lastMessage = "[Media]"
+		}
+	}
+
+	tx, err := db.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return SavedTextMessage{}, err
+	}
+	defer tx.Rollback()
+
+	if err := upsertChat(ctx, tx, input.TextMessageInput); err != nil {
+		return SavedTextMessage{}, err
+	}
+
+	result, err := tx.ExecContext(ctx, `
+		INSERT INTO messages (id, chat_id, sender_id, text, timestamp, direction, is_read, status, media_mime_type, media_local_path, media_width, media_height)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO NOTHING
+	`, input.ID, input.ChatID, input.SenderID, input.Text, input.Timestamp.Unix(), input.Direction,
+		boolToInt(!input.CountUnread), input.Status, input.MediaMimeType, input.MediaLocalPath, input.MediaWidth, input.MediaHeight)
+	if err != nil {
+		return SavedTextMessage{}, err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return SavedTextMessage{}, err
+	}
+	inserted := rowsAffected > 0
+
+	if inserted {
+		unreadIncrement := 0
+		if input.CountUnread {
+			unreadIncrement = 1
+		}
+
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE chats
+			SET name = CASE WHEN ? != '' THEN ? ELSE name END,
+				last_message = CASE WHEN ? >= last_message_time THEN ? ELSE last_message END,
+				last_message_time = CASE WHEN ? >= last_message_time THEN ? ELSE last_message_time END,
+				unread_count = unread_count + ?,
+				is_group = ?
+			WHERE id = ?
+		`, input.ChatName, input.ChatName, input.Timestamp.Unix(), lastMessage, input.Timestamp.Unix(), input.Timestamp.Unix(), unreadIncrement, boolToInt(input.IsGroup), input.ChatID); err != nil {
+			return SavedTextMessage{}, err
+		}
+	}
+
+	message, err := getMessageTx(ctx, tx, input.ID)
+	if err != nil {
+		return SavedTextMessage{}, err
+	}
+
+	chat, err := getChatTx(ctx, tx, input.ChatID)
+	if err != nil {
+		return SavedTextMessage{}, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return SavedTextMessage{}, err
+	}
+
+	return SavedTextMessage{Message: message, Chat: chat, Inserted: inserted}, nil
+}
+
 func (db *DB) ListMessages(ctx context.Context, chatID string, limit int, beforeMessageID string) ([]Message, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 
 	query := `
-		SELECT id, chat_id, sender_id, text, timestamp, direction, is_read, status
+		SELECT id, chat_id, sender_id, text, timestamp, direction, is_read, status, media_mime_type, media_local_path, media_width, media_height
 		FROM messages
 		WHERE chat_id = ?
 	`
@@ -212,6 +320,10 @@ func (db *DB) ListMessages(ctx context.Context, chatID string, limit int, before
 			&message.Direction,
 			&message.IsRead,
 			&message.Status,
+			&message.MediaMimeType,
+			&message.MediaLocalPath,
+			&message.MediaWidth,
+			&message.MediaHeight,
 		); err != nil {
 			return nil, err
 		}
@@ -325,7 +437,7 @@ func getChatRow(ctx context.Context, queryer interface {
 	var chat Chat
 	var isGroup int
 	err := queryer.QueryRowContext(ctx, `
-		SELECT id, name, last_message, last_message_time, unread_count, is_group
+		SELECT id, name, last_message, last_message_time, unread_count, is_group, avatar_local_path, avatar_picture_id
 		FROM chats
 		WHERE id = ?
 	`, id).Scan(
@@ -335,6 +447,8 @@ func getChatRow(ctx context.Context, queryer interface {
 		&chat.LastMessageTime,
 		&chat.UnreadCount,
 		&isGroup,
+		&chat.AvatarLocalPath,
+		&chat.AvatarPictureID,
 	)
 	chat.IsGroup = isGroup != 0
 	return chat, err
@@ -344,7 +458,7 @@ func getMessageRow(ctx context.Context, queryer interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }, id string, message *Message) error {
 	return queryer.QueryRowContext(ctx, `
-		SELECT id, chat_id, sender_id, text, timestamp, direction, is_read, status
+		SELECT id, chat_id, sender_id, text, timestamp, direction, is_read, status, media_mime_type, media_local_path, media_width, media_height
 		FROM messages
 		WHERE id = ?
 	`, id).Scan(
@@ -356,6 +470,10 @@ func getMessageRow(ctx context.Context, queryer interface {
 		&message.Direction,
 		&message.IsRead,
 		&message.Status,
+		&message.MediaMimeType,
+		&message.MediaLocalPath,
+		&message.MediaWidth,
+		&message.MediaHeight,
 	)
 }
 
@@ -377,6 +495,8 @@ func scanChat(scanner interface{ Scan(...any) error }) (Chat, error) {
 		&chat.LastMessageTime,
 		&chat.UnreadCount,
 		&isGroup,
+		&chat.AvatarLocalPath,
+		&chat.AvatarPictureID,
 	)
 	chat.IsGroup = isGroup != 0
 	return chat, err

@@ -21,6 +21,7 @@ type ChatStore interface {
 
 type ChatActionController interface {
 	MarkChatRead(context.Context, string) (appstore.Chat, error)
+	SetChatPresence(context.Context, string, bool) error
 }
 
 type ChatService struct {
@@ -105,6 +106,20 @@ func (s *ChatService) MarkChatRead(ctx context.Context, req *pb.MarkChatReadRequ
 	return &pb.MarkChatReadResponse{}, nil
 }
 
+func (s *ChatService) SetChatPresence(ctx context.Context, req *pb.SetChatPresenceRequest) (*pb.SetChatPresenceResponse, error) {
+	if s.actions == nil {
+		return nil, status.Error(codes.Unimplemented, "chat action controller is not available")
+	}
+	if req.GetChatId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "chat_id is required")
+	}
+
+	if err := s.actions.SetChatPresence(ctx, req.GetChatId(), req.GetComposing()); err != nil {
+		return nil, err
+	}
+	return &pb.SetChatPresenceResponse{}, nil
+}
+
 func toAppChat(chat appstore.Chat) app.Chat {
 	return app.Chat{
 		ID:              chat.ID,
@@ -113,17 +128,22 @@ func toAppChat(chat appstore.Chat) app.Chat {
 		LastMessageTime: chat.LastMessageTime,
 		UnreadCount:     chat.UnreadCount,
 		IsGroup:         chat.IsGroup,
+		AvatarLocalPath: chat.AvatarLocalPath,
 	}
 }
 
 func toAppMessage(message appstore.Message) app.Message {
 	return app.Message{
-		ID:            message.ID,
-		ChatID:        message.ChatID,
-		SenderID:      message.SenderID,
-		Text:          message.Text,
-		TimestampUnix: message.TimestampUnix,
-		Direction:     message.Direction,
-		Status:        message.Status,
+		ID:             message.ID,
+		ChatID:         message.ChatID,
+		SenderID:       message.SenderID,
+		Text:           message.Text,
+		TimestampUnix:  message.TimestampUnix,
+		Direction:      message.Direction,
+		Status:         message.Status,
+		MediaMimeType:  message.MediaMimeType,
+		MediaLocalPath: message.MediaLocalPath,
+		MediaWidth:     message.MediaWidth,
+		MediaHeight:    message.MediaHeight,
 	}
 }

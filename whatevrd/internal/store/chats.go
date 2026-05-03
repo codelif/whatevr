@@ -12,6 +12,8 @@ type Chat struct {
 	LastMessageTime int64
 	UnreadCount     int32
 	IsGroup         bool
+	AvatarLocalPath string
+	AvatarPictureID string
 }
 
 func (db *DB) ListChats(ctx context.Context, limit, offset int) ([]Chat, error) {
@@ -23,7 +25,7 @@ func (db *DB) ListChats(ctx context.Context, limit, offset int) ([]Chat, error) 
 	}
 
 	rows, err := db.conn.QueryContext(ctx, `
-		SELECT id, name, last_message, last_message_time, unread_count, is_group
+		SELECT id, name, last_message, last_message_time, unread_count, is_group, avatar_local_path, avatar_picture_id
 		FROM chats
 		ORDER BY last_message_time DESC, id ASC
 		LIMIT ? OFFSET ?
@@ -82,6 +84,19 @@ func (db *DB) ListLIDChats(ctx context.Context) ([]string, error) {
 	return chatIDs, nil
 }
 
+func (db *DB) UpdateChatAvatar(ctx context.Context, chatID, picID, localPath string) error {
+	_, err := db.conn.ExecContext(ctx, `
+		UPDATE chats SET avatar_picture_id = ?, avatar_local_path = ? WHERE id = ?
+	`, picID, localPath, chatID)
+	return err
+}
+
+func (db *DB) GetChatAvatarPictureID(ctx context.Context, chatID string) (string, error) {
+	var picID string
+	err := db.conn.QueryRowContext(ctx, `SELECT avatar_picture_id FROM chats WHERE id = ?`, chatID).Scan(&picID)
+	return picID, err
+}
+
 func (db *DB) MigrateChatID(ctx context.Context, fromChatID, toChatID string) (Chat, bool, error) {
 	tx, err := db.conn.BeginTx(ctx, nil)
 	if err != nil {
@@ -103,8 +118,8 @@ func (db *DB) MigrateChatID(ctx context.Context, fromChatID, toChatID string) (C
 	}
 
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO chats (id, name, last_message, last_message_time, unread_count, is_group)
-		SELECT ?, name, last_message, last_message_time, unread_count, is_group
+		INSERT INTO chats (id, name, last_message, last_message_time, unread_count, is_group, avatar_local_path, avatar_picture_id)
+		SELECT ?, name, last_message, last_message_time, unread_count, is_group, avatar_local_path, avatar_picture_id
 		FROM chats
 		WHERE id = ?
 		ON CONFLICT(id) DO UPDATE SET

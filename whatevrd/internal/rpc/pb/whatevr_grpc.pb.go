@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.1
 // - protoc             v7.34.1
-// source: proto/whatevr.proto
+// source: whatevr.proto
 
 package pb
 
@@ -159,7 +159,7 @@ var DaemonService_ServiceDesc = grpc.ServiceDesc{
 			ServerStreams: true,
 		},
 	},
-	Metadata: "proto/whatevr.proto",
+	Metadata: "whatevr.proto",
 }
 
 const (
@@ -303,7 +303,7 @@ var LoginService_ServiceDesc = grpc.ServiceDesc{
 			ServerStreams: true,
 		},
 	},
-	Metadata: "proto/whatevr.proto",
+	Metadata: "whatevr.proto",
 }
 
 const (
@@ -408,13 +408,14 @@ var FrontendService_ServiceDesc = grpc.ServiceDesc{
 			ServerStreams: true,
 		},
 	},
-	Metadata: "proto/whatevr.proto",
+	Metadata: "whatevr.proto",
 }
 
 const (
-	ChatService_ListChats_FullMethodName    = "/whatevr.v1.ChatService/ListChats"
-	ChatService_GetMessages_FullMethodName  = "/whatevr.v1.ChatService/GetMessages"
-	ChatService_MarkChatRead_FullMethodName = "/whatevr.v1.ChatService/MarkChatRead"
+	ChatService_ListChats_FullMethodName       = "/whatevr.v1.ChatService/ListChats"
+	ChatService_GetMessages_FullMethodName     = "/whatevr.v1.ChatService/GetMessages"
+	ChatService_MarkChatRead_FullMethodName    = "/whatevr.v1.ChatService/MarkChatRead"
+	ChatService_SetChatPresence_FullMethodName = "/whatevr.v1.ChatService/SetChatPresence"
 )
 
 // ChatServiceClient is the client API for ChatService service.
@@ -424,6 +425,7 @@ type ChatServiceClient interface {
 	ListChats(ctx context.Context, in *ListChatsRequest, opts ...grpc.CallOption) (*ListChatsResponse, error)
 	GetMessages(ctx context.Context, in *GetMessagesRequest, opts ...grpc.CallOption) (*GetMessagesResponse, error)
 	MarkChatRead(ctx context.Context, in *MarkChatReadRequest, opts ...grpc.CallOption) (*MarkChatReadResponse, error)
+	SetChatPresence(ctx context.Context, in *SetChatPresenceRequest, opts ...grpc.CallOption) (*SetChatPresenceResponse, error)
 }
 
 type chatServiceClient struct {
@@ -464,6 +466,16 @@ func (c *chatServiceClient) MarkChatRead(ctx context.Context, in *MarkChatReadRe
 	return out, nil
 }
 
+func (c *chatServiceClient) SetChatPresence(ctx context.Context, in *SetChatPresenceRequest, opts ...grpc.CallOption) (*SetChatPresenceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetChatPresenceResponse)
+	err := c.cc.Invoke(ctx, ChatService_SetChatPresence_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ChatServiceServer is the server API for ChatService service.
 // All implementations must embed UnimplementedChatServiceServer
 // for forward compatibility.
@@ -471,6 +483,7 @@ type ChatServiceServer interface {
 	ListChats(context.Context, *ListChatsRequest) (*ListChatsResponse, error)
 	GetMessages(context.Context, *GetMessagesRequest) (*GetMessagesResponse, error)
 	MarkChatRead(context.Context, *MarkChatReadRequest) (*MarkChatReadResponse, error)
+	SetChatPresence(context.Context, *SetChatPresenceRequest) (*SetChatPresenceResponse, error)
 	mustEmbedUnimplementedChatServiceServer()
 }
 
@@ -489,6 +502,9 @@ func (UnimplementedChatServiceServer) GetMessages(context.Context, *GetMessagesR
 }
 func (UnimplementedChatServiceServer) MarkChatRead(context.Context, *MarkChatReadRequest) (*MarkChatReadResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method MarkChatRead not implemented")
+}
+func (UnimplementedChatServiceServer) SetChatPresence(context.Context, *SetChatPresenceRequest) (*SetChatPresenceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetChatPresence not implemented")
 }
 func (UnimplementedChatServiceServer) mustEmbedUnimplementedChatServiceServer() {}
 func (UnimplementedChatServiceServer) testEmbeddedByValue()                     {}
@@ -565,6 +581,24 @@ func _ChatService_MarkChatRead_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ChatService_SetChatPresence_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetChatPresenceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ChatServiceServer).SetChatPresence(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ChatService_SetChatPresence_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ChatServiceServer).SetChatPresence(ctx, req.(*SetChatPresenceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ChatService_ServiceDesc is the grpc.ServiceDesc for ChatService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -584,13 +618,18 @@ var ChatService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "MarkChatRead",
 			Handler:    _ChatService_MarkChatRead_Handler,
 		},
+		{
+			MethodName: "SetChatPresence",
+			Handler:    _ChatService_SetChatPresence_Handler,
+		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "proto/whatevr.proto",
+	Metadata: "whatevr.proto",
 }
 
 const (
-	SendService_SendText_FullMethodName = "/whatevr.v1.SendService/SendText"
+	SendService_SendText_FullMethodName  = "/whatevr.v1.SendService/SendText"
+	SendService_SendMedia_FullMethodName = "/whatevr.v1.SendService/SendMedia"
 )
 
 // SendServiceClient is the client API for SendService service.
@@ -598,6 +637,7 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type SendServiceClient interface {
 	SendText(ctx context.Context, in *SendTextRequest, opts ...grpc.CallOption) (*SendTextResponse, error)
+	SendMedia(ctx context.Context, in *SendMediaRequest, opts ...grpc.CallOption) (*SendMediaResponse, error)
 }
 
 type sendServiceClient struct {
@@ -618,11 +658,22 @@ func (c *sendServiceClient) SendText(ctx context.Context, in *SendTextRequest, o
 	return out, nil
 }
 
+func (c *sendServiceClient) SendMedia(ctx context.Context, in *SendMediaRequest, opts ...grpc.CallOption) (*SendMediaResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SendMediaResponse)
+	err := c.cc.Invoke(ctx, SendService_SendMedia_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SendServiceServer is the server API for SendService service.
 // All implementations must embed UnimplementedSendServiceServer
 // for forward compatibility.
 type SendServiceServer interface {
 	SendText(context.Context, *SendTextRequest) (*SendTextResponse, error)
+	SendMedia(context.Context, *SendMediaRequest) (*SendMediaResponse, error)
 	mustEmbedUnimplementedSendServiceServer()
 }
 
@@ -635,6 +686,9 @@ type UnimplementedSendServiceServer struct{}
 
 func (UnimplementedSendServiceServer) SendText(context.Context, *SendTextRequest) (*SendTextResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SendText not implemented")
+}
+func (UnimplementedSendServiceServer) SendMedia(context.Context, *SendMediaRequest) (*SendMediaResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SendMedia not implemented")
 }
 func (UnimplementedSendServiceServer) mustEmbedUnimplementedSendServiceServer() {}
 func (UnimplementedSendServiceServer) testEmbeddedByValue()                     {}
@@ -675,6 +729,24 @@ func _SendService_SendText_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SendService_SendMedia_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SendMediaRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SendServiceServer).SendMedia(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SendService_SendMedia_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SendServiceServer).SendMedia(ctx, req.(*SendMediaRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SendService_ServiceDesc is the grpc.ServiceDesc for SendService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -686,7 +758,11 @@ var SendService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "SendText",
 			Handler:    _SendService_SendText_Handler,
 		},
+		{
+			MethodName: "SendMedia",
+			Handler:    _SendService_SendMedia_Handler,
+		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "proto/whatevr.proto",
+	Metadata: "whatevr.proto",
 }

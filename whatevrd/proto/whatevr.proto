@@ -47,10 +47,12 @@ service ChatService {
   rpc ListChats(ListChatsRequest) returns (ListChatsResponse);
   rpc GetMessages(GetMessagesRequest) returns (GetMessagesResponse);
   rpc MarkChatRead(MarkChatReadRequest) returns (MarkChatReadResponse);
+  rpc SetChatPresence(SetChatPresenceRequest) returns (SetChatPresenceResponse);
 }
 
 service SendService {
   rpc SendText(SendTextRequest) returns (SendTextResponse);
+  rpc SendMedia(SendMediaRequest) returns (SendMediaResponse);
 }
 
 message GetStatusRequest {}
@@ -74,7 +76,14 @@ message DaemonEvent {
     NewMessage new_message = 3;
     MessageUpdated message_updated = 4;
     ChatUpdated chat_updated = 5;
+    ChatPresenceChanged chat_presence_changed = 6;
   }
+}
+
+message ChatPresenceChanged {
+  string chat_id = 1;
+  string sender_id = 2;
+  bool is_composing = 3;
 }
 
 message ConnectionChanged {
@@ -151,12 +160,29 @@ message MarkChatReadRequest {
 
 message MarkChatReadResponse {}
 
+message SetChatPresenceRequest {
+  string chat_id = 1;
+  bool composing = 2;
+}
+
+message SetChatPresenceResponse {}
+
 message SendTextRequest {
   string chat_id = 1;
   string text = 2;
 }
 
 message SendTextResponse {
+  Message message = 1;
+}
+
+message SendMediaRequest {
+  string chat_id = 1;
+  string file_path = 2;
+  string caption = 3;
+}
+
+message SendMediaResponse {
   Message message = 1;
 }
 
@@ -167,6 +193,7 @@ message Chat {
   int64 last_message_time_unix = 4;
   int32 unread_count = 5;
   bool is_group = 6;
+  string avatar_local_path = 7;
 }
 
 message Message {
@@ -177,4 +204,8 @@ message Message {
   int64 timestamp_unix = 5;
   MessageDirection direction = 6;
   MessageStatus status = 7;
+  string media_mime_type = 8;
+  string media_local_path = 9;
+  int32 media_width = 10;
+  int32 media_height = 11;
 }
