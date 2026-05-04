@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -163,7 +165,10 @@ func (c *Client) resetClient(ctx context.Context) error {
 	client := whatsmeow.NewClient(device, c.log.Sub("Client"))
 	client.BackgroundEventCtx = ctx
 	client.EnableAutoReconnect = false
-	client.AutoTrustIdentity = true
+	client.AutoTrustIdentity = autoTrustIdentityEnabled()
+	if client.AutoTrustIdentity {
+		c.log.Warnf("WHATEVRD_AUTO_TRUST_IDENTITY is enabled; changed WhatsApp identities will be trusted automatically")
+	}
 	client.SetForceActiveDeliveryReceipts(true)
 	client.UseRetryMessageStore = true
 	client.AddEventHandler(c.handleEvent)
@@ -173,6 +178,15 @@ func (c *Client) resetClient(ctx context.Context) error {
 	c.mu.Unlock()
 
 	return nil
+}
+
+func autoTrustIdentityEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("WHATEVRD_AUTO_TRUST_IDENTITY"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *Client) currentClient() *whatsmeow.Client {
