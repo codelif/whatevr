@@ -14,6 +14,8 @@ import (
 	"go.mau.fi/whatsmeow/types"
 )
 
+const maxAvatarBytes = 5 * 1024 * 1024
+
 func (c *Client) scheduleAvatarRefresh(ctx context.Context, delay time.Duration) {
 	go func() {
 		if delay > 0 {
@@ -161,18 +163,29 @@ func downloadFile(ctx context.Context, url, destPath string) error {
 		return err
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return errors.New("avatar download returned non-success status")
+	}
+	if resp.ContentLength > maxAvatarBytes {
+		return errors.New("avatar image is too large")
+	}
 
-	f, err := os.Create(destPath)
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxAvatarBytes+1))
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	if len(data) == 0 || len(data) > maxAvatarBytes {
+		return errors.New("avatar image size is outside allowed bounds")
+	}
+	if _, ok := outboundImageExtension(http.DetectContentType(data)); !ok {
+		return errors.New("avatar image has unsupported content type")
+	}
 
-	_, err = io.Copy(f, resp.Body)
-	return err
+	return writeFileAtomic(destPath, data, 0o600)
 }

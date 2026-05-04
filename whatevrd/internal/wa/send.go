@@ -122,7 +122,7 @@ func (c *Client) SendMedia(ctx context.Context, chatID, filePath, caption string
 		return appstore.SavedTextMessage{}, err
 	}
 	localPath := filepath.Join(mediaDir, fmt.Sprintf("%s%s", safeFilenamePart(string(messageID)), extension))
-	if err := os.WriteFile(localPath, data, 0o600); err != nil {
+	if err := writeFileAtomic(localPath, data, 0o600); err != nil {
 		return appstore.SavedTextMessage{}, err
 	}
 

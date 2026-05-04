@@ -140,6 +140,10 @@ func (c *Client) imageMessageInput(ctx context.Context, evt *events.Message, cha
 		c.log.Warnf("Failed to download image for message %s: %v", info.ID, err)
 		return appstore.MediaMessageInput{}, false
 	}
+	if len(data) == 0 || len(data) > maxOutboundMediaBytes {
+		c.log.Warnf("Skipping image for message %s: size is outside allowed bounds", info.ID)
+		return appstore.MediaMessageInput{}, false
+	}
 
 	mediaDir := filepath.Join(c.paths.MediaCacheDir, "messages", chatID)
 	if err := os.MkdirAll(mediaDir, 0o700); err != nil {
@@ -148,7 +152,7 @@ func (c *Client) imageMessageInput(ctx context.Context, evt *events.Message, cha
 	}
 
 	localPath := filepath.Join(mediaDir, fmt.Sprintf("%s.jpg", info.ID))
-	if err := os.WriteFile(localPath, data, 0o600); err != nil {
+	if err := writeFileAtomic(localPath, data, 0o600); err != nil {
 		c.log.Warnf("Failed to write image for message %s: %v", info.ID, err)
 		return appstore.MediaMessageInput{}, false
 	}
