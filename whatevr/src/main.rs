@@ -748,11 +748,6 @@ fn connect_signals(
             glib::idle_add_local_once(move || {
                 resize_composer(&idle_widgets);
                 scroll_composer_to_bottom_if_needed(&idle_widgets);
-                let frame_widgets = idle_widgets.clone();
-                glib::timeout_add_local_once(Duration::from_millis(16), move || {
-                    resize_composer(&frame_widgets);
-                    scroll_composer_to_bottom_if_needed(&frame_widgets);
-                });
             });
         });
 
@@ -1959,29 +1954,20 @@ fn resize_composer(widgets: &Widgets) {
     let target_height = content_height.clamp(1, COMPOSER_MAX_HEIGHT);
     let needs_scroll = content_height > COMPOSER_MAX_HEIGHT;
 
-    let current_max_height = widgets.composer_scroller.max_content_height();
-    if current_max_height != -1 && target_height > current_max_height {
-        widgets
-            .composer_scroller
-            .set_max_content_height(target_height);
-        widgets
-            .composer_scroller
-            .set_min_content_height(target_height);
-    } else {
-        widgets
-            .composer_scroller
-            .set_min_content_height(target_height);
-        widgets
-            .composer_scroller
-            .set_max_content_height(target_height);
-    }
     widgets
         .composer_scroller
-        .set_vscrollbar_policy(if needs_scroll {
-            gtk::PolicyType::Always
-        } else {
-            gtk::PolicyType::Never
-        });
+        .set_min_content_height(target_height);
+
+    let scrollbar_policy = if needs_scroll {
+        gtk::PolicyType::Always
+    } else {
+        gtk::PolicyType::Never
+    };
+    if widgets.composer_scroller.vscrollbar_policy() != scrollbar_policy {
+        widgets
+            .composer_scroller
+            .set_vscrollbar_policy(scrollbar_policy);
+    }
 
     if !needs_scroll {
         widgets.composer_scroller.vadjustment().set_value(0.0);
