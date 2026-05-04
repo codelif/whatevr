@@ -177,6 +177,8 @@ struct RenderedMessage {
 struct Widgets {
     root_stack: gtk::Stack,
     loading_page: adw::StatusPage,
+    loading_spinner: gtk::Spinner,
+    loading_retry_button: gtk::Button,
     login_status_label: gtk::Label,
     qr_picture: gtk::Picture,
     qr_error_label: gtk::Label,
@@ -241,7 +243,20 @@ fn build_ui(app: &adw::Application) {
         .margin_top(18)
         .margin_bottom(18)
         .build();
-    loading_page.set_child(Some(&loading_spinner));
+    let loading_retry_button = gtk::Button::builder()
+        .label("Retry")
+        .css_classes(["suggested-action"])
+        .halign(gtk::Align::Center)
+        .visible(false)
+        .build();
+    let loading_box = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(12)
+        .halign(gtk::Align::Center)
+        .build();
+    loading_box.append(&loading_spinner);
+    loading_box.append(&loading_retry_button);
+    loading_page.set_child(Some(&loading_box));
 
     let login_status_label = gtk::Label::builder().wrap(true).xalign(0.0).build();
     let qr_picture = gtk::Picture::builder().halign(gtk::Align::Center).build();
@@ -504,6 +519,8 @@ fn build_ui(app: &adw::Application) {
     let widgets = Rc::new(Widgets {
         root_stack,
         loading_page,
+        loading_spinner,
+        loading_retry_button,
         login_status_label,
         qr_picture,
         qr_error_label,
@@ -539,22 +556,31 @@ fn build_ui(app: &adw::Application) {
 
     connect_signals(&widgets, &state, &sender, &refresh_button);
 
-    // Reconnect button in the banner
+    {
+        let retry_sender = sender.clone();
+        widgets.loading_retry_button.connect_clicked(move |_| {
+            request_status(retry_sender.clone());
+        });
+    }
+
     {
         let reconnect_sender = sender.clone();
         let reconnect_state = state.clone();
         let reconnect_banner = widgets.banner.clone();
         widgets.banner.connect_button_clicked(move |_| {
-            let already_in_flight = {
+            let should_retry_daemon = reconnect_state.borrow().daemon_disconnected;
+            if should_retry_daemon {
+                reconnect_banner.set_button_label(Some(""));
+                request_status(reconnect_sender.clone());
+                return;
+            }
+
+            {
                 let mut s = reconnect_state.borrow_mut();
                 if s.reconnect_in_flight {
                     return;
                 }
                 s.reconnect_in_flight = true;
-                false
-            };
-            if already_in_flight {
-                return;
             }
             reconnect_banner.set_button_label(Some(""));
             request_reconnect(reconnect_sender.clone());
@@ -570,7 +596,7 @@ fn build_ui(app: &adw::Application) {
             s.window_focused = focused;
             s.selected_chat_id.clone()
         };
-        if focused {
+        if focused && !focus_state.borrow().daemon_disconnected {
             if let Some(chat_id) = selected {
                 request_mark_chat_read(focus_sender.clone(), chat_id);
             }
@@ -771,12 +797,37 @@ fn handle_ui_message(
         UiMessage::StatusLoaded(status) => {
             let daemon_state =
                 DaemonState::try_from(status.state).unwrap_or(DaemonState::Unspecified);
-            apply_daemon_state(widgets, state, sender, daemon_state, String::new(), false, 0, 0);
+            widgets.loading_spinner.set_spinning(true);
+            widgets.loading_spinner.set_visible(true);
+            widgets.loading_retry_button.set_visible(false);
+            apply_daemon_state(
+                widgets,
+                state,
+                sender,
+                daemon_state,
+                status.detail,
+                status.can_reconnect,
+                status.retry_attempt,
+                status.next_retry_unix,
+            );
         }
         UiMessage::StatusFailed(error) => {
-            widgets.loading_page.set_title("Unable to reach whatevrd");
-            widgets.loading_page.set_description(Some(&error));
+            {
+                let mut s = state.borrow_mut();
+                s.daemon_disconnected = true;
+            }
+            widgets
+                .loading_page
+                .set_title("Unable to connect to whatevrd");
+            widgets
+                .loading_page
+                .set_description(Some(&friendly_daemon_error_text(&error)));
+            widgets.loading_spinner.set_spinning(false);
+            widgets.loading_spinner.set_visible(false);
+            widgets.loading_retry_button.set_visible(true);
             widgets.root_stack.set_visible_child_name(ROOT_LOADING_PAGE);
+            let state = state.borrow();
+            update_banner(widgets, &state);
         }
         UiMessage::DaemonState {
             state: daemon_state,
@@ -1147,7 +1198,8 @@ fn handle_ui_message(
             show_banner_notice(widgets, &format!("Logout failed: {error}"));
         }
         UiMessage::Notice(text) => {
-            show_banner_notice(widgets, &text);
+            let state = state.borrow();
+            show_banner_notice_preserving_action(widgets, &state, &text);
         }
         UiMessage::DaemonConnectionLost => {
             {
@@ -1155,14 +1207,16 @@ fn handle_ui_message(
                 s.daemon_disconnected = true;
             }
             let state = state.borrow();
-            show_banner_notice(widgets, "Lost connection to whatevrd. Retrying...");
+            update_banner(widgets, &state);
             render_composer_state(widgets, &state);
         }
         UiMessage::DaemonConnectionRestored => {
-            {
+            let was_disconnected = {
                 let mut s = state.borrow_mut();
+                let was_disconnected = s.daemon_disconnected;
                 s.daemon_disconnected = false;
-            }
+                was_disconnected
+            };
             request_status(sender.clone());
             request_chats(sender.clone());
             let selected = state.borrow().selected_chat_id.clone();
@@ -1172,13 +1226,18 @@ fn handle_ui_message(
             }
             let state = state.borrow();
             render_composer_state(widgets, &state);
+            update_banner(widgets, &state);
+            if was_disconnected {
+                show_banner_notice(widgets, "Connected to whatevrd");
+            }
         }
         UiMessage::ReconnectSucceeded => {
             {
                 let mut s = state.borrow_mut();
                 s.reconnect_in_flight = false;
             }
-            show_banner_notice(widgets, "Reconnect requested");
+            let state = state.borrow();
+            show_banner_notice_preserving_action(widgets, &state, "Reconnect requested");
         }
         UiMessage::ReconnectFailed(error) => {
             {
@@ -1188,8 +1247,9 @@ fn handle_ui_message(
             }
             let state = state.borrow();
             update_banner(widgets, &state);
-            show_banner_notice(
+            show_banner_notice_preserving_action(
                 widgets,
+                &state,
                 &format!("Unable to ask whatevrd to reconnect: {}", error),
             );
         }
@@ -1215,6 +1275,10 @@ fn apply_daemon_state(
         state.can_reconnect = can_reconnect;
         state.retry_attempt = retry_attempt;
         state.next_retry_unix = next_retry_unix;
+        state.daemon_disconnected = false;
+        widgets.loading_spinner.set_spinning(true);
+        widgets.loading_spinner.set_visible(true);
+        widgets.loading_retry_button.set_visible(false);
         // Clear reconnect_in_flight once daemon confirms connection attempt.
         if matches!(
             daemon_state,
@@ -1266,7 +1330,11 @@ fn apply_daemon_state(
 
 fn update_banner(widgets: &Widgets, state: &UiState) {
     if state.daemon_disconnected {
-        // daemon socket unreachable — already handled by DaemonConnectionLost notice
+        widgets
+            .banner
+            .set_title("Unable to connect to whatevrd. Retrying...");
+        widgets.banner.set_button_label(Some("Retry"));
+        widgets.banner.set_revealed(true);
         return;
     }
 
@@ -1326,6 +1394,19 @@ fn show_banner_notice(widgets: &Widgets, text: &str) {
     widgets.banner.set_button_label(Some(""));
     widgets.banner.set_title(text);
     widgets.banner.set_revealed(true);
+}
+
+fn show_banner_notice_preserving_action(widgets: &Widgets, state: &UiState, text: &str) {
+    if state.daemon_disconnected
+        || matches!(
+            state.daemon_state,
+            DaemonState::Offline | DaemonState::Reconnecting
+        )
+    {
+        update_banner(widgets, state);
+    } else {
+        show_banner_notice(widgets, text);
+    }
 }
 
 fn next_message_request_generation(state: &Rc<RefCell<UiState>>) -> u64 {
@@ -1790,7 +1871,10 @@ fn composer_send_allowed(state: &UiState) -> bool {
     }
     matches!(
         state.daemon_state,
-        DaemonState::Online | DaemonState::Connecting | DaemonState::Reconnecting | DaemonState::Offline
+        DaemonState::Online
+            | DaemonState::Connecting
+            | DaemonState::Reconnecting
+            | DaemonState::Offline
     )
 }
 
@@ -1906,20 +1990,11 @@ fn hold_frontend_session(sender: mpsc::Sender<UiMessage>) {
 fn subscribe_daemon_events(sender: mpsc::Sender<UiMessage>) {
     spawn_async(async move {
         let mut backoff = Duration::from_secs(2);
-        let mut first = true;
         loop {
-            match stream_daemon_events(sender.clone()).await {
-                Ok(()) => break,
-                Err(_) => {
-                    if !first {
-                        let _ = sender.send(UiMessage::DaemonConnectionLost);
-                    }
-                    first = false;
-                    tokio::time::sleep(backoff).await;
-                    backoff = (backoff * 2).min(Duration::from_secs(30));
-                    let _ = sender.send(UiMessage::DaemonConnectionRestored);
-                }
-            }
+            let _ = stream_daemon_events(sender.clone()).await;
+            let _ = sender.send(UiMessage::DaemonConnectionLost);
+            tokio::time::sleep(backoff).await;
+            backoff = (backoff * 2).min(Duration::from_secs(30));
         }
     });
 }
@@ -1975,6 +2050,10 @@ fn request_messages(sender: mpsc::Sender<UiMessage>, chat_id: String, generation
 fn request_mark_chat_read(sender: mpsc::Sender<UiMessage>, chat_id: String) {
     spawn_async(async move {
         if let Err(error) = mark_chat_read(chat_id).await {
+            if is_daemon_transport_error(&*error) {
+                let _ = sender.send(UiMessage::DaemonConnectionLost);
+                return;
+            }
             let _ = sender.send(UiMessage::Notice(format!(
                 "Unable to mark chat read: {error}"
             )));
@@ -2086,16 +2165,7 @@ async fn stream_login_events(
 
     while let Some(event) = stream.message().await? {
         match event.payload {
-            Some(login_event::Payload::LoginStateChanged(change)) => {
-                let state = DaemonState::try_from(change.state).unwrap_or(DaemonState::Unspecified);
-                let _ = sender.send(UiMessage::DaemonState {
-                    state,
-                    detail: change.detail,
-                    can_reconnect: false,
-                    retry_attempt: 0,
-                    next_retry_unix: 0,
-                });
-            }
+            Some(login_event::Payload::LoginStateChanged(_)) => {}
             Some(login_event::Payload::QrCode(qr)) => {
                 let _ = sender.send(UiMessage::QrCode {
                     code: qr.code,
@@ -2135,6 +2205,7 @@ async fn stream_daemon_events(
         .subscribe_events(SubscribeEventsRequest {})
         .await?
         .into_inner();
+    let _ = sender.send(UiMessage::DaemonConnectionRestored);
 
     while let Some(event) = stream.message().await? {
         match event.payload {
@@ -2286,7 +2357,10 @@ async fn do_reconnect() -> Result<(), Box<dyn std::error::Error + Send + Sync>> 
 }
 
 fn friendly_daemon_error(err: &dyn std::error::Error) -> String {
-    let s = err.to_string();
+    friendly_daemon_error_text(&err.to_string())
+}
+
+fn friendly_daemon_error_text(s: &str) -> String {
     if s.contains("No such file or directory")
         || s.contains("Connection refused")
         || s.contains("os error 2")
@@ -2299,8 +2373,17 @@ fn friendly_daemon_error(err: &dyn std::error::Error) -> String {
     } else if s.contains("FailedPrecondition") {
         "WhatsApp is not logged in. Please scan the QR code.".to_string()
     } else {
-        s
+        s.to_string()
     }
+}
+
+fn is_daemon_transport_error(err: &dyn std::error::Error) -> bool {
+    let s = err.to_string();
+    s.contains("transport error")
+        || s.contains("No such file or directory")
+        || s.contains("Connection refused")
+        || s.contains("os error 2")
+        || s.contains("Unavailable")
 }
 
 async fn connect_channel() -> Result<Channel, Box<dyn std::error::Error + Send + Sync>> {

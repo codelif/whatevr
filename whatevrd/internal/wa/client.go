@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 
 	_ "modernc.org/sqlite"
 
@@ -42,6 +43,7 @@ type Client struct {
 
 	sendQueueWake chan struct{}
 	reconnectCh   chan struct{} // supervisor wakeup: reconnect immediately
+	reconnectNow  atomic.Bool
 }
 
 func New(ctx context.Context, paths app.Paths, daemon *app.Daemon, store *appstore.DB) (*Client, error) {
@@ -76,14 +78,14 @@ func (c *Client) Start(ctx context.Context) {
 }
 
 func (c *Client) Reconnect(ctx context.Context) error {
-	if client := c.currentClient(); client != nil {
-		client.Disconnect()
-	}
-	c.signalReconnect()
+	c.requestReconnect(true)
 	return nil
 }
 
-func (c *Client) signalReconnect() {
+func (c *Client) requestReconnect(forceClose bool) {
+	if forceClose {
+		c.reconnectNow.Store(true)
+	}
 	select {
 	case c.reconnectCh <- struct{}{}:
 	default:

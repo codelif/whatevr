@@ -39,13 +39,17 @@ func (s *DaemonService) Reconnect(ctx context.Context, _ *pb.ReconnectRequest) (
 func (s *DaemonService) GetStatus(context.Context, *pb.GetStatusRequest) (*pb.GetStatusResponse, error) {
 	status := s.daemon.Status()
 	return &pb.GetStatusResponse{
-		State:        toProtoState(status.State),
-		StateLabel:   status.State.String(),
-		SocketPath:   status.Paths.SocketPath,
-		DataDir:      status.Paths.DataDir,
-		CacheDir:     status.Paths.CacheDir,
-		DatabasePath: status.Paths.DatabasePath,
-		Version:      Version,
+		State:         toProtoState(status.State),
+		StateLabel:    status.State.String(),
+		SocketPath:    status.Paths.SocketPath,
+		DataDir:       status.Paths.DataDir,
+		CacheDir:      status.Paths.CacheDir,
+		DatabasePath:  status.Paths.DatabasePath,
+		Version:       Version,
+		Detail:        status.Detail,
+		CanReconnect:  status.CanReconnect,
+		RetryAttempt:  status.RetryAttempt,
+		NextRetryUnix: status.NextRetryUnix,
 	}, nil
 }
 

@@ -66,6 +66,10 @@ message GetStatusResponse {
   string cache_dir = 5;
   string database_path = 6;
   string version = 7;
+  string detail = 8;
+  bool can_reconnect = 9;
+  int32 retry_attempt = 10;
+  int64 next_retry_unix = 11;
 }
 
 message SubscribeEventsRequest {}

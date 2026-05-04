@@ -25,7 +25,17 @@ func (c *Client) handleEvent(raw any) {
 	case *events.Disconnected:
 		c.daemon.SetConnMeta(0, 0, true)
 		c.daemon.SetStateDetail(app.StateReconnecting, "Connection lost. Reconnecting...")
-		c.signalReconnect()
+		c.requestReconnect(false)
+	case *events.KeepAliveTimeout:
+		c.daemon.SetConnMeta(0, 0, true)
+		c.daemon.SetStateDetail(app.StateOffline, "Connection lost. Reconnecting...")
+		c.requestReconnect(true)
+	case *events.KeepAliveRestored:
+		client := c.currentClient()
+		if client != nil && client.IsLoggedIn() && client.IsConnected() {
+			c.daemon.SetConnMeta(0, 0, false)
+			c.daemon.SetStateDetail(app.StateOnline, "Connected to WhatsApp")
+		}
 	case *events.PairSuccess:
 		c.daemon.SetStateDetail(app.StateConnecting, "QR scanned; pairing succeeded")
 	case *events.PairError:
@@ -38,7 +48,7 @@ func (c *Client) handleEvent(raw any) {
 	case *events.ConnectFailure:
 		c.daemon.SetConnMeta(0, 0, true)
 		c.daemon.SetStateDetail(app.StateOffline, fmt.Sprintf("WhatsApp connection failed: %s", evt.Reason.String()))
-		c.signalReconnect()
+		c.requestReconnect(true)
 	case *events.ClientOutdated:
 		c.daemon.SetConnMeta(0, 0, false)
 		c.daemon.SetStateDetail(app.StateOffline, "WhatsApp client is outdated. Update whatevr/whatevrd.")

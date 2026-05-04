@@ -7,8 +7,12 @@ import (
 )
 
 type Status struct {
-	State State
-	Paths Paths
+	State         State
+	Detail        string
+	Paths         Paths
+	RetryAttempt  int32
+	NextRetryUnix int64
+	CanReconnect  bool
 }
 
 type Daemon struct {
@@ -67,9 +71,17 @@ func (d *Daemon) SetConnMeta(attempt int32, nextRetryUnix int64, canReconnect bo
 }
 
 func (d *Daemon) Status() Status {
+	d.subMu.Lock()
+	detail := d.lastDetail
+	d.subMu.Unlock()
+
 	return Status{
-		State: State(d.state.Load()),
-		Paths: d.paths,
+		State:         State(d.state.Load()),
+		Detail:        detail,
+		Paths:         d.paths,
+		RetryAttempt:  d.retryAttempt.Load(),
+		NextRetryUnix: d.nextRetryUnix.Load(),
+		CanReconnect:  d.canReconnect.Load(),
 	}
 }
 
@@ -159,7 +171,14 @@ func (d *Daemon) SubscribeDaemonEvents() (<-chan DaemonEvent, func()) {
 	detail := d.lastDetail
 	d.subMu.Unlock()
 
-	ch <- DaemonEvent{Kind: DaemonEventConnectionChanged, State: state, Detail: detail}
+	ch <- DaemonEvent{
+		Kind:          DaemonEventConnectionChanged,
+		State:         state,
+		Detail:        detail,
+		RetryAttempt:  d.retryAttempt.Load(),
+		NextRetryUnix: d.nextRetryUnix.Load(),
+		CanReconnect:  d.canReconnect.Load(),
+	}
 
 	return ch, func() {
 		d.subMu.Lock()

@@ -234,6 +234,10 @@ type GetStatusResponse struct {
 	CacheDir      string                 `protobuf:"bytes,5,opt,name=cache_dir,json=cacheDir,proto3" json:"cache_dir,omitempty"`
 	DatabasePath  string                 `protobuf:"bytes,6,opt,name=database_path,json=databasePath,proto3" json:"database_path,omitempty"`
 	Version       string                 `protobuf:"bytes,7,opt,name=version,proto3" json:"version,omitempty"`
+	Detail        string                 `protobuf:"bytes,8,opt,name=detail,proto3" json:"detail,omitempty"`
+	CanReconnect  bool                   `protobuf:"varint,9,opt,name=can_reconnect,json=canReconnect,proto3" json:"can_reconnect,omitempty"`
+	RetryAttempt  int32                  `protobuf:"varint,10,opt,name=retry_attempt,json=retryAttempt,proto3" json:"retry_attempt,omitempty"`
+	NextRetryUnix int64                  `protobuf:"varint,11,opt,name=next_retry_unix,json=nextRetryUnix,proto3" json:"next_retry_unix,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -315,6 +319,34 @@ func (x *GetStatusResponse) GetVersion() string {
 		return x.Version
 	}
 	return ""
+}
+
+func (x *GetStatusResponse) GetDetail() string {
+	if x != nil {
+		return x.Detail
+	}
+	return ""
+}
+
+func (x *GetStatusResponse) GetCanReconnect() bool {
+	if x != nil {
+		return x.CanReconnect
+	}
+	return false
+}
+
+func (x *GetStatusResponse) GetRetryAttempt() int32 {
+	if x != nil {
+		return x.RetryAttempt
+	}
+	return 0
+}
+
+func (x *GetStatusResponse) GetNextRetryUnix() int64 {
+	if x != nil {
+		return x.NextRetryUnix
+	}
+	return 0
 }
 
 type SubscribeEventsRequest struct {
@@ -2035,7 +2067,7 @@ const file_whatevr_proto_rawDesc = "" +
 	"\n" +
 	"\rwhatevr.proto\x12\n" +
 	"whatevr.v1\"\x12\n" +
-	"\x10GetStatusRequest\"\xfb\x01\n" +
+	"\x10GetStatusRequest\"\x85\x03\n" +
 	"\x11GetStatusResponse\x12-\n" +
 	"\x05state\x18\x01 \x01(\x0e2\x17.whatevr.v1.DaemonStateR\x05state\x12\x1f\n" +
 	"\vstate_label\x18\x02 \x01(\tR\n" +
@@ -2045,7 +2077,12 @@ const file_whatevr_proto_rawDesc = "" +
 	"\bdata_dir\x18\x04 \x01(\tR\adataDir\x12\x1b\n" +
 	"\tcache_dir\x18\x05 \x01(\tR\bcacheDir\x12#\n" +
 	"\rdatabase_path\x18\x06 \x01(\tR\fdatabasePath\x12\x18\n" +
-	"\aversion\x18\a \x01(\tR\aversion\"\x18\n" +
+	"\aversion\x18\a \x01(\tR\aversion\x12\x16\n" +
+	"\x06detail\x18\b \x01(\tR\x06detail\x12#\n" +
+	"\rcan_reconnect\x18\t \x01(\bR\fcanReconnect\x12#\n" +
+	"\rretry_attempt\x18\n" +
+	" \x01(\x05R\fretryAttempt\x12&\n" +
+	"\x0fnext_retry_unix\x18\v \x01(\x03R\rnextRetryUnix\"\x18\n" +
 	"\x16SubscribeEventsRequest\"\xd0\x03\n" +
 	"\vDaemonEvent\x12N\n" +
 	"\x12connection_changed\x18\x01 \x01(\v2\x1d.whatevr.v1.ConnectionChangedH\x00R\x11connectionChanged\x12O\n" +

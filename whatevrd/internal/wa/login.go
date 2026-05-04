@@ -9,6 +9,7 @@ import (
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/store"
+	"go.mau.fi/whatsmeow/types"
 
 	"whatevrd/internal/app"
 )
@@ -34,6 +35,7 @@ func (c *Client) runConnectionSupervisor(ctx context.Context) {
 		case <-c.reconnectCh:
 		default:
 		}
+		c.closeForReconnectIfRequested()
 
 		err := c.connectOnce(ctx)
 		if ctx.Err() != nil {
@@ -62,18 +64,74 @@ func (c *Client) runConnectionSupervisor(ctx context.Context) {
 		c.daemon.SetConnMeta(0, 0, false)
 
 		// Park until a reconnect is signalled.
+		if !c.waitForReconnectSignal(ctx) {
+			return
+		}
+
+		// Brief pause so whatsmeow can finish cleanup.
 		select {
 		case <-ctx.Done():
 			return
+		case <-time.After(300 * time.Millisecond):
+		}
+	}
+}
+
+func (c *Client) waitForReconnectSignal(ctx context.Context) bool {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return false
 		case <-c.reconnectCh:
-			// Brief pause so whatsmeow can finish cleanup.
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(300 * time.Millisecond):
+			return true
+		case <-ticker.C:
+			if c.connectionLooksOffline(ctx) {
+				c.daemon.SetConnMeta(0, 0, true)
+				c.daemon.SetStateDetail(app.StateOffline, "Connection lost. Reconnecting...")
+				c.reconnectNow.Store(true)
+				return true
 			}
 		}
 	}
+}
+
+func (c *Client) closeForReconnectIfRequested() {
+	if !c.reconnectNow.Swap(false) {
+		return
+	}
+	if client := c.currentClient(); client != nil {
+		client.Disconnect()
+	}
+}
+
+func (c *Client) connectionLooksOffline(ctx context.Context) bool {
+	client := c.currentClient()
+	if client == nil || client.Store.ID == nil {
+		return false
+	}
+	if !client.IsLoggedIn() || !client.IsConnected() {
+		return true
+	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := client.SendPresence(probeCtx, c.desiredPresence()); err != nil {
+		c.log.Warnf("WhatsApp connection probe failed: %v", err)
+		return true
+	}
+	return false
+}
+
+func (c *Client) desiredPresence() types.Presence {
+	c.presenceMu.Lock()
+	defer c.presenceMu.Unlock()
+	if c.frontendSessions > 0 {
+		return types.PresenceAvailable
+	}
+	return types.PresenceUnavailable
 }
 
 // connectOnce performs a single connection attempt. For QR-login sessions it
@@ -98,6 +156,10 @@ func (c *Client) connectOnce(ctx context.Context) error {
 	c.daemon.SetStateDetail(app.StateConnecting, "Connecting to WhatsApp...")
 	if err := client.ConnectContext(ctx); err != nil {
 		return fmt.Errorf("connect: %w", err)
+	}
+	if client.IsLoggedIn() && client.IsConnected() {
+		c.daemon.SetConnMeta(0, 0, false)
+		c.daemon.SetStateDetail(app.StateOnline, "Connected to WhatsApp")
 	}
 	return nil
 }
