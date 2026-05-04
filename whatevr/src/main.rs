@@ -46,6 +46,7 @@ const CONVERSATION_PLACEHOLDER_PAGE: &str = "placeholder";
 const CONVERSATION_LOADING_PAGE: &str = "loading";
 const CONVERSATION_EMPTY_PAGE: &str = "empty";
 const CONVERSATION_MESSAGES_PAGE: &str = "messages";
+const COMPOSER_MAX_HEIGHT: i32 = 144;
 
 #[derive(Clone)]
 enum UiMessage {
@@ -197,6 +198,7 @@ struct Widgets {
     conversation_title: gtk::Label,
     message_scroller: gtk::ScrolledWindow,
     message_box: gtk::Box,
+    composer_scroller: gtk::ScrolledWindow,
     composer_text_view: gtk::TextView,
     composer_error_label: gtk::Label,
     composer_send_button: gtk::Button,
@@ -380,31 +382,36 @@ fn build_ui(app: &adw::Application) {
     let composer_buffer = gtk::TextBuffer::new(None);
     let composer_text_view = gtk::TextView::with_buffer(&composer_buffer);
     composer_text_view.set_wrap_mode(gtk::WrapMode::WordChar);
-    composer_text_view.set_top_margin(10);
-    composer_text_view.set_bottom_margin(10);
-    composer_text_view.set_left_margin(12);
-    composer_text_view.set_right_margin(12);
+    composer_text_view.set_top_margin(8);
+    composer_text_view.set_bottom_margin(8);
+    composer_text_view.set_left_margin(10);
+    composer_text_view.set_right_margin(10);
     composer_text_view.set_accepts_tab(false);
+    composer_text_view.set_valign(gtk::Align::Center);
     let composer_scroller = gtk::ScrolledWindow::builder()
         .child(&composer_text_view)
         .hscrollbar_policy(gtk::PolicyType::Never)
-        .min_content_height(68)
-        .max_content_height(140)
+        .vscrollbar_policy(gtk::PolicyType::Never)
+        .propagate_natural_height(true)
+        .max_content_height(COMPOSER_MAX_HEIGHT)
+        .valign(gtk::Align::Center)
         .build();
     let composer_frame = gtk::Frame::builder()
         .child(&composer_scroller)
         .hexpand(true)
-        .css_classes(["composer-frame"])
+        .valign(gtk::Align::Center)
+        .css_classes(["composer-input"])
         .build();
     let composer_send_button = gtk::Button::builder()
         .icon_name("mail-send-symbolic")
         .tooltip_text("Send message")
-        .css_classes(["suggested-action"])
+        .css_classes(["suggested-action", "circular"])
         .valign(gtk::Align::End)
         .build();
     let composer_attach_button = gtk::Button::builder()
         .icon_name("mail-attachment-symbolic")
         .tooltip_text("Attach image")
+        .css_classes(["flat", "circular"])
         .valign(gtk::Align::End)
         .build();
     let composer_error_label = gtk::Label::builder()
@@ -458,24 +465,16 @@ fn build_ui(app: &adw::Application) {
     conversation_content_stack.add_named(&message_scroller, Some(CONVERSATION_MESSAGES_PAGE));
     conversation_content_stack.set_visible_child_name(CONVERSATION_LOADING_PAGE);
 
-    let conversation_separator = gtk::Separator::builder()
-        .orientation(gtk::Orientation::Horizontal)
-        .build();
-    let selected_conversation_shell = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .vexpand(true)
-        .hexpand(true)
-        .build();
-    selected_conversation_shell.append(&conversation_content_stack);
-    selected_conversation_shell.append(&conversation_separator);
-    selected_conversation_shell.append(&composer_box);
+    let selected_conversation_toolbar = adw::ToolbarView::new();
+    selected_conversation_toolbar.set_content(Some(&conversation_content_stack));
+    selected_conversation_toolbar.add_bottom_bar(&composer_box);
 
     let conversation_stack = gtk::Stack::builder().vexpand(true).hexpand(true).build();
     conversation_stack.add_named(
         &conversation_placeholder_page,
         Some(CONVERSATION_PLACEHOLDER_PAGE),
     );
-    conversation_stack.add_named(&selected_conversation_shell, Some("selected"));
+    conversation_stack.add_named(&selected_conversation_toolbar, Some("selected"));
     conversation_stack.set_visible_child_name(CONVERSATION_PLACEHOLDER_PAGE);
 
     let content_toolbar = adw::ToolbarView::new();
@@ -539,6 +538,7 @@ fn build_ui(app: &adw::Application) {
         conversation_title,
         message_scroller,
         message_box,
+        composer_scroller,
         composer_text_view,
         composer_error_label,
         composer_send_button,
@@ -707,8 +707,16 @@ fn connect_signals(
         submit_composer_message(&send_widgets, &send_state, &send_sender);
     });
 
-    // Typing indicator: fire when composer buffer content changes
+    let resize_widgets = widgets.clone();
+    widgets
+        .composer_scroller
+        .connect_notify_local(Some("allocated-width"), move |_, _| {
+            resize_composer(&resize_widgets);
+        });
+
+    // Typing indicator + send button state: fire when composer buffer changes
     let typing_state = state.clone();
+    let typing_widgets = widgets.clone();
     let typing_sender = sender.clone();
     widgets
         .composer_text_view
@@ -729,6 +737,9 @@ fn connect_signals(
                     request_set_chat_presence(typing_sender.clone(), chat_id, non_empty);
                 }
             }
+
+            let s = typing_state.borrow();
+            render_composer_state(&typing_widgets, &s);
         });
 
     // Attach button: open file picker for images
@@ -1881,9 +1892,12 @@ fn composer_send_allowed(state: &UiState) -> bool {
 fn render_composer_state(widgets: &Widgets, state: &UiState) {
     let has_selected_chat = state.selected_chat_id.is_some();
     let enabled = has_selected_chat && composer_send_allowed(state);
+    let has_text = !composer_text(&widgets.composer_text_view).trim().is_empty();
 
     widgets.composer_text_view.set_sensitive(enabled);
-    widgets.composer_send_button.set_sensitive(enabled);
+    widgets
+        .composer_send_button
+        .set_sensitive(enabled && has_text);
     widgets.composer_attach_button.set_sensitive(enabled);
     widgets.composer_text_view.set_visible(has_selected_chat);
     widgets.composer_send_button.set_visible(has_selected_chat);
@@ -1898,6 +1912,31 @@ fn render_composer_state(widgets: &Widgets, state: &UiState) {
         widgets.composer_error_label.set_visible(true);
         widgets.composer_error_label.set_text(&state.composer_error);
     }
+
+    resize_composer(widgets);
+}
+
+fn resize_composer(widgets: &Widgets) {
+    let width = widgets.composer_scroller.allocated_width();
+    let for_size = if width > 0 { width } else { -1 };
+    let (_, natural_height, _, _) = widgets
+        .composer_text_view
+        .measure(gtk::Orientation::Vertical, for_size);
+    let target_height = natural_height.clamp(1, COMPOSER_MAX_HEIGHT);
+
+    widgets
+        .composer_scroller
+        .set_min_content_height(target_height);
+    widgets
+        .composer_scroller
+        .set_max_content_height(target_height);
+    widgets
+        .composer_scroller
+        .set_vscrollbar_policy(if natural_height > COMPOSER_MAX_HEIGHT {
+            gtk::PolicyType::Automatic
+        } else {
+            gtk::PolicyType::Never
+        });
 }
 
 fn submit_composer_message(
@@ -2886,8 +2925,15 @@ fn install_css() {
             padding: 0;
         }
 
-        .composer-frame {
+        .composer-input {
             border-radius: 16px;
+            border: 1px solid alpha(@window_fg_color, 0.15);
+            background-color: @card_bg_color;
+        }
+
+        .composer-input > * {
+            border-radius: inherit;
+            background-color: transparent;
         }
 
         .unread-badge {
