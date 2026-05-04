@@ -111,6 +111,7 @@ enum UiMessage {
     Notice(String),
     DaemonConnectionLost,
     DaemonConnectionRestored,
+    WhatsAppConnectionLost(String),
     ReconnectSucceeded,
     ReconnectFailed(String),
 }
@@ -1050,6 +1051,7 @@ fn handle_ui_message(
             }
         }
         UiMessage::SendFailed { chat_id, error } => {
+            let connection_lost = is_whatsapp_connection_error_text(&error);
             let mut should_render = false;
             {
                 let mut state = state.borrow_mut();
@@ -1064,9 +1066,15 @@ fn handle_ui_message(
                 let state = state.borrow();
                 render_conversation(widgets, &state);
             }
+            if connection_lost {
+                let _ = sender.send(UiMessage::WhatsAppConnectionLost(
+                    whatsapp_connection_lost_detail(),
+                ));
+            }
         }
         UiMessage::MediaSendSucceeded => {}
         UiMessage::MediaSendFailed { chat_id, error } => {
+            let connection_lost = is_whatsapp_connection_error_text(&error);
             let mut should_render = false;
             {
                 let mut state = state.borrow_mut();
@@ -1078,6 +1086,11 @@ fn handle_ui_message(
             if should_render {
                 let state = state.borrow();
                 render_conversation(widgets, &state);
+            }
+            if connection_lost {
+                let _ = sender.send(UiMessage::WhatsAppConnectionLost(
+                    whatsapp_connection_lost_detail(),
+                ));
             }
         }
         UiMessage::ChatPresence {
@@ -1238,6 +1251,20 @@ fn handle_ui_message(
         UiMessage::Notice(text) => {
             let state = state.borrow();
             show_banner_notice_preserving_action(widgets, &state, &text);
+        }
+        UiMessage::WhatsAppConnectionLost(detail) => {
+            {
+                let mut s = state.borrow_mut();
+                s.daemon_state = DaemonState::Offline;
+                s.daemon_detail = detail;
+                s.can_reconnect = true;
+                s.retry_attempt = 0;
+                s.next_retry_unix = 0;
+                s.reconnect_in_flight = false;
+            }
+            let state = state.borrow();
+            update_banner(widgets, &state);
+            render_composer_state(widgets, &state);
         }
         UiMessage::DaemonConnectionLost => {
             {
@@ -2190,6 +2217,13 @@ fn request_send_media(sender: mpsc::Sender<UiMessage>, chat_id: String, file_pat
 fn request_set_chat_presence(sender: mpsc::Sender<UiMessage>, chat_id: String, composing: bool) {
     spawn_async(async move {
         if let Err(error) = set_chat_presence(chat_id, composing).await {
+            let error = error.to_string();
+            if is_whatsapp_connection_error_text(&error) {
+                let _ = sender.send(UiMessage::WhatsAppConnectionLost(
+                    whatsapp_connection_lost_detail(),
+                ));
+                return;
+            }
             let _ = sender.send(UiMessage::Notice(format!(
                 "Unable to set chat presence: {error}"
             )));
@@ -2478,6 +2512,17 @@ fn is_daemon_transport_error(err: &dyn std::error::Error) -> bool {
         || s.contains("Connection refused")
         || s.contains("os error 2")
         || s.contains("Unavailable")
+}
+
+fn is_whatsapp_connection_error_text(s: &str) -> bool {
+    let s = s.to_lowercase();
+    s.contains("websocket not connected")
+        || s.contains("failed to read frame header")
+        || s.contains("keepalive timed out")
+}
+
+fn whatsapp_connection_lost_detail() -> String {
+    "WhatsApp connection lost. Reconnect now or wait for automatic retry.".to_string()
 }
 
 async fn connect_channel() -> Result<Channel, Box<dyn std::error::Error + Send + Sync>> {
