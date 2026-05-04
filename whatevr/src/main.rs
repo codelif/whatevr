@@ -47,6 +47,7 @@ const CONVERSATION_LOADING_PAGE: &str = "loading";
 const CONVERSATION_EMPTY_PAGE: &str = "empty";
 const CONVERSATION_MESSAGES_PAGE: &str = "messages";
 const COMPOSER_MAX_HEIGHT: i32 = 144;
+const COMPOSER_HEIGHT_SLACK: i32 = 2;
 
 #[derive(Clone)]
 enum UiMessage {
@@ -711,7 +712,10 @@ fn connect_signals(
     widgets
         .composer_scroller
         .connect_notify_local(Some("allocated-width"), move |_, _| {
-            resize_composer(&resize_widgets);
+            let idle_widgets = resize_widgets.clone();
+            glib::idle_add_local_once(move || {
+                resize_composer(&idle_widgets);
+            });
         });
 
     // Typing indicator + send button state: fire when composer buffer changes
@@ -740,6 +744,16 @@ fn connect_signals(
 
             let s = typing_state.borrow();
             render_composer_state(&typing_widgets, &s);
+            let idle_widgets = typing_widgets.clone();
+            glib::idle_add_local_once(move || {
+                resize_composer(&idle_widgets);
+                scroll_composer_to_bottom_if_needed(&idle_widgets);
+                let frame_widgets = idle_widgets.clone();
+                glib::timeout_add_local_once(Duration::from_millis(16), move || {
+                    resize_composer(&frame_widgets);
+                    scroll_composer_to_bottom_if_needed(&frame_widgets);
+                });
+            });
         });
 
     // Attach button: open file picker for images
@@ -910,26 +924,30 @@ fn handle_ui_message(
             generation,
             messages,
         } => {
-            let should_mark_read = {
+            let (should_mark_read, should_clear_composer) = {
                 let mut state = state.borrow_mut();
                 if state.message_request_generation != generation {
                     return;
                 }
                 if state.pending_chat_id.as_deref() == Some(chat_id.as_str()) {
-                    commit_pending_chat(&mut state, &widgets.composer_text_view, chat_id.clone());
+                    let should_clear_composer = commit_pending_chat(&mut state, chat_id.clone());
                     state.current_messages_chat_id = Some(chat_id.clone());
                     state.current_messages = messages;
                     state.loading_chat_id = None;
-                    true
+                    (true, should_clear_composer)
                 } else if state.selected_chat_id.as_deref() == Some(chat_id.as_str()) {
                     state.current_messages_chat_id = Some(chat_id.clone());
                     state.current_messages = messages;
                     state.loading_chat_id = None;
-                    false
+                    (false, false)
                 } else {
                     return;
                 }
             };
+
+            if should_clear_composer {
+                clear_composer(&widgets.composer_text_view);
+            }
 
             let state = state.borrow();
             render_chat_list(widgets, &state);
@@ -944,22 +962,29 @@ fn handle_ui_message(
             generation,
             error,
         } => {
-            let should_show_error = {
+            let (should_show_error, should_clear_composer) = {
                 let mut state = state.borrow_mut();
                 if state.message_request_generation != generation {
                     return;
                 }
                 if state.pending_chat_id.as_deref() == Some(chat_id.as_str()) {
-                    commit_pending_chat(&mut state, &widgets.composer_text_view, chat_id.clone());
+                    let should_clear_composer = commit_pending_chat(&mut state, chat_id.clone());
                     state.loading_chat_id = Some(chat_id.clone());
-                    true
+                    (true, should_clear_composer)
                 } else {
-                    state.selected_chat_id.as_deref() == Some(chat_id.as_str())
+                    (
+                        state.selected_chat_id.as_deref() == Some(chat_id.as_str()),
+                        false,
+                    )
                 }
             };
 
             if !should_show_error {
                 return;
+            }
+
+            if should_clear_composer {
+                clear_composer(&widgets.composer_text_view);
             }
 
             let state = state.borrow();
@@ -983,7 +1008,7 @@ fn handle_ui_message(
             chat_id,
             generation,
         } => {
-            let should_mark_read = {
+            let (should_mark_read, should_clear_composer) = {
                 let mut state = state.borrow_mut();
                 if state.message_request_generation != generation
                     || state.pending_chat_id.as_deref() != Some(chat_id.as_str())
@@ -991,10 +1016,14 @@ fn handle_ui_message(
                     return;
                 }
 
-                commit_pending_chat(&mut state, &widgets.composer_text_view, chat_id.clone());
+                let should_clear_composer = commit_pending_chat(&mut state, chat_id.clone());
                 state.loading_chat_id = Some(chat_id.clone());
-                true
+                (true, should_clear_composer)
             };
+
+            if should_clear_composer {
+                clear_composer(&widgets.composer_text_view);
+            }
 
             let state = state.borrow();
             render_chat_list(widgets, &state);
@@ -1021,6 +1050,9 @@ fn handle_ui_message(
 
             let state = state.borrow();
             render_composer_state(widgets, &state);
+            if should_clear_composer {
+                widgets.composer_text_view.grab_focus();
+            }
         }
         UiMessage::SendFailed { chat_id, error } => {
             let mut should_render = false;
@@ -1426,7 +1458,7 @@ fn next_message_request_generation(state: &Rc<RefCell<UiState>>) -> u64 {
     state.message_request_generation
 }
 
-fn commit_pending_chat(state: &mut UiState, composer: &gtk::TextView, chat_id: String) {
+fn commit_pending_chat(state: &mut UiState, chat_id: String) -> bool {
     let was_selected = state.selected_chat_id.as_deref() == Some(chat_id.as_str());
     state.selected_chat_id = Some(chat_id.clone());
     state.pending_chat_id = None;
@@ -1436,8 +1468,9 @@ fn commit_pending_chat(state: &mut UiState, composer: &gtk::TextView, chat_id: S
         state.current_messages_chat_id = None;
         state.current_messages.clear();
         state.last_sent_composing = false;
-        clear_composer(composer);
     }
+
+    !was_selected
 }
 
 fn clear_local_ui_state(state: &mut UiState) {
@@ -1922,21 +1955,57 @@ fn resize_composer(widgets: &Widgets) {
     let (_, natural_height, _, _) = widgets
         .composer_text_view
         .measure(gtk::Orientation::Vertical, for_size);
-    let target_height = natural_height.clamp(1, COMPOSER_MAX_HEIGHT);
+    let content_height = natural_height + COMPOSER_HEIGHT_SLACK;
+    let target_height = content_height.clamp(1, COMPOSER_MAX_HEIGHT);
+    let needs_scroll = content_height > COMPOSER_MAX_HEIGHT;
 
+    let current_max_height = widgets.composer_scroller.max_content_height();
+    if current_max_height != -1 && target_height > current_max_height {
+        widgets
+            .composer_scroller
+            .set_max_content_height(target_height);
+        widgets
+            .composer_scroller
+            .set_min_content_height(target_height);
+    } else {
+        widgets
+            .composer_scroller
+            .set_min_content_height(target_height);
+        widgets
+            .composer_scroller
+            .set_max_content_height(target_height);
+    }
     widgets
         .composer_scroller
-        .set_min_content_height(target_height);
-    widgets
-        .composer_scroller
-        .set_max_content_height(target_height);
-    widgets
-        .composer_scroller
-        .set_vscrollbar_policy(if natural_height > COMPOSER_MAX_HEIGHT {
-            gtk::PolicyType::Automatic
+        .set_vscrollbar_policy(if needs_scroll {
+            gtk::PolicyType::Always
         } else {
             gtk::PolicyType::Never
         });
+
+    if !needs_scroll {
+        widgets.composer_scroller.vadjustment().set_value(0.0);
+    } else {
+        scroll_composer_to_bottom(widgets);
+    }
+}
+
+fn scroll_composer_to_bottom(widgets: &Widgets) {
+    let buffer = widgets.composer_text_view.buffer();
+    let mut end_iter = buffer.end_iter();
+    widgets
+        .composer_text_view
+        .scroll_to_iter(&mut end_iter, 0.0, true, 0.0, 1.0);
+
+    let adjustment = widgets.composer_scroller.vadjustment();
+    let bottom = (adjustment.upper() - adjustment.page_size()).max(adjustment.lower());
+    adjustment.set_value(bottom);
+}
+
+fn scroll_composer_to_bottom_if_needed(widgets: &Widgets) {
+    if widgets.composer_scroller.vscrollbar_policy() != gtk::PolicyType::Never {
+        scroll_composer_to_bottom(widgets);
+    }
 }
 
 fn submit_composer_message(
