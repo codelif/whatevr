@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -11,6 +12,13 @@ import (
 	"whatevrd/internal/app"
 	"whatevrd/internal/rpc/pb"
 	appstore "whatevrd/internal/store"
+)
+
+const (
+	defaultChatLimit    = 100
+	maxChatLimit        = 500
+	defaultMessageLimit = 50
+	maxMessageLimit     = 200
 )
 
 type ChatStore interface {
@@ -40,7 +48,12 @@ func (s *ChatService) ListChats(ctx context.Context, req *pb.ListChatsRequest) (
 		return nil, status.Error(codes.Unimplemented, "chat store is not available")
 	}
 
-	chats, err := s.store.ListChats(ctx, int(req.GetLimit()), int(req.GetOffset()))
+	limit, offset, err := normalizePage(req.GetLimit(), req.GetOffset(), defaultChatLimit, maxChatLimit)
+	if err != nil {
+		return nil, err
+	}
+
+	chats, err := s.store.ListChats(ctx, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -57,11 +70,15 @@ func (s *ChatService) GetMessages(ctx context.Context, req *pb.GetMessagesReques
 	if s.store == nil {
 		return nil, status.Error(codes.Unimplemented, "chat store is not available")
 	}
-	if req.GetChatId() == "" {
+	if strings.TrimSpace(req.GetChatId()) == "" {
 		return nil, status.Error(codes.InvalidArgument, "chat_id is required")
 	}
+	limit, _, err := normalizePage(req.GetLimit(), 0, defaultMessageLimit, maxMessageLimit)
+	if err != nil {
+		return nil, err
+	}
 
-	messages, err := s.store.ListMessages(ctx, req.GetChatId(), int(req.GetLimit()), req.GetBeforeMessageId())
+	messages, err := s.store.ListMessages(ctx, req.GetChatId(), limit, req.GetBeforeMessageId())
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, status.Error(codes.NotFound, "message not found")
@@ -81,7 +98,7 @@ func (s *ChatService) MarkChatRead(ctx context.Context, req *pb.MarkChatReadRequ
 	if s.store == nil {
 		return nil, status.Error(codes.Unimplemented, "chat store is not available")
 	}
-	if req.GetChatId() == "" {
+	if strings.TrimSpace(req.GetChatId()) == "" {
 		return nil, status.Error(codes.InvalidArgument, "chat_id is required")
 	}
 
@@ -110,7 +127,7 @@ func (s *ChatService) SetChatPresence(ctx context.Context, req *pb.SetChatPresen
 	if s.actions == nil {
 		return nil, status.Error(codes.Unimplemented, "chat action controller is not available")
 	}
-	if req.GetChatId() == "" {
+	if strings.TrimSpace(req.GetChatId()) == "" {
 		return nil, status.Error(codes.InvalidArgument, "chat_id is required")
 	}
 
@@ -118,6 +135,22 @@ func (s *ChatService) SetChatPresence(ctx context.Context, req *pb.SetChatPresen
 		return nil, err
 	}
 	return &pb.SetChatPresenceResponse{}, nil
+}
+
+func normalizePage(limit int32, offset int32, defaultLimit int, maxLimit int) (int, int, error) {
+	if offset < 0 {
+		return 0, 0, status.Error(codes.InvalidArgument, "offset must be non-negative")
+	}
+	if limit < 0 {
+		return 0, 0, status.Error(codes.InvalidArgument, "limit must be non-negative")
+	}
+	if limit == 0 {
+		limit = int32(defaultLimit)
+	}
+	if limit > int32(maxLimit) {
+		return 0, 0, status.Errorf(codes.InvalidArgument, "limit must be <= %d", maxLimit)
+	}
+	return int(limit), int(offset), nil
 }
 
 func toAppChat(chat appstore.Chat) app.Chat {
