@@ -3,12 +3,18 @@ package rpc
 import (
 	"context"
 	"strings"
+	"unicode/utf8"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	"whatevrd/internal/rpc/pb"
 	appstore "whatevrd/internal/store"
+)
+
+const (
+	maxSendTextRunes = 4096
+	maxCaptionRunes  = 1024
 )
 
 type SendController interface {
@@ -32,11 +38,15 @@ func (s *SendService) SendText(ctx context.Context, req *pb.SendTextRequest) (*p
 	if strings.TrimSpace(req.GetChatId()) == "" {
 		return nil, status.Error(codes.InvalidArgument, "chat_id is required")
 	}
-	if strings.TrimSpace(req.GetText()) == "" {
+	text := strings.TrimSpace(req.GetText())
+	if text == "" {
 		return nil, status.Error(codes.InvalidArgument, "text is required")
 	}
+	if utf8.RuneCountInString(text) > maxSendTextRunes {
+		return nil, status.Errorf(codes.InvalidArgument, "text must be <= %d characters", maxSendTextRunes)
+	}
 
-	saved, err := s.sender.SendText(ctx, req.GetChatId(), req.GetText())
+	saved, err := s.sender.SendText(ctx, strings.TrimSpace(req.GetChatId()), text)
 	if err != nil {
 		return nil, err
 	}
@@ -51,11 +61,16 @@ func (s *SendService) SendMedia(ctx context.Context, req *pb.SendMediaRequest) (
 	if strings.TrimSpace(req.GetChatId()) == "" {
 		return nil, status.Error(codes.InvalidArgument, "chat_id is required")
 	}
-	if strings.TrimSpace(req.GetFilePath()) == "" {
+	filePath := strings.TrimSpace(req.GetFilePath())
+	if filePath == "" {
 		return nil, status.Error(codes.InvalidArgument, "file_path is required")
 	}
+	caption := strings.TrimSpace(req.GetCaption())
+	if utf8.RuneCountInString(caption) > maxCaptionRunes {
+		return nil, status.Errorf(codes.InvalidArgument, "caption must be <= %d characters", maxCaptionRunes)
+	}
 
-	saved, err := s.sender.SendMedia(ctx, req.GetChatId(), req.GetFilePath(), req.GetCaption())
+	saved, err := s.sender.SendMedia(ctx, strings.TrimSpace(req.GetChatId()), filePath, caption)
 	if err != nil {
 		return nil, err
 	}

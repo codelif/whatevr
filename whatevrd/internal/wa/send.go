@@ -4,10 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"go.mau.fi/whatsmeow"
@@ -20,6 +22,8 @@ import (
 
 	appstore "whatevrd/internal/store"
 )
+
+const maxOutboundMediaBytes = 25 * 1024 * 1024
 
 type readBatch struct {
 	sender     types.JID
@@ -100,12 +104,10 @@ func (c *Client) SendMedia(ctx context.Context, chatID, filePath, caption string
 		return appstore.SavedTextMessage{}, grpcstatus.Error(codes.FailedPrecondition, "WhatsApp session is not logged in")
 	}
 
-	data, err := os.ReadFile(filePath)
+	data, mimeType, extension, err := readOutboundMedia(filePath)
 	if err != nil {
-		return appstore.SavedTextMessage{}, grpcstatus.Errorf(codes.InvalidArgument, "cannot read file: %v", err)
+		return appstore.SavedTextMessage{}, err
 	}
-
-	mimeType := http.DetectContentType(data)
 
 	targetJID, err := types.ParseJID(chatID)
 	if err != nil {
@@ -119,7 +121,7 @@ func (c *Client) SendMedia(ctx context.Context, chatID, filePath, caption string
 	if err := os.MkdirAll(mediaDir, 0o700); err != nil {
 		return appstore.SavedTextMessage{}, err
 	}
-	localPath := filepath.Join(mediaDir, fmt.Sprintf("%s.jpg", messageID))
+	localPath := filepath.Join(mediaDir, fmt.Sprintf("%s%s", safeFilenamePart(string(messageID)), extension))
 	if err := os.WriteFile(localPath, data, 0o600); err != nil {
 		return appstore.SavedTextMessage{}, err
 	}
@@ -149,6 +151,72 @@ func (c *Client) SendMedia(ctx context.Context, chatID, filePath, caption string
 	}
 	c.signalSendQueue()
 	return saved, nil
+}
+
+func readOutboundMedia(filePath string) ([]byte, string, string, error) {
+	if !filepath.IsAbs(filePath) {
+		return nil, "", "", grpcstatus.Error(codes.InvalidArgument, "media file path must be absolute")
+	}
+	info, err := os.Lstat(filePath)
+	if err != nil {
+		return nil, "", "", grpcstatus.Error(codes.InvalidArgument, "media file is not accessible")
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return nil, "", "", grpcstatus.Error(codes.InvalidArgument, "media file must not be a symlink")
+	}
+	if !info.Mode().IsRegular() {
+		return nil, "", "", grpcstatus.Error(codes.InvalidArgument, "media file must be a regular file")
+	}
+	if info.Size() <= 0 {
+		return nil, "", "", grpcstatus.Error(codes.InvalidArgument, "media file is empty")
+	}
+	if info.Size() > maxOutboundMediaBytes {
+		return nil, "", "", grpcstatus.Errorf(codes.InvalidArgument, "media file must be <= %d MiB", maxOutboundMediaBytes/(1024*1024))
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || stat.Uid != uint32(os.Geteuid()) {
+		return nil, "", "", grpcstatus.Error(codes.PermissionDenied, "media file owner is not allowed")
+	}
+
+	f, err := os.Open(filePath)
+	if err != nil {
+		return nil, "", "", grpcstatus.Error(codes.InvalidArgument, "media file is not readable")
+	}
+	defer f.Close()
+
+	data, err := io.ReadAll(io.LimitReader(f, maxOutboundMediaBytes+1))
+	if err != nil {
+		return nil, "", "", grpcstatus.Error(codes.InvalidArgument, "media file could not be read")
+	}
+	if len(data) > maxOutboundMediaBytes {
+		return nil, "", "", grpcstatus.Errorf(codes.InvalidArgument, "media file must be <= %d MiB", maxOutboundMediaBytes/(1024*1024))
+	}
+	mimeType := http.DetectContentType(data)
+	extension, ok := outboundImageExtension(mimeType)
+	if !ok {
+		return nil, "", "", grpcstatus.Error(codes.InvalidArgument, "media file must be a supported image")
+	}
+	return data, mimeType, extension, nil
+}
+
+func outboundImageExtension(mimeType string) (string, bool) {
+	switch mimeType {
+	case "image/jpeg":
+		return ".jpg", true
+	case "image/png":
+		return ".png", true
+	case "image/gif":
+		return ".gif", true
+	case "image/webp":
+		return ".webp", true
+	default:
+		return "", false
+	}
+}
+
+func safeFilenamePart(input string) string {
+	replacer := strings.NewReplacer("/", "_", "\\", "_", ":", "_", "@", "_")
+	return replacer.Replace(input)
 }
 
 func (c *Client) signalSendQueue() {
