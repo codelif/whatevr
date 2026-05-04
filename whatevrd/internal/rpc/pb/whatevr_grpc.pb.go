@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.1
 // - protoc             v7.34.1
-// source: whatevr.proto
+// source: proto/whatevr.proto
 
 package pb
 
@@ -197,7 +197,7 @@ var DaemonService_ServiceDesc = grpc.ServiceDesc{
 			ServerStreams: true,
 		},
 	},
-	Metadata: "whatevr.proto",
+	Metadata: "proto/whatevr.proto",
 }
 
 const (
@@ -341,11 +341,12 @@ var LoginService_ServiceDesc = grpc.ServiceDesc{
 			ServerStreams: true,
 		},
 	},
-	Metadata: "whatevr.proto",
+	Metadata: "proto/whatevr.proto",
 }
 
 const (
-	FrontendService_HoldSession_FullMethodName = "/whatevr.v1.FrontendService/HoldSession"
+	FrontendService_HoldSession_FullMethodName        = "/whatevr.v1.FrontendService/HoldSession"
+	FrontendService_UpdateSessionState_FullMethodName = "/whatevr.v1.FrontendService/UpdateSessionState"
 )
 
 // FrontendServiceClient is the client API for FrontendService service.
@@ -353,6 +354,7 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type FrontendServiceClient interface {
 	HoldSession(ctx context.Context, in *HoldSessionRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[FrontendSessionEvent], error)
+	UpdateSessionState(ctx context.Context, in *UpdateSessionStateRequest, opts ...grpc.CallOption) (*UpdateSessionStateResponse, error)
 }
 
 type frontendServiceClient struct {
@@ -382,11 +384,22 @@ func (c *frontendServiceClient) HoldSession(ctx context.Context, in *HoldSession
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type FrontendService_HoldSessionClient = grpc.ServerStreamingClient[FrontendSessionEvent]
 
+func (c *frontendServiceClient) UpdateSessionState(ctx context.Context, in *UpdateSessionStateRequest, opts ...grpc.CallOption) (*UpdateSessionStateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UpdateSessionStateResponse)
+	err := c.cc.Invoke(ctx, FrontendService_UpdateSessionState_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // FrontendServiceServer is the server API for FrontendService service.
 // All implementations must embed UnimplementedFrontendServiceServer
 // for forward compatibility.
 type FrontendServiceServer interface {
 	HoldSession(*HoldSessionRequest, grpc.ServerStreamingServer[FrontendSessionEvent]) error
+	UpdateSessionState(context.Context, *UpdateSessionStateRequest) (*UpdateSessionStateResponse, error)
 	mustEmbedUnimplementedFrontendServiceServer()
 }
 
@@ -399,6 +412,9 @@ type UnimplementedFrontendServiceServer struct{}
 
 func (UnimplementedFrontendServiceServer) HoldSession(*HoldSessionRequest, grpc.ServerStreamingServer[FrontendSessionEvent]) error {
 	return status.Error(codes.Unimplemented, "method HoldSession not implemented")
+}
+func (UnimplementedFrontendServiceServer) UpdateSessionState(context.Context, *UpdateSessionStateRequest) (*UpdateSessionStateResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateSessionState not implemented")
 }
 func (UnimplementedFrontendServiceServer) mustEmbedUnimplementedFrontendServiceServer() {}
 func (UnimplementedFrontendServiceServer) testEmbeddedByValue()                         {}
@@ -432,13 +448,36 @@ func _FrontendService_HoldSession_Handler(srv interface{}, stream grpc.ServerStr
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type FrontendService_HoldSessionServer = grpc.ServerStreamingServer[FrontendSessionEvent]
 
+func _FrontendService_UpdateSessionState_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateSessionStateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FrontendServiceServer).UpdateSessionState(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FrontendService_UpdateSessionState_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FrontendServiceServer).UpdateSessionState(ctx, req.(*UpdateSessionStateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // FrontendService_ServiceDesc is the grpc.ServiceDesc for FrontendService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var FrontendService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "whatevr.v1.FrontendService",
 	HandlerType: (*FrontendServiceServer)(nil),
-	Methods:     []grpc.MethodDesc{},
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "UpdateSessionState",
+			Handler:    _FrontendService_UpdateSessionState_Handler,
+		},
+	},
 	Streams: []grpc.StreamDesc{
 		{
 			StreamName:    "HoldSession",
@@ -446,7 +485,7 @@ var FrontendService_ServiceDesc = grpc.ServiceDesc{
 			ServerStreams: true,
 		},
 	},
-	Metadata: "whatevr.proto",
+	Metadata: "proto/whatevr.proto",
 }
 
 const (
@@ -662,7 +701,7 @@ var ChatService_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "whatevr.proto",
+	Metadata: "proto/whatevr.proto",
 }
 
 const (
@@ -802,5 +841,5 @@ var SendService_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "whatevr.proto",
+	Metadata: "proto/whatevr.proto",
 }

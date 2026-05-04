@@ -42,6 +42,7 @@ service LoginService {
 
 service FrontendService {
   rpc HoldSession(HoldSessionRequest) returns (stream FrontendSessionEvent);
+  rpc UpdateSessionState(UpdateSessionStateRequest) returns (UpdateSessionStateResponse);
 }
 
 service ChatService {
@@ -142,11 +143,20 @@ message LogoutResponse {}
 
 message HoldSessionRequest {
   string client_name = 1;
+  string session_id = 2;
 }
 
 message FrontendSessionEvent {
   string detail = 1;
 }
+
+message UpdateSessionStateRequest {
+  string session_id = 1;
+  bool focused = 2;
+  string active_chat_id = 3;
+}
+
+message UpdateSessionStateResponse {}
 
 message ListChatsRequest {
   int32 limit = 1;

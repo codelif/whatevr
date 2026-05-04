@@ -128,7 +128,7 @@ func (c *Client) connectionLooksOffline(ctx context.Context) bool {
 func (c *Client) desiredPresence() types.Presence {
 	c.presenceMu.Lock()
 	defer c.presenceMu.Unlock()
-	if c.frontendSessions > 0 {
+	if len(c.frontendSessions) > 0 {
 		return types.PresenceAvailable
 	}
 	return types.PresenceUnavailable

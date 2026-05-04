@@ -22,6 +22,7 @@ import (
 type Client struct {
 	daemon    *app.Daemon
 	store     *appstore.DB
+	notifier  MessageNotifier
 	container *sqlstore.Container
 	paths     app.Paths
 	log       waLog.Logger
@@ -34,7 +35,7 @@ type Client struct {
 	runCancel context.CancelFunc
 
 	presenceMu       sync.Mutex
-	frontendSessions int
+	frontendSessions map[string]frontendSession
 	lastPresence     types.Presence
 
 	avatarMu             sync.Mutex
@@ -46,7 +47,16 @@ type Client struct {
 	reconnectNow  atomic.Bool
 }
 
-func New(ctx context.Context, paths app.Paths, daemon *app.Daemon, store *appstore.DB) (*Client, error) {
+type frontendSession struct {
+	focused      bool
+	activeChatID string
+}
+
+type MessageNotifier interface {
+	NotifyMessage(context.Context, app.Message, app.Chat)
+}
+
+func New(ctx context.Context, paths app.Paths, daemon *app.Daemon, store *appstore.DB, notifier MessageNotifier) (*Client, error) {
 	log := waLog.Stdout("whatevrd/wa", "WARN", false)
 	container, err := openSessionStore(ctx, paths.SessionDBPath, log.Sub("DB"))
 	if err != nil {
@@ -54,13 +64,15 @@ func New(ctx context.Context, paths app.Paths, daemon *app.Daemon, store *appsto
 	}
 
 	c := &Client{
-		daemon:        daemon,
-		store:         store,
-		container:     container,
-		paths:         paths,
-		log:           log,
-		sendQueueWake: make(chan struct{}, 1),
-		reconnectCh:   make(chan struct{}, 1),
+		daemon:           daemon,
+		store:            store,
+		container:        container,
+		paths:            paths,
+		notifier:         notifier,
+		log:              log,
+		frontendSessions: make(map[string]frontendSession),
+		sendQueueWake:    make(chan struct{}, 1),
+		reconnectCh:      make(chan struct{}, 1),
 	}
 
 	if err := c.resetClient(ctx); err != nil {
@@ -169,10 +181,14 @@ func (c *Client) currentClient() *whatsmeow.Client {
 	return c.client
 }
 
-func (c *Client) FrontendSessionStarted() {
+func (c *Client) FrontendSessionStarted(sessionID string) {
+	if sessionID == "" {
+		return
+	}
 	c.presenceMu.Lock()
-	c.frontendSessions++
-	shouldSync := c.frontendSessions == 1
+	_, existed := c.frontendSessions[sessionID]
+	c.frontendSessions[sessionID] = frontendSession{}
+	shouldSync := !existed && len(c.frontendSessions) == 1
 	c.presenceMu.Unlock()
 
 	if shouldSync {
@@ -180,17 +196,39 @@ func (c *Client) FrontendSessionStarted() {
 	}
 }
 
-func (c *Client) FrontendSessionEnded() {
-	c.presenceMu.Lock()
-	if c.frontendSessions > 0 {
-		c.frontendSessions--
+func (c *Client) FrontendSessionEnded(sessionID string) {
+	if sessionID == "" {
+		return
 	}
-	shouldSync := c.frontendSessions == 0
+	c.presenceMu.Lock()
+	_, existed := c.frontendSessions[sessionID]
+	delete(c.frontendSessions, sessionID)
+	shouldSync := existed && len(c.frontendSessions) == 0
 	c.presenceMu.Unlock()
 
 	if shouldSync {
 		c.syncPresence(context.Background(), true)
 	}
+}
+
+func (c *Client) FrontendSessionStateChanged(sessionID string, focused bool, activeChatID string) {
+	if sessionID == "" {
+		return
+	}
+	c.presenceMu.Lock()
+	c.frontendSessions[sessionID] = frontendSession{focused: focused, activeChatID: activeChatID}
+	c.presenceMu.Unlock()
+}
+
+func (c *Client) ShouldNotifyChat(chatID string) bool {
+	c.presenceMu.Lock()
+	defer c.presenceMu.Unlock()
+	for _, session := range c.frontendSessions {
+		if session.focused && session.activeChatID == chatID {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *Client) syncPresence(ctx context.Context, force bool) {
@@ -201,7 +239,7 @@ func (c *Client) syncPresence(ctx context.Context, force bool) {
 
 	c.presenceMu.Lock()
 	desired := types.PresenceUnavailable
-	if c.frontendSessions > 0 {
+	if len(c.frontendSessions) > 0 {
 		desired = types.PresenceAvailable
 	}
 	if desired == types.PresenceAvailable && client.Store.PushName == "" {

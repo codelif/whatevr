@@ -236,8 +236,9 @@ func (d *Daemon) PublishMessageUpdated(message Message) {
 }
 
 type FrontendSessionController interface {
-	FrontendSessionStarted()
-	FrontendSessionEnded()
+	FrontendSessionStarted(string)
+	FrontendSessionEnded(string)
+	FrontendSessionStateChanged(string, bool, string)
 }
 
 func (d *Daemon) PublishChatUpdated(chat Chat) {

@@ -7,6 +7,7 @@ import (
 	"syscall"
 
 	"whatevrd/internal/app"
+	"whatevrd/internal/notify"
 	daemonrpc "whatevrd/internal/rpc"
 	"whatevrd/internal/store"
 	"whatevrd/internal/wa"
@@ -38,8 +39,15 @@ func main() {
 	defer db.Close()
 
 	daemon := app.NewDaemon(paths)
+	notificationWorker, err := notify.NewWorker()
+	if err != nil {
+		log.Printf("notifications disabled: %v", err)
+	}
+	if notificationWorker != nil {
+		notificationWorker.Start(ctx)
+	}
 
-	waClient, err := wa.New(ctx, paths, daemon, db)
+	waClient, err := wa.New(ctx, paths, daemon, db, notificationWorker)
 	if err != nil {
 		log.Fatalf("initialize WhatsApp client: %v", err)
 	}

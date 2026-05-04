@@ -5,7 +5,7 @@ use std::{
     rc::Rc,
     sync::mpsc,
     thread,
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use adw::prelude::*;
@@ -32,7 +32,7 @@ use proto::send_service_client::SendServiceClient;
 use proto::{
     DaemonState, GetMessagesRequest, GetStatusRequest, ListChatsRequest, LogoutRequest,
     MarkChatReadRequest, ReconnectRequest, SendMediaRequest, SetChatPresenceRequest,
-    SubscribeEventsRequest, SubscribeLoginEventsRequest,
+    SubscribeEventsRequest, SubscribeLoginEventsRequest, UpdateSessionStateRequest,
 };
 
 const APP_ID: &str = "in.codelif.Whatevr";
@@ -114,6 +114,10 @@ enum UiMessage {
     WhatsAppConnectionLost(String),
     ReconnectSucceeded,
     ReconnectFailed(String),
+    OpenChat {
+        chat_id: String,
+    },
+    FrontendSessionConnected,
 }
 
 struct UiState {
@@ -138,6 +142,8 @@ struct UiState {
     window_focused: bool,
     composing_peers: HashMap<String, bool>,
     last_sent_composing: bool,
+    pending_open_chat_id: Option<String>,
+    frontend_session_id: String,
 }
 
 impl Default for UiState {
@@ -164,8 +170,24 @@ impl Default for UiState {
             window_focused: false,
             composing_peers: HashMap::new(),
             last_sent_composing: false,
+            pending_open_chat_id: None,
+            frontend_session_id: new_frontend_session_id(),
         }
     }
+}
+
+#[derive(Clone)]
+struct AppContext {
+    widgets: Rc<Widgets>,
+    sender: mpsc::Sender<UiMessage>,
+}
+
+fn new_frontend_session_id() -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    format!("whatevr-{}-{nanos}", std::process::id())
 }
 
 #[derive(Clone)]
@@ -217,12 +239,46 @@ fn main() -> glib::ExitCode {
     adw::init().expect("failed to initialize libadwaita");
     install_css();
 
-    let app = adw::Application::builder().application_id(APP_ID).build();
-    app.connect_activate(build_ui);
+    let app = adw::Application::builder()
+        .application_id(APP_ID)
+        .flags(gio::ApplicationFlags::HANDLES_OPEN)
+        .build();
+    let app_context: Rc<RefCell<Option<AppContext>>> = Rc::new(RefCell::new(None));
+    {
+        let app_context = app_context.clone();
+        app.connect_activate(move |app| {
+            if let Some(context) = app_context.borrow().as_ref() {
+                present_app_window(&context.widgets);
+                return;
+            }
+            let context = build_ui(app);
+            *app_context.borrow_mut() = Some(context);
+        });
+    }
+    {
+        let app_context = app_context.clone();
+        app.connect_open(move |app, files, _hint| {
+            let context = if let Some(context) = app_context.borrow().as_ref() {
+                context.clone()
+            } else {
+                let context = build_ui(app);
+                *app_context.borrow_mut() = Some(context.clone());
+                context
+            };
+
+            present_app_window(&context.widgets);
+            for file in files {
+                let uri = file.uri();
+                if let Some(chat_id) = chat_id_from_uri(uri.as_str()) {
+                    let _ = context.sender.send(UiMessage::OpenChat { chat_id });
+                }
+            }
+        });
+    }
     app.run()
 }
 
-fn build_ui(app: &adw::Application) {
+fn build_ui(app: &adw::Application) -> AppContext {
     let refresh_button = gtk::Button::builder()
         .icon_name("view-refresh-symbolic")
         .tooltip_text("Refresh chats and connection state")
@@ -598,6 +654,7 @@ fn build_ui(app: &adw::Application) {
             s.window_focused = focused;
             s.selected_chat_id.clone()
         };
+        report_frontend_session_state(&focus_state, focus_sender.clone());
         if focused && !focus_state.borrow().daemon_disconnected {
             if let Some(chat_id) = selected {
                 request_mark_chat_read(focus_sender.clone(), chat_id);
@@ -621,11 +678,13 @@ fn build_ui(app: &adw::Application) {
     });
 
     request_status(sender.clone());
-    hold_frontend_session(sender.clone());
+    hold_frontend_session(sender.clone(), state.borrow().frontend_session_id.clone());
     subscribe_login_events(sender.clone());
     subscribe_daemon_events(sender.clone());
 
     window.present();
+
+    AppContext { widgets, sender }
 }
 
 fn connect_signals(
@@ -889,17 +948,33 @@ fn handle_ui_message(
             widgets.root_stack.set_visible_child_name(ROOT_LOGIN_PAGE);
         }
         UiMessage::ChatsLoaded(chats) => {
-            {
+            let pending_open_chat_id = {
                 let mut state = state.borrow_mut();
                 state.chats = chats;
                 state.chats_loaded = true;
                 sync_selected_chat_after_reload(&mut state);
+                state.pending_open_chat_id.clone()
+            };
+            report_frontend_session_state(state, sender.clone());
+
+            let mut opened_pending = false;
+            if let Some(chat_id) = pending_open_chat_id {
+                opened_pending = open_chat_by_id(chat_id, false, widgets, state, sender);
+                if opened_pending {
+                    state.borrow_mut().pending_open_chat_id = None;
+                }
             }
 
-            let state = state.borrow();
-            render_chat_list(widgets, &state);
-            render_conversation(widgets, &state);
-            update_navigation_state(widgets, &state);
+            if opened_pending {
+                return;
+            }
+
+            {
+                let state = state.borrow();
+                render_chat_list(widgets, &state);
+                render_conversation(widgets, &state);
+                update_navigation_state(widgets, &state);
+            }
         }
         UiMessage::ChatsFailed(error) => {
             let state = state.borrow();
@@ -1289,6 +1364,7 @@ fn handle_ui_message(
                 let generation = next_message_request_generation(state);
                 request_messages(sender.clone(), chat_id, generation);
             }
+            report_frontend_session_state(state, sender.clone());
             let state = state.borrow();
             render_composer_state(widgets, &state);
             update_banner(widgets, &state);
@@ -1318,6 +1394,28 @@ fn handle_ui_message(
                 &format!("Unable to ask whatevrd to reconnect: {}", error),
             );
         }
+        UiMessage::OpenChat { chat_id } => {
+            present_app_window(widgets);
+            if !open_chat_by_id(chat_id.clone(), false, widgets, state, sender) {
+                {
+                    let mut s = state.borrow_mut();
+                    s.pending_open_chat_id = Some(chat_id);
+                    s.chats_loaded = false;
+                }
+                request_chats(sender.clone());
+                let state = state.borrow();
+                render_chat_list(widgets, &state);
+            }
+        }
+        UiMessage::FrontendSessionConnected => {
+            report_frontend_session_state(state, sender.clone());
+        }
+    }
+}
+
+fn present_app_window(widgets: &Widgets) {
+    if let Some(window) = widgets.root_stack.root().and_downcast::<gtk::Window>() {
+        window.present();
     }
 }
 
@@ -1507,6 +1605,7 @@ fn clear_local_ui_state(state: &mut UiState) {
     state.send_in_flight = false;
     state.composing_peers.clear();
     state.last_sent_composing = false;
+    state.pending_open_chat_id = None;
 }
 
 fn show_logout_confirmation(widgets: &Rc<Widgets>, sender: &mpsc::Sender<UiMessage>) {
@@ -1900,6 +1999,8 @@ fn open_chat_at_index(
         }
     }
 
+    report_frontend_session_state(state, sender.clone());
+
     if !should_request || force_reload {
         let state = state.borrow();
         render_conversation(widgets, &state);
@@ -1915,6 +2016,60 @@ fn open_chat_at_index(
 
     schedule_conversation_loading(sender.clone(), chat_id.clone(), generation);
     request_messages(sender.clone(), chat_id, generation);
+}
+
+fn open_chat_by_id(
+    chat_id: String,
+    force_reload: bool,
+    widgets: &Rc<Widgets>,
+    state: &Rc<RefCell<UiState>>,
+    sender: &mpsc::Sender<UiMessage>,
+) -> bool {
+    let index = {
+        let state = state.borrow();
+        state.chats.iter().position(|chat| chat.id == chat_id)
+    };
+    let Some(index) = index else {
+        return false;
+    };
+
+    open_chat_at_index(index, force_reload, widgets, state, sender);
+    true
+}
+
+fn chat_id_from_uri(uri: &str) -> Option<String> {
+    let rest = uri.strip_prefix("whatevr://chat/")?;
+    percent_decode(rest)
+}
+
+fn percent_decode(input: &str) -> Option<String> {
+    let bytes = input.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            if i + 2 >= bytes.len() {
+                return None;
+            }
+            let hi = hex_value(bytes[i + 1])?;
+            let lo = hex_value(bytes[i + 2])?;
+            decoded.push((hi << 4) | lo);
+            i += 3;
+        } else {
+            decoded.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(decoded).ok()
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 fn sync_selected_chat_after_reload(state: &mut UiState) {
@@ -2093,11 +2248,11 @@ fn subscribe_login_events(sender: mpsc::Sender<UiMessage>) {
     });
 }
 
-fn hold_frontend_session(sender: mpsc::Sender<UiMessage>) {
+fn hold_frontend_session(sender: mpsc::Sender<UiMessage>, session_id: String) {
     spawn_async(async move {
         let mut backoff = Duration::from_secs(2);
         loop {
-            match stream_frontend_session(sender.clone()).await {
+            match stream_frontend_session(sender.clone(), session_id.clone()).await {
                 Ok(()) => break,
                 Err(_) => {
                     tokio::time::sleep(backoff).await;
@@ -2106,6 +2261,18 @@ fn hold_frontend_session(sender: mpsc::Sender<UiMessage>) {
             }
         }
     });
+}
+
+fn report_frontend_session_state(state: &Rc<RefCell<UiState>>, sender: mpsc::Sender<UiMessage>) {
+    let (session_id, focused, active_chat_id) = {
+        let state = state.borrow();
+        (
+            state.frontend_session_id.clone(),
+            state.window_focused,
+            state.selected_chat_id.clone().unwrap_or_default(),
+        )
+    };
+    request_update_frontend_session_state(sender, session_id, focused, active_chat_id);
 }
 
 fn subscribe_daemon_events(sender: mpsc::Sender<UiMessage>) {
@@ -2178,6 +2345,22 @@ fn request_mark_chat_read(sender: mpsc::Sender<UiMessage>, chat_id: String) {
             let _ = sender.send(UiMessage::Notice(format!(
                 "Unable to mark chat read: {error}"
             )));
+        }
+    });
+}
+
+fn request_update_frontend_session_state(
+    sender: mpsc::Sender<UiMessage>,
+    session_id: String,
+    focused: bool,
+    active_chat_id: String,
+) {
+    spawn_async(async move {
+        if let Err(error) = update_frontend_session_state(session_id, focused, active_chat_id).await
+        {
+            if is_daemon_transport_error(&*error) {
+                let _ = sender.send(UiMessage::DaemonConnectionLost);
+            }
         }
     });
 }
@@ -2308,19 +2491,39 @@ async fn stream_login_events(
 }
 
 async fn stream_frontend_session(
-    _sender: mpsc::Sender<UiMessage>,
+    sender: mpsc::Sender<UiMessage>,
+    session_id: String,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let channel = connect_channel().await?;
     let mut client = FrontendServiceClient::new(channel);
     let mut stream = client
         .hold_session(proto::HoldSessionRequest {
             client_name: "whatevr".to_string(),
+            session_id,
         })
         .await?
         .into_inner();
+    let _ = sender.send(UiMessage::FrontendSessionConnected);
 
     while stream.message().await?.is_some() {}
 
+    Ok(())
+}
+
+async fn update_frontend_session_state(
+    session_id: String,
+    focused: bool,
+    active_chat_id: String,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let channel = connect_channel().await?;
+    let mut client = FrontendServiceClient::new(channel);
+    client
+        .update_session_state(UpdateSessionStateRequest {
+            session_id,
+            focused,
+            active_chat_id,
+        })
+        .await?;
     Ok(())
 }
 

@@ -1,14 +1,17 @@
 package rpc
 
 import (
+	"context"
+	"fmt"
 	"time"
 
 	"whatevrd/internal/rpc/pb"
 )
 
 type FrontendSessionController interface {
-	FrontendSessionStarted()
-	FrontendSessionEnded()
+	FrontendSessionStarted(string)
+	FrontendSessionEnded(string)
+	FrontendSessionStateChanged(string, bool, string)
 }
 
 type FrontendService struct {
@@ -21,9 +24,14 @@ func NewFrontendService(sessions FrontendSessionController) *FrontendService {
 }
 
 func (s *FrontendService) HoldSession(req *pb.HoldSessionRequest, stream pb.FrontendService_HoldSessionServer) error {
+	sessionID := req.GetSessionId()
+	if sessionID == "" {
+		sessionID = fmt.Sprintf("frontend-%d", time.Now().UnixNano())
+	}
+
 	if s.sessions != nil {
-		s.sessions.FrontendSessionStarted()
-		defer s.sessions.FrontendSessionEnded()
+		s.sessions.FrontendSessionStarted(sessionID)
+		defer s.sessions.FrontendSessionEnded(sessionID)
 	}
 
 	clientName := req.GetClientName()
@@ -48,4 +56,11 @@ func (s *FrontendService) HoldSession(req *pb.HoldSessionRequest, stream pb.Fron
 			}
 		}
 	}
+}
+
+func (s *FrontendService) UpdateSessionState(_ context.Context, req *pb.UpdateSessionStateRequest) (*pb.UpdateSessionStateResponse, error) {
+	if s.sessions != nil && req.GetSessionId() != "" {
+		s.sessions.FrontendSessionStateChanged(req.GetSessionId(), req.GetFocused(), req.GetActiveChatId())
+	}
+	return &pb.UpdateSessionStateResponse{}, nil
 }

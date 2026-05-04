@@ -72,7 +72,12 @@ func (c *Client) handleMessageWithChatName(ctx context.Context, evt *events.Mess
 			return false
 		}
 		c.log.Infof("Stored text message %s from %s", saved.Message.ID, saved.Message.SenderID)
-		c.daemon.PublishNewMessage(toDaemonMessage(saved.Message), toDaemonChat(saved.Chat))
+		message := toDaemonMessage(saved.Message)
+		chat := toDaemonChat(saved.Chat)
+		c.daemon.PublishNewMessage(message, chat)
+		if c.notifier != nil && textInput.CountUnread && c.ShouldNotifyChat(chat.ID) {
+			c.notifier.NotifyMessage(ctx, message, chat)
+		}
 		return true
 	}
 
@@ -89,7 +94,12 @@ func (c *Client) handleMessageWithChatName(ctx context.Context, evt *events.Mess
 			return false
 		}
 		c.log.Infof("Stored media message %s from %s", saved.Message.ID, saved.Message.SenderID)
-		c.daemon.PublishNewMessage(toDaemonMessage(saved.Message), toDaemonChat(saved.Chat))
+		message := toDaemonMessage(saved.Message)
+		chat := toDaemonChat(saved.Chat)
+		c.daemon.PublishNewMessage(message, chat)
+		if c.notifier != nil && mediaInput.CountUnread && c.ShouldNotifyChat(chat.ID) {
+			c.notifier.NotifyMessage(ctx, message, chat)
+		}
 		return true
 	}
 
