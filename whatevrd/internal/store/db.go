@@ -4,9 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"path/filepath"
 
 	_ "modernc.org/sqlite"
 )
+
+const schemaVersion = 1
 
 type DB struct {
 	conn *sql.DB
@@ -24,6 +27,10 @@ func Open(ctx context.Context, path string) (*DB, error) {
 		conn.Close()
 		return nil, err
 	}
+	if err := db.CheckIntegrity(ctx); err != nil {
+		conn.Close()
+		return nil, err
+	}
 
 	return db, nil
 }
@@ -33,10 +40,31 @@ func (db *DB) Close() error {
 }
 
 func (db *DB) migrate(ctx context.Context) error {
-	statements := []string{
+	for _, statement := range []string{
 		`PRAGMA busy_timeout = 5000`,
 		`PRAGMA journal_mode = WAL`,
 		`PRAGMA foreign_keys = ON`,
+	} {
+		if _, err := db.conn.ExecContext(ctx, statement); err != nil {
+			return err
+		}
+	}
+
+	version, err := db.userVersion(ctx)
+	if err != nil {
+		return err
+	}
+	if version > schemaVersion {
+		return fmt.Errorf("database schema version %d is newer than supported version %d", version, schemaVersion)
+	}
+
+	tx, err := db.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	statements := []string{
 		`CREATE TABLE IF NOT EXISTS app_state (
 			key TEXT PRIMARY KEY,
 			value TEXT NOT NULL,
@@ -66,9 +94,15 @@ func (db *DB) migrate(ctx context.Context) error {
 	}
 
 	for _, statement := range statements {
-		if _, err := db.conn.ExecContext(ctx, statement); err != nil {
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
 			return err
 		}
+	}
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`PRAGMA user_version = %d`, schemaVersion)); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
 	}
 
 	if err := db.ensureMessageReadColumn(ctx); err != nil {
@@ -88,6 +122,34 @@ func (db *DB) migrate(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (db *DB) userVersion(ctx context.Context) (int, error) {
+	var version int
+	if err := db.conn.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
+		return 0, err
+	}
+	return version, nil
+}
+
+func (db *DB) CheckIntegrity(ctx context.Context) error {
+	var result string
+	if err := db.conn.QueryRowContext(ctx, `PRAGMA quick_check`).Scan(&result); err != nil {
+		return err
+	}
+	if result != "ok" {
+		return fmt.Errorf("sqlite integrity check failed: %s", result)
+	}
+	return nil
+}
+
+func (db *DB) Backup(ctx context.Context, path string) error {
+	if path == "" {
+		return fmt.Errorf("backup path is required")
+	}
+	backupPath := filepath.ToSlash(path)
+	_, err := db.conn.ExecContext(ctx, `VACUUM INTO ?`, backupPath)
+	return err
 }
 
 func (db *DB) ensureChatsAvatarColumns(ctx context.Context) error {

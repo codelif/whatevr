@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"os"
+	"path/filepath"
 	"time"
 
 	"go.mau.fi/whatsmeow"
@@ -260,6 +261,12 @@ func (c *Client) Logout(ctx context.Context) error {
 	c.cancelRunContextLocked()
 
 	localCtx := context.Background()
+	backupPath := filepath.Join(c.paths.DataDir, fmt.Sprintf("whatevrd-before-logout-%d.db", time.Now().Unix()))
+	if err := c.store.Backup(localCtx, backupPath); err != nil {
+		c.log.Warnf("Failed to back up local database before logout: %v", err)
+	} else {
+		c.log.Infof("Backed up local database before logout to %s", backupPath)
+	}
 
 	if err := c.store.ClearSessionData(localCtx); err != nil {
 		return err
