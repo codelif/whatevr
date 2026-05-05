@@ -236,13 +236,11 @@ struct Widgets {
 }
 
 fn main() -> glib::ExitCode {
-    adw::init().expect("failed to initialize libadwaita");
-    install_css();
-
     let app = adw::Application::builder()
         .application_id(APP_ID)
         .flags(gio::ApplicationFlags::HANDLES_OPEN)
         .build();
+    app.connect_startup(|_| install_css());
     let app_context: Rc<RefCell<Option<AppContext>>> = Rc::new(RefCell::new(None));
     {
         let app_context = app_context.clone();
@@ -677,12 +675,16 @@ fn build_ui(app: &adw::Application) -> AppContext {
         glib::ControlFlow::Continue
     });
 
-    request_status(sender.clone());
-    hold_frontend_session(sender.clone(), state.borrow().frontend_session_id.clone());
-    subscribe_login_events(sender.clone());
-    subscribe_daemon_events(sender.clone());
-
     window.present();
+
+    let bootstrap_sender = sender.clone();
+    let bootstrap_session_id = state.borrow().frontend_session_id.clone();
+    glib::idle_add_local_once(move || {
+        request_status(bootstrap_sender.clone());
+        hold_frontend_session(bootstrap_sender.clone(), bootstrap_session_id);
+        subscribe_login_events(bootstrap_sender.clone());
+        subscribe_daemon_events(bootstrap_sender);
+    });
 
     AppContext { widgets, sender }
 }
