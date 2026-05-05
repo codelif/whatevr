@@ -53,6 +53,7 @@ const COMPOSER_HEIGHT_SLACK: i32 = 2;
 const RPC_TIMEOUT: Duration = Duration::from_secs(10);
 const RPC_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 const TYPING_IDLE_TIMEOUT: Duration = Duration::from_secs(3);
+const UI_MESSAGE_BATCH_SIZE: usize = 8;
 
 #[derive(Clone)]
 enum UiMessage {
@@ -115,6 +116,7 @@ enum UiMessage {
         chat: proto::Chat,
         previous_chat_id: Option<String>,
     },
+    RenderChatList,
     LogoutSucceeded,
     LogoutFailed(String),
     Notice(String),
@@ -155,6 +157,7 @@ struct UiState {
     typing_generation: u64,
     pending_open_chat_id: Option<String>,
     frontend_session_id: String,
+    chat_list_render_scheduled: bool,
 }
 
 impl Default for UiState {
@@ -184,6 +187,7 @@ impl Default for UiState {
             typing_generation: 0,
             pending_open_chat_id: None,
             frontend_session_id: new_frontend_session_id(),
+            chat_list_render_scheduled: false,
         }
     }
 }
@@ -216,6 +220,12 @@ struct RenderedMessage {
     status: i32,
     row: gtk::Box,
     meta_label: gtk::Label,
+}
+
+struct AvatarDecodeRequest {
+    avatar: glib::WeakRef<adw::Avatar>,
+    path: String,
+    bytes: Vec<u8>,
 }
 
 #[derive(Clone)]
@@ -689,24 +699,67 @@ fn build_ui(app: &adw::Application) -> AppContext {
         }
     });
 
-    let widgets_for_receiver = widgets.clone();
-    let state_for_receiver = state.clone();
-    let sender_for_receiver = sender.clone();
-    glib::MainContext::default().spawn_local(async move {
-        while let Ok(message) = receiver.recv().await {
-            handle_ui_message(
-                message,
-                &widgets_for_receiver,
-                &state_for_receiver,
-                &sender_for_receiver,
-            );
-        }
+    attach_ui_receiver(receiver, widgets.clone(), state.clone(), sender.clone());
+
+    let close_app = app.clone();
+    window.connect_close_request(move |_| {
+        close_app.quit();
+        glib::Propagation::Proceed
     });
 
     window.present();
     schedule_bootstrap_after_first_frame(&window, sender.clone());
 
     AppContext { widgets, sender }
+}
+
+fn attach_ui_receiver(
+    receiver: async_channel::Receiver<UiMessage>,
+    widgets: Rc<Widgets>,
+    state: Rc<RefCell<UiState>>,
+    sender: UiSender,
+) {
+    glib::MainContext::default().spawn_local(async move {
+        while let Ok(message) = receiver.recv().await {
+            handle_ui_message(message, &widgets, &state, &sender);
+
+            for _ in 1..UI_MESSAGE_BATCH_SIZE {
+                match receiver.try_recv() {
+                    Ok(message) => handle_ui_message(message, &widgets, &state, &sender),
+                    Err(async_channel::TryRecvError::Empty) => break,
+                    Err(async_channel::TryRecvError::Closed) => return,
+                }
+            }
+
+            yield_to_gtk().await;
+        }
+    });
+}
+
+async fn yield_to_gtk() {
+    let (tx, rx) = async_channel::bounded(1);
+    glib::idle_add_local_once(move || {
+        let _ = tx.try_send(());
+    });
+    let _ = rx.recv().await;
+}
+
+fn schedule_chat_list_render(state: &Rc<RefCell<UiState>>, sender: UiSender) {
+    let should_schedule = {
+        let mut state = state.borrow_mut();
+        if state.chat_list_render_scheduled {
+            false
+        } else {
+            state.chat_list_render_scheduled = true;
+            true
+        }
+    };
+
+    if should_schedule {
+        glib::idle_add_local_once(move || {
+            send_ui(&sender, UiMessage::RenderChatList);
+        });
+    }
 }
 
 fn connect_signals(
@@ -995,6 +1048,7 @@ fn handle_ui_message(
             let pending_open_chat_id = {
                 let mut state = state.borrow_mut();
                 state.chats = chats;
+                sort_chats(&mut state.chats);
                 state.chats_loaded = true;
                 sync_selected_chat_after_reload(&mut state);
                 state.pending_open_chat_id.clone()
@@ -1310,16 +1364,8 @@ fn handle_ui_message(
             chat,
             previous_chat_id,
         } => {
-            let (header_changed, updated_row_index) = {
+            let header_changed = {
                 let mut s = state.borrow_mut();
-                let new_chat_id = chat.id.clone();
-                let old_chat_id = previous_chat_id
-                    .clone()
-                    .unwrap_or_else(|| new_chat_id.clone());
-                let old_index = s
-                    .chats
-                    .iter()
-                    .position(|existing| existing.id == old_chat_id);
 
                 if let Some(prev_id) = previous_chat_id.as_deref() {
                     if s.selected_chat_id.as_deref() == Some(prev_id) {
@@ -1355,25 +1401,25 @@ fn handle_ui_message(
                     };
 
                 upsert_chat(&mut s.chats, chat);
-                let new_index = s
-                    .chats
-                    .iter()
-                    .position(|existing| existing.id == new_chat_id);
-                let updated_row_index = old_index.filter(|old_index| Some(*old_index) == new_index);
-                (header_changed, updated_row_index)
+                header_changed
             };
 
             let state_borrow = state.borrow();
-            if let Some(index) = updated_row_index {
-                if let Some(chat) = state_borrow.chats.get(index) {
-                    update_chat_row_at_index(&widgets.chat_list, index, chat);
-                }
-            } else {
-                render_chat_list(widgets, &state_borrow);
-            }
             if header_changed {
                 render_conversation_header(widgets, &state_borrow);
             }
+            drop(state_borrow);
+            schedule_chat_list_render(state, sender.clone());
+        }
+        UiMessage::RenderChatList => {
+            {
+                let mut state = state.borrow_mut();
+                state.chat_list_render_scheduled = false;
+                sort_chats(&mut state.chats);
+            }
+            let state = state.borrow();
+            render_chat_list(widgets, &state);
+            update_navigation_state(widgets, &state);
         }
         UiMessage::LogoutSucceeded => {
             {
@@ -1828,6 +1874,9 @@ fn upsert_chat(chats: &mut Vec<proto::Chat>, chat: proto::Chat) {
     } else {
         chats.push(chat);
     }
+}
+
+fn sort_chats(chats: &mut [proto::Chat]) {
     chats.sort_by_key(|chat| std::cmp::Reverse(chat.last_message_time_unix));
 }
 
@@ -2008,6 +2057,8 @@ struct TextureCache {
 
 thread_local! {
     static TEXTURE_CACHE: RefCell<TextureCache> = RefCell::new(TextureCache::default());
+    static AVATAR_DECODE_QUEUE: RefCell<VecDeque<AvatarDecodeRequest>> = RefCell::new(VecDeque::new());
+    static AVATAR_DECODE_SCHEDULED: Cell<bool> = const { Cell::new(false) };
 }
 
 fn cached_texture(path: &str) -> Option<gdk::Texture> {
@@ -2049,11 +2100,47 @@ fn schedule_async_avatar_load(avatar: &adw::Avatar, path: String) {
         let Ok(Some(bytes)) = rx.recv().await else {
             return;
         };
-        if let Some(texture) = texture_from_bytes(&bytes, 64, 64, true) {
-            store_cached_texture(path, texture.clone());
-            if let Some(avatar) = avatar_weak.upgrade() {
-                avatar.set_custom_image(Some(&texture));
+        enqueue_avatar_decode(AvatarDecodeRequest {
+            avatar: avatar_weak,
+            path,
+            bytes,
+        });
+    });
+}
+
+fn enqueue_avatar_decode(request: AvatarDecodeRequest) {
+    AVATAR_DECODE_QUEUE.with(|queue| queue.borrow_mut().push_back(request));
+    schedule_avatar_decode();
+}
+
+fn schedule_avatar_decode() {
+    let already_scheduled = AVATAR_DECODE_SCHEDULED.with(|scheduled| {
+        if scheduled.get() {
+            true
+        } else {
+            scheduled.set(true);
+            false
+        }
+    });
+    if already_scheduled {
+        return;
+    }
+
+    glib::idle_add_local_once(|| {
+        let request = AVATAR_DECODE_QUEUE.with(|queue| queue.borrow_mut().pop_front());
+        if let Some(request) = request {
+            if let Some(texture) = texture_from_bytes(&request.bytes, 64, 64, true) {
+                store_cached_texture(request.path, texture.clone());
+                if let Some(avatar) = request.avatar.upgrade() {
+                    avatar.set_custom_image(Some(&texture));
+                }
             }
+        }
+
+        AVATAR_DECODE_SCHEDULED.with(|scheduled| scheduled.set(false));
+        let has_more = AVATAR_DECODE_QUEUE.with(|queue| !queue.borrow().is_empty());
+        if has_more {
+            schedule_avatar_decode();
         }
     });
 }
@@ -2976,12 +3063,6 @@ fn build_chat_row(chat: &proto::Chat) -> gtk::ListBoxRow {
         .build();
     row.set_child(Some(&row_box));
     row
-}
-
-fn update_chat_row_at_index(chat_list: &gtk::ListBox, index: usize, chat: &proto::Chat) {
-    if let Some(row) = chat_list.row_at_index(index as i32) {
-        row.set_child(Some(&build_chat_row_content(chat)));
-    }
 }
 
 fn build_chat_row_content(chat: &proto::Chat) -> gtk::Box {
