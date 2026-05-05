@@ -1218,6 +1218,12 @@ fn handle_ui_message(
                 render_conversation(widgets, &state);
                 if was_near_bottom {
                     scroll_messages_to_bottom(widgets);
+                } else {
+                    show_banner_notice_preserving_action(
+                        widgets,
+                        &state,
+                        "New messages below. Scroll down to read.",
+                    );
                 }
             }
             if mark_read {
@@ -1814,7 +1820,6 @@ fn render_conversation(widgets: &Widgets, state: &UiState) {
         reveal_messages_at_bottom(widgets);
     } else {
         widgets.message_scroller.set_opacity(1.0);
-        scroll_messages_to_bottom(widgets);
         widgets
             .conversation_content_stack
             .set_visible_child_name(CONVERSATION_MESSAGES_PAGE);
