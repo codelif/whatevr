@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"context"
+	"fmt"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -38,6 +39,15 @@ func (s *DaemonService) Reconnect(ctx context.Context, _ *pb.ReconnectRequest) (
 
 func (s *DaemonService) GetStatus(context.Context, *pb.GetStatusRequest) (*pb.GetStatusResponse, error) {
 	status := s.daemon.Status()
+	detail := status.Detail
+	if status.DroppedDaemonEvents > 0 || status.DroppedLoginEvents > 0 {
+		resyncDetail := fmt.Sprintf("Some frontend events were dropped; refresh to resync. daemon=%d login=%d", status.DroppedDaemonEvents, status.DroppedLoginEvents)
+		if detail == "" {
+			detail = resyncDetail
+		} else {
+			detail += "\n" + resyncDetail
+		}
+	}
 	return &pb.GetStatusResponse{
 		State:         toProtoState(status.State),
 		StateLabel:    status.State.String(),
@@ -46,7 +56,7 @@ func (s *DaemonService) GetStatus(context.Context, *pb.GetStatusRequest) (*pb.Ge
 		CacheDir:      status.Paths.CacheDir,
 		DatabasePath:  status.Paths.DatabasePath,
 		Version:       Version,
-		Detail:        status.Detail,
+		Detail:        detail,
 		CanReconnect:  status.CanReconnect,
 		RetryAttempt:  status.RetryAttempt,
 		NextRetryUnix: status.NextRetryUnix,

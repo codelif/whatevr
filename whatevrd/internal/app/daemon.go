@@ -7,12 +7,14 @@ import (
 )
 
 type Status struct {
-	State         State
-	Detail        string
-	Paths         Paths
-	RetryAttempt  int32
-	NextRetryUnix int64
-	CanReconnect  bool
+	State               State
+	Detail              string
+	Paths               Paths
+	RetryAttempt        int32
+	NextRetryUnix       int64
+	CanReconnect        bool
+	DroppedDaemonEvents uint64
+	DroppedLoginEvents  uint64
 }
 
 type Daemon struct {
@@ -28,6 +30,9 @@ type Daemon struct {
 	retryAttempt  atomic.Int32
 	nextRetryUnix atomic.Int64
 	canReconnect  atomic.Bool
+
+	droppedDaemonEvents atomic.Uint64
+	droppedLoginEvents  atomic.Uint64
 }
 
 func NewDaemon(paths Paths) *Daemon {
@@ -76,12 +81,14 @@ func (d *Daemon) Status() Status {
 	d.subMu.Unlock()
 
 	return Status{
-		State:         State(d.state.Load()),
-		Detail:        detail,
-		Paths:         d.paths,
-		RetryAttempt:  d.retryAttempt.Load(),
-		NextRetryUnix: d.nextRetryUnix.Load(),
-		CanReconnect:  d.canReconnect.Load(),
+		State:               State(d.state.Load()),
+		Detail:              detail,
+		Paths:               d.paths,
+		RetryAttempt:        d.retryAttempt.Load(),
+		NextRetryUnix:       d.nextRetryUnix.Load(),
+		CanReconnect:        d.canReconnect.Load(),
+		DroppedDaemonEvents: d.droppedDaemonEvents.Load(),
+		DroppedLoginEvents:  d.droppedLoginEvents.Load(),
 	}
 }
 
@@ -222,6 +229,7 @@ func (d *Daemon) broadcastDaemonEvent(event DaemonEvent) {
 		select {
 		case ch <- event:
 		default:
+			d.droppedDaemonEvents.Add(1)
 		}
 	}
 }
@@ -270,6 +278,7 @@ func (d *Daemon) broadcastLoginEvent(event LoginEvent) {
 		select {
 		case ch <- event:
 		default:
+			d.droppedLoginEvents.Add(1)
 		}
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"google.golang.org/grpc"
 
@@ -18,6 +19,7 @@ import (
 const (
 	maxRPCMessageBytes      = 16 * 1024 * 1024
 	maxConcurrentRPCStreams = 32
+	gracefulStopTimeout     = 5 * time.Second
 )
 
 type Server struct {
@@ -160,7 +162,16 @@ func (s *Server) Err() <-chan error {
 func (s *Server) serve(ctx context.Context) {
 	go func() {
 		<-ctx.Done()
-		s.grpcServer.Stop()
+		stopped := make(chan struct{})
+		go func() {
+			s.grpcServer.GracefulStop()
+			close(stopped)
+		}()
+		select {
+		case <-stopped:
+		case <-time.After(gracefulStopTimeout):
+			s.grpcServer.Stop()
+		}
 		s.listener.Close()
 		_ = os.Remove(s.socketPath)
 	}()
