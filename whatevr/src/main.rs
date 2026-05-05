@@ -4,7 +4,6 @@ use std::{
     path::PathBuf,
     rc::Rc,
     sync::OnceLock,
-    thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -1889,7 +1888,10 @@ fn set_avatar_image(avatar: &adw::Avatar, path: &str) {
     }
     match load_texture_cached(path) {
         Some(texture) => avatar.set_custom_image(Some(&texture)),
-        None => avatar.set_custom_image(None::<&gdk::Texture>),
+        None => {
+            avatar.set_custom_image(None::<&gdk::Texture>);
+            schedule_async_avatar_load(avatar, path.to_string());
+        }
     }
 }
 
@@ -1929,42 +1931,68 @@ fn load_texture_cached(path: &str) -> Option<gdk::Texture> {
     if let Some(texture) = cached_texture(path) {
         return Some(texture);
     }
-    let texture = gdk::Texture::from_file(&gio::File::for_path(path)).ok()?;
-    store_cached_texture(path.to_string(), texture.clone());
-    Some(texture)
+    None
+}
+
+fn schedule_async_avatar_load(avatar: &adw::Avatar, path: String) {
+    let (tx, rx) = async_channel::bounded::<Option<Vec<u8>>>(1);
+    let path_for_task = path.clone();
+    spawn_async(async move {
+        let _ = tx.send(tokio::fs::read(path_for_task).await.ok()).await;
+    });
+
+    let avatar_weak = avatar.downgrade();
+    glib::MainContext::default().spawn_local(async move {
+        let Ok(Some(bytes)) = rx.recv().await else {
+            return;
+        };
+        if let Some(texture) = texture_from_bytes(&bytes, 64, 64, true) {
+            store_cached_texture(path, texture.clone());
+            if let Some(avatar) = avatar_weak.upgrade() {
+                avatar.set_custom_image(Some(&texture));
+            }
+        }
+    });
 }
 
 fn schedule_async_image_load(picture: gtk::Picture, path: String, display_w: i32, display_h: i32) {
-    let (tx, rx) = std::sync::mpsc::channel::<Option<Vec<u8>>>();
-    let path_for_thread = path.clone();
-    thread::spawn(move || {
-        let _ = tx.send(std::fs::read(&path_for_thread).ok());
+    let (tx, rx) = async_channel::bounded::<Option<Vec<u8>>>(1);
+    let path_for_task = path.clone();
+    spawn_async(async move {
+        let _ = tx.send(tokio::fs::read(path_for_task).await.ok()).await;
     });
 
     let picture_weak = picture.downgrade();
-    glib::idle_add_local(move || match rx.try_recv() {
-        Ok(Some(bytes)) => {
-            let glib_bytes = glib::Bytes::from(&bytes);
-            let stream = gio::MemoryInputStream::from_bytes(&glib_bytes);
-            if let Ok(pixbuf) = gdk::gdk_pixbuf::Pixbuf::from_stream_at_scale(
-                &stream,
-                display_w,
-                display_h,
-                false,
-                None::<&gio::Cancellable>,
-            ) {
-                let texture = gdk::Texture::for_pixbuf(&pixbuf);
-                store_cached_texture(path.clone(), texture.clone());
-                if let Some(pic) = picture_weak.upgrade() {
-                    pic.set_paintable(Some(&texture));
-                }
+    glib::MainContext::default().spawn_local(async move {
+        let Ok(Some(bytes)) = rx.recv().await else {
+            return;
+        };
+        if let Some(texture) = texture_from_bytes(&bytes, display_w, display_h, false) {
+            store_cached_texture(path, texture.clone());
+            if let Some(pic) = picture_weak.upgrade() {
+                pic.set_paintable(Some(&texture));
             }
-            glib::ControlFlow::Break
         }
-        Ok(None) => glib::ControlFlow::Break,
-        Err(std::sync::mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
-        Err(std::sync::mpsc::TryRecvError::Disconnected) => glib::ControlFlow::Break,
     });
+}
+
+fn texture_from_bytes(
+    bytes: &[u8],
+    width: i32,
+    height: i32,
+    preserve_aspect: bool,
+) -> Option<gdk::Texture> {
+    let glib_bytes = glib::Bytes::from(bytes);
+    let stream = gio::MemoryInputStream::from_bytes(&glib_bytes);
+    let pixbuf = gdk::gdk_pixbuf::Pixbuf::from_stream_at_scale(
+        &stream,
+        width,
+        height,
+        preserve_aspect,
+        None::<&gio::Cancellable>,
+    )
+    .ok()?;
+    Some(gdk::Texture::for_pixbuf(&pixbuf))
 }
 
 fn open_chat_at_index(
@@ -2309,8 +2337,8 @@ fn request_chats(sender: UiSender) {
 }
 
 fn schedule_conversation_loading(sender: UiSender, chat_id: String, generation: u64) {
-    thread::spawn(move || {
-        thread::sleep(Duration::from_secs(1));
+    spawn_async(async move {
+        tokio::time::sleep(Duration::from_secs(1)).await;
         send_ui(
             &sender,
             UiMessage::ShowConversationLoading {
