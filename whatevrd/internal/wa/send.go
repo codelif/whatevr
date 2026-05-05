@@ -236,11 +236,11 @@ func (c *Client) runSendQueue(ctx context.Context) {
 		case <-c.sendQueueWake:
 		}
 
-		c.sendQueueMu.Lock()
 		for {
+			c.sendQueueMu.Lock()
 			processed, err := c.drainSendQueue(ctx)
+			c.sendQueueMu.Unlock()
 			if err != nil {
-				c.sendQueueMu.Unlock()
 				select {
 				case <-ctx.Done():
 					return
@@ -253,7 +253,6 @@ func (c *Client) runSendQueue(ctx context.Context) {
 				break
 			}
 		}
-		c.sendQueueMu.Unlock()
 	}
 }
 
