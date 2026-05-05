@@ -16,6 +16,7 @@ use hyper_util::rt::TokioIo;
 use qrcode::{QrCode, types::Color};
 use tokio::net::UnixStream;
 use tonic::transport::{Channel, Endpoint};
+use tonic::{Code, Request};
 use tower::service_fn;
 
 type UiSender = async_channel::Sender<UiMessage>;
@@ -50,6 +51,8 @@ const CONVERSATION_EMPTY_PAGE: &str = "empty";
 const CONVERSATION_MESSAGES_PAGE: &str = "messages";
 const COMPOSER_MAX_HEIGHT: i32 = 144;
 const COMPOSER_HEIGHT_SLACK: i32 = 2;
+const RPC_TIMEOUT: Duration = Duration::from_secs(10);
+const RPC_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Clone)]
 enum UiMessage {
@@ -2484,7 +2487,10 @@ async fn fetch_status() -> Result<proto::GetStatusResponse, Box<dyn std::error::
 {
     let channel = connect_channel().await?;
     let mut client = DaemonServiceClient::new(channel);
-    Ok(client.get_status(GetStatusRequest {}).await?.into_inner())
+    Ok(client
+        .get_status(rpc_request(GetStatusRequest {}))
+        .await?
+        .into_inner())
 }
 
 async fn stream_login_events(
@@ -2544,11 +2550,11 @@ async fn update_frontend_session_state(
     let channel = connect_channel().await?;
     let mut client = FrontendServiceClient::new(channel);
     client
-        .update_session_state(UpdateSessionStateRequest {
+        .update_session_state(rpc_request(UpdateSessionStateRequest {
             session_id,
             focused,
             active_chat_id,
-        })
+        }))
         .await?;
     Ok(())
 }
@@ -2625,10 +2631,10 @@ async fn load_chats() -> Result<Vec<proto::Chat>, Box<dyn std::error::Error + Se
     let channel = connect_channel().await?;
     let mut client = ChatServiceClient::new(channel);
     let response = client
-        .list_chats(ListChatsRequest {
+        .list_chats(rpc_request(ListChatsRequest {
             limit: 100,
             offset: 0,
-        })
+        }))
         .await?
         .into_inner();
     Ok(response.chats)
@@ -2640,11 +2646,11 @@ async fn load_messages(
     let channel = connect_channel().await?;
     let mut client = ChatServiceClient::new(channel);
     let response = client
-        .get_messages(GetMessagesRequest {
+        .get_messages(rpc_request(GetMessagesRequest {
             chat_id,
             limit: 50,
             before_message_id: String::new(),
-        })
+        }))
         .await?
         .into_inner();
     Ok(response.messages)
@@ -2654,7 +2660,7 @@ async fn mark_chat_read(chat_id: String) -> Result<(), Box<dyn std::error::Error
     let channel = connect_channel().await?;
     let mut client = ChatServiceClient::new(channel);
     client
-        .mark_chat_read(MarkChatReadRequest { chat_id })
+        .mark_chat_read(rpc_request(MarkChatReadRequest { chat_id }))
         .await?;
     Ok(())
 }
@@ -2667,10 +2673,10 @@ async fn send_text(
     let mut client = proto::send_service_client::SendServiceClient::new(channel);
     let request_chat_id = chat_id.clone();
     let response = client
-        .send_text(proto::SendTextRequest {
+        .send_text(rpc_request(proto::SendTextRequest {
             chat_id: request_chat_id,
             text,
-        })
+        }))
         .await?
         .into_inner();
     Ok(response
@@ -2687,11 +2693,11 @@ async fn send_media(
     let channel = connect_channel().await?;
     let mut client = SendServiceClient::new(channel);
     client
-        .send_media(SendMediaRequest {
+        .send_media(rpc_request(SendMediaRequest {
             chat_id,
             file_path,
             caption: String::new(),
-        })
+        }))
         .await?;
     Ok(())
 }
@@ -2703,7 +2709,7 @@ async fn set_chat_presence(
     let channel = connect_channel().await?;
     let mut client = ChatServiceClient::new(channel);
     client
-        .set_chat_presence(SetChatPresenceRequest { chat_id, composing })
+        .set_chat_presence(rpc_request(SetChatPresenceRequest { chat_id, composing }))
         .await?;
     Ok(())
 }
@@ -2711,19 +2717,41 @@ async fn set_chat_presence(
 async fn logout() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let channel = connect_channel().await?;
     let mut client = LoginServiceClient::new(channel);
-    client.logout(LogoutRequest {}).await?;
+    client.logout(rpc_request(LogoutRequest {})).await?;
     Ok(())
 }
 
 async fn do_reconnect() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let channel = connect_channel().await?;
     let mut client = DaemonServiceClient::new(channel);
-    client.reconnect(ReconnectRequest {}).await?;
+    client.reconnect(rpc_request(ReconnectRequest {})).await?;
     Ok(())
 }
 
-fn friendly_daemon_error(err: &dyn std::error::Error) -> String {
+fn rpc_request<T>(message: T) -> Request<T> {
+    let mut request = Request::new(message);
+    request.set_timeout(RPC_TIMEOUT);
+    request
+}
+
+fn friendly_daemon_error(err: &(dyn std::error::Error + 'static)) -> String {
+    if let Some(status) = err.downcast_ref::<tonic::Status>() {
+        return friendly_tonic_status(status);
+    }
     friendly_daemon_error_text(&err.to_string())
+}
+
+fn friendly_tonic_status(status: &tonic::Status) -> String {
+    match status.code() {
+        Code::Unavailable => "whatevrd is not responding. Retrying...".to_string(),
+        Code::DeadlineExceeded => "whatevrd took too long to respond. Try again.".to_string(),
+        Code::FailedPrecondition => {
+            "WhatsApp is not logged in. Please scan the QR code.".to_string()
+        }
+        Code::PermissionDenied => "Cannot access whatevrd. Check daemon permissions.".to_string(),
+        Code::InvalidArgument => status.message().to_string(),
+        _ => status.to_string(),
+    }
 }
 
 fn friendly_daemon_error_text(s: &str) -> String {
@@ -2743,7 +2771,10 @@ fn friendly_daemon_error_text(s: &str) -> String {
     }
 }
 
-fn is_daemon_transport_error(err: &dyn std::error::Error) -> bool {
+fn is_daemon_transport_error(err: &(dyn std::error::Error + 'static)) -> bool {
+    if let Some(status) = err.downcast_ref::<tonic::Status>() {
+        return matches!(status.code(), Code::Unavailable | Code::DeadlineExceeded);
+    }
     let s = err.to_string();
     s.contains("transport error")
         || s.contains("No such file or directory")
@@ -2765,7 +2796,7 @@ fn whatsapp_connection_lost_detail() -> String {
 
 async fn connect_channel() -> Result<Channel, Box<dyn std::error::Error + Send + Sync>> {
     let socket_path = socket_path()?;
-    let endpoint = Endpoint::try_from("http://[::]:50051")?;
+    let endpoint = Endpoint::try_from("http://[::]:50051")?.connect_timeout(RPC_CONNECT_TIMEOUT);
 
     let channel = endpoint
         .connect_with_connector(service_fn(move |_: Uri| {
