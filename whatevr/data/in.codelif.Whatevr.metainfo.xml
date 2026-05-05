@@ -3,10 +3,27 @@
   <id>in.codelif.Whatevr</id>
   <name>whatevr</name>
   <summary>Native WhatsApp client for Linux</summary>
+  <developer id="in.codelif">
+    <name>codelif</name>
+  </developer>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>BSD-3-Clause</project_license>
   <description>
-    <p>whatevr is the official GTK frontend for the whatevrd background daemon.</p>
+    <p>whatevr is a native GTK frontend for the whatevrd background daemon, designed to provide a smooth Linux desktop experience for WhatsApp messaging.</p>
+    <p>It provides QR login, local chat history, text messaging, media previews, and notification integration for Linux desktops.</p>
   </description>
   <launchable type="desktop-id">in.codelif.Whatevr.desktop</launchable>
+  <url type="homepage">https://github.com/codelif/whatevr</url>
+  <url type="bugtracker">https://github.com/codelif/whatevr/issues</url>
+  <provides>
+    <binary>whatevr</binary>
+  </provides>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="0.1.0" date="2026-05-06">
+      <description>
+        <p>Initial native GTK frontend and whatevrd daemon integration.</p>
+      </description>
+    </release>
+  </releases>
 </component>
