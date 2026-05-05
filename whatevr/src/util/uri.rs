@@ -37,3 +37,27 @@ fn hex_value(byte: u8) -> Option<u8> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chat_id_from_uri_decodes_percent_encoded_chat_id() {
+        assert_eq!(
+            chat_id_from_uri("whatevr://chat/user%40example.com"),
+            Some("user@example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn chat_id_from_uri_rejects_other_schemes() {
+        assert_eq!(chat_id_from_uri("https://example.com/chat/123"), None);
+    }
+
+    #[test]
+    fn chat_id_from_uri_rejects_invalid_percent_encoding() {
+        assert_eq!(chat_id_from_uri("whatevr://chat/user%4"), None);
+        assert_eq!(chat_id_from_uri("whatevr://chat/user%zz"), None);
+    }
+}

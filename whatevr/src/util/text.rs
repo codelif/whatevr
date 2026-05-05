@@ -47,3 +47,44 @@ pub fn state_name(state: DaemonState) -> &'static str {
         DaemonState::Offline => "OFFLINE",
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_chat_name_falls_back_to_id_for_blank_names() {
+        let chat = proto::Chat {
+            id: "chat-1".to_string(),
+            name: "  ".to_string(),
+            ..Default::default()
+        };
+
+        assert_eq!(display_chat_name(&chat), "chat-1");
+    }
+
+    #[test]
+    fn chat_preview_collapses_whitespace() {
+        let chat = proto::Chat {
+            last_message: "hello\n\tthere   friend".to_string(),
+            ..Default::default()
+        };
+
+        assert_eq!(chat_preview(&chat), "hello there friend");
+    }
+
+    #[test]
+    fn unread_count_label_caps_large_counts() {
+        assert_eq!(unread_count_label(5), "5");
+        assert_eq!(unread_count_label(100), "99+");
+    }
+
+    #[test]
+    fn format_login_state_includes_optional_detail() {
+        assert_eq!(format_login_state(DaemonState::Online, ""), "State: ONLINE");
+        assert_eq!(
+            format_login_state(DaemonState::Offline, "Waiting"),
+            "State: OFFLINE\nWaiting"
+        );
+    }
+}

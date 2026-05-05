@@ -178,3 +178,161 @@ pub fn upsert_chat(chats: &mut Vec<proto::Chat>, chat: proto::Chat) {
 pub fn sort_chats(chats: &mut [proto::Chat]) {
     chats.sort_by_key(|chat| std::cmp::Reverse(chat.last_message_time_unix));
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn chat(id: &str, last_message_time_unix: i64) -> proto::Chat {
+        proto::Chat {
+            id: id.to_string(),
+            last_message_time_unix,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn commit_pending_chat_selects_chat_and_clears_conversation_when_changed() {
+        let mut state = UiState {
+            selected_chat_id: Some("old".to_string()),
+            pending_chat_id: Some("new".to_string()),
+            current_messages_chat_id: Some("old".to_string()),
+            current_messages: vec![proto::Message::default()],
+            composer_error: "error".to_string(),
+            last_sent_composing: true,
+            ..Default::default()
+        };
+
+        assert!(commit_pending_chat(&mut state, "new".to_string()));
+        assert_eq!(state.selected_chat_id.as_deref(), Some("new"));
+        assert_eq!(state.pending_chat_id, None);
+        assert_eq!(state.current_messages_chat_id, None);
+        assert!(state.current_messages.is_empty());
+        assert!(state.composer_error.is_empty());
+        assert!(!state.last_sent_composing);
+        assert_eq!(state.typing_generation, 1);
+    }
+
+    #[test]
+    fn commit_pending_chat_preserves_conversation_when_already_selected() {
+        let mut state = UiState {
+            selected_chat_id: Some("same".to_string()),
+            pending_chat_id: Some("same".to_string()),
+            current_messages_chat_id: Some("same".to_string()),
+            current_messages: vec![proto::Message::default()],
+            last_sent_composing: true,
+            ..Default::default()
+        };
+
+        assert!(!commit_pending_chat(&mut state, "same".to_string()));
+        assert_eq!(state.current_messages_chat_id.as_deref(), Some("same"));
+        assert_eq!(state.current_messages.len(), 1);
+        assert!(state.last_sent_composing);
+        assert_eq!(state.typing_generation, 0);
+    }
+
+    #[test]
+    fn clear_local_ui_state_resets_chat_specific_state() {
+        let mut state = UiState {
+            chats: vec![chat("a", 1)],
+            selected_chat_id: Some("a".to_string()),
+            pending_chat_id: Some("b".to_string()),
+            loading_chat_id: Some("a".to_string()),
+            current_messages_chat_id: Some("a".to_string()),
+            current_messages: vec![proto::Message::default()],
+            composer_error: "error".to_string(),
+            send_in_flight: true,
+            last_sent_composing: true,
+            pending_open_chat_id: Some("a".to_string()),
+            ..Default::default()
+        };
+
+        clear_local_ui_state(&mut state);
+
+        assert!(state.chats.is_empty());
+        assert!(state.chats_loaded);
+        assert_eq!(state.selected_chat_id, None);
+        assert_eq!(state.pending_chat_id, None);
+        assert_eq!(state.loading_chat_id, None);
+        assert_eq!(state.current_messages_chat_id, None);
+        assert!(state.current_messages.is_empty());
+        assert!(state.composer_error.is_empty());
+        assert!(!state.send_in_flight);
+        assert!(!state.last_sent_composing);
+        assert_eq!(state.pending_open_chat_id, None);
+        assert_eq!(state.typing_generation, 1);
+    }
+
+    #[test]
+    fn sync_selected_chat_after_reload_clears_missing_selection() {
+        let mut state = UiState {
+            chats: vec![chat("new", 2)],
+            selected_chat_id: Some("old".to_string()),
+            pending_chat_id: Some("old".to_string()),
+            loading_chat_id: Some("old".to_string()),
+            current_messages_chat_id: Some("old".to_string()),
+            current_messages: vec![proto::Message::default()],
+            composer_error: "error".to_string(),
+            send_in_flight: true,
+            ..Default::default()
+        };
+
+        sync_selected_chat_after_reload(&mut state);
+
+        assert_eq!(state.selected_chat_id, None);
+        assert_eq!(state.pending_chat_id, None);
+        assert_eq!(state.loading_chat_id, None);
+        assert_eq!(state.current_messages_chat_id, None);
+        assert!(state.current_messages.is_empty());
+        assert!(state.composer_error.is_empty());
+        assert!(!state.send_in_flight);
+    }
+
+    #[test]
+    fn composer_send_allowed_respects_connection_and_in_flight_state() {
+        let mut state = UiState {
+            daemon_state: DaemonState::Online,
+            ..Default::default()
+        };
+
+        assert!(composer_send_allowed(&state));
+
+        state.send_in_flight = true;
+        assert!(!composer_send_allowed(&state));
+
+        state.send_in_flight = false;
+        state.daemon_disconnected = true;
+        assert!(!composer_send_allowed(&state));
+
+        state.daemon_disconnected = false;
+        state.daemon_state = DaemonState::NeedLogin;
+        assert!(!composer_send_allowed(&state));
+    }
+
+    #[test]
+    fn upsert_chat_replaces_existing_and_appends_new() {
+        let mut chats = vec![chat("a", 1)];
+
+        upsert_chat(&mut chats, chat("a", 3));
+        upsert_chat(&mut chats, chat("b", 2));
+
+        assert_eq!(chats.len(), 2);
+        assert_eq!(chats[0].last_message_time_unix, 3);
+        assert_eq!(chats[1].id, "b");
+    }
+
+    #[test]
+    fn sort_chats_orders_newest_first() {
+        let mut chats = vec![chat("old", 1), chat("new", 3), chat("middle", 2)];
+
+        sort_chats(&mut chats);
+
+        assert_eq!(
+            chats
+                .iter()
+                .map(|chat| chat.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["new", "middle", "old"]
+        );
+    }
+}

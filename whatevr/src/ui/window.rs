@@ -21,21 +21,72 @@ use crate::ui::{
     widgets::Widgets,
 };
 
+struct ActionButtons {
+    refresh_button: gtk::Button,
+    logout_button: gtk::Button,
+    back_button: gtk::Button,
+}
+
+struct LoadingView {
+    page: adw::StatusPage,
+    spinner: gtk::Spinner,
+    retry_button: gtk::Button,
+}
+
+struct LoginView {
+    page: adw::StatusPage,
+    status_label: gtk::Label,
+    qr_picture: gtk::Picture,
+    qr_error_label: gtk::Label,
+    qr_expiry_label: gtk::Label,
+}
+
+struct SidebarView {
+    toolbar: adw::ToolbarView,
+    stack: gtk::Stack,
+    loading_page: adw::StatusPage,
+    empty_page: adw::StatusPage,
+    chat_list: gtk::ListBox,
+}
+
+struct ComposerView {
+    box_: gtk::Box,
+    scroller: gtk::ScrolledWindow,
+    text_view: gtk::TextView,
+    error_label: gtk::Label,
+    send_button: gtk::Button,
+    attach_button: gtk::Button,
+}
+
+struct ConversationView {
+    toolbar: adw::ToolbarView,
+    stack: gtk::Stack,
+    content_stack: gtk::Stack,
+    loading_page: adw::StatusPage,
+    header: gtk::Box,
+    avatar: adw::Avatar,
+    title: gtk::Label,
+    message_scroller: gtk::ScrolledWindow,
+    message_box: gtk::Box,
+}
+
 fn set_accessible_label(widget: &impl IsA<gtk::Accessible>, label: &str) {
     widget.update_property(&[gtk::accessible::Property::Label(label)]);
 }
 
-pub fn build(app: &adw::Application) -> AppContext {
+fn build_action_buttons() -> ActionButtons {
     let refresh_button = gtk::Button::builder()
         .icon_name("view-refresh-symbolic")
         .tooltip_text("Refresh chats and connection state")
         .build();
     set_accessible_label(&refresh_button, "Refresh chats and connection state");
+
     let logout_button = gtk::Button::builder()
         .icon_name("system-log-out-symbolic")
         .tooltip_text("Log out and delete local session data")
         .build();
     set_accessible_label(&logout_button, "Log out and delete local session data");
+
     let back_button = gtk::Button::builder()
         .icon_name("go-previous-symbolic")
         .tooltip_text("Back to chats")
@@ -43,17 +94,25 @@ pub fn build(app: &adw::Application) -> AppContext {
         .build();
     set_accessible_label(&back_button, "Back to chats");
 
-    let loading_page = adw::StatusPage::builder()
+    ActionButtons {
+        refresh_button,
+        logout_button,
+        back_button,
+    }
+}
+
+fn build_loading_view() -> LoadingView {
+    let page = adw::StatusPage::builder()
         .icon_name("network-transmit-receive-symbolic")
         .title("Starting whatevrd")
         .description("Preparing the local session and syncing pipeline.")
         .build();
-    let loading_spinner = gtk::Spinner::builder()
+    let spinner = gtk::Spinner::builder()
         .spinning(true)
         .margin_top(18)
         .margin_bottom(18)
         .build();
-    let loading_retry_button = gtk::Button::builder()
+    let retry_button = gtk::Button::builder()
         .label("Retry")
         .css_classes(["suggested-action"])
         .halign(gtk::Align::Center)
@@ -64,14 +123,24 @@ pub fn build(app: &adw::Application) -> AppContext {
         .spacing(12)
         .halign(gtk::Align::Center)
         .build();
-    loading_box.append(&loading_spinner);
-    loading_box.append(&loading_retry_button);
-    loading_page.set_child(Some(&loading_box));
 
-    let login_status_label = gtk::Label::builder().wrap(true).xalign(0.0).build();
+    loading_box.append(&spinner);
+    loading_box.append(&retry_button);
+    page.set_child(Some(&loading_box));
+
+    LoadingView {
+        page,
+        spinner,
+        retry_button,
+    }
+}
+
+fn build_login_view() -> LoginView {
+    let status_label = gtk::Label::builder().wrap(true).xalign(0.0).build();
     let qr_picture = gtk::Picture::builder().halign(gtk::Align::Center).build();
     qr_picture.set_size_request(252, 252);
     set_accessible_label(&qr_picture, "WhatsApp login QR code");
+
     let qr_frame = gtk::Frame::builder()
         .child(&qr_picture)
         .halign(gtk::Align::Center)
@@ -89,77 +158,171 @@ pub fn build(app: &adw::Application) -> AppContext {
         .spacing(16)
         .halign(gtk::Align::Center)
         .build();
-    login_box.append(&login_status_label);
+
+    login_box.append(&status_label);
     login_box.append(&qr_frame);
     login_box.append(&qr_error_label);
     login_box.append(&qr_expiry_label);
-    let login_page = adw::StatusPage::builder()
+
+    let page = adw::StatusPage::builder()
         .icon_name("chat-bubbles-symbolic")
         .title("Scan to sign in")
         .description("whatevrd keeps your WhatsApp session alive in the background, even when this window is closed.")
         .build();
-    login_page.set_child(Some(&login_box));
+    page.set_child(Some(&login_box));
 
-    let banner = adw::Banner::new("Connecting to WhatsApp");
-    banner.set_revealed(false);
-    banner.set_button_label(Some(""));
+    LoginView {
+        page,
+        status_label,
+        qr_picture,
+        qr_error_label,
+        qr_expiry_label,
+    }
+}
 
+fn build_sidebar_view(buttons: &ActionButtons) -> SidebarView {
     let chat_list = gtk::ListBox::builder()
         .selection_mode(gtk::SelectionMode::Single)
         .activate_on_single_click(true)
         .build();
     chat_list.add_css_class("navigation-sidebar");
+
     let chat_scroller = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
         .vexpand(true)
         .child(&chat_list)
         .build();
-    let sidebar_loading_page = adw::StatusPage::builder()
+    let loading_page = adw::StatusPage::builder()
         .title("Loading chats")
         .description("Reading your local conversation list.")
         .icon_name("chat-bubbles-symbolic")
         .build();
     let sidebar_spinner = gtk::Spinner::builder().spinning(true).build();
-    sidebar_loading_page.set_child(Some(&sidebar_spinner));
-    let sidebar_empty_page = adw::StatusPage::builder()
+    loading_page.set_child(Some(&sidebar_spinner));
+    let empty_page = adw::StatusPage::builder()
         .title("No chats yet")
         .description("Chats will appear here once text history is stored locally.")
         .icon_name("chat-bubbles-symbolic")
         .build();
-    let sidebar_stack = gtk::Stack::builder().vexpand(true).build();
-    sidebar_stack.add_named(&sidebar_loading_page, Some(SIDEBAR_LOADING_PAGE));
-    sidebar_stack.add_named(&sidebar_empty_page, Some(SIDEBAR_EMPTY_PAGE));
-    sidebar_stack.add_named(&chat_scroller, Some(SIDEBAR_LIST_PAGE));
-    sidebar_stack.set_visible_child_name(SIDEBAR_LOADING_PAGE);
+
+    let stack = gtk::Stack::builder().vexpand(true).build();
+    stack.add_named(&loading_page, Some(SIDEBAR_LOADING_PAGE));
+    stack.add_named(&empty_page, Some(SIDEBAR_EMPTY_PAGE));
+    stack.add_named(&chat_scroller, Some(SIDEBAR_LIST_PAGE));
+    stack.set_visible_child_name(SIDEBAR_LOADING_PAGE);
 
     let sidebar_header = adw::HeaderBar::new();
     sidebar_header.set_title_widget(Some(&gtk::Box::new(gtk::Orientation::Horizontal, 0)));
-    sidebar_header.pack_end(&logout_button);
-    sidebar_header.pack_end(&refresh_button);
+    sidebar_header.pack_end(&buttons.logout_button);
+    sidebar_header.pack_end(&buttons.refresh_button);
 
-    let sidebar_toolbar = adw::ToolbarView::new();
-    sidebar_toolbar.add_top_bar(&sidebar_header);
+    let toolbar = adw::ToolbarView::new();
+    toolbar.add_top_bar(&sidebar_header);
     let sidebar_content = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .vexpand(true)
         .build();
     sidebar_content.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-    sidebar_content.append(&sidebar_stack);
-    sidebar_toolbar.set_content(Some(&sidebar_content));
+    sidebar_content.append(&stack);
+    toolbar.set_content(Some(&sidebar_content));
 
-    let conversation_avatar = adw::Avatar::new(32, Some(""), true);
-    let conversation_title = gtk::Label::builder()
+    SidebarView {
+        toolbar,
+        stack,
+        loading_page,
+        empty_page,
+        chat_list,
+    }
+}
+
+fn build_composer_view() -> ComposerView {
+    let composer_buffer = gtk::TextBuffer::new(None);
+    let text_view = gtk::TextView::with_buffer(&composer_buffer);
+    text_view.set_wrap_mode(gtk::WrapMode::WordChar);
+    text_view.set_top_margin(8);
+    text_view.set_bottom_margin(8);
+    text_view.set_left_margin(10);
+    text_view.set_right_margin(10);
+    text_view.set_accepts_tab(false);
+    text_view.set_valign(gtk::Align::Center);
+
+    let scroller = gtk::ScrolledWindow::builder()
+        .child(&text_view)
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .vscrollbar_policy(gtk::PolicyType::Never)
+        .propagate_natural_height(true)
+        .max_content_height(COMPOSER_MAX_HEIGHT)
+        .valign(gtk::Align::Center)
+        .build();
+    let composer_frame = gtk::Frame::builder()
+        .child(&scroller)
+        .hexpand(true)
+        .valign(gtk::Align::Center)
+        .css_classes(["composer-input"])
+        .build();
+    let send_button = gtk::Button::builder()
+        .icon_name("mail-send-symbolic")
+        .tooltip_text("Send message")
+        .css_classes(["suggested-action", "circular"])
+        .valign(gtk::Align::End)
+        .build();
+    set_accessible_label(&send_button, "Send message");
+    let attach_button = gtk::Button::builder()
+        .icon_name("mail-attachment-symbolic")
+        .tooltip_text("Attach image")
+        .css_classes(["flat", "circular"])
+        .valign(gtk::Align::End)
+        .build();
+    set_accessible_label(&attach_button, "Attach image");
+    let error_label = gtk::Label::builder()
+        .wrap(true)
+        .xalign(0.0)
+        .css_classes(["error"])
+        .visible(false)
+        .build();
+    let composer_row = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(12)
+        .build();
+    composer_row.append(&attach_button);
+    composer_row.append(&composer_frame);
+    composer_row.append(&send_button);
+
+    let box_ = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(8)
+        .margin_top(14)
+        .margin_bottom(18)
+        .margin_start(18)
+        .margin_end(18)
+        .build();
+    box_.append(&error_label);
+    box_.append(&composer_row);
+
+    ComposerView {
+        box_,
+        scroller,
+        text_view,
+        error_label,
+        send_button,
+        attach_button,
+    }
+}
+
+fn build_conversation_view(buttons: &ActionButtons, composer: &ComposerView) -> ConversationView {
+    let avatar = adw::Avatar::new(32, Some(""), true);
+    let title = gtk::Label::builder()
         .xalign(0.5)
         .valign(gtk::Align::Center)
         .css_classes(["conversation-header-name"])
         .ellipsize(pango::EllipsizeMode::End)
         .build();
-    let conversation_title_box = gtk::Box::builder()
+    let title_box = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .valign(gtk::Align::Center)
         .build();
-    conversation_title_box.append(&conversation_title);
-    let conversation_header = gtk::Box::builder()
+    title_box.append(&title);
+    let header = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
         .spacing(8)
         .margin_top(6)
@@ -169,12 +332,13 @@ pub fn build(app: &adw::Application) -> AppContext {
         .valign(gtk::Align::Center)
         .visible(false)
         .build();
-    conversation_header.append(&conversation_avatar);
-    conversation_header.append(&conversation_title_box);
+    header.append(&avatar);
+    header.append(&title_box);
 
     let content_header = adw::HeaderBar::new();
-    content_header.pack_start(&back_button);
-    content_header.set_title_widget(Some(&conversation_header));
+    content_header.pack_start(&buttons.back_button);
+    content_header.set_title_widget(Some(&header));
+
     let message_box = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .spacing(12)
@@ -188,112 +352,63 @@ pub fn build(app: &adw::Application) -> AppContext {
         .vexpand(true)
         .child(&message_box)
         .build();
-    let composer_buffer = gtk::TextBuffer::new(None);
-    let composer_text_view = gtk::TextView::with_buffer(&composer_buffer);
-    composer_text_view.set_wrap_mode(gtk::WrapMode::WordChar);
-    composer_text_view.set_top_margin(8);
-    composer_text_view.set_bottom_margin(8);
-    composer_text_view.set_left_margin(10);
-    composer_text_view.set_right_margin(10);
-    composer_text_view.set_accepts_tab(false);
-    composer_text_view.set_valign(gtk::Align::Center);
-    let composer_scroller = gtk::ScrolledWindow::builder()
-        .child(&composer_text_view)
-        .hscrollbar_policy(gtk::PolicyType::Never)
-        .vscrollbar_policy(gtk::PolicyType::Never)
-        .propagate_natural_height(true)
-        .max_content_height(COMPOSER_MAX_HEIGHT)
-        .valign(gtk::Align::Center)
-        .build();
-    let composer_frame = gtk::Frame::builder()
-        .child(&composer_scroller)
-        .hexpand(true)
-        .valign(gtk::Align::Center)
-        .css_classes(["composer-input"])
-        .build();
-    let composer_send_button = gtk::Button::builder()
-        .icon_name("mail-send-symbolic")
-        .tooltip_text("Send message")
-        .css_classes(["suggested-action", "circular"])
-        .valign(gtk::Align::End)
-        .build();
-    set_accessible_label(&composer_send_button, "Send message");
-    let composer_attach_button = gtk::Button::builder()
-        .icon_name("mail-attachment-symbolic")
-        .tooltip_text("Attach image")
-        .css_classes(["flat", "circular"])
-        .valign(gtk::Align::End)
-        .build();
-    set_accessible_label(&composer_attach_button, "Attach image");
-    let composer_error_label = gtk::Label::builder()
-        .wrap(true)
-        .xalign(0.0)
-        .css_classes(["error"])
-        .visible(false)
-        .build();
-    let composer_row = gtk::Box::builder()
-        .orientation(gtk::Orientation::Horizontal)
-        .spacing(12)
-        .build();
-    composer_row.append(&composer_attach_button);
-    composer_row.append(&composer_frame);
-    composer_row.append(&composer_send_button);
-    let composer_box = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .spacing(8)
-        .margin_top(14)
-        .margin_bottom(18)
-        .margin_start(18)
-        .margin_end(18)
-        .build();
-    composer_box.append(&composer_error_label);
-    composer_box.append(&composer_row);
 
-    let conversation_placeholder_page = adw::StatusPage::builder()
+    let placeholder_page = adw::StatusPage::builder()
         .title("Select a chat")
         .description("Choose a conversation from the sidebar to read the local message history.")
         .icon_name("chat-bubbles-symbolic")
         .build();
-    let conversation_loading_page = adw::StatusPage::builder()
+    let loading_page = adw::StatusPage::builder()
         .title("Loading messages")
         .description("Reading the latest 50 messages from the local store.")
         .icon_name("mail-message-symbolic")
         .build();
     let conversation_spinner = gtk::Spinner::builder().spinning(true).build();
-    conversation_loading_page.set_child(Some(&conversation_spinner));
-    let conversation_empty_page = adw::StatusPage::builder()
+    loading_page.set_child(Some(&conversation_spinner));
+    let empty_page = adw::StatusPage::builder()
         .title("No text messages yet")
         .description("This conversation is stored, but there are no text messages available for display yet.")
         .icon_name("mail-message-symbolic")
         .build();
 
-    let conversation_content_stack = gtk::Stack::builder().vexpand(true).build();
+    let content_stack = gtk::Stack::builder().vexpand(true).build();
+    content_stack.add_named(&loading_page, Some(CONVERSATION_LOADING_PAGE));
+    content_stack.add_named(&empty_page, Some(CONVERSATION_EMPTY_PAGE));
+    content_stack.add_named(&message_scroller, Some(CONVERSATION_MESSAGES_PAGE));
+    content_stack.set_visible_child_name(CONVERSATION_LOADING_PAGE);
 
-    conversation_content_stack
-        .add_named(&conversation_loading_page, Some(CONVERSATION_LOADING_PAGE));
+    let selected_toolbar = adw::ToolbarView::new();
+    selected_toolbar.set_content(Some(&content_stack));
+    selected_toolbar.add_bottom_bar(&composer.box_);
 
-    conversation_content_stack.add_named(&conversation_empty_page, Some(CONVERSATION_EMPTY_PAGE));
-    conversation_content_stack.add_named(&message_scroller, Some(CONVERSATION_MESSAGES_PAGE));
-    conversation_content_stack.set_visible_child_name(CONVERSATION_LOADING_PAGE);
+    let stack = gtk::Stack::builder().vexpand(true).hexpand(true).build();
+    stack.add_named(&placeholder_page, Some(CONVERSATION_PLACEHOLDER_PAGE));
+    stack.add_named(&selected_toolbar, Some("selected"));
+    stack.set_visible_child_name(CONVERSATION_PLACEHOLDER_PAGE);
 
-    let selected_conversation_toolbar = adw::ToolbarView::new();
-    selected_conversation_toolbar.set_content(Some(&conversation_content_stack));
-    selected_conversation_toolbar.add_bottom_bar(&composer_box);
+    let toolbar = adw::ToolbarView::new();
+    toolbar.add_top_bar(&content_header);
+    toolbar.set_content(Some(&stack));
 
-    let conversation_stack = gtk::Stack::builder().vexpand(true).hexpand(true).build();
-    conversation_stack.add_named(
-        &conversation_placeholder_page,
-        Some(CONVERSATION_PLACEHOLDER_PAGE),
-    );
-    conversation_stack.add_named(&selected_conversation_toolbar, Some("selected"));
-    conversation_stack.set_visible_child_name(CONVERSATION_PLACEHOLDER_PAGE);
+    ConversationView {
+        toolbar,
+        stack,
+        content_stack,
+        loading_page,
+        header,
+        avatar,
+        title,
+        message_scroller,
+        message_box,
+    }
+}
 
-    let content_toolbar = adw::ToolbarView::new();
-    content_toolbar.add_top_bar(&content_header);
-    content_toolbar.set_content(Some(&conversation_stack));
-
-    let sidebar_page = adw::NavigationPage::new(&sidebar_toolbar, "Chats");
-    let content_page = adw::NavigationPage::new(&content_toolbar, "Conversation");
+fn build_split_view(
+    sidebar: &SidebarView,
+    conversation: &ConversationView,
+) -> adw::NavigationSplitView {
+    let sidebar_page = adw::NavigationPage::new(&sidebar.toolbar, "Chats");
+    let content_page = adw::NavigationPage::new(&conversation.toolbar, "Conversation");
     let split_view = adw::NavigationSplitView::new();
     split_view.set_sidebar(Some(&sidebar_page));
     split_view.set_content(Some(&content_page));
@@ -303,6 +418,21 @@ pub fn build(app: &adw::Application) -> AppContext {
     split_view.set_show_content(false);
     split_view.set_vexpand(true);
     split_view.set_hexpand(true);
+    split_view
+}
+
+pub fn build(app: &adw::Application) -> AppContext {
+    let buttons = build_action_buttons();
+    let loading = build_loading_view();
+    let login = build_login_view();
+    let banner = adw::Banner::new("Connecting to WhatsApp");
+    banner.set_revealed(false);
+    banner.set_button_label(Some(""));
+
+    let sidebar = build_sidebar_view(&buttons);
+    let composer = build_composer_view();
+    let conversation = build_conversation_view(&buttons, &composer);
+    let split_view = build_split_view(&sidebar, &conversation);
 
     let main_page = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
@@ -313,8 +443,8 @@ pub fn build(app: &adw::Application) -> AppContext {
     main_page.append(&split_view);
 
     let root_stack = gtk::Stack::builder().vexpand(true).hexpand(true).build();
-    root_stack.add_named(&loading_page, Some(ROOT_LOADING_PAGE));
-    root_stack.add_named(&login_page, Some(ROOT_LOGIN_PAGE));
+    root_stack.add_named(&loading.page, Some(ROOT_LOADING_PAGE));
+    root_stack.add_named(&login.page, Some(ROOT_LOGIN_PAGE));
     root_stack.add_named(&main_page, Some(ROOT_MAIN_PAGE));
     root_stack.set_visible_child_name(ROOT_MAIN_PAGE);
 
@@ -328,34 +458,34 @@ pub fn build(app: &adw::Application) -> AppContext {
 
     let widgets = Rc::new(Widgets {
         root_stack,
-        loading_page,
-        loading_spinner,
-        loading_retry_button,
-        login_status_label,
-        qr_picture,
-        qr_error_label,
-        qr_expiry_label,
+        loading_page: loading.page,
+        loading_spinner: loading.spinner,
+        loading_retry_button: loading.retry_button,
+        login_status_label: login.status_label,
+        qr_picture: login.qr_picture,
+        qr_error_label: login.qr_error_label,
+        qr_expiry_label: login.qr_expiry_label,
         banner,
         split_view,
-        sidebar_stack,
-        sidebar_loading_page,
-        sidebar_empty_page,
-        chat_list,
-        conversation_stack,
-        conversation_content_stack,
-        conversation_loading_page,
-        conversation_header,
-        conversation_avatar,
-        conversation_title,
-        message_scroller,
-        message_box,
-        composer_scroller,
-        composer_text_view,
-        composer_error_label,
-        composer_send_button,
-        composer_attach_button,
-        back_button,
-        logout_button,
+        sidebar_stack: sidebar.stack,
+        sidebar_loading_page: sidebar.loading_page,
+        sidebar_empty_page: sidebar.empty_page,
+        chat_list: sidebar.chat_list,
+        conversation_stack: conversation.stack,
+        conversation_content_stack: conversation.content_stack,
+        conversation_loading_page: conversation.loading_page,
+        conversation_header: conversation.header,
+        conversation_avatar: conversation.avatar,
+        conversation_title: conversation.title,
+        message_scroller: conversation.message_scroller,
+        message_box: conversation.message_box,
+        composer_scroller: composer.scroller,
+        composer_text_view: composer.text_view,
+        composer_error_label: composer.error_label,
+        composer_send_button: composer.send_button,
+        composer_attach_button: composer.attach_button,
+        back_button: buttons.back_button,
+        logout_button: buttons.logout_button,
         syncing_chat_selection: Cell::new(false),
         message_scroll_generation: Rc::new(Cell::new(0)),
         rendered_chat_id: RefCell::new(None),
@@ -365,7 +495,7 @@ pub fn build(app: &adw::Application) -> AppContext {
     let state = Rc::new(RefCell::new(UiState::default()));
     let (sender, receiver) = async_channel::unbounded::<UiMessage>();
 
-    signals::connect(&widgets, &state, &sender, &refresh_button);
+    signals::connect(&widgets, &state, &sender, &buttons.refresh_button);
 
     {
         let retry_sender = sender.clone();

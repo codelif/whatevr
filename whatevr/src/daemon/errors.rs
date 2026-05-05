@@ -63,3 +63,51 @@ pub fn is_whatsapp_connection_error_text(s: &str) -> bool {
 pub fn whatsapp_connection_lost_detail() -> String {
     "WhatsApp connection lost. Reconnect now or wait for automatic retry.".to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn friendly_tonic_status_maps_common_daemon_failures() {
+        assert_eq!(
+            friendly_tonic_status(&tonic::Status::new(Code::Unavailable, "down")),
+            "whatevrd is not responding. Retrying..."
+        );
+        assert_eq!(
+            friendly_tonic_status(&tonic::Status::new(Code::InvalidArgument, "bad request")),
+            "bad request"
+        );
+    }
+
+    #[test]
+    fn friendly_daemon_error_text_maps_socket_failures() {
+        assert_eq!(
+            friendly_daemon_error_text("No such file or directory"),
+            "whatevrd is not running. Start the daemon and try again."
+        );
+        assert_eq!(
+            friendly_daemon_error_text("Permission denied"),
+            "Cannot access the whatevrd socket. Check daemon permissions."
+        );
+    }
+
+    #[test]
+    fn detects_daemon_transport_statuses() {
+        assert!(is_daemon_transport_error(&tonic::Status::new(
+            Code::Unavailable,
+            "down"
+        )));
+        assert!(!is_daemon_transport_error(&tonic::Status::new(
+            Code::InvalidArgument,
+            "bad request"
+        )));
+    }
+
+    #[test]
+    fn detects_whatsapp_connection_errors_case_insensitively() {
+        assert!(is_whatsapp_connection_error_text("WebSocket not connected"));
+        assert!(is_whatsapp_connection_error_text("keepalive timed out"));
+        assert!(!is_whatsapp_connection_error_text("permission denied"));
+    }
+}
