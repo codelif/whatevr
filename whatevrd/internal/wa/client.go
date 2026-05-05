@@ -46,6 +46,7 @@ type Client struct {
 	avatarRefreshRunning bool
 	avatarRefreshQueued  bool
 
+	sendQueueMu   sync.Mutex
 	sendQueueWake chan struct{}
 	reconnectCh   chan struct{} // supervisor wakeup: reconnect immediately
 	reconnectNow  atomic.Bool

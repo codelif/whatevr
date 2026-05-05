@@ -407,13 +407,19 @@ func (db *DB) UpdateMessageSendAttempt(ctx context.Context, id string, attempts 
 	_, err := db.conn.ExecContext(ctx, `
 		UPDATE messages
 		SET send_attempts = ?, last_send_error = ?, next_send_attempt = ?
-		WHERE id = ?
-	`, attempts, sendErr, nextAttempt.Unix(), id)
+		WHERE id = ? AND status = ?
+	`, attempts, sendErr, nextAttempt.Unix(), id, StatusPending)
 	return err
 }
 
 func (db *DB) UpdateMessageStatus(ctx context.Context, id, status string) (Message, bool, error) {
-	message, err := db.GetMessage(ctx, id)
+	tx, err := db.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return Message{}, false, err
+	}
+	defer tx.Rollback()
+
+	message, err := getMessageTx(ctx, tx, id)
 	if err != nil {
 		return Message{}, false, err
 	}
@@ -423,11 +429,14 @@ func (db *DB) UpdateMessageStatus(ctx context.Context, id, status string) (Messa
 		return message, false, nil
 	}
 
-	if _, err := db.conn.ExecContext(ctx, `
+	if _, err := tx.ExecContext(ctx, `
 		UPDATE messages
 		SET status = ?
 		WHERE id = ?
 	`, nextStatus, id); err != nil {
+		return Message{}, false, err
+	}
+	if err := tx.Commit(); err != nil {
 		return Message{}, false, err
 	}
 
