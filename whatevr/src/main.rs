@@ -127,6 +127,7 @@ enum UiMessage {
         chat_id: String,
     },
     FrontendSessionConnected,
+    BootstrapAfterFirstFrame,
 }
 
 struct UiState {
@@ -586,7 +587,7 @@ fn build_ui(app: &adw::Application) -> AppContext {
     root_stack.add_named(&loading_page, Some(ROOT_LOADING_PAGE));
     root_stack.add_named(&login_page, Some(ROOT_LOGIN_PAGE));
     root_stack.add_named(&main_page, Some(ROOT_MAIN_PAGE));
-    root_stack.set_visible_child_name(ROOT_LOADING_PAGE);
+    root_stack.set_visible_child_name(ROOT_MAIN_PAGE);
 
     let window = adw::ApplicationWindow::builder()
         .application(app)
@@ -703,15 +704,7 @@ fn build_ui(app: &adw::Application) -> AppContext {
     });
 
     window.present();
-
-    let bootstrap_sender = sender.clone();
-    let bootstrap_session_id = state.borrow().frontend_session_id.clone();
-    glib::idle_add_local_once(move || {
-        request_status(bootstrap_sender.clone());
-        hold_frontend_session(bootstrap_sender.clone(), bootstrap_session_id);
-        subscribe_login_events(bootstrap_sender.clone());
-        subscribe_daemon_events(bootstrap_sender);
-    });
+    schedule_bootstrap_after_first_frame(&window, sender.clone());
 
     AppContext { widgets, sender }
 }
@@ -1487,6 +1480,20 @@ fn handle_ui_message(
         UiMessage::FrontendSessionConnected => {
             report_frontend_session_state(state, sender.clone());
         }
+        UiMessage::BootstrapAfterFirstFrame => {
+            let session_id = {
+                let mut state = state.borrow_mut();
+                if !state.initial_chat_request_started {
+                    state.initial_chat_request_started = true;
+                    request_chats(sender.clone());
+                }
+                state.frontend_session_id.clone()
+            };
+            request_status(sender.clone());
+            hold_frontend_session(sender.clone(), session_id);
+            subscribe_login_events(sender.clone());
+            subscribe_daemon_events(sender.clone());
+        }
     }
 }
 
@@ -1494,6 +1501,20 @@ fn present_app_window(widgets: &Widgets) {
     if let Some(window) = widgets.root_stack.root().and_downcast::<gtk::Window>() {
         window.present();
     }
+}
+
+fn schedule_bootstrap_after_first_frame(window: &adw::ApplicationWindow, sender: UiSender) {
+    let frame_count = Rc::new(Cell::new(0u8));
+    window.add_tick_callback(move |_, _| {
+        let next = frame_count.get().saturating_add(1);
+        frame_count.set(next);
+        if next < 2 {
+            return glib::ControlFlow::Continue;
+        }
+
+        send_ui(&sender, UiMessage::BootstrapAfterFirstFrame);
+        glib::ControlFlow::Break
+    });
 }
 
 fn apply_daemon_state(
@@ -1534,11 +1555,15 @@ fn apply_daemon_state(
 
         match daemon_state {
             DaemonState::Starting | DaemonState::Unspecified => {
-                widgets.root_stack.set_visible_child_name(ROOT_LOADING_PAGE);
-                widgets.loading_page.set_title("Starting whatevrd");
-                widgets
-                    .loading_page
-                    .set_description(Some("Preparing the local session and syncing pipeline."));
+                if state.chats_loaded || state.initial_chat_request_started {
+                    widgets.root_stack.set_visible_child_name(ROOT_MAIN_PAGE);
+                } else {
+                    widgets.root_stack.set_visible_child_name(ROOT_LOADING_PAGE);
+                    widgets.loading_page.set_title("Starting whatevrd");
+                    widgets
+                        .loading_page
+                        .set_description(Some("Preparing the local session and syncing pipeline."));
+                }
             }
             DaemonState::NeedLogin => {
                 widgets.root_stack.set_visible_child_name(ROOT_LOGIN_PAGE);
