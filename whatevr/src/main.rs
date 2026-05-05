@@ -52,6 +52,7 @@ const COMPOSER_MAX_HEIGHT: i32 = 144;
 const COMPOSER_HEIGHT_SLACK: i32 = 2;
 const RPC_TIMEOUT: Duration = Duration::from_secs(10);
 const RPC_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+const TYPING_IDLE_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Clone)]
 enum UiMessage {
@@ -100,6 +101,10 @@ enum UiMessage {
         chat_id: String,
         is_composing: bool,
     },
+    TypingIdle {
+        chat_id: String,
+        generation: u64,
+    },
     NewMessage {
         message: proto::Message,
     },
@@ -146,6 +151,7 @@ struct UiState {
     window_focused: bool,
     composing_peers: HashMap<String, bool>,
     last_sent_composing: bool,
+    typing_generation: u64,
     pending_open_chat_id: Option<String>,
     frontend_session_id: String,
 }
@@ -174,6 +180,7 @@ impl Default for UiState {
             window_focused: false,
             composing_peers: HashMap::new(),
             last_sent_composing: false,
+            typing_generation: 0,
             pending_open_chat_id: None,
             frontend_session_id: new_frontend_session_id(),
         }
@@ -196,6 +203,10 @@ fn new_frontend_session_id() -> String {
 
 fn send_ui(sender: &UiSender, message: UiMessage) {
     let _ = sender.try_send(message);
+}
+
+fn set_accessible_label(widget: &impl IsA<gtk::Accessible>, label: &str) {
+    widget.update_property(&[gtk::accessible::Property::Label(label)]);
 }
 
 #[derive(Clone)]
@@ -289,15 +300,18 @@ fn build_ui(app: &adw::Application) -> AppContext {
         .icon_name("view-refresh-symbolic")
         .tooltip_text("Refresh chats and connection state")
         .build();
+    set_accessible_label(&refresh_button, "Refresh chats and connection state");
     let logout_button = gtk::Button::builder()
         .icon_name("system-log-out-symbolic")
         .tooltip_text("Log out and delete local session data")
         .build();
+    set_accessible_label(&logout_button, "Log out and delete local session data");
     let back_button = gtk::Button::builder()
         .icon_name("go-previous-symbolic")
         .tooltip_text("Back to chats")
         .visible(false)
         .build();
+    set_accessible_label(&back_button, "Back to chats");
 
     let loading_page = adw::StatusPage::builder()
         .icon_name("network-transmit-receive-symbolic")
@@ -327,6 +341,7 @@ fn build_ui(app: &adw::Application) -> AppContext {
     let login_status_label = gtk::Label::builder().wrap(true).xalign(0.0).build();
     let qr_picture = gtk::Picture::builder().halign(gtk::Align::Center).build();
     qr_picture.set_size_request(252, 252);
+    set_accessible_label(&qr_picture, "WhatsApp login QR code");
     let qr_frame = gtk::Frame::builder()
         .child(&qr_picture)
         .halign(gtk::Align::Center)
@@ -472,12 +487,14 @@ fn build_ui(app: &adw::Application) -> AppContext {
         .css_classes(["suggested-action", "circular"])
         .valign(gtk::Align::End)
         .build();
+    set_accessible_label(&composer_send_button, "Send message");
     let composer_attach_button = gtk::Button::builder()
         .icon_name("mail-attachment-symbolic")
         .tooltip_text("Attach image")
         .css_classes(["flat", "circular"])
         .valign(gtk::Align::End)
         .build();
+    set_accessible_label(&composer_attach_button, "Attach image");
     let composer_error_label = gtk::Label::builder()
         .wrap(true)
         .xalign(0.0)
@@ -658,6 +675,9 @@ fn build_ui(app: &adw::Application) -> AppContext {
         let selected = {
             let mut s = focus_state.borrow_mut();
             s.window_focused = focused;
+            if !focused {
+                stop_current_composing(&mut s, &focus_sender);
+            }
             s.selected_chat_id.clone()
         };
         report_frontend_session_state(&focus_state, focus_sender.clone());
@@ -716,8 +736,10 @@ fn connect_signals(
     });
 
     let logout_widgets = widgets.clone();
+    let logout_state = state.clone();
     let logout_sender = sender.clone();
     widgets.logout_button.connect_clicked(move |_| {
+        stop_current_composing(&mut logout_state.borrow_mut(), &logout_sender);
         show_logout_confirmation(&logout_widgets, &logout_sender);
     });
 
@@ -796,18 +818,26 @@ fn connect_signals(
         .buffer()
         .connect_changed(move |buf| {
             let non_empty = buf.char_count() > 0;
-            let (chat_id, should_send) = {
+            let (chat_id, generation, should_send) = {
                 let mut s = typing_state.borrow_mut();
                 let id = s.selected_chat_id.clone();
-                let changed = non_empty != s.last_sent_composing;
-                if changed {
-                    s.last_sent_composing = non_empty;
+                s.typing_generation = s.typing_generation.wrapping_add(1);
+                let generation = s.typing_generation;
+                let should_send = non_empty && !s.last_sent_composing;
+                if should_send {
+                    s.last_sent_composing = true;
                 }
-                (id, changed)
+                if !non_empty && s.last_sent_composing {
+                    stop_current_composing(&mut s, &typing_sender);
+                }
+                (id, generation, should_send)
             };
-            if should_send {
-                if let Some(chat_id) = chat_id {
-                    request_set_chat_presence(typing_sender.clone(), chat_id, non_empty);
+            if let Some(chat_id) = chat_id.clone() {
+                if should_send {
+                    request_set_chat_presence(typing_sender.clone(), chat_id.clone(), true);
+                }
+                if non_empty {
+                    schedule_typing_idle(typing_sender.clone(), chat_id, generation);
                 }
             }
 
@@ -845,12 +875,24 @@ fn connect_signals(
 
         let sender = attach_sender.clone();
         dialog.open(window.as_ref(), None::<&gio::Cancellable>, move |result| {
-            if let Ok(file) = result {
-                if let Some(path) = file.path() {
-                    if let Some(path_str) = path.to_str() {
-                        request_send_media(sender.clone(), chat_id.clone(), path_str.to_string());
-                    }
-                }
+            let Ok(file) = result else {
+                send_ui(&sender, UiMessage::Notice("No image selected.".to_string()));
+                return;
+            };
+            let Some(path) = file.path() else {
+                send_ui(
+                    &sender,
+                    UiMessage::Notice("Only local image files can be attached.".to_string()),
+                );
+                return;
+            };
+            if let Some(path_str) = path.to_str() {
+                request_send_media(sender.clone(), chat_id.clone(), path_str.to_string());
+            } else {
+                send_ui(
+                    &sender,
+                    UiMessage::Notice("This file path cannot be attached.".to_string()),
+                );
             }
         });
     });
@@ -1190,6 +1232,24 @@ fn handle_ui_message(
             };
             if selected_matches {
                 render_conversation_header(widgets, &state.borrow());
+            }
+        }
+        UiMessage::TypingIdle {
+            chat_id,
+            generation,
+        } => {
+            let should_send = {
+                let mut s = state.borrow_mut();
+                let matches_active = s.selected_chat_id.as_deref() == Some(chat_id.as_str())
+                    && s.typing_generation == generation
+                    && s.last_sent_composing;
+                if matches_active {
+                    s.last_sent_composing = false;
+                }
+                matches_active
+            };
+            if should_send {
+                request_set_chat_presence(sender.clone(), chat_id, false);
             }
         }
         UiMessage::NewMessage { message } => {
@@ -1605,6 +1665,7 @@ fn commit_pending_chat(state: &mut UiState, chat_id: String) -> bool {
         state.current_messages_chat_id = None;
         state.current_messages.clear();
         state.last_sent_composing = false;
+        state.typing_generation = state.typing_generation.wrapping_add(1);
     }
 
     !was_selected
@@ -1622,7 +1683,19 @@ fn clear_local_ui_state(state: &mut UiState) {
     state.send_in_flight = false;
     state.composing_peers.clear();
     state.last_sent_composing = false;
+    state.typing_generation = state.typing_generation.wrapping_add(1);
     state.pending_open_chat_id = None;
+}
+
+fn stop_current_composing(state: &mut UiState, sender: &UiSender) {
+    if !state.last_sent_composing {
+        return;
+    }
+    if let Some(chat_id) = state.selected_chat_id.clone() {
+        request_set_chat_presence(sender.clone(), chat_id, false);
+    }
+    state.last_sent_composing = false;
+    state.typing_generation = state.typing_generation.wrapping_add(1);
 }
 
 fn show_logout_confirmation(widgets: &Rc<Widgets>, sender: &UiSender) {
@@ -2023,6 +2096,9 @@ fn open_chat_at_index(
     {
         let mut state = state.borrow_mut();
         let already_selected = state.selected_chat_id.as_deref() == Some(chat_id.as_str());
+        if !already_selected {
+            stop_current_composing(&mut state, sender);
+        }
 
         if already_selected
             && state.current_messages_chat_id.as_deref() == Some(chat_id.as_str())
@@ -2239,6 +2315,7 @@ fn submit_composer_message(widgets: &Rc<Widgets>, state: &Rc<RefCell<UiState>>, 
 
         state.send_in_flight = true;
         state.composer_error.clear();
+        stop_current_composing(&mut state, sender);
         chat_id
     };
 
@@ -2347,6 +2424,19 @@ fn schedule_conversation_loading(sender: UiSender, chat_id: String, generation: 
         send_ui(
             &sender,
             UiMessage::ShowConversationLoading {
+                chat_id,
+                generation,
+            },
+        );
+    });
+}
+
+fn schedule_typing_idle(sender: UiSender, chat_id: String, generation: u64) {
+    spawn_async(async move {
+        tokio::time::sleep(TYPING_IDLE_TIMEOUT).await;
+        send_ui(
+            &sender,
+            UiMessage::TypingIdle {
                 chat_id,
                 generation,
             },
@@ -2973,6 +3063,7 @@ fn build_message_row(message: &proto::Message) -> (gtk::Box, gtk::Label) {
             picture.set_can_shrink(false);
             picture.set_content_fit(gtk::ContentFit::Fill);
             picture.add_css_class("image-placeholder");
+            set_accessible_label(&picture, "Attached image preview");
 
             if let Some(texture) = cached_texture(&message.media_local_path) {
                 picture.set_paintable(Some(&texture));
