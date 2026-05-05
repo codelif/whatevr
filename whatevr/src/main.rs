@@ -3,7 +3,7 @@ use std::{
     collections::{HashMap, VecDeque},
     path::PathBuf,
     rc::Rc,
-    sync::mpsc,
+    sync::OnceLock,
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -17,6 +17,8 @@ use qrcode::{QrCode, types::Color};
 use tokio::net::UnixStream;
 use tonic::transport::{Channel, Endpoint};
 use tower::service_fn;
+
+type UiSender = async_channel::Sender<UiMessage>;
 
 mod proto {
     tonic::include_proto!("whatevr.v1");
@@ -179,7 +181,7 @@ impl Default for UiState {
 #[derive(Clone)]
 struct AppContext {
     widgets: Rc<Widgets>,
-    sender: mpsc::Sender<UiMessage>,
+    sender: UiSender,
 }
 
 fn new_frontend_session_id() -> String {
@@ -188,6 +190,10 @@ fn new_frontend_session_id() -> String {
         .map(|duration| duration.as_nanos())
         .unwrap_or_default();
     format!("whatevr-{}-{nanos}", std::process::id())
+}
+
+fn send_ui(sender: &UiSender, message: UiMessage) {
+    let _ = sender.try_send(message);
 }
 
 #[derive(Clone)]
@@ -268,7 +274,7 @@ fn main() -> glib::ExitCode {
             for file in files {
                 let uri = file.uri();
                 if let Some(chat_id) = chat_id_from_uri(uri.as_str()) {
-                    let _ = context.sender.send(UiMessage::OpenChat { chat_id });
+                    send_ui(&context.sender, UiMessage::OpenChat { chat_id });
                 }
             }
         });
@@ -608,7 +614,7 @@ fn build_ui(app: &adw::Application) -> AppContext {
     });
 
     let state = Rc::new(RefCell::new(UiState::default()));
-    let (sender, receiver) = mpsc::channel::<UiMessage>();
+    let (sender, receiver) = async_channel::unbounded::<UiMessage>();
 
     connect_signals(&widgets, &state, &sender, &refresh_button);
 
@@ -663,8 +669,8 @@ fn build_ui(app: &adw::Application) -> AppContext {
     let widgets_for_receiver = widgets.clone();
     let state_for_receiver = state.clone();
     let sender_for_receiver = sender.clone();
-    glib::timeout_add_local(Duration::from_millis(40), move || {
-        while let Ok(message) = receiver.try_recv() {
+    glib::MainContext::default().spawn_local(async move {
+        while let Ok(message) = receiver.recv().await {
             handle_ui_message(
                 message,
                 &widgets_for_receiver,
@@ -672,7 +678,6 @@ fn build_ui(app: &adw::Application) -> AppContext {
                 &sender_for_receiver,
             );
         }
-        glib::ControlFlow::Continue
     });
 
     window.present();
@@ -692,7 +697,7 @@ fn build_ui(app: &adw::Application) -> AppContext {
 fn connect_signals(
     widgets: &Rc<Widgets>,
     state: &Rc<RefCell<UiState>>,
-    sender: &mpsc::Sender<UiMessage>,
+    sender: &UiSender,
     refresh_button: &gtk::Button,
 ) {
     let refresh_sender = sender.clone();
@@ -873,7 +878,7 @@ fn handle_ui_message(
     message: UiMessage,
     widgets: &Rc<Widgets>,
     state: &Rc<RefCell<UiState>>,
-    sender: &mpsc::Sender<UiMessage>,
+    sender: &UiSender,
 ) {
     match message {
         UiMessage::StatusLoaded(status) => {
@@ -1144,9 +1149,10 @@ fn handle_ui_message(
                 render_conversation(widgets, &state);
             }
             if connection_lost {
-                let _ = sender.send(UiMessage::WhatsAppConnectionLost(
-                    whatsapp_connection_lost_detail(),
-                ));
+                send_ui(
+                    &sender,
+                    UiMessage::WhatsAppConnectionLost(whatsapp_connection_lost_detail()),
+                );
             }
         }
         UiMessage::MediaSendSucceeded => {}
@@ -1165,9 +1171,10 @@ fn handle_ui_message(
                 render_conversation(widgets, &state);
             }
             if connection_lost {
-                let _ = sender.send(UiMessage::WhatsAppConnectionLost(
-                    whatsapp_connection_lost_detail(),
-                ));
+                send_ui(
+                    &sender,
+                    UiMessage::WhatsAppConnectionLost(whatsapp_connection_lost_detail()),
+                );
             }
         }
         UiMessage::ChatPresence {
@@ -1424,7 +1431,7 @@ fn present_app_window(widgets: &Widgets) {
 fn apply_daemon_state(
     widgets: &Rc<Widgets>,
     state: &Rc<RefCell<UiState>>,
-    sender: &mpsc::Sender<UiMessage>,
+    sender: &UiSender,
     daemon_state: DaemonState,
     detail: String,
     can_reconnect: bool,
@@ -1610,7 +1617,7 @@ fn clear_local_ui_state(state: &mut UiState) {
     state.pending_open_chat_id = None;
 }
 
-fn show_logout_confirmation(widgets: &Rc<Widgets>, sender: &mpsc::Sender<UiMessage>) {
+fn show_logout_confirmation(widgets: &Rc<Widgets>, sender: &UiSender) {
     let Some(window) = widgets.root_stack.root().and_downcast::<gtk::Window>() else {
         request_logout(sender.clone());
         return;
@@ -1962,7 +1969,7 @@ fn open_chat_at_index(
     force_reload: bool,
     widgets: &Rc<Widgets>,
     state: &Rc<RefCell<UiState>>,
-    sender: &mpsc::Sender<UiMessage>,
+    sender: &UiSender,
 ) {
     let chat = {
         let state = state.borrow();
@@ -2025,7 +2032,7 @@ fn open_chat_by_id(
     force_reload: bool,
     widgets: &Rc<Widgets>,
     state: &Rc<RefCell<UiState>>,
-    sender: &mpsc::Sender<UiMessage>,
+    sender: &UiSender,
 ) -> bool {
     let index = {
         let state = state.borrow();
@@ -2178,11 +2185,7 @@ fn scroll_composer_to_bottom_if_needed(widgets: &Widgets) {
     }
 }
 
-fn submit_composer_message(
-    widgets: &Rc<Widgets>,
-    state: &Rc<RefCell<UiState>>,
-    sender: &mpsc::Sender<UiMessage>,
-) {
+fn submit_composer_message(widgets: &Rc<Widgets>, state: &Rc<RefCell<UiState>>, sender: &UiSender) {
     let text = composer_text(&widgets.composer_text_view);
     if text.trim().is_empty() {
         return;
@@ -2222,20 +2225,20 @@ fn clear_composer(text_view: &gtk::TextView) {
     text_view.buffer().set_text("");
 }
 
-fn request_status(sender: mpsc::Sender<UiMessage>) {
+fn request_status(sender: UiSender) {
     spawn_async(async move {
         match fetch_status().await {
             Ok(status) => {
-                let _ = sender.send(UiMessage::StatusLoaded(status));
+                send_ui(&sender, UiMessage::StatusLoaded(status));
             }
             Err(error) => {
-                let _ = sender.send(UiMessage::StatusFailed(error.to_string()));
+                send_ui(&sender, UiMessage::StatusFailed(error.to_string()));
             }
         }
     });
 }
 
-fn subscribe_login_events(sender: mpsc::Sender<UiMessage>) {
+fn subscribe_login_events(sender: UiSender) {
     spawn_async(async move {
         let mut backoff = Duration::from_secs(2);
         loop {
@@ -2250,7 +2253,7 @@ fn subscribe_login_events(sender: mpsc::Sender<UiMessage>) {
     });
 }
 
-fn hold_frontend_session(sender: mpsc::Sender<UiMessage>, session_id: String) {
+fn hold_frontend_session(sender: UiSender, session_id: String) {
     spawn_async(async move {
         let mut backoff = Duration::from_secs(2);
         loop {
@@ -2265,7 +2268,7 @@ fn hold_frontend_session(sender: mpsc::Sender<UiMessage>, session_id: String) {
     });
 }
 
-fn report_frontend_session_state(state: &Rc<RefCell<UiState>>, sender: mpsc::Sender<UiMessage>) {
+fn report_frontend_session_state(state: &Rc<RefCell<UiState>>, sender: UiSender) {
     let (session_id, focused, active_chat_id) = {
         let state = state.borrow();
         (
@@ -2277,82 +2280,88 @@ fn report_frontend_session_state(state: &Rc<RefCell<UiState>>, sender: mpsc::Sen
     request_update_frontend_session_state(sender, session_id, focused, active_chat_id);
 }
 
-fn subscribe_daemon_events(sender: mpsc::Sender<UiMessage>) {
+fn subscribe_daemon_events(sender: UiSender) {
     spawn_async(async move {
         let mut backoff = Duration::from_secs(2);
         loop {
             let _ = stream_daemon_events(sender.clone()).await;
-            let _ = sender.send(UiMessage::DaemonConnectionLost);
+            send_ui(&sender, UiMessage::DaemonConnectionLost);
             tokio::time::sleep(backoff).await;
             backoff = (backoff * 2).min(Duration::from_secs(30));
         }
     });
 }
 
-fn request_chats(sender: mpsc::Sender<UiMessage>) {
+fn request_chats(sender: UiSender) {
     spawn_async(async move {
         match load_chats().await {
             Ok(chats) => {
-                let _ = sender.send(UiMessage::ChatsLoaded(chats));
+                send_ui(&sender, UiMessage::ChatsLoaded(chats));
             }
             Err(error) => {
-                let _ = sender.send(UiMessage::ChatsFailed(error.to_string()));
+                send_ui(&sender, UiMessage::ChatsFailed(error.to_string()));
             }
         }
     });
 }
 
-fn schedule_conversation_loading(
-    sender: mpsc::Sender<UiMessage>,
-    chat_id: String,
-    generation: u64,
-) {
+fn schedule_conversation_loading(sender: UiSender, chat_id: String, generation: u64) {
     thread::spawn(move || {
         thread::sleep(Duration::from_secs(1));
-        let _ = sender.send(UiMessage::ShowConversationLoading {
-            chat_id,
-            generation,
-        });
+        send_ui(
+            &sender,
+            UiMessage::ShowConversationLoading {
+                chat_id,
+                generation,
+            },
+        );
     });
 }
 
-fn request_messages(sender: mpsc::Sender<UiMessage>, chat_id: String, generation: u64) {
+fn request_messages(sender: UiSender, chat_id: String, generation: u64) {
     spawn_async(async move {
         match load_messages(chat_id.clone()).await {
             Ok(messages) => {
-                let _ = sender.send(UiMessage::MessagesLoaded {
-                    chat_id,
-                    generation,
-                    messages,
-                });
+                send_ui(
+                    &sender,
+                    UiMessage::MessagesLoaded {
+                        chat_id,
+                        generation,
+                        messages,
+                    },
+                );
             }
             Err(error) => {
-                let _ = sender.send(UiMessage::MessagesFailed {
-                    chat_id,
-                    generation,
-                    error: error.to_string(),
-                });
+                send_ui(
+                    &sender,
+                    UiMessage::MessagesFailed {
+                        chat_id,
+                        generation,
+                        error: error.to_string(),
+                    },
+                );
             }
         }
     });
 }
 
-fn request_mark_chat_read(sender: mpsc::Sender<UiMessage>, chat_id: String) {
+fn request_mark_chat_read(sender: UiSender, chat_id: String) {
     spawn_async(async move {
         if let Err(error) = mark_chat_read(chat_id).await {
             if is_daemon_transport_error(&*error) {
-                let _ = sender.send(UiMessage::DaemonConnectionLost);
+                send_ui(&sender, UiMessage::DaemonConnectionLost);
                 return;
             }
-            let _ = sender.send(UiMessage::Notice(format!(
-                "Unable to mark chat read: {error}"
-            )));
+            send_ui(
+                &sender,
+                UiMessage::Notice(format!("Unable to mark chat read: {error}")),
+            );
         }
     });
 }
 
 fn request_update_frontend_session_state(
-    sender: mpsc::Sender<UiMessage>,
+    sender: UiSender,
     session_id: String,
     focused: bool,
     active_chat_id: String,
@@ -2361,82 +2370,93 @@ fn request_update_frontend_session_state(
         if let Err(error) = update_frontend_session_state(session_id, focused, active_chat_id).await
         {
             if is_daemon_transport_error(&*error) {
-                let _ = sender.send(UiMessage::DaemonConnectionLost);
+                send_ui(&sender, UiMessage::DaemonConnectionLost);
             }
         }
     });
 }
 
-fn request_send_text(sender: mpsc::Sender<UiMessage>, chat_id: String, text: String) {
+fn request_send_text(sender: UiSender, chat_id: String, text: String) {
     spawn_async(async move {
         match send_text(chat_id.clone(), text).await {
             Ok(chat_id) => {
-                let _ = sender.send(UiMessage::SendSucceeded { chat_id });
+                send_ui(&sender, UiMessage::SendSucceeded { chat_id });
             }
             Err(error) => {
-                let _ = sender.send(UiMessage::SendFailed {
-                    chat_id,
-                    error: error.to_string(),
-                });
+                send_ui(
+                    &sender,
+                    UiMessage::SendFailed {
+                        chat_id,
+                        error: error.to_string(),
+                    },
+                );
             }
         }
     });
 }
 
-fn request_send_media(sender: mpsc::Sender<UiMessage>, chat_id: String, file_path: String) {
+fn request_send_media(sender: UiSender, chat_id: String, file_path: String) {
     spawn_async(async move {
         match send_media(chat_id.clone(), file_path).await {
             Ok(()) => {
-                let _ = sender.send(UiMessage::MediaSendSucceeded);
+                send_ui(&sender, UiMessage::MediaSendSucceeded);
             }
             Err(error) => {
-                let _ = sender.send(UiMessage::MediaSendFailed {
-                    chat_id,
-                    error: error.to_string(),
-                });
+                send_ui(
+                    &sender,
+                    UiMessage::MediaSendFailed {
+                        chat_id,
+                        error: error.to_string(),
+                    },
+                );
             }
         }
     });
 }
 
-fn request_set_chat_presence(sender: mpsc::Sender<UiMessage>, chat_id: String, composing: bool) {
+fn request_set_chat_presence(sender: UiSender, chat_id: String, composing: bool) {
     spawn_async(async move {
         if let Err(error) = set_chat_presence(chat_id, composing).await {
             let error = error.to_string();
             if is_whatsapp_connection_error_text(&error) {
-                let _ = sender.send(UiMessage::WhatsAppConnectionLost(
-                    whatsapp_connection_lost_detail(),
-                ));
+                send_ui(
+                    &sender,
+                    UiMessage::WhatsAppConnectionLost(whatsapp_connection_lost_detail()),
+                );
                 return;
             }
-            let _ = sender.send(UiMessage::Notice(format!(
-                "Unable to set chat presence: {error}"
-            )));
+            send_ui(
+                &sender,
+                UiMessage::Notice(format!("Unable to set chat presence: {error}")),
+            );
         }
     });
 }
 
-fn request_logout(sender: mpsc::Sender<UiMessage>) {
+fn request_logout(sender: UiSender) {
     spawn_async(async move {
         match logout().await {
             Ok(()) => {
-                let _ = sender.send(UiMessage::LogoutSucceeded);
+                send_ui(&sender, UiMessage::LogoutSucceeded);
             }
             Err(error) => {
-                let _ = sender.send(UiMessage::LogoutFailed(error.to_string()));
+                send_ui(&sender, UiMessage::LogoutFailed(error.to_string()));
             }
         }
     });
 }
 
-fn request_reconnect(sender: mpsc::Sender<UiMessage>) {
+fn request_reconnect(sender: UiSender) {
     spawn_async(async move {
         match do_reconnect().await {
             Ok(()) => {
-                let _ = sender.send(UiMessage::ReconnectSucceeded);
+                send_ui(&sender, UiMessage::ReconnectSucceeded);
             }
             Err(error) => {
-                let _ = sender.send(UiMessage::ReconnectFailed(friendly_daemon_error(&*error)));
+                send_ui(
+                    &sender,
+                    UiMessage::ReconnectFailed(friendly_daemon_error(&*error)),
+                );
             }
         }
     });
@@ -2446,17 +2466,18 @@ fn spawn_async<Fut>(future: Fut)
 where
     Fut: std::future::Future<Output = ()> + Send + 'static,
 {
-    thread::spawn(move || {
-        let runtime = match tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-        {
-            Ok(runtime) => runtime,
-            Err(_) => return,
-        };
+    async_runtime().spawn(future);
+}
 
-        runtime.block_on(future);
-    });
+fn async_runtime() -> &'static tokio::runtime::Runtime {
+    static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+    RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .thread_name("whatevr-async")
+            .build()
+            .expect("failed to initialize frontend async runtime")
+    })
 }
 
 async fn fetch_status() -> Result<proto::GetStatusResponse, Box<dyn std::error::Error + Send + Sync>>
@@ -2467,7 +2488,7 @@ async fn fetch_status() -> Result<proto::GetStatusResponse, Box<dyn std::error::
 }
 
 async fn stream_login_events(
-    sender: mpsc::Sender<UiMessage>,
+    sender: UiSender,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let channel = connect_channel().await?;
     let mut client = LoginServiceClient::new(channel);
@@ -2480,10 +2501,13 @@ async fn stream_login_events(
         match event.payload {
             Some(login_event::Payload::LoginStateChanged(_)) => {}
             Some(login_event::Payload::QrCode(qr)) => {
-                let _ = sender.send(UiMessage::QrCode {
-                    code: qr.code,
-                    expires_at: qr.expires_at_unix,
-                });
+                send_ui(
+                    &sender,
+                    UiMessage::QrCode {
+                        code: qr.code,
+                        expires_at: qr.expires_at_unix,
+                    },
+                );
             }
             None => {}
         }
@@ -2493,7 +2517,7 @@ async fn stream_login_events(
 }
 
 async fn stream_frontend_session(
-    sender: mpsc::Sender<UiMessage>,
+    sender: UiSender,
     session_id: String,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let channel = connect_channel().await?;
@@ -2505,7 +2529,7 @@ async fn stream_frontend_session(
         })
         .await?
         .into_inner();
-    let _ = sender.send(UiMessage::FrontendSessionConnected);
+    send_ui(&sender, UiMessage::FrontendSessionConnected);
 
     while stream.message().await?.is_some() {}
 
@@ -2530,7 +2554,7 @@ async fn update_frontend_session_state(
 }
 
 async fn stream_daemon_events(
-    sender: mpsc::Sender<UiMessage>,
+    sender: UiSender,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let channel = connect_channel().await?;
     let mut client = DaemonServiceClient::new(channel);
@@ -2538,28 +2562,31 @@ async fn stream_daemon_events(
         .subscribe_events(SubscribeEventsRequest {})
         .await?
         .into_inner();
-    let _ = sender.send(UiMessage::DaemonConnectionRestored);
+    send_ui(&sender, UiMessage::DaemonConnectionRestored);
 
     while let Some(event) = stream.message().await? {
         match event.payload {
             Some(daemon_event::Payload::ConnectionChanged(change)) => {
                 let state = DaemonState::try_from(change.state).unwrap_or(DaemonState::Unspecified);
-                let _ = sender.send(UiMessage::DaemonState {
-                    state,
-                    detail: change.detail,
-                    can_reconnect: change.can_reconnect,
-                    retry_attempt: change.retry_attempt,
-                    next_retry_unix: change.next_retry_unix,
-                });
+                send_ui(
+                    &sender,
+                    UiMessage::DaemonState {
+                        state,
+                        detail: change.detail,
+                        can_reconnect: change.can_reconnect,
+                        retry_attempt: change.retry_attempt,
+                        next_retry_unix: change.next_retry_unix,
+                    },
+                );
             }
             Some(daemon_event::Payload::NewMessage(new_message)) => {
                 if let Some(message) = new_message.message {
-                    let _ = sender.send(UiMessage::NewMessage { message });
+                    send_ui(&sender, UiMessage::NewMessage { message });
                 }
             }
             Some(daemon_event::Payload::MessageUpdated(message_updated)) => {
                 if let Some(message) = message_updated.message {
-                    let _ = sender.send(UiMessage::MessageUpdated { message });
+                    send_ui(&sender, UiMessage::MessageUpdated { message });
                 }
             }
             Some(daemon_event::Payload::ChatUpdated(chat_updated)) => {
@@ -2569,17 +2596,23 @@ async fn stream_daemon_events(
                     Some(chat_updated.previous_chat_id)
                 };
                 if let Some(chat) = chat_updated.chat {
-                    let _ = sender.send(UiMessage::ChatUpdated {
-                        chat,
-                        previous_chat_id,
-                    });
+                    send_ui(
+                        &sender,
+                        UiMessage::ChatUpdated {
+                            chat,
+                            previous_chat_id,
+                        },
+                    );
                 }
             }
             Some(daemon_event::Payload::ChatPresenceChanged(presence)) => {
-                let _ = sender.send(UiMessage::ChatPresence {
-                    chat_id: presence.chat_id,
-                    is_composing: presence.is_composing,
-                });
+                send_ui(
+                    &sender,
+                    UiMessage::ChatPresence {
+                        chat_id: presence.chat_id,
+                        is_composing: presence.is_composing,
+                    },
+                );
             }
             _ => {}
         }
