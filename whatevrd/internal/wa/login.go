@@ -210,8 +210,12 @@ func (c *Client) startQRLogin(ctx context.Context, client *whatsmeow.Client) err
 }
 
 func (c *Client) resetAfterExternalLogout() {
-	ctx := context.Background()
-	c.cancelRunContext()
+	c.lifecycleMu.Lock()
+	defer c.lifecycleMu.Unlock()
+
+	ctx := c.backgroundContext()
+	c.cancelRunContextLocked()
+	ctx = context.Background()
 
 	c.mu.Lock()
 	old := c.client
@@ -230,10 +234,15 @@ func (c *Client) resetAfterExternalLogout() {
 		c.log.Errorf("Failed to reset client after remote logout: %v", err)
 		return
 	}
-	c.Start(context.Background())
+	runCtx := c.replaceRunContextLocked(context.Background())
+	c.startRunGoroutine(func() { c.runConnectionSupervisor(runCtx) })
+	c.startRunGoroutine(func() { c.runSendQueue(runCtx) })
 }
 
 func (c *Client) Logout(ctx context.Context) error {
+	c.lifecycleMu.Lock()
+	defer c.lifecycleMu.Unlock()
+
 	c.daemon.SetStateDetail(app.StateConnecting, "Logging out and clearing local session data")
 
 	client := c.currentClient()
@@ -248,7 +257,7 @@ func (c *Client) Logout(ctx context.Context) error {
 			client.Disconnect()
 		}
 	}
-	c.cancelRunContext()
+	c.cancelRunContextLocked()
 
 	localCtx := context.Background()
 
@@ -298,7 +307,9 @@ func (c *Client) Logout(ctx context.Context) error {
 	}
 
 	c.daemon.SetStateDetail(app.StateNeedLogin, "Logged out")
-	c.Start(context.Background())
+	runCtx := c.replaceRunContextLocked(context.Background())
+	c.startRunGoroutine(func() { c.runConnectionSupervisor(runCtx) })
+	c.startRunGoroutine(func() { c.runSendQueue(runCtx) })
 	return nil
 }
 

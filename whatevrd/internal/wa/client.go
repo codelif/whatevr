@@ -32,9 +32,11 @@ type Client struct {
 	mu     sync.Mutex
 	client *whatsmeow.Client
 
-	runMu     sync.Mutex
-	runCtx    context.Context
-	runCancel context.CancelFunc
+	lifecycleMu sync.Mutex
+	runMu       sync.Mutex
+	runCtx      context.Context
+	runCancel   context.CancelFunc
+	runWG       sync.WaitGroup
 
 	presenceMu       sync.Mutex
 	frontendSessions map[string]frontendSession
@@ -86,9 +88,12 @@ func New(ctx context.Context, paths app.Paths, daemon *app.Daemon, store *appsto
 }
 
 func (c *Client) Start(ctx context.Context) {
-	runCtx := c.replaceRunContext(ctx)
-	go c.runConnectionSupervisor(runCtx)
-	go c.runSendQueue(runCtx)
+	c.lifecycleMu.Lock()
+	defer c.lifecycleMu.Unlock()
+
+	runCtx := c.replaceRunContextLocked(ctx)
+	c.startRunGoroutine(func() { c.runConnectionSupervisor(runCtx) })
+	c.startRunGoroutine(func() { c.runSendQueue(runCtx) })
 }
 
 func (c *Client) Reconnect(ctx context.Context) error {
@@ -107,7 +112,9 @@ func (c *Client) requestReconnect(forceClose bool) {
 }
 
 func (c *Client) Close() error {
-	c.cancelRunContext()
+	c.lifecycleMu.Lock()
+	c.cancelRunContextLocked()
+	c.lifecycleMu.Unlock()
 
 	c.mu.Lock()
 	if c.client != nil {
@@ -122,22 +129,20 @@ func (c *Client) Close() error {
 	return container.Close()
 }
 
-func (c *Client) replaceRunContext(parent context.Context) context.Context {
-	c.runMu.Lock()
-	defer c.runMu.Unlock()
-
-	if c.runCancel != nil {
-		c.runCancel()
-	}
+func (c *Client) replaceRunContextLocked(parent context.Context) context.Context {
+	c.cancelRunContextLocked()
 
 	if parent == nil {
 		parent = context.Background()
 	}
+	c.runMu.Lock()
 	c.runCtx, c.runCancel = context.WithCancel(parent)
-	return c.runCtx
+	runCtx := c.runCtx
+	c.runMu.Unlock()
+	return runCtx
 }
 
-func (c *Client) cancelRunContext() {
+func (c *Client) cancelRunContextLocked() {
 	c.runMu.Lock()
 	if c.runCancel != nil {
 		c.runCancel()
@@ -145,6 +150,21 @@ func (c *Client) cancelRunContext() {
 	}
 	c.runCtx = nil
 	c.runMu.Unlock()
+	c.runWG.Wait()
+}
+
+func (c *Client) startRunGoroutine(fn func()) {
+	c.runWG.Add(1)
+	go func() {
+		defer c.runWG.Done()
+		fn()
+	}()
+}
+
+func (c *Client) cancelRunContext() {
+	c.lifecycleMu.Lock()
+	c.cancelRunContextLocked()
+	c.lifecycleMu.Unlock()
 }
 
 func (c *Client) backgroundContext() context.Context {
