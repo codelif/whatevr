@@ -2,6 +2,7 @@ package wa
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand/v2"
 	"os"
@@ -18,7 +19,10 @@ import (
 const (
 	connBackoffBase = 5 * time.Second
 	connBackoffMax  = 60 * time.Second
+	qrRetryDelay    = 300 * time.Millisecond
 )
+
+var errQRLoginRetry = errors.New("retry QR login")
 
 // runConnectionSupervisor replaces the old one-shot start(). It loops
 // forever (until ctx is cancelled), connecting and retrying with
@@ -44,18 +48,24 @@ func (c *Client) runConnectionSupervisor(ctx context.Context) {
 		}
 
 		if err != nil {
-			attempt++
-			delay := connBackoffDelay(attempt)
-			nextRetry := time.Now().Add(delay)
-			c.daemon.SetConnMeta(int32(attempt), nextRetry.Unix(), true)
-			c.daemon.SetStateDetail(app.StateOffline, retryDetail(attempt, delay))
+			retry := connectionRetry(attempt, err)
+			attempt = retry.attempt
+			if retry.nextRetryUnix {
+				nextRetry := time.Now().Add(retry.delay)
+				c.daemon.SetConnMeta(int32(attempt), nextRetry.Unix(), retry.canReconnect)
+			} else {
+				c.daemon.SetConnMeta(int32(attempt), 0, retry.canReconnect)
+			}
+			if retry.detail != "" {
+				c.daemon.SetStateDetail(retry.state, retry.detail)
+			}
 
 			select {
 			case <-ctx.Done():
 				return
 			case <-c.reconnectCh:
 				attempt = 0
-			case <-time.After(delay):
+			case <-time.After(retry.delay):
 			}
 			continue
 		}
@@ -183,7 +193,7 @@ func (c *Client) startQRLogin(ctx context.Context, client *whatsmeow.Client) err
 			return ctx.Err()
 		case item, ok := <-qrChan:
 			if !ok {
-				return fmt.Errorf("QR channel closed unexpectedly")
+				return fmt.Errorf("QR channel closed unexpectedly: %w", errQRLoginRetry)
 			}
 
 			switch item.Event {
@@ -194,19 +204,52 @@ func (c *Client) startQRLogin(ctx context.Context, client *whatsmeow.Client) err
 				return nil
 			case whatsmeow.QRChannelTimeout.Event:
 				c.daemon.SetStateDetail(app.StateNeedLogin, "QR login timed out; scan a new code")
-				return fmt.Errorf("QR login timed out")
+				return fmt.Errorf("QR login timed out: %w", errQRLoginRetry)
 			case whatsmeow.QRChannelClientOutdated.Event:
 				c.daemon.SetConnMeta(0, 0, false)
 				c.daemon.SetStateDetail(app.StateOffline, "WhatsApp client is outdated. Update whatevr/whatevrd.")
 				return fmt.Errorf("client outdated")
 			case whatsmeow.QRChannelScannedWithoutMultidevice.Event:
 				c.daemon.SetStateDetail(app.StateNeedLogin, "Enable multi-device on your phone and scan again")
-				return fmt.Errorf("multi-device not enabled")
+				return fmt.Errorf("multi-device not enabled: %w", errQRLoginRetry)
 			case whatsmeow.QRChannelEventError:
 				c.daemon.SetStateDetail(app.StateNeedLogin, fmt.Sprintf("QR login error: %v", item.Error))
-				return item.Error
+				if item.Error != nil {
+					return errors.Join(errQRLoginRetry, item.Error)
+				}
+				return errQRLoginRetry
 			}
 		}
+	}
+}
+
+type retryPlan struct {
+	attempt       int
+	delay         time.Duration
+	state         app.State
+	detail        string
+	canReconnect  bool
+	nextRetryUnix bool
+}
+
+func connectionRetry(attempt int, err error) retryPlan {
+	if errors.Is(err, errQRLoginRetry) {
+		return retryPlan{
+			attempt: 0,
+			delay:   qrRetryDelay,
+			state:   app.StateNeedLogin,
+		}
+	}
+
+	attempt++
+	delay := connBackoffDelay(attempt)
+	return retryPlan{
+		attempt:       attempt,
+		delay:         delay,
+		state:         app.StateOffline,
+		detail:        retryDetail(attempt, delay),
+		canReconnect:  true,
+		nextRetryUnix: true,
 	}
 }
 

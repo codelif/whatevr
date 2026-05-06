@@ -1,6 +1,12 @@
 package wa
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+	"time"
+
+	"whatevrd/internal/app"
+)
 
 func TestShouldNotifyChatNoFocusedSession(t *testing.T) {
 	c := &Client{frontendSessions: make(map[string]frontendSession)}
@@ -52,5 +58,51 @@ func TestShouldNotifyChatAnyFocusedSessionSuppresses(t *testing.T) {
 
 	if c.ShouldNotifyChat("chat-a") {
 		t.Fatal("any focused session on chat should suppress notifications")
+	}
+}
+
+func TestConnectionRetryKeepsQRLoginOnLoginRetry(t *testing.T) {
+	retry := connectionRetry(3, fmt.Errorf("wrapped: %w", errQRLoginRetry))
+
+	if retry.attempt != 0 {
+		t.Fatalf("attempt = %d, want 0", retry.attempt)
+	}
+	if retry.delay != qrRetryDelay {
+		t.Fatalf("delay = %v, want %v", retry.delay, qrRetryDelay)
+	}
+	if retry.state != app.StateNeedLogin {
+		t.Fatalf("state = %v, want %v", retry.state, app.StateNeedLogin)
+	}
+	if retry.detail != "" {
+		t.Fatalf("detail = %q, want empty to preserve QR detail", retry.detail)
+	}
+	if retry.canReconnect {
+		t.Fatal("canReconnect = true, want false")
+	}
+	if retry.nextRetryUnix {
+		t.Fatal("nextRetryUnix = true, want false")
+	}
+}
+
+func TestConnectionRetryMarksNonQRFailuresOffline(t *testing.T) {
+	retry := connectionRetry(0, fmt.Errorf("connect failed"))
+
+	if retry.attempt != 1 {
+		t.Fatalf("attempt = %d, want 1", retry.attempt)
+	}
+	if retry.delay < connBackoffBase || retry.delay >= connBackoffBase+time.Second {
+		t.Fatalf("delay = %v, want first backoff range", retry.delay)
+	}
+	if retry.state != app.StateOffline {
+		t.Fatalf("state = %v, want %v", retry.state, app.StateOffline)
+	}
+	if retry.detail == "" {
+		t.Fatal("detail is empty, want retry detail")
+	}
+	if !retry.canReconnect {
+		t.Fatal("canReconnect = false, want true")
+	}
+	if !retry.nextRetryUnix {
+		t.Fatal("nextRetryUnix = false, want true")
 	}
 }
