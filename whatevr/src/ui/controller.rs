@@ -30,8 +30,9 @@ use crate::ui::{
         qr::render_qr_texture,
     },
     state::{
-        UiState, clear_local_ui_state, commit_pending_chat, next_message_request_generation,
-        sort_chats, sync_selected_chat_after_reload, upsert_chat,
+        UiState, apply_chat_update, apply_message_update, apply_new_message, clear_local_ui_state,
+        commit_pending_chat, next_message_request_generation, sort_chats,
+        sync_selected_chat_after_reload,
     },
     widgets::Widgets,
 };
@@ -395,27 +396,13 @@ pub fn handle_ui_message(
             }
         }
         UiMessage::NewMessage { message } => {
-            let chat_id = message.chat_id.clone();
             let was_near_bottom = is_scroller_near_bottom(widgets);
-            let (is_for_selected, mark_read) = {
+            let transition = {
                 let mut s = state.borrow_mut();
-                let selected = s.selected_chat_id.as_deref() == Some(chat_id.as_str());
-                let mark_read = selected && s.window_focused;
-                if selected && s.current_messages_chat_id.as_deref() == Some(chat_id.as_str()) {
-                    if let Some(existing) = s
-                        .current_messages
-                        .iter_mut()
-                        .find(|existing| existing.id == message.id)
-                    {
-                        *existing = message;
-                    } else {
-                        s.current_messages.push(message);
-                    }
-                }
-                (selected, mark_read)
+                apply_new_message(&mut s, message)
             };
 
-            if is_for_selected {
+            if transition.is_for_selected_chat {
                 let state = state.borrow();
                 render_conversation(widgets, &state);
                 if was_near_bottom {
@@ -428,26 +415,14 @@ pub fn handle_ui_message(
                     );
                 }
             }
-            if mark_read {
-                request_mark_chat_read(sender.clone(), chat_id);
+            if transition.should_mark_read {
+                request_mark_chat_read(sender.clone(), transition.chat_id);
             }
         }
         UiMessage::MessageUpdated { message } => {
-            let chat_id = message.chat_id.clone();
             let updated = {
                 let mut s = state.borrow_mut();
-                if s.selected_chat_id.as_deref() != Some(chat_id.as_str()) {
-                    false
-                } else if let Some(existing) = s
-                    .current_messages
-                    .iter_mut()
-                    .find(|existing| existing.id == message.id)
-                {
-                    *existing = message;
-                    true
-                } else {
-                    false
-                }
+                apply_message_update(&mut s, message)
             };
 
             if updated {
@@ -461,42 +436,7 @@ pub fn handle_ui_message(
         } => {
             let header_changed = {
                 let mut s = state.borrow_mut();
-
-                if let Some(prev_id) = previous_chat_id.as_deref() {
-                    if s.selected_chat_id.as_deref() == Some(prev_id) {
-                        s.selected_chat_id = Some(chat.id.clone());
-                        if s.current_messages_chat_id.as_deref() == Some(prev_id) {
-                            s.current_messages_chat_id = Some(chat.id.clone());
-                            for message in s.current_messages.iter_mut() {
-                                message.chat_id = chat.id.clone();
-                            }
-                        }
-                        if let Some(value) = s.composing_peers.remove(prev_id) {
-                            s.composing_peers.insert(chat.id.clone(), value);
-                        }
-                    }
-                    s.chats.retain(|existing| existing.id != prev_id);
-                }
-
-                let header_changed = s
-                    .selected_chat_id
-                    .as_deref()
-                    .map(|selected| selected == chat.id)
-                    .unwrap_or(false)
-                    && {
-                        let prev = s.chats.iter().find(|existing| existing.id == chat.id);
-                        match prev {
-                            Some(existing) => {
-                                existing.name != chat.name
-                                    || existing.is_group != chat.is_group
-                                    || existing.avatar_local_path != chat.avatar_local_path
-                            }
-                            None => true,
-                        }
-                    };
-
-                upsert_chat(&mut s.chats, chat);
-                header_changed
+                apply_chat_update(&mut s, chat, previous_chat_id.as_deref())
             };
 
             let state_borrow = state.borrow();
