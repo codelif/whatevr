@@ -1,0 +1,83 @@
+package wa
+
+import (
+	"testing"
+
+	waHistorySync "go.mau.fi/whatsmeow/proto/waHistorySync"
+	waWeb "go.mau.fi/whatsmeow/proto/waWeb"
+
+	"whatevrd/internal/app"
+	appstore "whatevrd/internal/store"
+)
+
+func TestMapWebMessageStatusKnownValues(t *testing.T) {
+	cases := []struct {
+		in   waWeb.WebMessageInfo_Status
+		want string
+	}{
+		{waWeb.WebMessageInfo_PENDING, appstore.StatusPending},
+		{waWeb.WebMessageInfo_SERVER_ACK, appstore.StatusSent},
+		{waWeb.WebMessageInfo_DELIVERY_ACK, appstore.StatusDelivered},
+		{waWeb.WebMessageInfo_READ, appstore.StatusRead},
+		{waWeb.WebMessageInfo_PLAYED, appstore.StatusRead},
+		{waWeb.WebMessageInfo_ERROR, appstore.StatusFailed},
+	}
+
+	for _, tc := range cases {
+		status := tc.in
+		webMsg := &waWeb.WebMessageInfo{Status: &status}
+		got := mapWebMessageStatus(webMsg)
+		if got != tc.want {
+			t.Errorf("mapWebMessageStatus(%v) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestMapWebMessageStatusReturnsEmptyForNil(t *testing.T) {
+	if got := mapWebMessageStatus(nil); got != "" {
+		t.Errorf("mapWebMessageStatus(nil) = %q, want empty", got)
+	}
+
+	if got := mapWebMessageStatus(&waWeb.WebMessageInfo{}); got != "" {
+		t.Errorf("mapWebMessageStatus(empty) = %q, want empty", got)
+	}
+}
+
+func TestHistorySyncTypeMapping(t *testing.T) {
+	cases := []struct {
+		in   waHistorySync.HistorySync_HistorySyncType
+		want app.HistorySyncType
+	}{
+		{waHistorySync.HistorySync_INITIAL_BOOTSTRAP, app.HistorySyncTypeInitialBootstrap},
+		{waHistorySync.HistorySync_INITIAL_STATUS_V3, app.HistorySyncTypeInitialStatusV3},
+		{waHistorySync.HistorySync_FULL, app.HistorySyncTypeFull},
+		{waHistorySync.HistorySync_RECENT, app.HistorySyncTypeRecent},
+		{waHistorySync.HistorySync_PUSH_NAME, app.HistorySyncTypePushName},
+		{waHistorySync.HistorySync_NON_BLOCKING_DATA, app.HistorySyncTypeNonBlockingData},
+		{waHistorySync.HistorySync_ON_DEMAND, app.HistorySyncTypeOnDemand},
+	}
+
+	for _, tc := range cases {
+		if got := historySyncType(tc.in); got != tc.want {
+			t.Errorf("historySyncType(%v) = %v, want %v", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestHistorySyncIsCompleteRespectsTerminalTypes(t *testing.T) {
+	if !historySyncIsComplete(app.HistorySyncTypePushName, 0) {
+		t.Error("PUSH_NAME should always be complete (no progress field)")
+	}
+	if !historySyncIsComplete(app.HistorySyncTypeNonBlockingData, 0) {
+		t.Error("NON_BLOCKING_DATA should always be complete (no progress field)")
+	}
+	if historySyncIsComplete(app.HistorySyncTypeFull, 50) {
+		t.Error("FULL at 50% should not be complete")
+	}
+	if !historySyncIsComplete(app.HistorySyncTypeFull, 100) {
+		t.Error("FULL at 100% should be complete")
+	}
+	if !historySyncIsComplete(app.HistorySyncTypeRecent, 100) {
+		t.Error("RECENT at 100% should be complete")
+	}
+}
