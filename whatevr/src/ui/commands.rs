@@ -2,7 +2,7 @@ use std::{cell::RefCell, rc::Rc, time::Duration};
 
 use crate::config::TYPING_IDLE_TIMEOUT;
 use crate::daemon::{self, DynError};
-use crate::proto::{DaemonState, daemon_event, login_event};
+use crate::proto::{DaemonState, HistorySyncType, daemon_event, login_event};
 use crate::runtime;
 use crate::ui::{
     context::{UiSender, send_ui},
@@ -164,6 +164,45 @@ pub fn request_messages(sender: UiSender, chat_id: String, generation: u64) {
     });
 }
 
+pub fn request_older_messages(
+    sender: UiSender,
+    chat_id: String,
+    anchor_message_id: String,
+    generation: u64,
+) {
+    runtime::spawn(async move {
+        match daemon::chat_service::load_messages_before(
+            chat_id.clone(),
+            Some(anchor_message_id.clone()),
+        )
+        .await
+        {
+            Ok(messages) => {
+                send_ui(
+                    &sender,
+                    UiMessage::OlderMessagesLoaded {
+                        chat_id,
+                        anchor_message_id,
+                        generation,
+                        messages,
+                    },
+                );
+            }
+            Err(error) => {
+                send_ui(
+                    &sender,
+                    UiMessage::OlderMessagesFailed {
+                        chat_id,
+                        anchor_message_id,
+                        generation,
+                        error: error.to_string(),
+                    },
+                );
+            }
+        }
+    });
+}
+
 pub fn request_mark_chat_read(sender: UiSender, chat_id: String) {
     runtime::spawn(async move {
         if let Err(error) = daemon::chat_service::mark_chat_read(chat_id).await {
@@ -176,6 +215,22 @@ pub fn request_mark_chat_read(sender: UiSender, chat_id: String) {
                 &sender,
                 UiMessage::Notice(format!("Unable to mark chat read: {error}")),
             );
+        }
+    });
+}
+
+pub fn request_download_media(sender: UiSender, message_id: String) {
+    runtime::spawn(async move {
+        match daemon::chat_service::download_message_media(message_id).await {
+            Ok(message) => {
+                send_ui(&sender, UiMessage::MessageUpdated { message });
+            }
+            Err(error) => {
+                send_ui(
+                    &sender,
+                    UiMessage::Notice(format!("Unable to load media: {error}")),
+                );
+            }
         }
     });
 }
@@ -373,6 +428,30 @@ async fn stream_daemon_events(sender: UiSender) -> Result<(), DynError> {
                     UiMessage::ChatPresence {
                         chat_id: presence.chat_id,
                         is_composing: presence.is_composing,
+                    },
+                );
+            }
+            Some(daemon_event::Payload::HistorySyncProgress(progress)) => {
+                let sync_type = HistorySyncType::try_from(progress.sync_type)
+                    .unwrap_or(HistorySyncType::Unspecified);
+                send_ui(
+                    &sender,
+                    UiMessage::HistorySyncProgress {
+                        sync_type,
+                        progress_percent: progress.progress_percent,
+                        chunk_order: progress.chunk_order,
+                        conversations_in_chunk: progress.conversations_in_chunk,
+                        messages_in_chunk: progress.messages_in_chunk,
+                        is_complete: progress.is_complete,
+                    },
+                );
+            }
+            Some(daemon_event::Payload::HistoryBackfilled(backfilled)) => {
+                send_ui(
+                    &sender,
+                    UiMessage::HistoryBackfilled {
+                        chat_id: backfilled.chat_id,
+                        messages_added: backfilled.messages_added,
                     },
                 );
             }

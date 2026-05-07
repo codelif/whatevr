@@ -67,7 +67,7 @@ pub fn open_chat_at_index(
 
     if !should_request || force_reload {
         let state = state.borrow();
-        render_conversation(widgets, &state);
+        render_conversation(widgets, &state, sender);
         update_navigation_state(widgets, &state);
     } else {
         let state = state.borrow();

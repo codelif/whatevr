@@ -50,9 +50,44 @@ pub fn install() {
             min-width: 26px;
         }
 
+        button.scroll-bottom-button {
+            border-radius: 999px;
+            padding: 8px;
+            min-width: 40px;
+            min-height: 40px;
+            background-color: alpha(@accent_bg_color, 0.86);
+            color: @accent_fg_color;
+            box-shadow: 0 4px 16px alpha(black, 0.24);
+        }
+
+        button.scroll-bottom-button:hover {
+            background-color: alpha(@accent_bg_color, 0.96);
+        }
+
+        .scroll-bottom-badge {
+            color: inherit;
+            font-weight: 800;
+            font-size: 0.92em;
+            padding: 0;
+            min-width: 18px;
+        }
+
+        .older-messages-loading {
+            border-radius: 999px;
+            padding: 8px 12px;
+            background-color: alpha(@window_bg_color, 0.88);
+            box-shadow: 0 4px 16px alpha(black, 0.18);
+        }
+
         picture.image-placeholder {
             background-color: alpha(@window_fg_color, 0.06);
             border-radius: 8px;
+        }
+
+        button.media-load-button {
+            background-color: alpha(@window_fg_color, 0.06);
+            border-radius: 8px;
+            color: @window_fg_color;
         }
 
         .conversation-header-name {

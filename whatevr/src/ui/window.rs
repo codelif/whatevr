@@ -47,6 +47,9 @@ struct SidebarView {
     loading_page: adw::StatusPage,
     empty_page: adw::StatusPage,
     chat_list: gtk::ListBox,
+    history_sync_strip: gtk::Box,
+    history_sync_label: gtk::Label,
+    history_sync_bar: gtk::ProgressBar,
 }
 
 struct ComposerView {
@@ -68,6 +71,10 @@ struct ConversationView {
     title: gtk::Label,
     message_scroller: gtk::ScrolledWindow,
     message_box: gtk::Box,
+    older_messages_loading: gtk::Box,
+    scroll_to_bottom_button: gtk::Button,
+    scroll_to_bottom_icon: gtk::Image,
+    scroll_to_bottom_badge: gtk::Label,
 }
 
 fn set_accessible_label(widget: &impl IsA<gtk::Accessible>, label: &str) {
@@ -216,6 +223,31 @@ fn build_sidebar_view(buttons: &ActionButtons) -> SidebarView {
     sidebar_header.pack_end(&buttons.logout_button);
     sidebar_header.pack_end(&buttons.refresh_button);
 
+    let history_sync_label = gtk::Label::builder()
+        .xalign(0.0)
+        .css_classes(["caption", "dim-label"])
+        .label("Syncing chat history…")
+        .wrap(true)
+        .wrap_mode(gtk::pango::WrapMode::WordChar)
+        .max_width_chars(34)
+        .width_chars(1)
+        .build();
+    let history_sync_bar = gtk::ProgressBar::builder()
+        .show_text(false)
+        .hexpand(true)
+        .build();
+    let history_sync_strip = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(4)
+        .margin_start(12)
+        .margin_end(12)
+        .margin_top(6)
+        .margin_bottom(6)
+        .visible(false)
+        .build();
+    history_sync_strip.append(&history_sync_label);
+    history_sync_strip.append(&history_sync_bar);
+
     let toolbar = adw::ToolbarView::new();
     toolbar.add_top_bar(&sidebar_header);
     let sidebar_content = gtk::Box::builder()
@@ -223,6 +255,7 @@ fn build_sidebar_view(buttons: &ActionButtons) -> SidebarView {
         .vexpand(true)
         .build();
     sidebar_content.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+    sidebar_content.append(&history_sync_strip);
     sidebar_content.append(&stack);
     toolbar.set_content(Some(&sidebar_content));
 
@@ -232,6 +265,9 @@ fn build_sidebar_view(buttons: &ActionButtons) -> SidebarView {
         loading_page,
         empty_page,
         chat_list,
+        history_sync_strip,
+        history_sync_label,
+        history_sync_bar,
     }
 }
 
@@ -352,6 +388,47 @@ fn build_conversation_view(buttons: &ActionButtons, composer: &ComposerView) -> 
         .vexpand(true)
         .child(&message_box)
         .build();
+    let older_messages_spinner = gtk::Spinner::builder().spinning(true).build();
+    let older_messages_loading = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(8)
+        .halign(gtk::Align::Center)
+        .valign(gtk::Align::Start)
+        .margin_top(10)
+        .visible(false)
+        .css_classes(["older-messages-loading"])
+        .build();
+    older_messages_loading.append(&older_messages_spinner);
+    let scroll_icon = gtk::Image::from_icon_name("go-down-symbolic");
+    let scroll_badge = gtk::Label::builder()
+        .label("0")
+        .visible(false)
+        .css_classes(["scroll-bottom-badge"])
+        .build();
+    let scroll_button_content = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(6)
+        .halign(gtk::Align::Center)
+        .valign(gtk::Align::Center)
+        .build();
+    scroll_button_content.append(&scroll_icon);
+    scroll_button_content.append(&scroll_badge);
+    let scroll_to_bottom_button = gtk::Button::builder()
+        .child(&scroll_button_content)
+        .halign(gtk::Align::End)
+        .valign(gtk::Align::End)
+        .margin_bottom(16)
+        .margin_end(16)
+        .visible(false)
+        .css_classes(["scroll-bottom-button"])
+        .build();
+    let message_overlay = gtk::Overlay::builder()
+        .vexpand(true)
+        .hexpand(true)
+        .child(&message_scroller)
+        .build();
+    message_overlay.add_overlay(&scroll_to_bottom_button);
+    message_overlay.add_overlay(&older_messages_loading);
 
     let placeholder_page = adw::StatusPage::builder()
         .title("Select a chat")
@@ -374,7 +451,7 @@ fn build_conversation_view(buttons: &ActionButtons, composer: &ComposerView) -> 
     let content_stack = gtk::Stack::builder().vexpand(true).build();
     content_stack.add_named(&loading_page, Some(CONVERSATION_LOADING_PAGE));
     content_stack.add_named(&empty_page, Some(CONVERSATION_EMPTY_PAGE));
-    content_stack.add_named(&message_scroller, Some(CONVERSATION_MESSAGES_PAGE));
+    content_stack.add_named(&message_overlay, Some(CONVERSATION_MESSAGES_PAGE));
     content_stack.set_visible_child_name(CONVERSATION_LOADING_PAGE);
 
     let selected_toolbar = adw::ToolbarView::new();
@@ -400,6 +477,10 @@ fn build_conversation_view(buttons: &ActionButtons, composer: &ComposerView) -> 
         title,
         message_scroller,
         message_box,
+        older_messages_loading,
+        scroll_to_bottom_button,
+        scroll_to_bottom_icon: scroll_icon,
+        scroll_to_bottom_badge: scroll_badge,
     }
 }
 
@@ -471,6 +552,9 @@ pub fn build(app: &adw::Application) -> AppContext {
         sidebar_loading_page: sidebar.loading_page,
         sidebar_empty_page: sidebar.empty_page,
         chat_list: sidebar.chat_list,
+        history_sync_strip: sidebar.history_sync_strip,
+        history_sync_label: sidebar.history_sync_label,
+        history_sync_bar: sidebar.history_sync_bar,
         conversation_stack: conversation.stack,
         conversation_content_stack: conversation.content_stack,
         conversation_loading_page: conversation.loading_page,
@@ -479,6 +563,13 @@ pub fn build(app: &adw::Application) -> AppContext {
         conversation_title: conversation.title,
         message_scroller: conversation.message_scroller,
         message_box: conversation.message_box,
+        older_messages_loading: conversation.older_messages_loading,
+        scroll_to_bottom_button: conversation.scroll_to_bottom_button,
+        scroll_to_bottom_icon: conversation.scroll_to_bottom_icon,
+        scroll_to_bottom_badge: conversation.scroll_to_bottom_badge,
+        messages_below_count: Cell::new(0),
+        message_prepend_in_progress: Rc::new(Cell::new(false)),
+        message_prepend_generation: Rc::new(Cell::new(0)),
         composer_scroller: composer.scroller,
         composer_text_view: composer.text_view,
         composer_error_label: composer.error_label,
@@ -487,6 +578,8 @@ pub fn build(app: &adw::Application) -> AppContext {
         back_button: buttons.back_button,
         logout_button: buttons.logout_button,
         syncing_chat_selection: Cell::new(false),
+        rendered_chat_rows: RefCell::new(std::collections::HashMap::new()),
+        rendered_chat_order: RefCell::new(Vec::new()),
         message_scroll_generation: Rc::new(Cell::new(0)),
         rendered_chat_id: RefCell::new(None),
         rendered_messages: RefCell::new(Vec::new()),

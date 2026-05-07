@@ -8,6 +8,7 @@ use crate::config::{
 };
 use crate::proto;
 use crate::ui::{
+    context::UiSender,
     render::{
         avatar::set_avatar_image,
         composer::render_composer_state,
@@ -37,13 +38,15 @@ pub fn render_conversation_header(widgets: &Widgets, state: &UiState) {
     widgets.conversation_title.set_text(display_chat_name(chat));
 }
 
-pub fn render_conversation(widgets: &Widgets, state: &UiState) {
+pub fn render_conversation(widgets: &Widgets, state: &UiState, sender: &UiSender) {
     let Some(selected_chat_id) = state.selected_chat_id.as_deref() else {
         widgets
             .conversation_stack
             .set_visible_child_name(CONVERSATION_PLACEHOLDER_PAGE);
+        cancel_message_prepend(widgets);
         render_conversation_header(widgets, state);
         reset_rendered_messages(widgets);
+        reset_messages_below(widgets);
         render_composer_state(widgets, state);
         return;
     };
@@ -52,8 +55,10 @@ pub fn render_conversation(widgets: &Widgets, state: &UiState) {
         widgets
             .conversation_stack
             .set_visible_child_name(CONVERSATION_PLACEHOLDER_PAGE);
+        cancel_message_prepend(widgets);
         render_conversation_header(widgets, state);
         reset_rendered_messages(widgets);
+        reset_messages_below(widgets);
         render_composer_state(widgets, state);
         return;
     }
@@ -61,6 +66,14 @@ pub fn render_conversation(widgets: &Widgets, state: &UiState) {
     widgets
         .conversation_stack
         .set_visible_child_name("selected");
+    widgets.older_messages_loading.set_visible(
+        widgets.message_prepend_in_progress.get()
+            || state
+                .older_fetch_in_flight
+                .as_ref()
+                .map(|fetch| fetch.chat_id.as_str() == selected_chat_id)
+                .unwrap_or(false),
+    );
 
     render_conversation_header(widgets, state);
 
@@ -74,7 +87,9 @@ pub fn render_conversation(widgets: &Widgets, state: &UiState) {
         widgets
             .conversation_content_stack
             .set_visible_child_name(CONVERSATION_LOADING_PAGE);
+        cancel_message_prepend(widgets);
         reset_rendered_messages(widgets);
+        reset_messages_below(widgets);
         render_composer_state(widgets, state);
         return;
     }
@@ -88,6 +103,7 @@ pub fn render_conversation(widgets: &Widgets, state: &UiState) {
         widgets
             .conversation_content_stack
             .set_visible_child_name(CONVERSATION_EMPTY_PAGE);
+        cancel_message_prepend(widgets);
         reset_rendered_messages(widgets);
         render_composer_state(widgets, state);
         return;
@@ -100,12 +116,12 @@ pub fn render_conversation(widgets: &Widgets, state: &UiState) {
         .map(|rendered_chat_id| rendered_chat_id != selected_chat_id)
         .unwrap_or(true);
 
-    sync_message_rows(widgets, selected_chat_id, &state.current_messages);
+    sync_message_rows(widgets, selected_chat_id, &state.current_messages, sender);
 
     if is_newly_rendered_chat {
+        reset_messages_below(widgets);
         reveal_messages_at_bottom(widgets);
     } else {
-        widgets.message_scroller.set_opacity(1.0);
         widgets
             .conversation_content_stack
             .set_visible_child_name(CONVERSATION_MESSAGES_PAGE);
@@ -118,13 +134,27 @@ fn reset_rendered_messages(widgets: &Widgets) {
     let mut rendered = widgets.rendered_messages.borrow_mut();
 
     for entry in rendered.drain(..) {
-        widgets.message_box.remove(&entry.row);
+        remove_message_row_if_child(widgets, &entry.row);
     }
 
     *widgets.rendered_chat_id.borrow_mut() = None;
 }
 
-fn sync_message_rows(widgets: &Widgets, chat_id: &str, messages: &[proto::Message]) {
+fn cancel_message_prepend(widgets: &Widgets) {
+    widgets
+        .message_prepend_generation
+        .set(widgets.message_prepend_generation.get().wrapping_add(1));
+    widgets.message_prepend_in_progress.set(false);
+    widgets.message_scroller.set_opacity(1.0);
+    widgets.older_messages_loading.set_visible(false);
+}
+
+fn sync_message_rows(
+    widgets: &Widgets,
+    chat_id: &str,
+    messages: &[proto::Message],
+    sender: &UiSender,
+) {
     let same_chat = widgets
         .rendered_chat_id
         .borrow()
@@ -139,49 +169,178 @@ fn sync_message_rows(widgets: &Widgets, chat_id: &str, messages: &[proto::Messag
 
     let mut rendered = widgets.rendered_messages.borrow_mut();
 
+    if same_chat && sync_prepended_message_rows(widgets, &mut rendered, messages, sender) {
+        return;
+    }
+
     let mut common = 0;
 
-    while common < messages.len() && common < rendered.len() {
-        if rendered[common].id != messages[common].id {
-            break;
-        }
-
+    while common < messages.len()
+        && common < rendered.len()
+        && rendered[common].id == messages[common].id
+    {
         common += 1;
     }
 
     for i in 0..common {
-        let new_status = messages[i].status;
+        if rendered[i].same_content(&messages[i]) {
+            let new_status = messages[i].status;
+            if rendered[i].status != new_status {
+                rendered[i]
+                    .meta_label
+                    .set_text(&format_message_meta(&messages[i]));
+                rendered[i].status = new_status;
+            }
+        } else {
+            let (row, meta_label) = build_message_row(&messages[i], sender);
+            remove_message_row_if_child(widgets, &rendered[i].row);
+            widgets.message_box.insert_child_after(
+                &row,
+                i.checked_sub(1).map(|previous| &rendered[previous].row),
+            );
 
-        if rendered[i].status != new_status {
-            rendered[i]
-                .meta_label
-                .set_text(&format_message_meta(&messages[i]));
-            rendered[i].status = new_status;
+            rendered[i] = RenderedMessage::new(&messages[i], row, meta_label);
         }
     }
 
     while rendered.len() > common {
         if let Some(entry) = rendered.pop() {
-            widgets.message_box.remove(&entry.row);
+            remove_message_row_if_child(widgets, &entry.row);
         }
     }
 
     for new_msg in &messages[common..] {
-        let (row, meta_label) = build_message_row(new_msg);
+        let (row, meta_label) = build_message_row(new_msg, sender);
 
         widgets.message_box.append(&row);
 
-        rendered.push(RenderedMessage {
-            id: new_msg.id.clone(),
-            status: new_msg.status,
+        rendered.push(RenderedMessage::new(new_msg, row, meta_label));
+    }
+}
+
+fn sync_prepended_message_rows(
+    widgets: &Widgets,
+    rendered: &mut Vec<RenderedMessage>,
+    messages: &[proto::Message],
+    sender: &UiSender,
+) -> bool {
+    if rendered.is_empty() || messages.is_empty() {
+        return false;
+    }
+
+    let Some(anchor_index) = messages
+        .iter()
+        .position(|message| message.id == rendered[0].id)
+    else {
+        return false;
+    };
+    if anchor_index == 0 || messages.len() < anchor_index + rendered.len() {
+        return false;
+    }
+
+    let existing_messages = &messages[anchor_index..anchor_index + rendered.len()];
+    let trailing_messages = &messages[anchor_index + rendered.len()..];
+    if rendered
+        .iter()
+        .zip(existing_messages)
+        .any(|(rendered, message)| rendered.id != message.id)
+    {
+        return false;
+    }
+
+    for (rendered, message) in rendered.iter_mut().zip(existing_messages) {
+        let new_status = message.status;
+        if rendered.status != new_status {
+            rendered.meta_label.set_text(&format_message_meta(message));
+            rendered.status = new_status;
+        }
+    }
+
+    let mut prepended = Vec::with_capacity(anchor_index);
+    for message in &messages[..anchor_index] {
+        let (row, meta_label) = build_message_row(message, sender);
+        prepended.push(RenderedMessage::new(message, row, meta_label));
+    }
+
+    for entry in prepended.iter().rev() {
+        widgets
+            .message_box
+            .insert_child_after(&entry.row, None::<&gtk::Widget>);
+    }
+
+    rendered.splice(0..0, prepended);
+
+    for message in trailing_messages {
+        let (row, meta_label) = build_message_row(message, sender);
+        widgets.message_box.append(&row);
+        rendered.push(RenderedMessage::new(message, row, meta_label));
+    }
+
+    true
+}
+
+impl RenderedMessage {
+    fn same_content(&self, message: &proto::Message) -> bool {
+        self.text == message.text
+            && self.media_mime_type == message.media_mime_type
+            && self.media_local_path == message.media_local_path
+    }
+
+    fn new(message: &proto::Message, row: gtk::Box, meta_label: gtk::Label) -> Self {
+        Self {
+            id: message.id.clone(),
+            status: message.status,
             row,
             meta_label,
-        });
+            text: message.text.clone(),
+            media_mime_type: message.media_mime_type.clone(),
+            media_local_path: message.media_local_path.clone(),
+        }
+    }
+}
+
+fn remove_message_row_if_child(widgets: &Widgets, row: &gtk::Box) {
+    if row.parent().as_ref() == Some(widgets.message_box.upcast_ref()) {
+        if let Some(window) = widgets
+            .message_scroller
+            .root()
+            .and_downcast::<gtk::Window>()
+        {
+            gtk::prelude::GtkWindowExt::set_focus(&window, None::<&gtk::Widget>);
+        }
+
+        widgets.message_box.remove(row);
     }
 }
 
 pub fn scroll_messages_to_bottom(widgets: &Widgets) {
     keep_messages_at_bottom(widgets, false);
+    reset_messages_below(widgets);
+}
+
+pub fn show_messages_below_button(widgets: &Widgets) {
+    let count = widgets.messages_below_count.get().saturating_add(1);
+    widgets.messages_below_count.set(count);
+    widgets.scroll_to_bottom_badge.set_text(&count.to_string());
+    widgets.scroll_to_bottom_badge.set_visible(count > 0);
+    widgets.scroll_to_bottom_icon.set_visible(false);
+    widgets.scroll_to_bottom_button.set_visible(true);
+}
+
+pub fn update_messages_below_button(widgets: &Widgets) {
+    if is_scroller_near_bottom(widgets) {
+        reset_messages_below(widgets);
+    } else {
+        widgets.scroll_to_bottom_button.set_visible(true);
+    }
+}
+
+pub fn reset_messages_below(widgets: &Widgets) {
+    widgets.messages_below_count.set(0);
+    widgets.scroll_to_bottom_badge.set_text("0");
+    widgets.scroll_to_bottom_badge.set_visible(false);
+    widgets.scroll_to_bottom_icon.set_visible(true);
+    widgets.scroll_to_bottom_button.set_visible(false);
 }
 
 fn reveal_messages_at_bottom(widgets: &Widgets) {

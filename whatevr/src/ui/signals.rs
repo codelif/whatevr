@@ -6,8 +6,8 @@ use gtk::{gdk, gio, glib};
 use crate::ui::{
     chat_actions::{open_chat_at_index, submit_composer_message},
     commands::{
-        request_chats, request_messages, request_send_media, request_set_chat_presence,
-        request_status, schedule_typing_idle, stop_current_composing,
+        request_chats, request_messages, request_older_messages, request_send_media,
+        request_set_chat_presence, request_status, schedule_typing_idle, stop_current_composing,
     },
     context::{UiSender, send_ui},
     dialogs::show_logout_confirmation,
@@ -16,7 +16,8 @@ use crate::ui::{
     render::composer::{
         render_composer_state, resize_composer, scroll_composer_to_bottom_if_needed,
     },
-    state::{UiState, next_message_request_generation},
+    render::conversation::{scroll_messages_to_bottom, update_messages_below_button},
+    state::{OlderFetchInFlight, UiState, next_message_request_generation},
     widgets::Widgets,
 };
 
@@ -109,6 +110,11 @@ pub fn connect(
 
     widgets.composer_send_button.connect_clicked(move |_| {
         submit_composer_message(&send_widgets, &send_state, &send_sender);
+    });
+
+    let bottom_widgets = widgets.clone();
+    widgets.scroll_to_bottom_button.connect_clicked(move |_| {
+        scroll_messages_to_bottom(&bottom_widgets);
     });
 
     let resize_widgets = widgets.clone();
@@ -251,4 +257,83 @@ pub fn connect(
     widgets
         .composer_text_view
         .add_controller(composer_key_controller);
+
+    let pagination_state = state.clone();
+    let pagination_sender = sender.clone();
+
+    let scroll_widgets = widgets.clone();
+    widgets
+        .message_scroller
+        .vadjustment()
+        .connect_value_changed(move |adjustment| {
+            if scroll_widgets.message_prepend_in_progress.get() {
+                return;
+            }
+
+            update_messages_below_button(&scroll_widgets);
+
+            // Trigger a paginated fetch only when the user is *near* the
+            // top edge AND the existing scroll-bar has more height than a
+            // viewport. The latter prevents firing pagination during the
+            // initial render before any older history exists.
+            const NEAR_TOP_THRESHOLD: f64 = 80.0;
+            if adjustment.upper() <= adjustment.page_size() {
+                return;
+            }
+            if adjustment.value() > NEAR_TOP_THRESHOLD {
+                return;
+            }
+
+            if try_kick_older_fetch(&pagination_state, &pagination_sender) {
+                scroll_widgets.message_scroll_generation.set(
+                    scroll_widgets
+                        .message_scroll_generation
+                        .get()
+                        .wrapping_add(1),
+                );
+                scroll_widgets.older_messages_loading.set_visible(true);
+            }
+        });
+}
+
+fn try_kick_older_fetch(state: &Rc<RefCell<UiState>>, sender: &UiSender) -> bool {
+    let request = {
+        let mut s = state.borrow_mut();
+
+        let Some(chat_id) = s.selected_chat_id.clone() else {
+            return false;
+        };
+        if s.current_messages_chat_id.as_deref() != Some(chat_id.as_str()) {
+            return false;
+        }
+        if s.older_fetch_in_flight.is_some() {
+            return false;
+        }
+        if s.chats_with_exhausted_history.contains(&chat_id) {
+            // We've already learned that the local store has nothing
+            // older for this chat; don't keep poking the daemon.
+            // Cleared on logout / reload (clear_local_ui_state) or when
+            // a new history-sync chunk arrives for the chat
+            // (note_history_backfilled).
+            return false;
+        }
+        let Some(anchor) = s.current_messages.first().map(|m| m.id.clone()) else {
+            return false;
+        };
+
+        s.message_request_generation = s.message_request_generation.wrapping_add(1);
+        let generation = s.message_request_generation;
+
+        s.older_fetch_in_flight = Some(OlderFetchInFlight {
+            chat_id: chat_id.clone(),
+            anchor_message_id: anchor.clone(),
+            generation,
+        });
+
+        (chat_id, anchor, generation)
+    };
+
+    let (chat_id, anchor, generation) = request;
+    request_older_messages(sender.clone(), chat_id, anchor, generation);
+    true
 }

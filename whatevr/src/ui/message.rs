@@ -78,6 +78,34 @@ pub enum UiMessage {
         previous_chat_id: Option<String>,
     },
 
+    HistorySyncProgress {
+        sync_type: proto::HistorySyncType,
+        progress_percent: u32,
+        chunk_order: u32,
+        conversations_in_chunk: u32,
+        messages_in_chunk: u32,
+        is_complete: bool,
+    },
+
+    HistoryBackfilled {
+        chat_id: String,
+        messages_added: u32,
+    },
+
+    OlderMessagesLoaded {
+        chat_id: String,
+        anchor_message_id: String,
+        generation: u64,
+        messages: Vec<proto::Message>,
+    },
+
+    OlderMessagesFailed {
+        chat_id: String,
+        anchor_message_id: String,
+        generation: u64,
+        error: String,
+    },
+
     RenderChatList,
 
     LogoutSucceeded,

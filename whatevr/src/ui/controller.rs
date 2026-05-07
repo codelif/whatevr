@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, rc::Rc, time::Duration};
 
 use gtk::{gdk, glib, prelude::*};
 
@@ -25,18 +25,282 @@ use crate::ui::{
         composer::{clear_composer, render_composer_state},
         conversation::{
             is_scroller_near_bottom, render_conversation, render_conversation_header,
-            scroll_messages_to_bottom,
+            scroll_messages_to_bottom, show_messages_below_button,
         },
+        history_sync::render_history_sync_strip,
         qr::render_qr_texture,
     },
     state::{
-        UiState, apply_chat_update, apply_message_update, apply_new_message, clear_local_ui_state,
-        commit_pending_chat, next_message_request_generation, sort_chats,
-        sync_selected_chat_after_reload,
+        UiState, apply_chat_update, apply_history_sync_progress, apply_message_update,
+        apply_new_message, clear_local_ui_state, commit_pending_chat,
+        next_message_request_generation, note_history_backfilled, note_history_exhausted,
+        prepend_older_messages, replace_current_messages, sort_chats,
+        sync_selected_chat_after_reload, take_selected_history_refresh_chat,
     },
     widgets::Widgets,
 };
 use crate::util::{text::format_login_state, time::format_qr_expiry};
+
+const PREPEND_USER_SCROLL_ABORT_THRESHOLD: f64 = 6.0;
+
+#[derive(Clone)]
+struct PrependScrollAnchor {
+    generation: u64,
+    upper_before: f64,
+    value_before: f64,
+}
+
+// Capture the old adjustment bounds before rows are inserted. Once GTK reports
+// the new upper bound, the difference is the exact height prepended above us.
+fn begin_preserve_scroll_anchor_for_prepend(widgets: &Widgets) -> PrependScrollAnchor {
+    let adjustment = widgets.message_scroller.vadjustment();
+    widgets
+        .message_scroll_generation
+        .set(widgets.message_scroll_generation.get().wrapping_add(1));
+
+    let generation = widgets.message_prepend_generation.get().wrapping_add(1);
+    widgets.message_prepend_generation.set(generation);
+    widgets.message_prepend_in_progress.set(true);
+
+    PrependScrollAnchor {
+        generation,
+        upper_before: adjustment.upper(),
+        value_before: adjustment.value(),
+    }
+}
+
+fn finish_preserve_scroll_anchor_for_prepend(widgets: &Widgets, anchor: PrependScrollAnchor) {
+    let adjustment = widgets.message_scroller.vadjustment();
+    let last_applied_value = Rc::new(std::cell::Cell::new(f64::NAN));
+    let did_restore = Rc::new(std::cell::Cell::new(false));
+    let upper_notify_handler: Rc<RefCell<Option<glib::SignalHandlerId>>> =
+        Rc::new(RefCell::new(None));
+
+    let adjustment_for_notify = adjustment.clone();
+    let anchor_for_notify = anchor.clone();
+    let generation_for_notify = widgets.message_prepend_generation.clone();
+    let last_applied_for_notify = last_applied_value.clone();
+    let did_restore_for_notify = did_restore.clone();
+    let upper_notify_handler_for_notify = upper_notify_handler.clone();
+    let notify_handler = adjustment.connect_notify_local(Some("upper"), move |_, _| {
+        if generation_for_notify.get() != anchor_for_notify.generation {
+            disconnect_upper_notify(&adjustment_for_notify, &upper_notify_handler_for_notify);
+            return;
+        }
+
+        let preserve_value = if did_restore_for_notify.get() {
+            anchor_for_notify.value_before
+        } else {
+            adjustment_for_notify.value()
+        };
+        let restore = apply_prepend_scroll_restore(
+            &adjustment_for_notify,
+            &anchor_for_notify,
+            preserve_value,
+        );
+        if let Some(value) = restore.applied_value {
+            last_applied_for_notify.set(value);
+            did_restore_for_notify.set(true);
+        }
+        if restore.aligned {
+            disconnect_upper_notify(&adjustment_for_notify, &upper_notify_handler_for_notify);
+        }
+    });
+    *upper_notify_handler.borrow_mut() = Some(notify_handler);
+
+    let adjustment_for_idle = adjustment.clone();
+    let anchor_for_idle = anchor.clone();
+    let generation_for_idle = widgets.message_prepend_generation.clone();
+    let last_applied_for_idle = last_applied_value.clone();
+    let did_restore_for_idle = did_restore.clone();
+    glib::idle_add_local_once(move || {
+        if generation_for_idle.get() == anchor_for_idle.generation {
+            let preserve_value = if did_restore_for_idle.get() {
+                anchor_for_idle.value_before
+            } else {
+                adjustment_for_idle.value()
+            };
+            let restore = apply_prepend_scroll_restore(
+                &adjustment_for_idle,
+                &anchor_for_idle,
+                preserve_value,
+            );
+            if let Some(value) = restore.applied_value {
+                last_applied_for_idle.set(value);
+                did_restore_for_idle.set(true);
+            }
+        }
+    });
+
+    let adjustment_for_tick = adjustment.clone();
+    let anchor_for_tick = anchor.clone();
+    let loading_for_tick = widgets.older_messages_loading.clone();
+    let prepend_in_progress_for_tick = widgets.message_prepend_in_progress.clone();
+    let generation_for_tick = widgets.message_prepend_generation.clone();
+    let last_applied_for_tick = last_applied_value.clone();
+    let did_restore_for_tick = did_restore.clone();
+    let upper_notify_handler_for_tick = upper_notify_handler.clone();
+    let tick_state = Rc::new(RefCell::new((0usize, 0usize, f64::NAN, f64::NAN)));
+    let tick_state_for_callback = tick_state.clone();
+
+    widgets.message_scroller.add_tick_callback(move |_, _| {
+        if generation_for_tick.get() != anchor_for_tick.generation {
+            disconnect_upper_notify(&adjustment_for_tick, &upper_notify_handler_for_tick);
+            return gtk::glib::ControlFlow::Break;
+        }
+
+        let last_applied = last_applied_for_tick.get();
+        let tick_count = tick_state_for_callback.borrow().0;
+        if did_restore_for_tick.get()
+            && tick_count > 0
+            && !last_applied.is_nan()
+            && (adjustment_for_tick.value() - last_applied).abs()
+                > PREPEND_USER_SCROLL_ABORT_THRESHOLD
+        {
+            disconnect_upper_notify(&adjustment_for_tick, &upper_notify_handler_for_tick);
+            loading_for_tick.set_visible(false);
+            prepend_in_progress_for_tick.set(false);
+            return gtk::glib::ControlFlow::Break;
+        }
+
+        let preserve_value = if did_restore_for_tick.get() {
+            anchor_for_tick.value_before
+        } else {
+            adjustment_for_tick.value()
+        };
+        let restore =
+            apply_prepend_scroll_restore(&adjustment_for_tick, &anchor_for_tick, preserve_value);
+        if let Some(value) = restore.applied_value {
+            last_applied_for_tick.set(value);
+            did_restore_for_tick.set(true);
+        }
+
+        let upper_after = adjustment_for_tick.upper();
+        let page_size_after = adjustment_for_tick.page_size();
+        let mut tick_state = tick_state_for_callback.borrow_mut();
+        let count = tick_state.0 + 1;
+        let stable_count = if restore.aligned
+            && nearly_equal(tick_state.2, upper_after)
+            && nearly_equal(tick_state.3, page_size_after)
+        {
+            tick_state.1 + 1
+        } else {
+            0
+        };
+
+        *tick_state = (count, stable_count, upper_after, page_size_after);
+
+        if (did_restore_for_tick.get() && stable_count >= 1) || count >= 12 {
+            let preserve_value = if did_restore_for_tick.get() {
+                anchor_for_tick.value_before
+            } else {
+                adjustment_for_tick.value()
+            };
+            let restore = apply_prepend_scroll_restore(
+                &adjustment_for_tick,
+                &anchor_for_tick,
+                preserve_value,
+            );
+            if let Some(value) = restore.applied_value {
+                last_applied_for_tick.set(value);
+            }
+            disconnect_upper_notify(&adjustment_for_tick, &upper_notify_handler_for_tick);
+            loading_for_tick.set_visible(false);
+            prepend_in_progress_for_tick.set(false);
+            return gtk::glib::ControlFlow::Break;
+        }
+
+        gtk::glib::ControlFlow::Continue
+    });
+
+    let loading_for_timeout = widgets.older_messages_loading.clone();
+    let prepend_in_progress_for_timeout = widgets.message_prepend_in_progress.clone();
+    let generation_for_timeout = widgets.message_prepend_generation.clone();
+    let anchor_for_timeout = anchor.clone();
+    let adjustment_for_timeout = adjustment.clone();
+    let upper_notify_handler_for_timeout = upper_notify_handler.clone();
+    glib::timeout_add_local_once(Duration::from_secs(2), move || {
+        if generation_for_timeout.get() == anchor_for_timeout.generation
+            && prepend_in_progress_for_timeout.get()
+        {
+            disconnect_upper_notify(&adjustment_for_timeout, &upper_notify_handler_for_timeout);
+            loading_for_timeout.set_visible(false);
+            prepend_in_progress_for_timeout.set(false);
+        }
+    });
+}
+
+fn apply_prepend_scroll_restore(
+    adjustment: &gtk::Adjustment,
+    anchor: &PrependScrollAnchor,
+    preserve_value: f64,
+) -> PrependScrollRestore {
+    let delta = adjustment.upper() - anchor.upper_before;
+
+    // Once GTK reports the new upper bound, the delta is the actual inserted
+    // height. Applying row correction in the same frame can double-correct.
+    if delta > 0.5 {
+        let target = clamp_adjustment_value(adjustment, preserve_value + delta);
+        adjustment.set_value(target);
+        return PrependScrollRestore {
+            aligned: true,
+            applied_value: Some(target),
+        };
+    }
+
+    PrependScrollRestore {
+        aligned: false,
+        applied_value: None,
+    }
+}
+
+struct PrependScrollRestore {
+    aligned: bool,
+    applied_value: Option<f64>,
+}
+
+fn disconnect_upper_notify(
+    adjustment: &gtk::Adjustment,
+    handler: &Rc<RefCell<Option<glib::SignalHandlerId>>>,
+) {
+    if let Some(handler_id) = handler.borrow_mut().take() {
+        adjustment.disconnect(handler_id);
+    }
+}
+
+fn clamp_adjustment_value(adjustment: &gtk::Adjustment, value: f64) -> f64 {
+    let lower = adjustment.lower();
+    let upper = (adjustment.upper() - adjustment.page_size()).max(lower);
+
+    value.max(lower).min(upper)
+}
+
+fn nearly_equal(left: f64, right: f64) -> bool {
+    if left.is_nan() || right.is_nan() {
+        false
+    } else {
+        (left - right).abs() <= 0.5
+    }
+}
+
+fn preserve_scroll_position_for_update(widgets: &Widgets) -> impl FnOnce() + 'static {
+    let message_scroller = widgets.message_scroller.clone();
+    let adjustment = widgets.message_scroller.vadjustment();
+    let value_before = adjustment.value();
+
+    move || {
+        let adjustment_for_idle = adjustment.clone();
+        glib::idle_add_local_once(move || {
+            adjustment_for_idle.set_value(value_before);
+        });
+
+        let adjustment_for_tick = adjustment.clone();
+        message_scroller.add_tick_callback(move |_, _| {
+            adjustment_for_tick.set_value(value_before);
+            gtk::glib::ControlFlow::Break
+        });
+    }
+}
 
 fn schedule_chat_list_render(state: &Rc<RefCell<UiState>>, sender: UiSender) {
     let should_schedule = {
@@ -50,7 +314,7 @@ fn schedule_chat_list_render(state: &Rc<RefCell<UiState>>, sender: UiSender) {
     };
 
     if should_schedule {
-        glib::idle_add_local_once(move || {
+        glib::timeout_add_local_once(Duration::from_millis(80), move || {
             send_ui(&sender, UiMessage::RenderChatList);
         });
     }
@@ -162,7 +426,7 @@ pub fn handle_ui_message(
             {
                 let state = state.borrow();
                 render_chat_list(widgets, &state);
-                render_conversation(widgets, &state);
+                render_conversation(widgets, &state, sender);
                 update_navigation_state(widgets, &state);
             }
         }
@@ -192,13 +456,11 @@ pub fn handle_ui_message(
                 }
                 if state.pending_chat_id.as_deref() == Some(chat_id.as_str()) {
                     let should_clear_composer = commit_pending_chat(&mut state, chat_id.clone());
-                    state.current_messages_chat_id = Some(chat_id.clone());
-                    state.current_messages = messages;
+                    replace_current_messages(&mut state, chat_id.clone(), messages);
                     state.loading_chat_id = None;
                     (true, should_clear_composer)
                 } else if state.selected_chat_id.as_deref() == Some(chat_id.as_str()) {
-                    state.current_messages_chat_id = Some(chat_id.clone());
-                    state.current_messages = messages;
+                    replace_current_messages(&mut state, chat_id.clone(), messages);
                     state.loading_chat_id = None;
                     (false, false)
                 } else {
@@ -212,7 +474,7 @@ pub fn handle_ui_message(
 
             let state = state.borrow();
             render_chat_list(widgets, &state);
-            render_conversation(widgets, &state);
+            render_conversation(widgets, &state, sender);
             update_navigation_state(widgets, &state);
             if should_mark_read {
                 request_mark_chat_read(sender.clone(), chat_id);
@@ -288,7 +550,7 @@ pub fn handle_ui_message(
 
             let state = state.borrow();
             render_chat_list(widgets, &state);
-            render_conversation(widgets, &state);
+            render_conversation(widgets, &state, sender);
             update_navigation_state(widgets, &state);
             if should_mark_read {
                 request_mark_chat_read(sender.clone(), chat_id);
@@ -329,7 +591,7 @@ pub fn handle_ui_message(
 
             if should_render {
                 let state = state.borrow();
-                render_conversation(widgets, &state);
+                render_conversation(widgets, &state, sender);
             }
             if connection_lost {
                 send_ui(
@@ -353,7 +615,7 @@ pub fn handle_ui_message(
             }
             if should_render {
                 let state = state.borrow();
-                render_conversation(widgets, &state);
+                render_conversation(widgets, &state, sender);
             }
             if connection_lost {
                 send_ui(
@@ -404,15 +666,11 @@ pub fn handle_ui_message(
 
             if transition.is_for_selected_chat {
                 let state = state.borrow();
-                render_conversation(widgets, &state);
+                render_conversation(widgets, &state, sender);
                 if was_near_bottom {
                     scroll_messages_to_bottom(widgets);
                 } else {
-                    show_banner_notice_preserving_action(
-                        widgets,
-                        &state,
-                        "New messages below. Scroll down to read.",
-                    );
+                    show_messages_below_button(widgets);
                 }
             }
             if transition.should_mark_read {
@@ -420,6 +678,7 @@ pub fn handle_ui_message(
             }
         }
         UiMessage::MessageUpdated { message } => {
+            let restore_scroll = preserve_scroll_position_for_update(widgets);
             let updated = {
                 let mut s = state.borrow_mut();
                 apply_message_update(&mut s, message)
@@ -427,7 +686,8 @@ pub fn handle_ui_message(
 
             if updated {
                 let state = state.borrow();
-                render_conversation(widgets, &state);
+                render_conversation(widgets, &state, sender);
+                restore_scroll();
             }
         }
         UiMessage::ChatUpdated {
@@ -445,6 +705,122 @@ pub fn handle_ui_message(
             }
             drop(state_borrow);
             schedule_chat_list_render(state, sender.clone());
+        }
+        UiMessage::HistorySyncProgress {
+            sync_type,
+            progress_percent,
+            chunk_order,
+            conversations_in_chunk,
+            messages_in_chunk,
+            is_complete,
+        } => {
+            let (snapshot, refresh_chat_id) = {
+                let mut s = state.borrow_mut();
+                let update = apply_history_sync_progress(
+                    &mut s,
+                    sync_type,
+                    progress_percent,
+                    chunk_order,
+                    conversations_in_chunk,
+                    messages_in_chunk,
+                    is_complete,
+                );
+                let refresh_chat_id = if update.completed_visible_sync {
+                    take_selected_history_refresh_chat(&mut s)
+                } else {
+                    None
+                };
+                (update.snapshot, refresh_chat_id)
+            };
+            render_history_sync_strip(widgets, snapshot.as_ref());
+            if snapshot.is_none() && is_complete {
+                schedule_chat_list_render(state, sender.clone());
+            }
+            if let Some(chat_id) = refresh_chat_id {
+                let generation = next_message_request_generation(state);
+                request_messages(sender.clone(), chat_id, generation);
+            }
+        }
+        UiMessage::HistoryBackfilled {
+            chat_id,
+            messages_added,
+        } => {
+            let should_render_list = {
+                let mut s = state.borrow_mut();
+                note_history_backfilled(&mut s, &chat_id);
+                messages_added > 0 && s.selected_chat_id.as_deref() != Some(chat_id.as_str())
+            };
+
+            if should_render_list {
+                schedule_chat_list_render(state, sender.clone());
+            }
+        }
+        UiMessage::OlderMessagesLoaded {
+            chat_id,
+            anchor_message_id,
+            generation,
+            messages,
+        } => {
+            let added = {
+                let mut s = state.borrow_mut();
+                let in_flight = matches!(
+                    &s.older_fetch_in_flight,
+                    Some(in_flight)
+                        if in_flight.chat_id == chat_id
+                            && in_flight.anchor_message_id == anchor_message_id
+                            && in_flight.generation == generation
+                );
+                if !in_flight {
+                    return;
+                }
+                s.older_fetch_in_flight = None;
+                if messages.is_empty() {
+                    note_history_exhausted(&mut s, chat_id.clone());
+                    0
+                } else {
+                    prepend_older_messages(&mut s, &chat_id, messages)
+                }
+            };
+
+            if added > 0 {
+                let prepend_anchor = begin_preserve_scroll_anchor_for_prepend(widgets);
+                let state_borrow = state.borrow();
+                render_conversation(widgets, &state_borrow, sender);
+                finish_preserve_scroll_anchor_for_prepend(widgets, prepend_anchor);
+            } else {
+                widgets.older_messages_loading.set_visible(false);
+            }
+        }
+        UiMessage::OlderMessagesFailed {
+            chat_id,
+            anchor_message_id,
+            generation,
+            error,
+        } => {
+            let was_in_flight = {
+                let mut s = state.borrow_mut();
+                let matched = matches!(
+                    &s.older_fetch_in_flight,
+                    Some(in_flight)
+                        if in_flight.chat_id == chat_id
+                            && in_flight.anchor_message_id == anchor_message_id
+                            && in_flight.generation == generation
+                );
+                if matched {
+                    s.older_fetch_in_flight = None;
+                }
+                matched
+            };
+
+            if was_in_flight {
+                widgets.older_messages_loading.set_visible(false);
+                let state_borrow = state.borrow();
+                show_banner_notice_preserving_action(
+                    widgets,
+                    &state_borrow,
+                    &format!("Could not load older messages: {error}"),
+                );
+            }
         }
         UiMessage::RenderChatList => {
             {
@@ -465,7 +841,7 @@ pub fn handle_ui_message(
             let state = state.borrow();
             widgets.root_stack.set_visible_child_name(ROOT_LOGIN_PAGE);
             render_chat_list(widgets, &state);
-            render_conversation(widgets, &state);
+            render_conversation(widgets, &state, sender);
             update_navigation_state(widgets, &state);
             show_banner_notice(widgets, "Logged out and deleted local session data");
             drop(state);
@@ -645,7 +1021,7 @@ fn apply_daemon_state(
 
     let state = state.borrow();
     render_chat_list(widgets, &state);
-    render_conversation(widgets, &state);
+    render_conversation(widgets, &state, sender);
     update_navigation_state(widgets, &state);
 
     widgets
