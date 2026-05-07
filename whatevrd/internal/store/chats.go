@@ -60,6 +60,29 @@ func (db *DB) GetChat(ctx context.Context, chatID string) (Chat, error) {
 	return getChatRow(ctx, db.conn, chatID)
 }
 
+func (db *DB) EnsureChat(ctx context.Context, chatID, name string, isGroup bool) (Chat, error) {
+	if chatID == "" {
+		return Chat{}, nil
+	}
+	name = strings.TrimSpace(name)
+	insertName := name
+	if insertName == "" {
+		insertName = chatID
+	}
+
+	if _, err := db.conn.ExecContext(ctx, `
+		INSERT INTO chats (id, name, last_message, last_message_time, unread_count, is_group)
+		VALUES (?, ?, '', 0, 0, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			name = CASE WHEN ? != '' THEN ? ELSE chats.name END,
+			is_group = ?
+	`, chatID, insertName, boolToInt(isGroup), name, name, boolToInt(isGroup)); err != nil {
+		return Chat{}, err
+	}
+
+	return db.GetChat(ctx, chatID)
+}
+
 func (db *DB) ClearSessionData(ctx context.Context) error {
 	tx, err := db.conn.BeginTx(ctx, nil)
 	if err != nil {
@@ -78,6 +101,65 @@ func (db *DB) ClearSessionData(ctx context.Context) error {
 	}
 
 	return tx.Commit()
+}
+
+// OverwriteChatUnreadCount sets the chat's unread_count to the given value
+// directly. When unread is 0, all incoming messages in the chat are also
+// marked is_read=1 so the badge agrees with per-message state.
+//
+// This is intended for history sync, where the phone sends authoritative
+// per-conversation read state and we want the chat list badge to mirror it
+// (instead of the sum of locally inserted unread rows, which is always 0
+// because history sync inserts run with CountUnread=false).
+//
+// Returns the chat row (post-update) and whether anything actually changed.
+func (db *DB) OverwriteChatUnreadCount(ctx context.Context, chatID string, unread uint32) (Chat, bool, error) {
+	if chatID == "" {
+		return Chat{}, false, nil
+	}
+
+	tx, err := db.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return Chat{}, false, err
+	}
+	defer tx.Rollback()
+
+	current, err := getChatTx(ctx, tx, chatID)
+	if err != nil {
+		return Chat{}, false, err
+	}
+
+	changed := int32(unread) != current.UnreadCount
+	if changed {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE chats
+			SET unread_count = ?
+			WHERE id = ?
+		`, int32(unread), chatID); err != nil {
+			return Chat{}, false, err
+		}
+	}
+
+	if unread == 0 {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE messages
+			SET is_read = 1
+			WHERE chat_id = ? AND direction = ? AND is_read = 0
+		`, chatID, DirectionIncoming); err != nil {
+			return Chat{}, false, err
+		}
+	}
+
+	chat, err := getChatTx(ctx, tx, chatID)
+	if err != nil {
+		return Chat{}, false, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return Chat{}, false, err
+	}
+
+	return chat, changed, nil
 }
 
 func (db *DB) UpdateChatName(ctx context.Context, chatID, name string) (Chat, bool, error) {

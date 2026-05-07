@@ -127,8 +127,51 @@ func toProtoDaemonEvent(event app.DaemonEvent) *pb.DaemonEvent {
 				},
 			},
 		}
+	case app.DaemonEventHistorySyncProgress:
+		return &pb.DaemonEvent{
+			Payload: &pb.DaemonEvent_HistorySyncProgress{
+				HistorySyncProgress: &pb.HistorySyncProgress{
+					SyncType:             toProtoHistorySyncType(event.HistorySync.SyncType),
+					ProgressPercent:      event.HistorySync.ProgressPercent,
+					ChunkOrder:           event.HistorySync.ChunkOrder,
+					ConversationsInChunk: event.HistorySync.ConversationsInChunk,
+					MessagesInChunk:      event.HistorySync.MessagesInChunk,
+					IsComplete:           event.HistorySync.IsComplete,
+				},
+			},
+		}
+	case app.DaemonEventHistoryBackfilled:
+		return &pb.DaemonEvent{
+			Payload: &pb.DaemonEvent_HistoryBackfilled{
+				HistoryBackfilled: &pb.HistoryBackfilled{
+					ChatId:        event.HistorySync.ChatID,
+					MessagesAdded: event.HistorySync.MessagesAdded,
+				},
+			},
+		}
 	default:
 		return nil
+	}
+}
+
+func toProtoHistorySyncType(t app.HistorySyncType) pb.HistorySyncType {
+	switch t {
+	case app.HistorySyncTypeInitialBootstrap:
+		return pb.HistorySyncType_HISTORY_SYNC_TYPE_INITIAL_BOOTSTRAP
+	case app.HistorySyncTypeInitialStatusV3:
+		return pb.HistorySyncType_HISTORY_SYNC_TYPE_INITIAL_STATUS_V3
+	case app.HistorySyncTypeFull:
+		return pb.HistorySyncType_HISTORY_SYNC_TYPE_FULL
+	case app.HistorySyncTypeRecent:
+		return pb.HistorySyncType_HISTORY_SYNC_TYPE_RECENT
+	case app.HistorySyncTypePushName:
+		return pb.HistorySyncType_HISTORY_SYNC_TYPE_PUSH_NAME
+	case app.HistorySyncTypeNonBlockingData:
+		return pb.HistorySyncType_HISTORY_SYNC_TYPE_NON_BLOCKING_DATA
+	case app.HistorySyncTypeOnDemand:
+		return pb.HistorySyncType_HISTORY_SYNC_TYPE_ON_DEMAND
+	default:
+		return pb.HistorySyncType_HISTORY_SYNC_TYPE_UNSPECIFIED
 	}
 }
 

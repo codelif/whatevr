@@ -126,6 +126,9 @@ func (c *Client) connectionLooksOffline(ctx context.Context) bool {
 	if !client.IsLoggedIn() || !client.IsConnected() {
 		return true
 	}
+	if client.Store.PushName == "" && client.MessengerConfig == nil {
+		return false
+	}
 
 	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -256,6 +259,7 @@ func connectionRetry(attempt int, err error) retryPlan {
 func (c *Client) resetAfterExternalLogout() {
 	c.lifecycleMu.Lock()
 	defer c.lifecycleMu.Unlock()
+	c.eventGen.Add(1)
 
 	ctx := c.backgroundContext()
 	c.cancelRunContextLocked()
@@ -288,6 +292,7 @@ func (c *Client) Logout(ctx context.Context) error {
 	defer c.lifecycleMu.Unlock()
 
 	c.daemon.SetStateDetail(app.StateConnecting, "Logging out and clearing local session data")
+	c.eventGen.Add(1)
 
 	client := c.currentClient()
 	if client != nil {

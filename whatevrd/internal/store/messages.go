@@ -32,6 +32,7 @@ type Message struct {
 	MediaLocalPath  string
 	MediaWidth      int32
 	MediaHeight     int32
+	MediaPayload    []byte
 	SendAttempts    int32
 	LastSendError   string
 	NextSendAttempt int64
@@ -43,6 +44,7 @@ type MediaMessageInput struct {
 	MediaLocalPath string
 	MediaWidth     int32
 	MediaHeight    int32
+	MediaPayload   []byte
 }
 
 type ReadCandidate struct {
@@ -198,6 +200,9 @@ func (db *DB) SaveMediaMessage(ctx context.Context, input MediaMessageInput) (Sa
 	if input.Status == "" {
 		input.Status = StatusDelivered
 	}
+	if input.MediaPayload == nil {
+		input.MediaPayload = []byte{}
+	}
 
 	lastMessage := input.Text
 	if lastMessage == "" {
@@ -224,11 +229,11 @@ func (db *DB) SaveMediaMessage(ctx context.Context, input MediaMessageInput) (Sa
 	}
 
 	result, err := tx.ExecContext(ctx, `
-		INSERT INTO messages (id, chat_id, sender_id, text, timestamp, direction, is_read, status, media_mime_type, media_local_path, media_width, media_height)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO messages (id, chat_id, sender_id, text, timestamp, direction, is_read, status, media_mime_type, media_local_path, media_width, media_height, media_payload)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO NOTHING
 	`, input.ID, input.ChatID, input.SenderID, input.Text, input.Timestamp.Unix(), input.Direction,
-		boolToInt(!input.CountUnread), input.Status, input.MediaMimeType, input.MediaLocalPath, input.MediaWidth, input.MediaHeight)
+		boolToInt(!input.CountUnread), input.Status, input.MediaMimeType, input.MediaLocalPath, input.MediaWidth, input.MediaHeight, input.MediaPayload)
 	if err != nil {
 		return SavedTextMessage{}, err
 	}
@@ -281,7 +286,7 @@ func (db *DB) ListMessages(ctx context.Context, chatID string, limit int, before
 	}
 
 	query := `
-		SELECT id, chat_id, sender_id, text, timestamp, direction, is_read, status, media_mime_type, media_local_path, media_width, media_height,
+		SELECT id, chat_id, sender_id, text, timestamp, direction, is_read, status, media_mime_type, media_local_path, media_width, media_height, media_payload,
 		       send_attempts, last_send_error, next_send_attempt
 		FROM messages
 		WHERE chat_id = ?
@@ -328,6 +333,7 @@ func (db *DB) ListMessages(ctx context.Context, chatID string, limit int, before
 			&message.MediaLocalPath,
 			&message.MediaWidth,
 			&message.MediaHeight,
+			&message.MediaPayload,
 			&message.SendAttempts,
 			&message.LastSendError,
 			&message.NextSendAttempt,
@@ -357,7 +363,7 @@ func (db *DB) ListPendingOutgoingMessages(ctx context.Context, limit int, now ti
 	}
 
 	rows, err := db.conn.QueryContext(ctx, `
-		SELECT id, chat_id, sender_id, text, timestamp, direction, is_read, status, media_mime_type, media_local_path, media_width, media_height,
+		SELECT id, chat_id, sender_id, text, timestamp, direction, is_read, status, media_mime_type, media_local_path, media_width, media_height, media_payload,
 		       send_attempts, last_send_error, next_send_attempt
 		FROM messages
 		WHERE direction = ? AND status = ? AND next_send_attempt <= ?
@@ -385,6 +391,7 @@ func (db *DB) ListPendingOutgoingMessages(ctx context.Context, limit int, now ti
 			&message.MediaLocalPath,
 			&message.MediaWidth,
 			&message.MediaHeight,
+			&message.MediaPayload,
 			&message.SendAttempts,
 			&message.LastSendError,
 			&message.NextSendAttempt,
@@ -442,6 +449,33 @@ func (db *DB) UpdateMessageStatus(ctx context.Context, id, status string) (Messa
 
 	message.Status = nextStatus
 	return message, true, nil
+}
+
+func (db *DB) UpdateMessageMediaLocalPath(ctx context.Context, id, localPath string) (Message, error) {
+	tx, err := db.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return Message{}, err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE messages
+		SET media_local_path = ?
+		WHERE id = ?
+	`, localPath, id); err != nil {
+		return Message{}, err
+	}
+
+	message, err := getMessageTx(ctx, tx, id)
+	if err != nil {
+		return Message{}, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return Message{}, err
+	}
+
+	return message, nil
 }
 
 func (db *DB) ReadCandidatesForChat(ctx context.Context, chatID string) ([]ReadCandidate, error) {
@@ -535,7 +569,7 @@ func getMessageRow(ctx context.Context, queryer interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }, id string, message *Message) error {
 	return queryer.QueryRowContext(ctx, `
-		SELECT id, chat_id, sender_id, text, timestamp, direction, is_read, status, media_mime_type, media_local_path, media_width, media_height,
+		SELECT id, chat_id, sender_id, text, timestamp, direction, is_read, status, media_mime_type, media_local_path, media_width, media_height, media_payload,
 		       send_attempts, last_send_error, next_send_attempt
 		FROM messages
 		WHERE id = ?
@@ -552,6 +586,7 @@ func getMessageRow(ctx context.Context, queryer interface {
 		&message.MediaLocalPath,
 		&message.MediaWidth,
 		&message.MediaHeight,
+		&message.MediaPayload,
 		&message.SendAttempts,
 		&message.LastSendError,
 		&message.NextSendAttempt,

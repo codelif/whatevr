@@ -10,7 +10,11 @@ import (
 	"whatevrd/internal/app"
 )
 
-func (c *Client) handleEvent(raw any) {
+func (c *Client) handleEvent(eventGen uint64, raw any) {
+	if !c.isCurrentEventGeneration(eventGen) {
+		return
+	}
+
 	switch evt := raw.(type) {
 	case *events.Connected:
 		c.daemon.SetConnMeta(0, 0, false)
@@ -60,10 +64,14 @@ func (c *Client) handleEvent(raw any) {
 	case *events.Receipt:
 		c.handleReceipt(evt)
 	case *events.HistorySync:
-		c.handleHistorySync(evt)
+		c.handleHistorySync(eventGen, evt)
 	case *events.ChatPresence:
 		chatJID := c.normalizeJIDForChat(c.backgroundContext(), evt.Chat)
 		isComposing := evt.State == types.ChatPresenceComposing
 		c.daemon.PublishChatPresence(chatJID.String(), evt.Sender.String(), isComposing)
 	}
+}
+
+func (c *Client) isCurrentEventGeneration(eventGen uint64) bool {
+	return eventGen != 0 && eventGen == c.eventGen.Load()
 }

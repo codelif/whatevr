@@ -104,6 +104,8 @@ type DaemonEvent struct {
 	RetryAttempt   int32
 	NextRetryUnix  int64
 	CanReconnect   bool
+
+	HistorySync HistorySyncEvent
 }
 
 type DaemonEventKind int
@@ -114,7 +116,34 @@ const (
 	DaemonEventMessageUpdated
 	DaemonEventChatUpdated
 	DaemonEventChatPresence
+	DaemonEventHistorySyncProgress
+	DaemonEventHistoryBackfilled
 )
+
+type HistorySyncType int32
+
+const (
+	HistorySyncTypeUnspecified HistorySyncType = iota
+	HistorySyncTypeInitialBootstrap
+	HistorySyncTypeInitialStatusV3
+	HistorySyncTypeFull
+	HistorySyncTypeRecent
+	HistorySyncTypePushName
+	HistorySyncTypeNonBlockingData
+	HistorySyncTypeOnDemand
+)
+
+type HistorySyncEvent struct {
+	SyncType             HistorySyncType
+	ProgressPercent      uint32
+	ChunkOrder           uint32
+	ConversationsInChunk uint32
+	MessagesInChunk      uint32
+	IsComplete           bool
+
+	ChatID        string
+	MessagesAdded uint32
+}
 
 type Chat struct {
 	ID              string
@@ -255,6 +284,23 @@ func (d *Daemon) PublishChatUpdated(chat Chat) {
 
 func (d *Daemon) PublishChatMigrated(previousChatID string, chat Chat) {
 	d.broadcastDaemonEvent(DaemonEvent{Kind: DaemonEventChatUpdated, Chat: chat, PreviousChatID: previousChatID})
+}
+
+func (d *Daemon) PublishHistorySyncProgress(evt HistorySyncEvent) {
+	d.broadcastDaemonEvent(DaemonEvent{
+		Kind:        DaemonEventHistorySyncProgress,
+		HistorySync: evt,
+	})
+}
+
+func (d *Daemon) PublishHistoryBackfilled(chatID string, messagesAdded uint32) {
+	d.broadcastDaemonEvent(DaemonEvent{
+		Kind: DaemonEventHistoryBackfilled,
+		HistorySync: HistorySyncEvent{
+			ChatID:        chatID,
+			MessagesAdded: messagesAdded,
+		},
+	})
 }
 
 func (d *Daemon) PublishChatPresence(chatID, senderID string, isComposing bool) {

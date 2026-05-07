@@ -50,6 +50,7 @@ type Client struct {
 	sendQueueWake chan struct{}
 	reconnectCh   chan struct{} // supervisor wakeup: reconnect immediately
 	reconnectNow  atomic.Bool
+	eventGen      atomic.Uint64
 }
 
 type frontendSession struct {
@@ -192,7 +193,10 @@ func (c *Client) resetClient(ctx context.Context) error {
 	}
 	client.SetForceActiveDeliveryReceipts(true)
 	client.UseRetryMessageStore = true
-	client.AddEventHandler(c.handleEvent)
+	eventGen := c.eventGen.Add(1)
+	client.AddEventHandler(func(raw any) {
+		c.handleEvent(eventGen, raw)
+	})
 
 	c.mu.Lock()
 	c.client = client
@@ -277,7 +281,7 @@ func (c *Client) syncPresence(ctx context.Context, force bool) {
 	if len(c.frontendSessions) > 0 {
 		desired = types.PresenceAvailable
 	}
-	if desired == types.PresenceAvailable && client.Store.PushName == "" {
+	if client.Store.PushName == "" && client.MessengerConfig == nil {
 		c.presenceMu.Unlock()
 		return
 	}

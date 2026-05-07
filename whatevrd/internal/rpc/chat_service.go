@@ -30,6 +30,7 @@ type ChatStore interface {
 type ChatActionController interface {
 	MarkChatRead(context.Context, string) (appstore.Chat, error)
 	SetChatPresence(context.Context, string, bool) error
+	DownloadMessageMedia(context.Context, string) (appstore.Message, error)
 }
 
 type ChatService struct {
@@ -135,6 +136,25 @@ func (s *ChatService) SetChatPresence(ctx context.Context, req *pb.SetChatPresen
 		return nil, err
 	}
 	return &pb.SetChatPresenceResponse{}, nil
+}
+
+func (s *ChatService) DownloadMessageMedia(ctx context.Context, req *pb.DownloadMessageMediaRequest) (*pb.DownloadMessageMediaResponse, error) {
+	if s.actions == nil {
+		return nil, status.Error(codes.Unimplemented, "chat action controller is not available")
+	}
+	if strings.TrimSpace(req.GetMessageId()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "message_id is required")
+	}
+
+	message, err := s.actions.DownloadMessageMedia(ctx, req.GetMessageId())
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, status.Error(codes.NotFound, "message not found")
+		}
+		return nil, err
+	}
+
+	return &pb.DownloadMessageMediaResponse{Message: toProtoMessage(toAppMessage(message))}, nil
 }
 
 func normalizePage(limit int32, offset int32, defaultLimit int, maxLimit int) (int, int, error) {

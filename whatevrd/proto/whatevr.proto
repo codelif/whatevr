@@ -29,6 +29,17 @@ enum MessageStatus {
   MESSAGE_STATUS_FAILED = 5;
 }
 
+enum HistorySyncType {
+  HISTORY_SYNC_TYPE_UNSPECIFIED = 0;
+  HISTORY_SYNC_TYPE_INITIAL_BOOTSTRAP = 1;
+  HISTORY_SYNC_TYPE_INITIAL_STATUS_V3 = 2;
+  HISTORY_SYNC_TYPE_FULL = 3;
+  HISTORY_SYNC_TYPE_RECENT = 4;
+  HISTORY_SYNC_TYPE_PUSH_NAME = 5;
+  HISTORY_SYNC_TYPE_NON_BLOCKING_DATA = 6;
+  HISTORY_SYNC_TYPE_ON_DEMAND = 7;
+}
+
 service DaemonService {
   rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
   rpc SubscribeEvents(SubscribeEventsRequest) returns (stream DaemonEvent);
@@ -50,6 +61,7 @@ service ChatService {
   rpc GetMessages(GetMessagesRequest) returns (GetMessagesResponse);
   rpc MarkChatRead(MarkChatReadRequest) returns (MarkChatReadResponse);
   rpc SetChatPresence(SetChatPresenceRequest) returns (SetChatPresenceResponse);
+  rpc DownloadMessageMedia(DownloadMessageMediaRequest) returns (DownloadMessageMediaResponse);
 }
 
 service SendService {
@@ -83,7 +95,26 @@ message DaemonEvent {
     MessageUpdated message_updated = 4;
     ChatUpdated chat_updated = 5;
     ChatPresenceChanged chat_presence_changed = 6;
+    HistorySyncProgress history_sync_progress = 7;
+    HistoryBackfilled history_backfilled = 8;
   }
+}
+
+message HistorySyncProgress {
+  HistorySyncType sync_type = 1;
+  // 0..100, taken from waHistorySync.HistorySync.progress when present.
+  uint32 progress_percent = 2;
+  uint32 chunk_order = 3;
+  uint32 conversations_in_chunk = 4;
+  uint32 messages_in_chunk = 5;
+  // True when this chunk completes the sync (progress >= 100, or sync type
+  // does not carry progress).
+  bool is_complete = 6;
+}
+
+message HistoryBackfilled {
+  string chat_id = 1;
+  uint32 messages_added = 2;
 }
 
 message ChatPresenceChanged {
@@ -189,6 +220,14 @@ message SetChatPresenceRequest {
 }
 
 message SetChatPresenceResponse {}
+
+message DownloadMessageMediaRequest {
+  string message_id = 1;
+}
+
+message DownloadMessageMediaResponse {
+  Message message = 1;
+}
 
 message SendTextRequest {
   string chat_id = 1;

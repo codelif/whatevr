@@ -2,14 +2,14 @@ package wa
 
 import (
 	"context"
-	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
+	"google.golang.org/protobuf/proto"
+
 	waE2E "go.mau.fi/whatsmeow/proto/waE2E"
 	waHistorySync "go.mau.fi/whatsmeow/proto/waHistorySync"
+	waWeb "go.mau.fi/whatsmeow/proto/waWeb"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 
@@ -17,22 +17,90 @@ import (
 	appstore "whatevrd/internal/store"
 )
 
-func (c *Client) handleHistorySync(evt *events.HistorySync) {
+// ingestSource distinguishes a freshly-received WhatsApp message from a
+// history-sync backfill. The two paths share storage logic but diverge on
+// notification, event publication, and status mapping.
+type ingestSource int
+
+const (
+	sourceLive ingestSource = iota
+	sourceHistorySync
+)
+
+type ingestOptions struct {
+	source           ingestSource
+	chatNameOverride string
+	// historyStatus is set only for sourceHistorySync; mapped from
+	// WebMessageInfo.Status. Empty string means "no override".
+	historyStatus string
+	// forceRead, when true, suppresses unread counting for this message.
+	// Used during history sync when the conversation is already read on
+	// the phone — we don't want to spuriously bump unread badges that
+	// the user already cleared.
+	forceRead bool
+}
+
+func (c *Client) handleHistorySync(eventGen uint64, evt *events.HistorySync) {
+	if !c.isCurrentEventGeneration(eventGen) {
+		return
+	}
 	client := c.currentClient()
 	if client == nil {
 		return
 	}
 	ctx := c.backgroundContext()
+	if ctx.Err() != nil {
+		return
+	}
 	c.updateChatNamesFromHistorySync(ctx, evt)
+
+	syncType := historySyncType(evt.Data.GetSyncType())
+	progressPercent := evt.Data.GetProgress()
+	chunkOrder := evt.Data.GetChunkOrder()
+	conversations := evt.Data.GetConversations()
+	totalMessages := uint32(0)
+	for _, conv := range conversations {
+		totalMessages += uint32(len(conv.GetMessages()))
+	}
+
+	c.daemon.PublishHistorySyncProgress(app.HistorySyncEvent{
+		SyncType:             syncType,
+		ProgressPercent:      progressPercent,
+		ChunkOrder:           chunkOrder,
+		ConversationsInChunk: uint32(len(conversations)),
+		MessagesInChunk:      totalMessages,
+		IsComplete:           false,
+	})
+
 	storedAny := false
-	for _, conv := range evt.Data.GetConversations() {
+	for _, conv := range conversations {
+		if ctx.Err() != nil || !c.isCurrentEventGeneration(eventGen) {
+			return
+		}
 		chatJID, err := types.ParseJID(conv.GetID())
 		if err != nil {
 			c.log.Warnf("Failed to parse chat JID in history sync: %v", err)
 			continue
 		}
 		chatNameOverride := historySyncChatName(conv)
+		chatID := chatJID.String()
+		if _, err := c.store.EnsureChat(ctx, chatID, chatNameOverride, chatJID.Server == types.GroupServer); err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			c.log.Warnf("Failed to ensure history-sync chat %s: %v", chatID, err)
+			continue
+		}
+		convUnread := conv.GetUnreadCount()
+		convMarkedUnread := conv.GetMarkedAsUnread()
+		forceRead := convUnread == 0 && !convMarkedUnread
+
+		messagesAdded := uint32(0)
+		var lastSavedChat appstore.Chat
 		for _, msg := range conv.GetMessages() {
+			if ctx.Err() != nil || !c.isCurrentEventGeneration(eventGen) {
+				return
+			}
 			webMsg := msg.GetMessage()
 			if webMsg == nil {
 				continue
@@ -42,71 +110,130 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 				c.log.Warnf("Failed to parse history sync message: %v", err)
 				continue
 			}
-			if c.handleMessageWithChatName(ctx, parsedEvt, chatNameOverride) {
+			opts := ingestOptions{
+				source:           sourceHistorySync,
+				chatNameOverride: chatNameOverride,
+				historyStatus:    mapWebMessageStatus(webMsg),
+				forceRead:        forceRead,
+			}
+			saved, inserted := c.ingestMessage(ctx, parsedEvt, opts)
+			if inserted {
+				messagesAdded++
+				lastSavedChat = saved.Chat
 				storedAny = true
 			}
 		}
+
+		// Mirror the phone's read state on the chat row even if the
+		// per-message rows we just inserted didn't bump it (CountUnread
+		// is intentionally false during history-sync ingestion).
+		if ctx.Err() != nil || !c.isCurrentEventGeneration(eventGen) {
+			return
+		}
+		updatedChat, _, err := c.store.OverwriteChatUnreadCount(ctx, chatID, convUnread)
+		if err != nil {
+			c.log.Warnf("Failed to overwrite unread count for %s: %v", chatID, err)
+		} else if updatedChat.ID != "" {
+			lastSavedChat = updatedChat
+		}
+
+		if messagesAdded > 0 && c.isCurrentEventGeneration(eventGen) {
+			if lastSavedChat.ID != "" {
+				c.daemon.PublishChatUpdated(toDaemonChat(lastSavedChat))
+			}
+			c.daemon.PublishHistoryBackfilled(chatID, messagesAdded)
+		}
 	}
-	if storedAny {
+
+	if storedAny && c.isCurrentEventGeneration(eventGen) {
 		c.scheduleAvatarRefresh(ctx, 2*time.Second)
 	}
+	if ctx.Err() != nil || !c.isCurrentEventGeneration(eventGen) {
+		return
+	}
+
+	c.daemon.PublishHistorySyncProgress(app.HistorySyncEvent{
+		SyncType:             syncType,
+		ProgressPercent:      progressPercent,
+		ChunkOrder:           chunkOrder,
+		ConversationsInChunk: uint32(len(conversations)),
+		MessagesInChunk:      totalMessages,
+		IsComplete:           historySyncIsComplete(syncType, progressPercent),
+	})
 }
 
 func (c *Client) handleMessage(ctx context.Context, evt *events.Message) {
-	if c.handleMessageWithChatName(ctx, evt, "") {
+	if _, inserted := c.ingestMessage(ctx, evt, ingestOptions{source: sourceLive}); inserted {
 		c.scheduleAvatarRefresh(ctx, 2*time.Second)
 	}
 }
 
-func (c *Client) handleMessageWithChatName(ctx context.Context, evt *events.Message, chatNameOverride string) bool {
-	if textInput, ok := c.textMessageInput(ctx, evt, chatNameOverride); ok {
+// ingestMessage stores a parsed whatsmeow message in the local store and,
+// for live messages, publishes the daemon NewMessage event and triggers a
+// desktop notification when appropriate.
+//
+// History-sync messages are saved silently: no NewMessage broadcast, no
+// notification. The caller is responsible for emitting per-chat backfill
+// events once the conversation has been processed.
+func (c *Client) ingestMessage(ctx context.Context, evt *events.Message, opts ingestOptions) (appstore.SavedTextMessage, bool) {
+	if textInput, ok := c.textMessageInput(ctx, evt, opts); ok {
 		saved, err := c.store.SaveTextMessage(ctx, textInput)
 		if err != nil {
 			c.log.Errorf("Failed to store text message %s: %v", textInput.ID, err)
-			return false
+			return appstore.SavedTextMessage{}, false
 		}
 		if !saved.Inserted {
-			if chatNameOverride != "" {
+			if opts.source == sourceHistorySync && opts.historyStatus != "" {
+				c.maybeUpgradeStatusFromHistory(ctx, textInput.ID, opts.historyStatus)
+			}
+			if opts.chatNameOverride != "" && opts.source == sourceLive {
 				c.daemon.PublishChatUpdated(toDaemonChat(saved.Chat))
 			}
-			return false
+			return saved, false
 		}
 		c.log.Infof("Stored text message %s from %s", saved.Message.ID, saved.Message.SenderID)
-		message := toDaemonMessage(saved.Message)
-		chat := toDaemonChat(saved.Chat)
-		c.daemon.PublishNewMessage(message, chat)
-		if c.notifier != nil && textInput.CountUnread && c.ShouldNotifyChat(chat.ID) {
-			c.notifier.NotifyMessage(ctx, message, chat)
+		if opts.source == sourceLive {
+			message := toDaemonMessage(saved.Message)
+			chat := toDaemonChat(saved.Chat)
+			c.daemon.PublishNewMessage(message, chat)
+			if c.notifier != nil && textInput.CountUnread && c.ShouldNotifyChat(chat.ID) {
+				c.notifier.NotifyMessage(ctx, message, chat)
+			}
 		}
-		return true
+		return saved, true
 	}
 
-	if mediaInput, ok := c.imageMessageInput(ctx, evt, chatNameOverride); ok {
+	if mediaInput, ok := c.imageMessageInput(ctx, evt, opts); ok {
 		saved, err := c.store.SaveMediaMessage(ctx, mediaInput)
 		if err != nil {
 			c.log.Errorf("Failed to store media message %s: %v", mediaInput.ID, err)
-			return false
+			return appstore.SavedTextMessage{}, false
 		}
 		if !saved.Inserted {
-			if chatNameOverride != "" {
+			if opts.source == sourceHistorySync && opts.historyStatus != "" {
+				c.maybeUpgradeStatusFromHistory(ctx, mediaInput.ID, opts.historyStatus)
+			}
+			if opts.chatNameOverride != "" && opts.source == sourceLive {
 				c.daemon.PublishChatUpdated(toDaemonChat(saved.Chat))
 			}
-			return false
+			return saved, false
 		}
 		c.log.Infof("Stored media message %s from %s", saved.Message.ID, saved.Message.SenderID)
-		message := toDaemonMessage(saved.Message)
-		chat := toDaemonChat(saved.Chat)
-		c.daemon.PublishNewMessage(message, chat)
-		if c.notifier != nil && mediaInput.CountUnread && c.ShouldNotifyChat(chat.ID) {
-			c.notifier.NotifyMessage(ctx, message, chat)
+		if opts.source == sourceLive {
+			message := toDaemonMessage(saved.Message)
+			chat := toDaemonChat(saved.Chat)
+			c.daemon.PublishNewMessage(message, chat)
+			if c.notifier != nil && mediaInput.CountUnread && c.ShouldNotifyChat(chat.ID) {
+				c.notifier.NotifyMessage(ctx, message, chat)
+			}
 		}
-		return true
+		return saved, true
 	}
 
-	return false
+	return appstore.SavedTextMessage{}, false
 }
 
-func (c *Client) imageMessageInput(ctx context.Context, evt *events.Message, chatNameOverride string) (appstore.MediaMessageInput, bool) {
+func (c *Client) imageMessageInput(ctx context.Context, evt *events.Message, opts ingestOptions) (appstore.MediaMessageInput, bool) {
 	if evt == nil || evt.Message == nil {
 		return appstore.MediaMessageInput{}, false
 	}
@@ -123,38 +250,16 @@ func (c *Client) imageMessageInput(ctx context.Context, evt *events.Message, cha
 		return appstore.MediaMessageInput{}, false
 	}
 
-	direction := appstore.DirectionIncoming
-	status := appstore.StatusDelivered
-	if info.IsFromMe {
-		direction = appstore.DirectionOutgoing
-		status = appstore.StatusSent
-	}
+	direction, status := messageDirectionAndStatus(info, opts)
 
-	client := c.currentClient()
-	if client == nil {
-		return appstore.MediaMessageInput{}, false
-	}
-
-	data, err := client.Download(ctx, imgMsg)
+	payload, err := proto.Marshal(imgMsg)
 	if err != nil {
-		c.log.Warnf("Failed to download image for message %s: %v", info.ID, err)
+		c.log.Warnf("Failed to serialize image metadata for message %s: %v", info.ID, err)
 		return appstore.MediaMessageInput{}, false
 	}
-	if len(data) == 0 || len(data) > maxOutboundMediaBytes {
-		c.log.Warnf("Skipping image for message %s: size is outside allowed bounds", info.ID)
-		return appstore.MediaMessageInput{}, false
-	}
-
-	mediaDir := filepath.Join(c.paths.MediaCacheDir, "messages", chatID)
-	if err := os.MkdirAll(mediaDir, 0o700); err != nil {
-		c.log.Warnf("Failed to create media dir for %s: %v", chatID, err)
-		return appstore.MediaMessageInput{}, false
-	}
-
-	localPath := filepath.Join(mediaDir, fmt.Sprintf("%s.jpg", info.ID))
-	if err := writeFileAtomic(localPath, data, 0o600); err != nil {
-		c.log.Warnf("Failed to write image for message %s: %v", info.ID, err)
-		return appstore.MediaMessageInput{}, false
+	mimeType := imgMsg.GetMimetype()
+	if mimeType == "" {
+		mimeType = "image/jpeg"
 	}
 
 	caption := imgMsg.GetCaption()
@@ -162,19 +267,19 @@ func (c *Client) imageMessageInput(ctx context.Context, evt *events.Message, cha
 		TextMessageInput: appstore.TextMessageInput{
 			ID:          internalMessageIDForChat(chatID, info.ID),
 			ChatID:      chatID,
-			ChatName:    c.chatName(ctx, info, chatNameOverride),
+			ChatName:    c.chatName(ctx, info, opts.chatNameOverride),
 			SenderID:    senderID(info),
 			Text:        caption,
 			Timestamp:   info.Timestamp,
 			Direction:   direction,
 			Status:      status,
 			IsGroup:     info.IsGroup,
-			CountUnread: !info.IsFromMe && evt.SourceWebMsg == nil,
+			CountUnread: shouldCountUnread(evt, opts),
 		},
-		MediaMimeType:  "image/jpeg",
-		MediaLocalPath: localPath,
-		MediaWidth:     int32(imgMsg.GetWidth()),
-		MediaHeight:    int32(imgMsg.GetHeight()),
+		MediaMimeType: mimeType,
+		MediaWidth:    int32(imgMsg.GetWidth()),
+		MediaHeight:   int32(imgMsg.GetHeight()),
+		MediaPayload:  payload,
 	}, true
 }
 
@@ -196,7 +301,7 @@ func (c *Client) normalizeJIDForChat(ctx context.Context, jid types.JID) types.J
 	return pn
 }
 
-func (c *Client) textMessageInput(ctx context.Context, evt *events.Message, chatNameOverride string) (appstore.TextMessageInput, bool) {
+func (c *Client) textMessageInput(ctx context.Context, evt *events.Message, opts ingestOptions) (appstore.TextMessageInput, bool) {
 	if evt == nil || evt.Message == nil {
 		return appstore.TextMessageInput{}, false
 	}
@@ -216,25 +321,67 @@ func (c *Client) textMessageInput(ctx context.Context, evt *events.Message, chat
 		return appstore.TextMessageInput{}, false
 	}
 
-	direction := appstore.DirectionIncoming
-	status := appstore.StatusDelivered
-	if info.IsFromMe {
-		direction = appstore.DirectionOutgoing
-		status = appstore.StatusSent
-	}
+	direction, status := messageDirectionAndStatus(info, opts)
 
 	return appstore.TextMessageInput{
 		ID:          internalMessageIDForChat(chatID, info.ID),
 		ChatID:      chatID,
-		ChatName:    c.chatName(ctx, info, chatNameOverride),
+		ChatName:    c.chatName(ctx, info, opts.chatNameOverride),
 		SenderID:    senderID(info),
 		Text:        text,
 		Timestamp:   info.Timestamp,
 		Direction:   direction,
 		Status:      status,
 		IsGroup:     info.IsGroup,
-		CountUnread: !info.IsFromMe && evt.SourceWebMsg == nil,
+		CountUnread: shouldCountUnread(evt, opts),
 	}, true
+}
+
+// maybeUpgradeStatusFromHistory bumps an already-stored message's status to
+// the value reported by history sync if (and only if) the new status is
+// strictly higher rank. UpdateMessageStatus uses nextMessageStatus(), which
+// already enforces forward-only progression, so this is safe to call
+// unconditionally.
+func (c *Client) maybeUpgradeStatusFromHistory(ctx context.Context, internalID, status string) {
+	message, changed, err := c.store.UpdateMessageStatus(ctx, internalID, status)
+	if err != nil {
+		c.log.Warnf("Failed to upgrade history-sync status for %s: %v", internalID, err)
+		return
+	}
+	if !changed {
+		return
+	}
+	c.daemon.PublishMessageUpdated(toDaemonMessage(message))
+}
+
+func messageDirectionAndStatus(info types.MessageInfo, opts ingestOptions) (string, string) {
+	if info.IsFromMe {
+		status := appstore.StatusSent
+		if opts.source == sourceHistorySync && opts.historyStatus != "" {
+			status = opts.historyStatus
+		}
+		return appstore.DirectionOutgoing, status
+	}
+	return appstore.DirectionIncoming, appstore.StatusDelivered
+}
+
+func shouldCountUnread(evt *events.Message, opts ingestOptions) bool {
+	if evt == nil || evt.Info.IsFromMe {
+		return false
+	}
+	if opts.source == sourceHistorySync {
+		// History-sync rows never bump the unread count; the chat-row
+		// unread is set authoritatively from conv.UnreadCount once the
+		// conversation has been processed.
+		return false
+	}
+	if opts.forceRead {
+		return false
+	}
+	// Whatsmeow internally re-emits messages it parses out of a sync
+	// blob with SourceWebMsg set; only freshly-streamed events leave it
+	// nil. Use that to skip double-counting.
+	return evt.SourceWebMsg == nil
 }
 
 func textFromMessage(message *waE2E.Message) string {
@@ -264,6 +411,62 @@ func historySyncChatName(conv *waHistorySync.Conversation) string {
 		}
 	}
 	return ""
+}
+
+// mapWebMessageStatus translates the WhatsApp WebMessageInfo.Status field
+// into our internal status string, used for own-message rows during history
+// sync. Returns "" when the field is absent.
+func mapWebMessageStatus(webMsg *waWeb.WebMessageInfo) string {
+	if webMsg == nil || webMsg.Status == nil {
+		return ""
+	}
+	switch webMsg.GetStatus() {
+	case waWeb.WebMessageInfo_PENDING:
+		return appstore.StatusPending
+	case waWeb.WebMessageInfo_SERVER_ACK:
+		return appstore.StatusSent
+	case waWeb.WebMessageInfo_DELIVERY_ACK:
+		return appstore.StatusDelivered
+	case waWeb.WebMessageInfo_READ, waWeb.WebMessageInfo_PLAYED:
+		return appstore.StatusRead
+	case waWeb.WebMessageInfo_ERROR:
+		return appstore.StatusFailed
+	default:
+		return ""
+	}
+}
+
+func historySyncType(t waHistorySync.HistorySync_HistorySyncType) app.HistorySyncType {
+	switch t {
+	case waHistorySync.HistorySync_INITIAL_BOOTSTRAP:
+		return app.HistorySyncTypeInitialBootstrap
+	case waHistorySync.HistorySync_INITIAL_STATUS_V3:
+		return app.HistorySyncTypeInitialStatusV3
+	case waHistorySync.HistorySync_FULL:
+		return app.HistorySyncTypeFull
+	case waHistorySync.HistorySync_RECENT:
+		return app.HistorySyncTypeRecent
+	case waHistorySync.HistorySync_PUSH_NAME:
+		return app.HistorySyncTypePushName
+	case waHistorySync.HistorySync_NON_BLOCKING_DATA:
+		return app.HistorySyncTypeNonBlockingData
+	case waHistorySync.HistorySync_ON_DEMAND:
+		return app.HistorySyncTypeOnDemand
+	default:
+		return app.HistorySyncTypeUnspecified
+	}
+}
+
+// historySyncIsComplete reports whether the chunk we just processed should
+// dismiss the "Syncing chat history…" indicator. PUSH_NAME / NON_BLOCKING_DATA
+// don't carry progress so we always treat them as complete; otherwise we wait
+// for the server to report 100%.
+func historySyncIsComplete(syncType app.HistorySyncType, progress uint32) bool {
+	switch syncType {
+	case app.HistorySyncTypePushName, app.HistorySyncTypeNonBlockingData:
+		return true
+	}
+	return progress >= 100
 }
 
 func (c *Client) chatName(ctx context.Context, info types.MessageInfo, override string) string {

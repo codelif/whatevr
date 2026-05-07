@@ -798,3 +798,160 @@ func TestMigrateChatIDMergesExistingTargetWithoutDoubleCountingUnread(t *testing
 		t.Fatalf("expected duplicate message to be deduped, got %d", len(messages))
 	}
 }
+
+func TestOverwriteChatUnreadCountSetsBadgeAndMarksReadWhenZero(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	chatID := "chat-overwrite"
+	if _, err := db.SaveTextMessage(ctx, TextMessageInput{
+		ID:          chatID + ":a",
+		ChatID:      chatID,
+		ChatName:    "Test",
+		SenderID:    "sender-1",
+		Text:        "first",
+		Timestamp:   time.Unix(100, 0),
+		Direction:   DirectionIncoming,
+		Status:      StatusDelivered,
+		CountUnread: true,
+	}); err != nil {
+		t.Fatalf("save first: %v", err)
+	}
+	if _, err := db.SaveTextMessage(ctx, TextMessageInput{
+		ID:          chatID + ":b",
+		ChatID:      chatID,
+		ChatName:    "Test",
+		SenderID:    "sender-1",
+		Text:        "second",
+		Timestamp:   time.Unix(200, 0),
+		Direction:   DirectionIncoming,
+		Status:      StatusDelivered,
+		CountUnread: true,
+	}); err != nil {
+		t.Fatalf("save second: %v", err)
+	}
+
+	// Phone says the conversation is read; overwrite to 0.
+	chat, changed, err := db.OverwriteChatUnreadCount(ctx, chatID, 0)
+	if err != nil {
+		t.Fatalf("overwrite unread to zero: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected changed=true for non-zero -> zero transition")
+	}
+	if chat.UnreadCount != 0 {
+		t.Fatalf("expected unread_count=0, got %+v", chat)
+	}
+
+	// Both messages should now be marked read so badge stays at 0 even
+	// after a future MarkChatRead recompute.
+	candidates, err := db.ReadCandidatesForChat(ctx, chatID)
+	if err != nil {
+		t.Fatalf("read candidates: %v", err)
+	}
+	if len(candidates) != 0 {
+		t.Fatalf("expected no remaining unread candidates, got %d", len(candidates))
+	}
+}
+
+func TestEnsureChatAllowsUnreadOverwriteWithoutMessages(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	chat, err := db.EnsureChat(ctx, "chat-empty", "Empty Chat", true)
+	if err != nil {
+		t.Fatalf("ensure chat: %v", err)
+	}
+	if chat.Name != "Empty Chat" || !chat.IsGroup {
+		t.Fatalf("unexpected ensured chat: %+v", chat)
+	}
+
+	chat, changed, err := db.OverwriteChatUnreadCount(ctx, "chat-empty", 3)
+	if err != nil {
+		t.Fatalf("overwrite unread: %v", err)
+	}
+	if !changed || chat.UnreadCount != 3 {
+		t.Fatalf("unexpected overwrite result: changed=%v chat=%+v", changed, chat)
+	}
+}
+
+func TestOverwriteChatUnreadCountReportsUnchangedWhenSame(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	chatID := "chat-noop"
+	if _, err := db.SaveTextMessage(ctx, TextMessageInput{
+		ID:          chatID + ":a",
+		ChatID:      chatID,
+		ChatName:    "Test",
+		SenderID:    "sender-1",
+		Text:        "hi",
+		Timestamp:   time.Unix(100, 0),
+		Direction:   DirectionIncoming,
+		Status:      StatusDelivered,
+		CountUnread: false,
+	}); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	_, changed, err := db.OverwriteChatUnreadCount(ctx, chatID, 0)
+	if err != nil {
+		t.Fatalf("overwrite: %v", err)
+	}
+	if changed {
+		t.Fatal("expected changed=false when value already matches")
+	}
+}
+
+func TestOverwriteChatUnreadCountSetsNonZeroBadge(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	chatID := "chat-nonzero"
+	if _, err := db.SaveTextMessage(ctx, TextMessageInput{
+		ID:          chatID + ":a",
+		ChatID:      chatID,
+		ChatName:    "Test",
+		SenderID:    "sender-1",
+		Text:        "hi",
+		Timestamp:   time.Unix(100, 0),
+		Direction:   DirectionIncoming,
+		Status:      StatusDelivered,
+		CountUnread: false,
+	}); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	chat, changed, err := db.OverwriteChatUnreadCount(ctx, chatID, 7)
+	if err != nil {
+		t.Fatalf("overwrite: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected changed=true when overwriting to a new value")
+	}
+	if chat.UnreadCount != 7 {
+		t.Fatalf("expected unread_count=7, got %+v", chat)
+	}
+
+	// With unread=7 we did NOT mark messages read. ReadCandidates is
+	// based on per-message is_read which we shouldn't have touched.
+	if _, err := db.GetMessage(ctx, chatID+":a"); err == sql.ErrNoRows {
+		t.Fatalf("message disappeared after overwrite")
+	}
+}
