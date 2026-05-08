@@ -47,6 +47,11 @@ pub struct Widgets {
     pub messages_below_count: Cell<u32>,
     pub message_prepend_in_progress: Rc<Cell<bool>>,
     pub message_prepend_generation: Rc<Cell<u64>>,
+    // Monotonic-time deadline (microseconds) before another older-messages
+    // fetch may fire. Set briefly after each prepend completes so the value-
+    // changed event that follows our scroll restoration cannot immediately
+    // re-trigger pagination.
+    pub older_fetch_cooldown_until: Rc<Cell<i64>>,
 
     pub composer_scroller: gtk::ScrolledWindow,
     pub composer_text_view: gtk::TextView,

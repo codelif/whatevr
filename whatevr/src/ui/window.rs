@@ -570,6 +570,7 @@ pub fn build(app: &adw::Application) -> AppContext {
         messages_below_count: Cell::new(0),
         message_prepend_in_progress: Rc::new(Cell::new(false)),
         message_prepend_generation: Rc::new(Cell::new(0)),
+        older_fetch_cooldown_until: Rc::new(Cell::new(0)),
         composer_scroller: composer.scroller,
         composer_text_view: composer.text_view,
         composer_error_label: composer.error_label,

@@ -272,15 +272,31 @@ pub fn connect(
 
             update_messages_below_button(&scroll_widgets);
 
-            // Trigger a paginated fetch only when the user is *near* the
-            // top edge AND the existing scroll-bar has more height than a
-            // viewport. The latter prevents firing pagination during the
-            // initial render before any older history exists.
-            const NEAR_TOP_THRESHOLD: f64 = 80.0;
+            // Pre-fetch *before* the user reaches the absolute top: as soon
+            // as we are within ~one viewport of the top edge we kick the
+            // next page. The local DB read usually completes well within the
+            // distance the user will scroll, so by the time they arrive the
+            // older rows are already prepended and scroll position has been
+            // restored.
+            //
+            // We require the scroller to have more content than a viewport
+            // before paginating; otherwise the very first render (which
+            // sits at the bottom with `value == 0`) would immediately fire.
             if adjustment.upper() <= adjustment.page_size() {
                 return;
             }
-            if adjustment.value() > NEAR_TOP_THRESHOLD {
+
+            // Cooldown after a prepend completes prevents a value-changed
+            // event in the same cluster (e.g. layout settle, inertial
+            // scroll tick) from re-firing pagination instantly.
+            if scroll_widgets.older_fetch_cooldown_until.get() > glib::monotonic_time() {
+                return;
+            }
+
+            // Use a viewport-relative trigger zone, clamped so the threshold
+            // is sensible on both tiny and huge windows.
+            let trigger_zone = adjustment.page_size().clamp(200.0, 600.0);
+            if adjustment.value() > trigger_zone {
                 return;
             }
 

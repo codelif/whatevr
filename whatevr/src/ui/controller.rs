@@ -1,4 +1,8 @@
-use std::{cell::RefCell, rc::Rc, time::Duration};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+    time::Duration,
+};
 
 use gtk::{gdk, glib, prelude::*};
 
@@ -41,246 +45,119 @@ use crate::ui::{
 };
 use crate::util::{text::format_login_state, time::format_qr_expiry};
 
-const PREPEND_USER_SCROLL_ABORT_THRESHOLD: f64 = 6.0;
+// How many frames (~60Hz) we keep watching the adjustment after a prepend.
+// Layout settles within a frame or two on a normal box; we bound it as a
+// safety net.
+const PREPEND_MAX_FRAMES: u32 = 30;
+// Once `upper` stops growing, we want one more frame to confirm before
+// releasing the lock; this prevents a stale "still settling" state from
+// fighting user scrolls.
+const PREPEND_REQUIRED_STABLE_FRAMES: u32 = 2;
 
-#[derive(Clone)]
-struct PrependScrollAnchor {
+struct PrependAnchor {
     generation: u64,
     upper_before: f64,
-    value_before: f64,
+    bottom_offset: f64,
 }
 
-// Capture the old adjustment bounds before rows are inserted. Once GTK reports
-// the new upper bound, the difference is the exact height prepended above us.
-fn begin_preserve_scroll_anchor_for_prepend(widgets: &Widgets) -> PrependScrollAnchor {
+// Snapshot the *distance from the bottom* of the message stack right before
+// we insert older rows. After insertion, GTK will grow `upper` by exactly the
+// height of the new rows; restoring `value = upper - bottom_offset` keeps
+// the user pinned to the same on-screen content.
+fn begin_prepend(widgets: &Widgets) -> PrependAnchor {
     let adjustment = widgets.message_scroller.vadjustment();
-    widgets
-        .message_scroll_generation
-        .set(widgets.message_scroll_generation.get().wrapping_add(1));
+    let upper_before = adjustment.upper();
+    let value_before = adjustment.value();
+    let bottom_offset = (upper_before - value_before).max(0.0);
 
     let generation = widgets.message_prepend_generation.get().wrapping_add(1);
     widgets.message_prepend_generation.set(generation);
+    widgets
+        .message_scroll_generation
+        .set(widgets.message_scroll_generation.get().wrapping_add(1));
     widgets.message_prepend_in_progress.set(true);
 
-    PrependScrollAnchor {
+    PrependAnchor {
         generation,
-        upper_before: adjustment.upper(),
-        value_before: adjustment.value(),
+        upper_before,
+        bottom_offset,
     }
 }
 
-fn finish_preserve_scroll_anchor_for_prepend(widgets: &Widgets, anchor: PrependScrollAnchor) {
-    let adjustment = widgets.message_scroller.vadjustment();
-    let last_applied_value = Rc::new(std::cell::Cell::new(f64::NAN));
-    let did_restore = Rc::new(std::cell::Cell::new(false));
-    let upper_notify_handler: Rc<RefCell<Option<glib::SignalHandlerId>>> =
-        Rc::new(RefCell::new(None));
+// Drive the scroll position back onto the bottom-anchor each time `upper`
+// grows. We *only* set the value when `upper` has changed since our last
+// adjustment, so once layout settles we stop touching the adjustment and the
+// user can scroll freely without us fighting them.
+fn finish_prepend(widgets: &Widgets, anchor: PrependAnchor) {
+    let scroller = widgets.message_scroller.clone();
+    let prepend_generation = widgets.message_prepend_generation.clone();
+    let prepend_in_progress = widgets.message_prepend_in_progress.clone();
+    let older_loading = widgets.older_messages_loading.clone();
+    let cooldown_until = widgets.older_fetch_cooldown_until.clone();
 
-    let adjustment_for_notify = adjustment.clone();
-    let anchor_for_notify = anchor.clone();
-    let generation_for_notify = widgets.message_prepend_generation.clone();
-    let last_applied_for_notify = last_applied_value.clone();
-    let did_restore_for_notify = did_restore.clone();
-    let upper_notify_handler_for_notify = upper_notify_handler.clone();
-    let notify_handler = adjustment.connect_notify_local(Some("upper"), move |_, _| {
-        if generation_for_notify.get() != anchor_for_notify.generation {
-            disconnect_upper_notify(&adjustment_for_notify, &upper_notify_handler_for_notify);
-            return;
+    let last_upper = Rc::new(Cell::new(anchor.upper_before));
+    let frame_count = Rc::new(Cell::new(0u32));
+    let stable_frames = Rc::new(Cell::new(0u32));
+    let applied = Rc::new(Cell::new(false));
+
+    let generation = anchor.generation;
+    let upper_before = anchor.upper_before;
+    let bottom_offset = anchor.bottom_offset;
+
+    scroller.clone().add_tick_callback(move |scroller, _| {
+        if prepend_generation.get() != generation {
+            return glib::ControlFlow::Break;
         }
 
-        let preserve_value = if did_restore_for_notify.get() {
-            anchor_for_notify.value_before
-        } else {
-            adjustment_for_notify.value()
-        };
-        let restore = apply_prepend_scroll_restore(
-            &adjustment_for_notify,
-            &anchor_for_notify,
-            preserve_value,
-        );
-        if let Some(value) = restore.applied_value {
-            last_applied_for_notify.set(value);
-            did_restore_for_notify.set(true);
-        }
-        if restore.aligned {
-            disconnect_upper_notify(&adjustment_for_notify, &upper_notify_handler_for_notify);
-        }
-    });
-    *upper_notify_handler.borrow_mut() = Some(notify_handler);
+        let adj = scroller.vadjustment();
+        let upper = adj.upper();
 
-    let adjustment_for_idle = adjustment.clone();
-    let anchor_for_idle = anchor.clone();
-    let generation_for_idle = widgets.message_prepend_generation.clone();
-    let last_applied_for_idle = last_applied_value.clone();
-    let did_restore_for_idle = did_restore.clone();
-    glib::idle_add_local_once(move || {
-        if generation_for_idle.get() == anchor_for_idle.generation {
-            let preserve_value = if did_restore_for_idle.get() {
-                anchor_for_idle.value_before
+        if upper > upper_before + 0.5 {
+            let upper_changed = (upper - last_upper.get()).abs() > 0.5;
+            if !applied.get() || upper_changed {
+                let max_value = (upper - adj.page_size()).max(adj.lower());
+                let target = (upper - bottom_offset).max(adj.lower()).min(max_value);
+                if (adj.value() - target).abs() > 0.5 {
+                    adj.set_value(target);
+                }
+                applied.set(true);
+                last_upper.set(upper);
+                stable_frames.set(0);
             } else {
-                adjustment_for_idle.value()
-            };
-            let restore = apply_prepend_scroll_restore(
-                &adjustment_for_idle,
-                &anchor_for_idle,
-                preserve_value,
-            );
-            if let Some(value) = restore.applied_value {
-                last_applied_for_idle.set(value);
-                did_restore_for_idle.set(true);
+                stable_frames.set(stable_frames.get() + 1);
             }
         }
+
+        frame_count.set(frame_count.get() + 1);
+
+        let done = (applied.get() && stable_frames.get() >= PREPEND_REQUIRED_STABLE_FRAMES)
+            || frame_count.get() >= PREPEND_MAX_FRAMES;
+
+        if done {
+            prepend_in_progress.set(false);
+            older_loading.set_visible(false);
+            // Brief cooldown so an immediate value-changed event (e.g. from
+            // GTK's own settle, or a user scroll inertia tick) cannot kick a
+            // second fetch on the same frame.
+            cooldown_until.set(glib::monotonic_time() + 250_000);
+            glib::ControlFlow::Break
+        } else {
+            glib::ControlFlow::Continue
+        }
     });
 
-    let adjustment_for_tick = adjustment.clone();
-    let anchor_for_tick = anchor.clone();
-    let loading_for_tick = widgets.older_messages_loading.clone();
-    let prepend_in_progress_for_tick = widgets.message_prepend_in_progress.clone();
-    let generation_for_tick = widgets.message_prepend_generation.clone();
-    let last_applied_for_tick = last_applied_value.clone();
-    let did_restore_for_tick = did_restore.clone();
-    let upper_notify_handler_for_tick = upper_notify_handler.clone();
-    let tick_state = Rc::new(RefCell::new((0usize, 0usize, f64::NAN, f64::NAN)));
-    let tick_state_for_callback = tick_state.clone();
-
-    widgets.message_scroller.add_tick_callback(move |_, _| {
-        if generation_for_tick.get() != anchor_for_tick.generation {
-            disconnect_upper_notify(&adjustment_for_tick, &upper_notify_handler_for_tick);
-            return gtk::glib::ControlFlow::Break;
-        }
-
-        let last_applied = last_applied_for_tick.get();
-        let tick_count = tick_state_for_callback.borrow().0;
-        if did_restore_for_tick.get()
-            && tick_count > 0
-            && !last_applied.is_nan()
-            && (adjustment_for_tick.value() - last_applied).abs()
-                > PREPEND_USER_SCROLL_ABORT_THRESHOLD
-        {
-            disconnect_upper_notify(&adjustment_for_tick, &upper_notify_handler_for_tick);
-            loading_for_tick.set_visible(false);
-            prepend_in_progress_for_tick.set(false);
-            return gtk::glib::ControlFlow::Break;
-        }
-
-        let preserve_value = if did_restore_for_tick.get() {
-            anchor_for_tick.value_before
-        } else {
-            adjustment_for_tick.value()
-        };
-        let restore =
-            apply_prepend_scroll_restore(&adjustment_for_tick, &anchor_for_tick, preserve_value);
-        if let Some(value) = restore.applied_value {
-            last_applied_for_tick.set(value);
-            did_restore_for_tick.set(true);
-        }
-
-        let upper_after = adjustment_for_tick.upper();
-        let page_size_after = adjustment_for_tick.page_size();
-        let mut tick_state = tick_state_for_callback.borrow_mut();
-        let count = tick_state.0 + 1;
-        let stable_count = if restore.aligned
-            && nearly_equal(tick_state.2, upper_after)
-            && nearly_equal(tick_state.3, page_size_after)
-        {
-            tick_state.1 + 1
-        } else {
-            0
-        };
-
-        *tick_state = (count, stable_count, upper_after, page_size_after);
-
-        if (did_restore_for_tick.get() && stable_count >= 1) || count >= 12 {
-            let preserve_value = if did_restore_for_tick.get() {
-                anchor_for_tick.value_before
-            } else {
-                adjustment_for_tick.value()
-            };
-            let restore = apply_prepend_scroll_restore(
-                &adjustment_for_tick,
-                &anchor_for_tick,
-                preserve_value,
-            );
-            if let Some(value) = restore.applied_value {
-                last_applied_for_tick.set(value);
-            }
-            disconnect_upper_notify(&adjustment_for_tick, &upper_notify_handler_for_tick);
-            loading_for_tick.set_visible(false);
-            prepend_in_progress_for_tick.set(false);
-            return gtk::glib::ControlFlow::Break;
-        }
-
-        gtk::glib::ControlFlow::Continue
-    });
-
-    let loading_for_timeout = widgets.older_messages_loading.clone();
-    let prepend_in_progress_for_timeout = widgets.message_prepend_in_progress.clone();
-    let generation_for_timeout = widgets.message_prepend_generation.clone();
-    let anchor_for_timeout = anchor.clone();
-    let adjustment_for_timeout = adjustment.clone();
-    let upper_notify_handler_for_timeout = upper_notify_handler.clone();
+    // Safety net: if upper never grows (no rows actually rendered, or the
+    // chat changed mid-flight without bumping our generation), release the
+    // lock so the UI doesn't deadlock the spinner / prepend gate.
+    let prepend_generation_timeout = widgets.message_prepend_generation.clone();
+    let prepend_in_progress_timeout = widgets.message_prepend_in_progress.clone();
+    let older_loading_timeout = widgets.older_messages_loading.clone();
     glib::timeout_add_local_once(Duration::from_secs(2), move || {
-        if generation_for_timeout.get() == anchor_for_timeout.generation
-            && prepend_in_progress_for_timeout.get()
-        {
-            disconnect_upper_notify(&adjustment_for_timeout, &upper_notify_handler_for_timeout);
-            loading_for_timeout.set_visible(false);
-            prepend_in_progress_for_timeout.set(false);
+        if prepend_generation_timeout.get() == generation {
+            prepend_in_progress_timeout.set(false);
+            older_loading_timeout.set_visible(false);
         }
     });
-}
-
-fn apply_prepend_scroll_restore(
-    adjustment: &gtk::Adjustment,
-    anchor: &PrependScrollAnchor,
-    preserve_value: f64,
-) -> PrependScrollRestore {
-    let delta = adjustment.upper() - anchor.upper_before;
-
-    // Once GTK reports the new upper bound, the delta is the actual inserted
-    // height. Applying row correction in the same frame can double-correct.
-    if delta > 0.5 {
-        let target = clamp_adjustment_value(adjustment, preserve_value + delta);
-        adjustment.set_value(target);
-        return PrependScrollRestore {
-            aligned: true,
-            applied_value: Some(target),
-        };
-    }
-
-    PrependScrollRestore {
-        aligned: false,
-        applied_value: None,
-    }
-}
-
-struct PrependScrollRestore {
-    aligned: bool,
-    applied_value: Option<f64>,
-}
-
-fn disconnect_upper_notify(
-    adjustment: &gtk::Adjustment,
-    handler: &Rc<RefCell<Option<glib::SignalHandlerId>>>,
-) {
-    if let Some(handler_id) = handler.borrow_mut().take() {
-        adjustment.disconnect(handler_id);
-    }
-}
-
-fn clamp_adjustment_value(adjustment: &gtk::Adjustment, value: f64) -> f64 {
-    let lower = adjustment.lower();
-    let upper = (adjustment.upper() - adjustment.page_size()).max(lower);
-
-    value.max(lower).min(upper)
-}
-
-fn nearly_equal(left: f64, right: f64) -> bool {
-    if left.is_nan() || right.is_nan() {
-        false
-    } else {
-        (left - right).abs() <= 0.5
-    }
 }
 
 fn preserve_scroll_position_for_update(widgets: &Widgets) -> impl FnOnce() + 'static {
@@ -783,10 +660,10 @@ pub fn handle_ui_message(
             };
 
             if added > 0 {
-                let prepend_anchor = begin_preserve_scroll_anchor_for_prepend(widgets);
+                let anchor = begin_prepend(widgets);
                 let state_borrow = state.borrow();
                 render_conversation(widgets, &state_borrow, sender);
-                finish_preserve_scroll_anchor_for_prepend(widgets, prepend_anchor);
+                finish_prepend(widgets, anchor);
             } else {
                 widgets.older_messages_loading.set_visible(false);
             }
