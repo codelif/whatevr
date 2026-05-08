@@ -126,16 +126,6 @@ func (c *Client) connectionLooksOffline(ctx context.Context) bool {
 	if !client.IsLoggedIn() || !client.IsConnected() {
 		return true
 	}
-	if client.Store.PushName == "" && client.MessengerConfig == nil {
-		return false
-	}
-
-	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	if err := client.SendPresence(probeCtx, c.desiredPresence()); err != nil {
-		c.log.Warnf("WhatsApp connection probe failed: %v", err)
-		return true
-	}
 	return false
 }
 

@@ -44,7 +44,6 @@ type Client struct {
 
 	avatarMu             sync.Mutex
 	avatarRefreshRunning bool
-	avatarRefreshQueued  bool
 
 	sendQueueMu   sync.Mutex
 	sendQueueWake chan struct{}

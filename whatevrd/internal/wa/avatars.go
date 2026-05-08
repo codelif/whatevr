@@ -12,6 +12,8 @@ import (
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/types"
+
+	appstore "whatevrd/internal/store"
 )
 
 const maxAvatarBytes = 5 * 1024 * 1024
@@ -35,26 +37,19 @@ func (c *Client) scheduleAvatarRefresh(ctx context.Context, delay time.Duration)
 func (c *Client) runAvatarRefresh(ctx context.Context) {
 	c.avatarMu.Lock()
 	if c.avatarRefreshRunning {
-		c.avatarRefreshQueued = true
 		c.avatarMu.Unlock()
 		return
 	}
 	c.avatarRefreshRunning = true
 	c.avatarMu.Unlock()
 
-	for {
-		c.refreshAvatarsBackground(ctx)
-
+	defer func() {
 		c.avatarMu.Lock()
-		if !c.avatarRefreshQueued || ctx.Err() != nil {
-			c.avatarRefreshRunning = false
-			c.avatarRefreshQueued = false
-			c.avatarMu.Unlock()
-			return
-		}
-		c.avatarRefreshQueued = false
+		c.avatarRefreshRunning = false
 		c.avatarMu.Unlock()
-	}
+	}()
+
+	c.refreshAvatarsBackground(ctx)
 }
 
 func (c *Client) refreshAvatarsBackground(ctx context.Context) {
@@ -72,6 +67,9 @@ func (c *Client) refreshAvatarsBackground(ctx context.Context) {
 	for _, chat := range chats {
 		if ctx.Err() != nil {
 			return
+		}
+		if !chatNeedsAvatarRefresh(chat) {
+			continue
 		}
 
 		jid, err := types.ParseJID(chat.ID)
@@ -108,6 +106,65 @@ func (c *Client) refreshAvatarsBackground(ctx context.Context) {
 		}
 		c.daemon.PublishChatUpdated(toDaemonChat(updatedChat))
 	}
+}
+
+func (c *Client) scheduleAvatarRefreshForChat(ctx context.Context, chat appstore.Chat, delay time.Duration) {
+	if !chatNeedsAvatarRefresh(chat) {
+		return
+	}
+
+	go func() {
+		if delay > 0 {
+			timer := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+		}
+
+		c.refreshAvatarForChat(ctx, chat)
+	}()
+}
+
+func (c *Client) refreshAvatarForChat(ctx context.Context, chat appstore.Chat) {
+	client := c.currentClient()
+	if client == nil || !client.IsLoggedIn() || ctx.Err() != nil {
+		return
+	}
+
+	jid, err := types.ParseJID(chat.ID)
+	if err != nil || shouldSkipAvatarJID(jid) {
+		return
+	}
+
+	picID, localPath, err := c.fetchAndCacheAvatar(ctx, jid, chat.AvatarPictureID)
+	if err != nil {
+		if ctx.Err() != nil || isTransientAvatarError(err) {
+			return
+		}
+		c.log.Warnf("Avatar refresh: failed for %s: %v", chat.ID, err)
+		return
+	}
+	if picID == "" {
+		return
+	}
+
+	if err := c.store.UpdateChatAvatar(ctx, chat.ID, picID, localPath); err != nil {
+		c.log.Warnf("Avatar refresh: failed to update DB for %s: %v", chat.ID, err)
+		return
+	}
+
+	updatedChat, err := c.store.GetChat(ctx, chat.ID)
+	if err != nil {
+		return
+	}
+	c.daemon.PublishChatUpdated(toDaemonChat(updatedChat))
+}
+
+func chatNeedsAvatarRefresh(chat appstore.Chat) bool {
+	return strings.TrimSpace(chat.AvatarPictureID) == "" || strings.TrimSpace(chat.AvatarLocalPath) == ""
 }
 
 func shouldSkipAvatarJID(jid types.JID) bool {

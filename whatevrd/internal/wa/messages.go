@@ -163,8 +163,8 @@ func (c *Client) handleHistorySync(eventGen uint64, evt *events.HistorySync) {
 }
 
 func (c *Client) handleMessage(ctx context.Context, evt *events.Message) {
-	if _, inserted := c.ingestMessage(ctx, evt, ingestOptions{source: sourceLive}); inserted {
-		c.scheduleAvatarRefresh(ctx, 2*time.Second)
+	if saved, inserted := c.ingestMessage(ctx, evt, ingestOptions{source: sourceLive}); inserted {
+		c.scheduleAvatarRefreshForChat(ctx, saved.Chat, 2*time.Second)
 	}
 }
 
