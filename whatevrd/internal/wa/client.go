@@ -63,7 +63,11 @@ type MessageNotifier interface {
 }
 
 func New(ctx context.Context, paths app.Paths, daemon *app.Daemon, store *appstore.DB, notifier MessageNotifier) (*Client, error) {
-	log := waLog.Stdout("whatevrd/wa", "WARN", false)
+	level := os.Getenv("WHATEVRD_LOG_LEVEL")
+	if level == "" {
+		level = "WARN"
+	}
+	log := waLog.Stdout("whatevrd/wa", level, false)
 	container, err := openSessionStore(ctx, paths.SessionDBPath, log.Sub("DB"))
 	if err != nil {
 		return nil, err
