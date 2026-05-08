@@ -166,19 +166,53 @@ fn preserve_scroll_position_for_update(widgets: &Widgets) -> impl FnOnce() + 'st
     let message_scroller = widgets.message_scroller.clone();
     let adjustment = widgets.message_scroller.vadjustment();
     let value_before = adjustment.value();
+    let scroll = widgets.scroll_state.clone();
 
     move || {
+        if should_skip_scroll_restore(&scroll) {
+            return;
+        }
+
         let adjustment_for_idle = adjustment.clone();
+        let scroll_for_idle = scroll.clone();
         glib::idle_add_local_once(move || {
-            adjustment_for_idle.set_value(value_before);
+            if should_skip_scroll_restore(&scroll_for_idle) {
+                return;
+            }
+
+            set_adjustment_value_silently(&scroll_for_idle, &adjustment_for_idle, value_before);
         });
 
         let adjustment_for_tick = adjustment.clone();
+        let scroll_for_tick = scroll.clone();
         message_scroller.add_tick_callback(move |_, _| {
-            adjustment_for_tick.set_value(value_before);
+            if should_skip_scroll_restore(&scroll_for_tick) {
+                return gtk::glib::ControlFlow::Break;
+            }
+
+            set_adjustment_value_silently(&scroll_for_tick, &adjustment_for_tick, value_before);
             gtk::glib::ControlFlow::Break
         });
     }
+}
+
+fn should_skip_scroll_restore(scroll: &Rc<crate::ui::widgets::ScrollState>) -> bool {
+    scroll.loading.get() || scroll.scroll_burst_source_id.borrow().is_some()
+}
+
+fn set_adjustment_value_silently(
+    scroll: &Rc<crate::ui::widgets::ScrollState>,
+    adjustment: &gtk::Adjustment,
+    value: f64,
+) {
+    scroll.suppress_value_handler.set(true);
+    adjustment.set_value(value);
+    scroll.last_value.set(adjustment.value());
+
+    let scroll = scroll.clone();
+    glib::idle_add_local_once(move || {
+        scroll.suppress_value_handler.set(false);
+    });
 }
 
 fn schedule_chat_list_render(state: &Rc<RefCell<UiState>>, sender: UiSender) {

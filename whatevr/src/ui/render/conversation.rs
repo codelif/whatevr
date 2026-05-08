@@ -219,7 +219,10 @@ fn sync_message_store(widgets: &Widgets, chat_id: &str, messages: &[proto::Messa
 }
 
 fn first_store_id(store: &gtk::gio::ListStore) -> Option<String> {
-    store.item(0).and_downcast::<MessageObject>().map(|m| m.id())
+    store
+        .item(0)
+        .and_downcast::<MessageObject>()
+        .map(|m| m.id())
 }
 
 fn existing_tail_matches(store: &gtk::gio::ListStore, slice: &[proto::Message]) -> bool {

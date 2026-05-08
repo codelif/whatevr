@@ -322,11 +322,7 @@ fn install_scroll_pagination(
                 let moving_up = value < last_value - DIRECTION_EPS;
 
                 if moving_up && value <= TOP_TRIGGER_PX {
-                    arm_and_kick(
-                        &scroll_widgets,
-                        &pagination_state,
-                        &pagination_sender,
-                    );
+                    arm_and_kick(&scroll_widgets, &pagination_state, &pagination_sender);
                 }
             });
     }
@@ -336,9 +332,8 @@ fn install_scroll_pagination(
     // change the adjustment value, so notify::value never fires. Use the
     // raw scroll event plus an idle probe to detect that situation, and
     // also restart the burst-end timer on every scroll event.
-    let scroll_controller = gtk::EventControllerScroll::new(
-        gtk::EventControllerScrollFlags::VERTICAL,
-    );
+    let scroll_controller =
+        gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
     scroll_controller.set_propagation_phase(gtk::PropagationPhase::Capture);
 
     {
@@ -346,9 +341,14 @@ fn install_scroll_pagination(
         let pagination_state = state.clone();
         let pagination_sender = sender.clone();
 
-        scroll_controller.connect_scroll(move |_, _dx, _dy| {
+        scroll_controller.connect_scroll(move |_, _dx, dy| {
             restart_scroll_burst_timer(&scroll_widgets);
-            schedule_top_scroll_probe(&scroll_widgets, &pagination_state, &pagination_sender);
+
+            let adjustment = scroll_widgets.message_scroller.vadjustment();
+            if dy < 0.0 && adjustment.value() <= TOP_TRIGGER_PX {
+                schedule_top_scroll_probe(&scroll_widgets, &pagination_state, &pagination_sender);
+            }
+
             glib::Propagation::Proceed
         });
     }
@@ -364,12 +364,10 @@ fn restart_scroll_burst_timer(widgets: &Rc<crate::ui::widgets::Widgets>) {
     }
 
     let widgets_for_timeout = widgets.clone();
-    let source = glib::timeout_add_local_once(
-        Duration::from_millis(SCROLL_BURST_END_MS),
-        move || {
+    let source =
+        glib::timeout_add_local_once(Duration::from_millis(SCROLL_BURST_END_MS), move || {
             on_scroll_burst_finished(&widgets_for_timeout);
-        },
-    );
+        });
     *scroll.scroll_burst_source_id.borrow_mut() = Some(source);
 }
 
