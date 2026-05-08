@@ -4,7 +4,9 @@ use std::{
     rc::Rc,
 };
 
-use crate::ui::render::{chat_row::RenderedChatRow, message_row::RenderedMessage};
+use gtk::{gio, glib};
+
+use crate::ui::render::chat_row::RenderedChatRow;
 
 #[derive(Clone)]
 pub struct Widgets {
@@ -39,19 +41,19 @@ pub struct Widgets {
     pub conversation_title: gtk::Label,
 
     pub message_scroller: gtk::ScrolledWindow,
-    pub message_box: gtk::Box,
+    pub message_list_view: gtk::ListView,
+    pub message_store: gio::ListStore,
     pub older_messages_loading: gtk::Box,
     pub scroll_to_bottom_button: gtk::Button,
     pub scroll_to_bottom_icon: gtk::Image,
     pub scroll_to_bottom_badge: gtk::Label,
     pub messages_below_count: Cell<u32>,
-    pub message_prepend_in_progress: Rc<Cell<bool>>,
-    pub message_prepend_generation: Rc<Cell<u64>>,
-    // Monotonic-time deadline (microseconds) before another older-messages
-    // fetch may fire. Set briefly after each prepend completes so the value-
-    // changed event that follows our scroll restoration cannot immediately
-    // re-trigger pagination.
-    pub older_fetch_cooldown_until: Rc<Cell<i64>>,
+
+    // Scroll/prepend state machine. See `signals.rs` and `controller.rs`
+    // for the algorithm. Mirrors the design described in
+    // https://docs.gtk.org/gtk4/class.ListView.html plus a burst-lock so
+    // a single fast fling cannot prepend more than one page at a time.
+    pub scroll_state: Rc<ScrollState>,
 
     pub composer_scroller: gtk::ScrolledWindow,
     pub composer_text_view: gtk::TextView,
@@ -67,5 +69,45 @@ pub struct Widgets {
     pub rendered_chat_order: RefCell<Vec<String>>,
     pub message_scroll_generation: Rc<Cell<u64>>,
     pub rendered_chat_id: RefCell<Option<String>>,
-    pub rendered_messages: RefCell<Vec<RenderedMessage>>,
+}
+
+#[derive(Default)]
+pub struct ScrollState {
+    // True while a prepend operation is in flight (insert + scroll restore).
+    pub loading: Cell<bool>,
+    // True when a prepend is currently allowed.
+    pub prepend_armed: Cell<bool>,
+    // True after a successful prepend, until the current scroll burst ends.
+    pub block_rearm_until_scroll_stops: Cell<bool>,
+    // True while we programmatically set vadj.value, so the value-changed
+    // handler does not interpret it as user scrolling.
+    pub suppress_value_handler: Cell<bool>,
+    // Last observed adjustment value. NaN means "not yet initialized".
+    pub last_value: Cell<f64>,
+    // Restart-on-scroll timer used to detect the end of a scroll burst.
+    pub scroll_burst_source_id: RefCell<Option<glib::SourceId>>,
+    // True while an idle probe to maybe trigger a prepend from the top
+    // is already queued.
+    pub top_scroll_probe_scheduled: Cell<bool>,
+    // Snapshot of vadj.upper / vadj.value taken before a prepend, used to
+    // restore the visible position after GTK recalculates the new upper.
+    pub restore_state: RefCell<Option<RestoreState>>,
+    // Handler id for the temporary notify::upper subscription installed
+    // during a prepend. Cleared when the restore lands.
+    pub restore_upper_handler: RefCell<Option<glib::SignalHandlerId>>,
+}
+
+pub struct RestoreState {
+    pub old_upper: f64,
+    pub old_value: f64,
+    pub tries: u32,
+}
+
+impl ScrollState {
+    pub fn new() -> Self {
+        let state = Self::default();
+        state.prepend_armed.set(true);
+        state.last_value.set(f64::NAN);
+        state
+    }
 }

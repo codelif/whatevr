@@ -32,10 +32,14 @@ pub async fn load_messages_before(
     let channel = channel::connect().await?;
     let mut client = ChatServiceClient::new(channel);
 
+    // Larger pages reduce paginate-flicker churn: each prepend covers more
+    // screen, so users land further from the top edge after a fetch and
+    // don't immediately re-trigger the next one.
+    let limit = if before_message_id.is_some() { 100 } else { 50 };
     let response = client
         .get_messages(rpc_request(GetMessagesRequest {
             chat_id,
-            limit: 50,
+            limit,
             before_message_id: before_message_id.unwrap_or_default(),
         }))
         .await?

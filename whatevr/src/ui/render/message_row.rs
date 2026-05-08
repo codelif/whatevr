@@ -5,17 +5,6 @@ use crate::ui::render::avatar::{cached_texture, schedule_async_image_load};
 use crate::ui::{commands::request_download_media, context::UiSender};
 use crate::util::time::format_message_meta;
 
-#[derive(Clone)]
-pub struct RenderedMessage {
-    pub id: String,
-    pub status: i32,
-    pub row: gtk::Box,
-    pub meta_label: gtk::Label,
-    pub text: String,
-    pub media_mime_type: String,
-    pub media_local_path: String,
-}
-
 pub fn build_message_row(message: &proto::Message, sender: &UiSender) -> (gtk::Box, gtk::Label) {
     let outgoing = message.direction == proto::MessageDirection::Outgoing as i32;
 

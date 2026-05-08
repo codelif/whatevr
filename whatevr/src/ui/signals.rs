@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, rc::Rc, time::Duration};
 
 use adw::prelude::*;
 use gtk::{gdk, gio, glib};
@@ -258,58 +258,194 @@ pub fn connect(
         .composer_text_view
         .add_controller(composer_key_controller);
 
-    let pagination_state = state.clone();
-    let pagination_sender = sender.clone();
+    install_scroll_pagination(widgets, state, sender);
+}
 
-    let scroll_widgets = widgets.clone();
-    widgets
-        .message_scroller
-        .vadjustment()
-        .connect_value_changed(move |adjustment| {
-            if scroll_widgets.message_prepend_in_progress.get() {
-                return;
-            }
+// Pixel distance to the top that arms an older-messages fetch.
+const TOP_TRIGGER_PX: f64 = 120.0;
+// How long the scroll-burst timer sleeps before considering the gesture
+// over. Increase if a single fast fling still loads multiple pages.
+const SCROLL_BURST_END_MS: u64 = 220;
+// Anything smaller than this is treated as adjustment noise rather than
+// a real upward scroll.
+const DIRECTION_EPS: f64 = 1.0;
 
-            update_messages_below_button(&scroll_widgets);
+fn install_scroll_pagination(
+    widgets: &Rc<crate::ui::widgets::Widgets>,
+    state: &Rc<RefCell<UiState>>,
+    sender: &UiSender,
+) {
+    // value-changed handles the common case: user is mid-scroll, value
+    // moves toward 0, and we cross the trigger threshold.
+    {
+        let scroll_widgets = widgets.clone();
+        let pagination_state = state.clone();
+        let pagination_sender = sender.clone();
 
-            // Pre-fetch *before* the user reaches the absolute top: as soon
-            // as we are within ~one viewport of the top edge we kick the
-            // next page. The local DB read usually completes well within the
-            // distance the user will scroll, so by the time they arrive the
-            // older rows are already prepended and scroll position has been
-            // restored.
-            //
-            // We require the scroller to have more content than a viewport
-            // before paginating; otherwise the very first render (which
-            // sits at the bottom with `value == 0`) would immediately fire.
-            if adjustment.upper() <= adjustment.page_size() {
-                return;
-            }
+        widgets
+            .message_scroller
+            .vadjustment()
+            .connect_value_changed(move |adjustment| {
+                update_messages_below_button(&scroll_widgets);
 
-            // Cooldown after a prepend completes prevents a value-changed
-            // event in the same cluster (e.g. layout settle, inertial
-            // scroll tick) from re-firing pagination instantly.
-            if scroll_widgets.older_fetch_cooldown_until.get() > glib::monotonic_time() {
-                return;
-            }
+                let scroll = &scroll_widgets.scroll_state;
+                let value = adjustment.value();
 
-            // Use a viewport-relative trigger zone, clamped so the threshold
-            // is sensible on both tiny and huge windows.
-            let trigger_zone = adjustment.page_size().clamp(200.0, 600.0);
-            if adjustment.value() > trigger_zone {
-                return;
-            }
+                if scroll.suppress_value_handler.get() {
+                    scroll.last_value.set(value);
+                    return;
+                }
 
-            if try_kick_older_fetch(&pagination_state, &pagination_sender) {
-                scroll_widgets.message_scroll_generation.set(
-                    scroll_widgets
-                        .message_scroll_generation
-                        .get()
-                        .wrapping_add(1),
-                );
-                scroll_widgets.older_messages_loading.set_visible(true);
-            }
+                let last_value = scroll.last_value.get();
+                scroll.last_value.set(value);
+
+                if scroll.loading.get() {
+                    return;
+                }
+
+                if scroll.block_rearm_until_scroll_stops.get() {
+                    return;
+                }
+
+                if !scroll.prepend_armed.get() {
+                    return;
+                }
+
+                if adjustment.upper() <= adjustment.page_size() {
+                    return;
+                }
+
+                if last_value.is_nan() {
+                    return;
+                }
+
+                let moving_up = value < last_value - DIRECTION_EPS;
+
+                if moving_up && value <= TOP_TRIGGER_PX {
+                    arm_and_kick(
+                        &scroll_widgets,
+                        &pagination_state,
+                        &pagination_sender,
+                    );
+                }
+            });
+    }
+
+    // EventControllerScroll handles the "already at top" case: when the
+    // viewport is clamped at value=0, more upward scroll input does not
+    // change the adjustment value, so notify::value never fires. Use the
+    // raw scroll event plus an idle probe to detect that situation, and
+    // also restart the burst-end timer on every scroll event.
+    let scroll_controller = gtk::EventControllerScroll::new(
+        gtk::EventControllerScrollFlags::VERTICAL,
+    );
+    scroll_controller.set_propagation_phase(gtk::PropagationPhase::Capture);
+
+    {
+        let scroll_widgets = widgets.clone();
+        let pagination_state = state.clone();
+        let pagination_sender = sender.clone();
+
+        scroll_controller.connect_scroll(move |_, _dx, _dy| {
+            restart_scroll_burst_timer(&scroll_widgets);
+            schedule_top_scroll_probe(&scroll_widgets, &pagination_state, &pagination_sender);
+            glib::Propagation::Proceed
         });
+    }
+
+    widgets.message_scroller.add_controller(scroll_controller);
+}
+
+fn restart_scroll_burst_timer(widgets: &Rc<crate::ui::widgets::Widgets>) {
+    let scroll = widgets.scroll_state.clone();
+
+    if let Some(source) = scroll.scroll_burst_source_id.borrow_mut().take() {
+        source.remove();
+    }
+
+    let widgets_for_timeout = widgets.clone();
+    let source = glib::timeout_add_local_once(
+        Duration::from_millis(SCROLL_BURST_END_MS),
+        move || {
+            on_scroll_burst_finished(&widgets_for_timeout);
+        },
+    );
+    *scroll.scroll_burst_source_id.borrow_mut() = Some(source);
+}
+
+fn on_scroll_burst_finished(widgets: &Rc<crate::ui::widgets::Widgets>) {
+    let scroll = &widgets.scroll_state;
+    *scroll.scroll_burst_source_id.borrow_mut() = None;
+
+    if scroll.block_rearm_until_scroll_stops.get() {
+        scroll.block_rearm_until_scroll_stops.set(false);
+        scroll.prepend_armed.set(true);
+
+        // Take the post-restore value as the new baseline so the next
+        // value-changed comparison starts fresh — otherwise the residual
+        // delta from the restore could read as another upward scroll.
+        let value = widgets.message_scroller.vadjustment().value();
+        scroll.last_value.set(value);
+    }
+}
+
+fn schedule_top_scroll_probe(
+    widgets: &Rc<crate::ui::widgets::Widgets>,
+    state: &Rc<RefCell<UiState>>,
+    sender: &UiSender,
+) {
+    let scroll = &widgets.scroll_state;
+
+    if scroll.top_scroll_probe_scheduled.get() {
+        return;
+    }
+    scroll.top_scroll_probe_scheduled.set(true);
+
+    let widgets_for_idle = widgets.clone();
+    let state_for_idle = state.clone();
+    let sender_for_idle = sender.clone();
+
+    glib::idle_add_local_once(move || {
+        let scroll = &widgets_for_idle.scroll_state;
+        scroll.top_scroll_probe_scheduled.set(false);
+
+        if scroll.loading.get() {
+            return;
+        }
+        if scroll.block_rearm_until_scroll_stops.get() {
+            return;
+        }
+        if !scroll.prepend_armed.get() {
+            return;
+        }
+
+        let adjustment = widgets_for_idle.message_scroller.vadjustment();
+        if adjustment.upper() <= adjustment.page_size() {
+            return;
+        }
+
+        if adjustment.value() <= TOP_TRIGGER_PX {
+            arm_and_kick(&widgets_for_idle, &state_for_idle, &sender_for_idle);
+        }
+    });
+}
+
+fn arm_and_kick(
+    widgets: &Rc<crate::ui::widgets::Widgets>,
+    state: &Rc<RefCell<UiState>>,
+    sender: &UiSender,
+) {
+    let scroll = &widgets.scroll_state;
+
+    // One-prepend-per-burst lock: regardless of whether the daemon
+    // actually has older messages, we hold off on triggering a second
+    // prepend until the current scroll burst has ended.
+    scroll.prepend_armed.set(false);
+    scroll.block_rearm_until_scroll_stops.set(true);
+
+    if try_kick_older_fetch(state, sender) {
+        widgets.older_messages_loading.set_visible(true);
+    }
 }
 
 fn try_kick_older_fetch(state: &Rc<RefCell<UiState>>, sender: &UiSender) -> bool {

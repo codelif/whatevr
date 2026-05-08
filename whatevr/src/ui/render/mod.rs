@@ -4,5 +4,6 @@ pub mod chat_row;
 pub mod composer;
 pub mod conversation;
 pub mod history_sync;
+pub mod message_object;
 pub mod message_row;
 pub mod qr;

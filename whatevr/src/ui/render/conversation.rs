@@ -1,6 +1,6 @@
 use std::{cell::RefCell, rc::Rc, time::Duration};
 
-use gtk::prelude::*;
+use gtk::{glib, prelude::*};
 
 use crate::config::{
     CONVERSATION_EMPTY_PAGE, CONVERSATION_LOADING_PAGE, CONVERSATION_MESSAGES_PAGE,
@@ -8,16 +8,10 @@ use crate::config::{
 };
 use crate::proto;
 use crate::ui::{
-    context::UiSender,
-    render::{
-        avatar::set_avatar_image,
-        composer::render_composer_state,
-        message_row::{RenderedMessage, build_message_row},
-    },
-    state::UiState,
-    widgets::Widgets,
+    context::UiSender, render::avatar::set_avatar_image, render::composer::render_composer_state,
+    render::message_object::MessageObject, state::UiState, widgets::Widgets,
 };
-use crate::util::{text::display_chat_name, time::format_message_meta};
+use crate::util::text::display_chat_name;
 
 pub fn render_conversation_header(widgets: &Widgets, state: &UiState) {
     let Some(selected_chat_id) = state.selected_chat_id.as_deref() else {
@@ -38,14 +32,14 @@ pub fn render_conversation_header(widgets: &Widgets, state: &UiState) {
     widgets.conversation_title.set_text(display_chat_name(chat));
 }
 
-pub fn render_conversation(widgets: &Widgets, state: &UiState, sender: &UiSender) {
+pub fn render_conversation(widgets: &Widgets, state: &UiState, _sender: &UiSender) {
     let Some(selected_chat_id) = state.selected_chat_id.as_deref() else {
         widgets
             .conversation_stack
             .set_visible_child_name(CONVERSATION_PLACEHOLDER_PAGE);
         cancel_message_prepend(widgets);
         render_conversation_header(widgets, state);
-        reset_rendered_messages(widgets);
+        reset_message_store(widgets);
         reset_messages_below(widgets);
         render_composer_state(widgets, state);
         return;
@@ -57,7 +51,7 @@ pub fn render_conversation(widgets: &Widgets, state: &UiState, sender: &UiSender
             .set_visible_child_name(CONVERSATION_PLACEHOLDER_PAGE);
         cancel_message_prepend(widgets);
         render_conversation_header(widgets, state);
-        reset_rendered_messages(widgets);
+        reset_message_store(widgets);
         reset_messages_below(widgets);
         render_composer_state(widgets, state);
         return;
@@ -67,7 +61,7 @@ pub fn render_conversation(widgets: &Widgets, state: &UiState, sender: &UiSender
         .conversation_stack
         .set_visible_child_name("selected");
     widgets.older_messages_loading.set_visible(
-        widgets.message_prepend_in_progress.get()
+        widgets.scroll_state.loading.get()
             || state
                 .older_fetch_in_flight
                 .as_ref()
@@ -88,7 +82,7 @@ pub fn render_conversation(widgets: &Widgets, state: &UiState, sender: &UiSender
             .conversation_content_stack
             .set_visible_child_name(CONVERSATION_LOADING_PAGE);
         cancel_message_prepend(widgets);
-        reset_rendered_messages(widgets);
+        reset_message_store(widgets);
         reset_messages_below(widgets);
         render_composer_state(widgets, state);
         return;
@@ -104,7 +98,7 @@ pub fn render_conversation(widgets: &Widgets, state: &UiState, sender: &UiSender
             .conversation_content_stack
             .set_visible_child_name(CONVERSATION_EMPTY_PAGE);
         cancel_message_prepend(widgets);
-        reset_rendered_messages(widgets);
+        reset_message_store(widgets);
         render_composer_state(widgets, state);
         return;
     }
@@ -116,7 +110,7 @@ pub fn render_conversation(widgets: &Widgets, state: &UiState, sender: &UiSender
         .map(|rendered_chat_id| rendered_chat_id != selected_chat_id)
         .unwrap_or(true);
 
-    sync_message_rows(widgets, selected_chat_id, &state.current_messages, sender);
+    sync_message_store(widgets, selected_chat_id, &state.current_messages);
 
     if is_newly_rendered_chat {
         reset_messages_below(widgets);
@@ -130,31 +124,38 @@ pub fn render_conversation(widgets: &Widgets, state: &UiState, sender: &UiSender
     render_composer_state(widgets, state);
 }
 
-fn reset_rendered_messages(widgets: &Widgets) {
-    let mut rendered = widgets.rendered_messages.borrow_mut();
-
-    for entry in rendered.drain(..) {
-        remove_message_row_if_child(widgets, &entry.row);
-    }
-
+fn reset_message_store(widgets: &Widgets) {
+    widgets.message_store.remove_all();
     *widgets.rendered_chat_id.borrow_mut() = None;
 }
 
 fn cancel_message_prepend(widgets: &Widgets) {
-    widgets
-        .message_prepend_generation
-        .set(widgets.message_prepend_generation.get().wrapping_add(1));
-    widgets.message_prepend_in_progress.set(false);
+    let scroll = &widgets.scroll_state;
+
+    if let Some(handler) = scroll.restore_upper_handler.borrow_mut().take() {
+        widgets.message_scroller.vadjustment().disconnect(handler);
+    }
+    *scroll.restore_state.borrow_mut() = None;
+    scroll.loading.set(false);
+    scroll.prepend_armed.set(true);
+    scroll.block_rearm_until_scroll_stops.set(false);
+    scroll.suppress_value_handler.set(false);
+
+    if let Some(source) = scroll.scroll_burst_source_id.borrow_mut().take() {
+        source.remove();
+    }
+
     widgets.message_scroller.set_opacity(1.0);
     widgets.older_messages_loading.set_visible(false);
 }
 
-fn sync_message_rows(
-    widgets: &Widgets,
-    chat_id: &str,
-    messages: &[proto::Message],
-    sender: &UiSender,
-) {
+// `sync_message_store` reconciles the gio::ListStore behind the message
+// ListView with `messages`. It tries the two cheap fast paths first
+// (prepend-only and append-only) so existing rows keep their identity —
+// that's what lets the prepend anchor restore work.
+fn sync_message_store(widgets: &Widgets, chat_id: &str, messages: &[proto::Message]) {
+    let store = &widgets.message_store;
+
     let same_chat = widgets
         .rendered_chat_id
         .borrow()
@@ -163,153 +164,97 @@ fn sync_message_rows(
         .unwrap_or(false);
 
     if !same_chat {
-        reset_rendered_messages(widgets);
+        store.remove_all();
         *widgets.rendered_chat_id.borrow_mut() = Some(chat_id.to_string());
     }
 
-    let mut rendered = widgets.rendered_messages.borrow_mut();
+    let n = store.n_items() as usize;
 
-    if same_chat && sync_prepended_message_rows(widgets, &mut rendered, messages, sender) {
-        return;
+    if same_chat && n > 0 {
+        if let Some(anchor_id) = first_store_id(store) {
+            if let Some(anchor_idx) = messages.iter().position(|m| m.id == anchor_id) {
+                if messages.len() >= anchor_idx + n
+                    && existing_tail_matches(store, &messages[anchor_idx..anchor_idx + n])
+                {
+                    update_changed_items(store, &messages[anchor_idx..anchor_idx + n]);
+
+                    if anchor_idx > 0 {
+                        let prepend: Vec<MessageObject> = messages[..anchor_idx]
+                            .iter()
+                            .map(|m| MessageObject::new(m.clone()))
+                            .collect();
+                        store.splice(0, 0, &prepend);
+                    }
+
+                    for message in &messages[anchor_idx + n..] {
+                        store.append(&MessageObject::new(message.clone()));
+                    }
+
+                    return;
+                }
+            }
+        }
     }
 
-    let mut common = 0;
-
-    while common < messages.len()
-        && common < rendered.len()
-        && rendered[common].id == messages[common].id
-    {
+    // Fallback: longest common prefix by id, then splice the tail.
+    let mut common = 0usize;
+    while common < messages.len() && (common as u32) < store.n_items() {
+        let Some(item) = store.item(common as u32).and_downcast::<MessageObject>() else {
+            break;
+        };
+        if item.id() != messages[common].id {
+            break;
+        }
         common += 1;
     }
 
-    for i in 0..common {
-        if rendered[i].same_content(&messages[i]) {
-            let new_status = messages[i].status;
-            if rendered[i].status != new_status {
-                rendered[i]
-                    .meta_label
-                    .set_text(&format_message_meta(&messages[i]));
-                rendered[i].status = new_status;
-            }
-        } else {
-            let (row, meta_label) = build_message_row(&messages[i], sender);
-            remove_message_row_if_child(widgets, &rendered[i].row);
-            widgets.message_box.insert_child_after(
-                &row,
-                i.checked_sub(1).map(|previous| &rendered[previous].row),
-            );
+    update_changed_items(store, &messages[..common]);
 
-            rendered[i] = RenderedMessage::new(&messages[i], row, meta_label);
-        }
-    }
-
-    while rendered.len() > common {
-        if let Some(entry) = rendered.pop() {
-            remove_message_row_if_child(widgets, &entry.row);
-        }
-    }
-
-    for new_msg in &messages[common..] {
-        let (row, meta_label) = build_message_row(new_msg, sender);
-
-        widgets.message_box.append(&row);
-
-        rendered.push(RenderedMessage::new(new_msg, row, meta_label));
-    }
+    let store_n = store.n_items() as usize;
+    let new_tail: Vec<MessageObject> = messages[common..]
+        .iter()
+        .map(|m| MessageObject::new(m.clone()))
+        .collect();
+    store.splice(common as u32, (store_n - common) as u32, &new_tail);
 }
 
-fn sync_prepended_message_rows(
-    widgets: &Widgets,
-    rendered: &mut Vec<RenderedMessage>,
-    messages: &[proto::Message],
-    sender: &UiSender,
-) -> bool {
-    if rendered.is_empty() || messages.is_empty() {
-        return false;
-    }
+fn first_store_id(store: &gtk::gio::ListStore) -> Option<String> {
+    store.item(0).and_downcast::<MessageObject>().map(|m| m.id())
+}
 
-    let Some(anchor_index) = messages
-        .iter()
-        .position(|message| message.id == rendered[0].id)
-    else {
-        return false;
-    };
-    if anchor_index == 0 || messages.len() < anchor_index + rendered.len() {
-        return false;
-    }
-
-    let existing_messages = &messages[anchor_index..anchor_index + rendered.len()];
-    let trailing_messages = &messages[anchor_index + rendered.len()..];
-    if rendered
-        .iter()
-        .zip(existing_messages)
-        .any(|(rendered, message)| rendered.id != message.id)
-    {
-        return false;
-    }
-
-    for (rendered, message) in rendered.iter_mut().zip(existing_messages) {
-        let new_status = message.status;
-        if rendered.status != new_status {
-            rendered.meta_label.set_text(&format_message_meta(message));
-            rendered.status = new_status;
+fn existing_tail_matches(store: &gtk::gio::ListStore, slice: &[proto::Message]) -> bool {
+    for (i, expected) in slice.iter().enumerate() {
+        let Some(item) = store.item(i as u32).and_downcast::<MessageObject>() else {
+            return false;
+        };
+        if item.id() != expected.id {
+            return false;
         }
     }
-
-    let mut prepended = Vec::with_capacity(anchor_index);
-    for message in &messages[..anchor_index] {
-        let (row, meta_label) = build_message_row(message, sender);
-        prepended.push(RenderedMessage::new(message, row, meta_label));
-    }
-
-    for entry in prepended.iter().rev() {
-        widgets
-            .message_box
-            .insert_child_after(&entry.row, None::<&gtk::Widget>);
-    }
-
-    rendered.splice(0..0, prepended);
-
-    for message in trailing_messages {
-        let (row, meta_label) = build_message_row(message, sender);
-        widgets.message_box.append(&row);
-        rendered.push(RenderedMessage::new(message, row, meta_label));
-    }
-
     true
 }
 
-impl RenderedMessage {
-    fn same_content(&self, message: &proto::Message) -> bool {
-        self.text == message.text
-            && self.media_mime_type == message.media_mime_type
-            && self.media_local_path == message.media_local_path
-    }
-
-    fn new(message: &proto::Message, row: gtk::Box, meta_label: gtk::Label) -> Self {
-        Self {
-            id: message.id.clone(),
-            status: message.status,
-            row,
-            meta_label,
-            text: message.text.clone(),
-            media_mime_type: message.media_mime_type.clone(),
-            media_local_path: message.media_local_path.clone(),
+fn update_changed_items(store: &gtk::gio::ListStore, expected: &[proto::Message]) {
+    for (i, message) in expected.iter().enumerate() {
+        let Some(item) = store.item(i as u32).and_downcast::<MessageObject>() else {
+            continue;
+        };
+        let needs_update = {
+            let current = item.message();
+            current.text != message.text
+                || current.status != message.status
+                || current.media_local_path != message.media_local_path
+                || current.media_mime_type != message.media_mime_type
+                || current.media_width != message.media_width
+                || current.media_height != message.media_height
+        };
+        if needs_update {
+            item.set_message(message.clone());
+            // Force the factory to rebind this row so the visible widgets
+            // reflect the new state. With a virtualized ListView this is
+            // a no-op for off-screen rows.
+            store.items_changed(i as u32, 1, 1);
         }
-    }
-}
-
-fn remove_message_row_if_child(widgets: &Widgets, row: &gtk::Box) {
-    if row.parent().as_ref() == Some(widgets.message_box.upcast_ref()) {
-        if let Some(window) = widgets
-            .message_scroller
-            .root()
-            .and_downcast::<gtk::Window>()
-        {
-            gtk::prelude::GtkWindowExt::set_focus(&window, None::<&gtk::Widget>);
-        }
-
-        widgets.message_box.remove(row);
     }
 }
 
@@ -357,20 +302,24 @@ fn keep_messages_at_bottom(widgets: &Widgets, reveal_after_layout: bool) {
     widgets.message_scroll_generation.set(scroll_generation);
 
     let adjustment = widgets.message_scroller.vadjustment();
-    scroll_adjustment_to_bottom(&adjustment);
+    set_value_silently(widgets, &adjustment, scroll_to_bottom_value(&adjustment));
 
     let adjustment_for_tick = adjustment.clone();
     let tick_state = Rc::new(RefCell::new((0usize, 0usize, f64::NAN, f64::NAN, f64::NAN)));
     let tick_state_for_callback = tick_state.clone();
     let generation_for_tick = widgets.message_scroll_generation.clone();
-    let message_scroller_for_tick = widgets.message_scroller.clone();
+    let widgets_for_tick = widgets.clone();
 
     widgets.message_scroller.add_tick_callback(move |_, _| {
         if generation_for_tick.get() != scroll_generation {
             return gtk::glib::ControlFlow::Break;
         }
 
-        scroll_adjustment_to_bottom(&adjustment_for_tick);
+        set_value_silently(
+            &widgets_for_tick,
+            &adjustment_for_tick,
+            scroll_to_bottom_value(&adjustment_for_tick),
+        );
 
         let upper = adjustment_for_tick.upper();
         let page_size = adjustment_for_tick.page_size();
@@ -395,9 +344,20 @@ fn keep_messages_at_bottom(widgets: &Widgets, reveal_after_layout: bool) {
 
         if count >= 90 || (count >= 6 && stable_count >= 4) {
             if reveal_after_layout {
-                scroll_adjustment_to_bottom(&adjustment_for_tick);
-                message_scroller_for_tick.set_opacity(1.0);
+                set_value_silently(
+                    &widgets_for_tick,
+                    &adjustment_for_tick,
+                    scroll_to_bottom_value(&adjustment_for_tick),
+                );
+                widgets_for_tick.message_scroller.set_opacity(1.0);
             }
+
+            // Record the resting position so the value-changed handler
+            // doesn't see the reveal as a user-driven scroll upward.
+            widgets_for_tick
+                .scroll_state
+                .last_value
+                .set(adjustment_for_tick.value());
 
             gtk::glib::ControlFlow::Break
         } else {
@@ -407,13 +367,18 @@ fn keep_messages_at_bottom(widgets: &Widgets, reveal_after_layout: bool) {
 
     let adjustment_for_idle = adjustment.clone();
     let generation_for_idle = widgets.message_scroll_generation.clone();
+    let widgets_for_idle = widgets.clone();
 
     gtk::glib::idle_add_local_once(move || {
         if generation_for_idle.get() != scroll_generation {
             return;
         }
 
-        scroll_adjustment_to_bottom(&adjustment_for_idle);
+        set_value_silently(
+            &widgets_for_idle,
+            &adjustment_for_idle,
+            scroll_to_bottom_value(&adjustment_for_idle),
+        );
     });
 
     if reveal_after_layout {
@@ -438,9 +403,19 @@ fn nearly_equal(left: f64, right: f64) -> bool {
     }
 }
 
-fn scroll_adjustment_to_bottom(adjustment: &gtk::Adjustment) {
-    let max = adjustment.upper() - adjustment.page_size();
-    adjustment.set_value(max.max(0.0));
+fn scroll_to_bottom_value(adjustment: &gtk::Adjustment) -> f64 {
+    (adjustment.upper() - adjustment.page_size()).max(0.0)
+}
+
+fn set_value_silently(widgets: &Widgets, adjustment: &gtk::Adjustment, value: f64) {
+    widgets.scroll_state.suppress_value_handler.set(true);
+    adjustment.set_value(value);
+    widgets.scroll_state.last_value.set(adjustment.value());
+
+    let scroll_state = widgets.scroll_state.clone();
+    glib::idle_add_local_once(move || {
+        scroll_state.suppress_value_handler.set(false);
+    });
 }
 
 pub fn is_scroller_near_bottom(widgets: &Widgets) -> bool {

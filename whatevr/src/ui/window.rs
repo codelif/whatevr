@@ -4,7 +4,7 @@ use std::{
 };
 
 use adw::prelude::*;
-use gtk::{glib, pango};
+use gtk::{gio, glib, pango};
 
 use crate::config::*;
 use crate::ui::{
@@ -12,13 +12,15 @@ use crate::ui::{
         report_frontend_session_state, request_mark_chat_read, request_reconnect, request_status,
         stop_current_composing,
     },
-    context::AppContext,
+    context::{AppContext, UiSender},
     controller::handle_ui_message,
     lifecycle::schedule_bootstrap_after_first_frame,
     message::UiMessage,
-    receiver, signals,
+    receiver,
+    render::{message_object::MessageObject, message_row::build_message_row},
+    signals,
     state::UiState,
-    widgets::Widgets,
+    widgets::{ScrollState, Widgets},
 };
 
 struct ActionButtons {
@@ -70,7 +72,8 @@ struct ConversationView {
     avatar: adw::Avatar,
     title: gtk::Label,
     message_scroller: gtk::ScrolledWindow,
-    message_box: gtk::Box,
+    message_list_view: gtk::ListView,
+    message_store: gio::ListStore,
     older_messages_loading: gtk::Box,
     scroll_to_bottom_button: gtk::Button,
     scroll_to_bottom_icon: gtk::Image,
@@ -375,19 +378,25 @@ fn build_conversation_view(buttons: &ActionButtons, composer: &ComposerView) -> 
     content_header.pack_start(&buttons.back_button);
     content_header.set_title_widget(Some(&header));
 
-    let message_box = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .spacing(12)
-        .margin_top(18)
-        .margin_bottom(18)
-        .margin_start(18)
-        .margin_end(18)
+    let message_store = gio::ListStore::new::<MessageObject>();
+    let message_selection = gtk::NoSelection::new(Some(message_store.clone()));
+    let message_list_view = gtk::ListView::builder()
+        .model(&message_selection)
+        .vexpand(true)
+        .single_click_activate(false)
+        .show_separators(false)
+        .css_classes(["message-list"])
         .build();
+    // The factory is wired in `build()` once `sender` exists.
     let message_scroller = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
         .vexpand(true)
-        .child(&message_box)
+        .child(&message_list_view)
         .build();
+    // Kinetic scrolling fights anchor-preserving prepend: when the user
+    // flings to the top, the deceleration animation continues past our
+    // restore and re-arms more prepends. Disable it for the chat scroller.
+    message_scroller.set_kinetic_scrolling(false);
     let older_messages_spinner = gtk::Spinner::builder().spinning(true).build();
     let older_messages_loading = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
@@ -476,7 +485,8 @@ fn build_conversation_view(buttons: &ActionButtons, composer: &ComposerView) -> 
         avatar,
         title,
         message_scroller,
-        message_box,
+        message_list_view,
+        message_store,
         older_messages_loading,
         scroll_to_bottom_button,
         scroll_to_bottom_icon: scroll_icon,
@@ -562,15 +572,14 @@ pub fn build(app: &adw::Application) -> AppContext {
         conversation_avatar: conversation.avatar,
         conversation_title: conversation.title,
         message_scroller: conversation.message_scroller,
-        message_box: conversation.message_box,
+        message_list_view: conversation.message_list_view.clone(),
+        message_store: conversation.message_store.clone(),
         older_messages_loading: conversation.older_messages_loading,
         scroll_to_bottom_button: conversation.scroll_to_bottom_button,
         scroll_to_bottom_icon: conversation.scroll_to_bottom_icon,
         scroll_to_bottom_badge: conversation.scroll_to_bottom_badge,
         messages_below_count: Cell::new(0),
-        message_prepend_in_progress: Rc::new(Cell::new(false)),
-        message_prepend_generation: Rc::new(Cell::new(0)),
-        older_fetch_cooldown_until: Rc::new(Cell::new(0)),
+        scroll_state: Rc::new(ScrollState::new()),
         composer_scroller: composer.scroller,
         composer_text_view: composer.text_view,
         composer_error_label: composer.error_label,
@@ -583,11 +592,13 @@ pub fn build(app: &adw::Application) -> AppContext {
         rendered_chat_order: RefCell::new(Vec::new()),
         message_scroll_generation: Rc::new(Cell::new(0)),
         rendered_chat_id: RefCell::new(None),
-        rendered_messages: RefCell::new(Vec::new()),
     });
 
     let state = Rc::new(RefCell::new(UiState::default()));
     let (sender, receiver) = async_channel::unbounded::<UiMessage>();
+
+    let factory = build_message_factory(sender.clone());
+    widgets.message_list_view.set_factory(Some(&factory));
 
     signals::connect(&widgets, &state, &sender, &buttons.refresh_button);
 
@@ -660,4 +671,59 @@ pub fn build(app: &adw::Application) -> AppContext {
     schedule_bootstrap_after_first_frame(&window, sender.clone());
 
     AppContext { widgets, sender }
+}
+
+fn build_message_factory(sender: UiSender) -> gtk::SignalListItemFactory {
+    let factory = gtk::SignalListItemFactory::new();
+
+    factory.connect_setup(|_, list_item| {
+        let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        // Outer container that the bind step refills with a freshly built
+        // message row. Keeping a stable container means GTK can recycle
+        // these wrappers as the user scrolls.
+        let container = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .margin_start(18)
+            .margin_end(18)
+            .margin_top(6)
+            .margin_bottom(6)
+            .build();
+        list_item.set_child(Some(&container));
+    });
+
+    factory.connect_bind(move |_, list_item| {
+        let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let Some(container) = list_item.child().and_downcast::<gtk::Box>() else {
+            return;
+        };
+        clear_box_children(&container);
+
+        let Some(item) = list_item.item().and_downcast::<MessageObject>() else {
+            return;
+        };
+        let snapshot = item.message().clone();
+        let (row, _meta_label) = build_message_row(&snapshot, &sender);
+        container.append(&row);
+    });
+
+    factory.connect_unbind(|_, list_item| {
+        let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        if let Some(container) = list_item.child().and_downcast::<gtk::Box>() {
+            clear_box_children(&container);
+        }
+    });
+
+    factory
+}
+
+fn clear_box_children(container: &gtk::Box) {
+    while let Some(child) = container.first_child() {
+        container.remove(&child);
+    }
 }
