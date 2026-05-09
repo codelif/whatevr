@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Whatevr
+Comment=Native WhatsApp client for Linux
+Exec=whatkevr %u
+Icon=in.codelif.Whatevr
+Terminal=false
+Type=Application
+Categories=Network;Chat;InstantMessaging;Qt;KDE;
+StartupNotify=true
+MimeType=x-scheme-handler/whatevr;

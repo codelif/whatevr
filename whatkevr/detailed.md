@@ -1,0 +1,510 @@
+Whatkevr Parity Checklist
+Use this as the UI/client-side feature checklist for bringing the Kirigami frontend on par with the previous implementation and making it feel like a complete WhatsApp client.
+App Shell
+- [ ] Main window opens directly into chat list when logged in.
+- [ ] Main window shows login QR screen only when login is required.
+- [ ] Main window shows daemon/status screen only when daemon is unavailable or disconnected.
+- [ ] No redundant app branding header inside the app.
+- [ ] Window title remains Whatevr.
+- [ ] App header is repurposed into useful chat controls.
+- [ ] Header contains current section title, e.g. Chats.
+- [ ] Header contains logout action.
+- [ ] Header contains reconnect/refresh only when useful.
+- [ ] Header does not waste vertical space.
+- [ ] Layout works on desktop window sizes.
+- [ ] Layout works on narrow/mobile-like widths.
+- [ ] Wide layout shows chat list and conversation side by side.
+- [ ] Narrow layout shows chat list first.
+- [ ] Narrow layout can navigate into a selected conversation.
+- [ ] Narrow layout can navigate back to chat list.
+- [ ] Pane split sizes feel natural.
+- [ ] Left pane has sensible min/max width.
+- [ ] Right pane expands to fill remaining space.
+- [ ] App remembers last window size if previous frontend did.
+- [ ] App respects KDE/global theme colors.
+- [ ] App respects font scaling.
+- [ ] App respects light/dark theme.
+- [ ] App has no visual flicker during page transitions.
+- [ ] App has no visible blank flashes during startup.
+- [ ] App has no QML binding/runtime warnings in normal use.
+Daemon Connection
+- [ ] UI connects to whatevrd over the Unix socket.
+- [ ] UI detects daemon unavailable.
+- [ ] UI detects daemon reconnecting.
+- [ ] UI detects daemon connected.
+- [ ] UI detects WhatsApp disconnected.
+- [ ] UI detects WhatsApp connected.
+- [ ] UI exposes reconnect action when possible.
+- [ ] UI disables reconnect action while reconnect is in progress.
+- [ ] UI shows meaningful status text when daemon is unavailable.
+- [ ] UI shows meaningful status text when WhatsApp connection is unavailable.
+- [ ] UI retries daemon connection without spamming.
+- [ ] UI does not freeze while daemon is unavailable.
+- [ ] UI does not block on gRPC requests.
+- [ ] UI handles gRPC failures gracefully.
+- [ ] UI avoids repeatedly stacking duplicate error banners.
+- [ ] UI clears transient errors after recovery.
+- [ ] UI subscribes to daemon events after startup.
+- [ ] UI resubscribes to daemon events after transport failure.
+- [ ] UI subscribes to login events after startup.
+- [ ] UI resubscribes to login events after transport failure.
+- [ ] UI does not leak old gRPC streams after reconnect.
+- [ ] UI does not duplicate event handling after reconnect.
+Login
+- [ ] QR login page appears when login is required.
+- [ ] QR code is rendered clearly.
+- [ ] QR code has enough quiet zone/margin.
+- [ ] QR code updates when daemon emits a new code.
+- [ ] QR expiry is shown when available.
+- [ ] QR expiry countdown updates live.
+- [ ] Expired QR state is clear.
+- [ ] Login page explains what to do.
+- [ ] Login page has reconnect/retry if QR fetch fails.
+- [ ] Login success transitions into chat shell automatically.
+- [ ] Login failure shows useful error.
+- [ ] Logout action calls daemon logout.
+- [ ] Logout action is disabled while logout is in progress.
+- [ ] Logout returns UI to login state.
+- [ ] Logout clears local selected chat state.
+- [ ] Logout clears transient banners.
+- [ ] Logout does not leave stale chat data visible after session ends.
+Chat List Loading
+- [ ] UI loads chats from ChatService.ListChats.
+- [ ] UI shows loading indicator while initial chat list is loading.
+- [ ] UI shows empty state when there are no chats.
+- [ ] UI shows error state if chat loading fails.
+- [ ] UI can retry chat loading after failure.
+- [ ] UI handles large chat lists smoothly.
+- [ ] Chat list uses a real model, not large JS arrays.
+- [ ] Chat list virtualization/reuse is enabled.
+- [ ] Chat list does not jump unnecessarily on updates.
+- [ ] Chat list preserves selection when data refreshes.
+- [ ] Chat list sorts by most recent message.
+- [ ] Chat list has deterministic fallback sort for equal timestamps.
+- [ ] Chat list updates on DaemonEvent.ChatUpdated.
+- [ ] Chat list handles changed chat ID if daemon provides previous ID.
+- [ ] Chat list does not duplicate chats after updates.
+- [ ] Chat list removes/updates renamed chats correctly.
+- [ ] Chat list handles chats without names.
+- [ ] Chat list handles chats without last messages.
+- [ ] Chat list handles chats without avatars.
+- [ ] Chat list handles group chats.
+- [ ] Chat list handles individual chats.
+- [ ] Chat list handles archived chats if daemon exposes them.
+- [ ] Chat list handles muted chats if daemon exposes them.
+- [ ] Chat list handles pinned chats if daemon exposes them.
+- [ ] Chat list handles unread-only filtering if previous UI had it.
+- [ ] Chat list handles search/filter if previous UI had it.
+Chat Row UI
+- [ ] Each row shows avatar.
+- [ ] Each row shows fallback initials when no avatar exists.
+- [ ] Each row shows chat name.
+- [ ] Chat name is one line.
+- [ ] Chat name is ellipsized.
+- [ ] Each row shows last message preview.
+- [ ] Last message preview is one line only.
+- [ ] Last message preview replaces newlines with spaces.
+- [ ] Last message preview is ellipsized.
+- [ ] Last message preview does not expand row height.
+- [ ] Row height is consistent across chats.
+- [ ] Row shows unread badge.
+- [ ] Unread badge handles large counts, e.g. 99+.
+- [ ] Unread badge is hidden when unread count is zero.
+- [ ] Unread chats have stronger typography.
+- [ ] Selected chat has clear selection state.
+- [ ] Hovered row has subtle hover state.
+- [ ] Keyboard-focused row has accessible focus state.
+- [ ] Row click selects chat.
+- [ ] Row double click does not produce bad duplicate behavior.
+- [ ] Row avatar image loading is asynchronous.
+- [ ] Broken avatar path falls back to initials.
+- [ ] Group avatars and contact avatars look consistent.
+- [ ] Long names do not overlap unread badge.
+- [ ] Long previews do not overlap unread badge.
+- [ ] Rows are readable in dark theme.
+- [ ] Rows are readable in light theme.
+- [ ] Rows remain readable under high font scale.
+History Sync UI
+- [ ] History sync progress appears only when active.
+- [ ] History sync progress hides when complete.
+- [ ] History sync progress shows percentage.
+- [ ] History sync progress shows chunk number.
+- [ ] History sync progress shows messages in current chunk.
+- [ ] History sync progress shows conversations in current chunk when non-zero.
+- [ ] History sync progress does not claim total chunks if proto does not expose them.
+- [ ] History sync progress is visually compact.
+- [ ] History sync progress does not push chat rows excessively.
+- [ ] History sync complete state clears cleanly.
+- [ ] History sync updates do not stutter the chat list.
+- [ ] History sync can coexist with chat list loading.
+- [ ] History sync text remains one or two compact lines.
+- [ ] History sync details are ellipsized if too long.
+Conversation Selection
+- [ ] Selecting a chat updates selected chat ID.
+- [ ] Selecting a chat updates right pane header.
+- [ ] Right pane header shows avatar.
+- [ ] Right pane header shows chat/contact name.
+- [ ] Right pane header shows fallback avatar/initials if needed.
+- [ ] Right pane header has info/details button placeholder.
+- [ ] Right pane clears when selected chat disappears.
+- [ ] Right pane handles no selected chat.
+- [ ] Narrow layout opens selected chat view after selecting.
+- [ ] Back navigation returns to chat list on narrow layout.
+- [ ] Selection persists across chat list refresh.
+- [ ] Selection persists across live chat update.
+- [ ] Selection is cleared on logout.
+- [ ] Selection is cleared if daemon reports disconnected session.
+Message List Loading
+- [ ] UI has MessageListModel.
+- [ ] Selecting a chat loads messages for that chat.
+- [ ] UI shows loading state while messages load.
+- [ ] UI shows empty conversation state.
+- [ ] UI shows error state if message load fails.
+- [ ] UI can retry message load.
+- [ ] UI cancels or ignores stale message responses when user switches chats quickly.
+- [ ] UI does not show messages from previous chat during switch.
+- [ ] UI handles very large conversations.
+- [ ] Message list is virtualized.
+- [ ] Message list does not create all message delegates at once.
+- [ ] Message list anchors to bottom initially.
+- [ ] Message list loads older messages when scrolling upward if daemon supports pagination.
+- [ ] Message list preserves scroll position when older messages prepend.
+- [ ] Message list auto-scrolls only when user is already near bottom.
+- [ ] Message list does not auto-scroll if user is reading older messages.
+- [ ] New incoming message appears live.
+- [ ] New outgoing message appears live.
+- [ ] Message edits update existing bubble if supported.
+- [ ] Message deletions update existing bubble if supported.
+- [ ] Message reactions update existing bubble if supported.
+- [ ] Message status updates update existing bubble if supported.
+Message Bubble Rendering
+- [ ] Incoming messages are visually distinct from outgoing messages.
+- [ ] Message bubbles are readable.
+- [ ] Message bubble width is capped.
+- [ ] Long text wraps cleanly.
+- [ ] Very long unbroken text does not break layout.
+- [ ] Text messages support multiline body.
+- [ ] Message timestamp is shown.
+- [ ] Timestamp is subtle.
+- [ ] Outgoing message delivery/read status is shown if daemon exposes it.
+- [ ] Failed outgoing messages show failure state if supported.
+- [ ] Sender name is shown in group chats.
+- [ ] Sender name is hidden in one-to-one chats.
+- [ ] Consecutive messages from same sender are visually grouped if desired.
+- [ ] Date separators are shown.
+- [ ] Day/date separators are localized.
+- [ ] System messages are rendered differently.
+- [ ] Deleted messages are rendered appropriately.
+- [ ] Edited messages show edited marker if supported.
+- [ ] Forwarded messages show forwarded marker if supported.
+- [ ] Quoted/replied messages show quote preview if supported.
+- [ ] Mentions are styled if supported.
+- [ ] Links are clickable.
+- [ ] Links use system browser.
+- [ ] Text selection works if previous UI allowed it.
+- [ ] Copy message text works.
+- [ ] Context menu exposes useful actions.
+- [ ] Context menu is keyboard accessible.
+Media Messages
+- [ ] Image messages show thumbnail.
+- [ ] Image thumbnails load asynchronously.
+- [ ] Image thumbnails do not block UI.
+- [ ] Broken image path shows fallback.
+- [ ] Clicking image opens preview or file.
+- [ ] Video messages show thumbnail/play indicator.
+- [ ] Audio messages show audio UI if supported.
+- [ ] Document messages show filename.
+- [ ] Document messages show file size if available.
+- [ ] Document messages expose open/download action.
+- [ ] Sticker messages render appropriately.
+- [ ] GIF messages render or show preview appropriately.
+- [ ] Unsupported message types show readable fallback.
+- [ ] Captions are displayed.
+- [ ] Captions wrap cleanly.
+- [ ] Media loading errors are non-fatal.
+- [ ] Media cache paths are handled as local files safely.
+- [ ] Missing media can trigger download if daemon supports it.
+- [ ] Download progress is shown if daemon exposes it.
+Compose Box
+- [ ] Conversation has message input field.
+- [ ] Input field is disabled when disconnected.
+- [ ] Input field is disabled when no chat selected.
+- [ ] Input supports multiline messages.
+- [ ] Enter sends or inserts newline according to chosen UX.
+- [ ] Shift+Enter inserts newline if Enter sends.
+- [ ] Send button is enabled only when message has content.
+- [ ] Send button is disabled while no chat is selected.
+- [ ] Sending calls daemon/chat send API.
+- [ ] Sent message appears optimistically if previous UI did that.
+- [ ] Failed send shows retry/error state.
+- [ ] Draft text is preserved when switching chats if previous UI did that.
+- [ ] Draft text is cleared after successful send.
+- [ ] Paste text works.
+- [ ] Paste image/file works if supported.
+- [ ] Attachment button exists if sending attachments is supported.
+- [ ] Emoji picker exists if previous UI had it.
+- [ ] Typing indicator send/receive exists if daemon supports it.
+- [ ] Input area respects virtual keyboard/narrow layout.
+- [ ] Input area remains visible at bottom.
+- [ ] Input area does not overlap messages.
+- [ ] Input area has accessible labels.
+Read Receipts / Mark Read
+- [ ] UI tracks whether application window is active/focused.
+- [ ] UI tracks whether selected conversation is visible.
+- [ ] UI tracks whether selected conversation is actually open.
+- [ ] UI tracks whether message list is at/near latest messages if needed.
+- [ ] If window is focused and chat is open, visible incoming messages should be marked read.
+- [ ] If window is unfocused, incoming messages should not be marked read just because chat is selected.
+- [ ] If app is minimized, incoming messages should not be marked read.
+- [ ] If another chat is selected, messages for non-selected chats should not be marked read.
+- [ ] If user opens a chat while app is focused, unread messages in that chat should be marked read.
+- [ ] If user switches to a chat while app is focused, unread messages in that chat should be marked read.
+- [ ] If user switches away before messages load, do not mark stale chat read.
+- [ ] If user scrolls to bottom/newest messages, mark visible newest messages read if focused.
+- [ ] If user is reading old history and new messages arrive below, do not necessarily mark them read unless visible/at bottom.
+- [ ] Mark-read request should be debounced.
+- [ ] Mark-read request should not spam daemon on every message delegate creation.
+- [ ] Mark-read should be idempotent client-side.
+- [ ] Mark-read should update unread badge locally after daemon confirms or optimistically if previous UI did.
+- [ ] If mark-read fails, unread count should not be incorrectly cleared unless daemon later confirms.
+- [ ] Read state should survive chat list refresh.
+- [ ] Read state should update from daemon events.
+- [ ] Notifications and unread counts should stay consistent with mark-read behavior.
+Notifications
+- [ ] Incoming messages can trigger desktop notifications if previous UI did.
+- [ ] Notifications are suppressed for currently open chat when app is focused.
+- [ ] Notifications are shown for other chats.
+- [ ] Notifications are shown when app is unfocused/minimized.
+- [ ] Notifications respect muted chats if daemon exposes mute state.
+- [ ] Notifications show sender/chat name.
+- [ ] Notifications show message preview when allowed.
+- [ ] Notifications hide sensitive content if privacy setting exists.
+- [ ] Clicking notification opens the relevant chat.
+- [ ] Notification click focuses app window.
+- [ ] Notification click selects chat after app opens.
+- [ ] Notification click does not mark messages read until chat is visible/focused.
+- [ ] Notifications do not duplicate for same daemon event.
+- [ ] Notifications are cleared when chat is read if supported.
+Unread Counts
+- [ ] Chat list unread badge updates live.
+- [ ] Window/taskbar unread badge updates if supported by desktop integration.
+- [ ] Total unread count updates if previous frontend showed it.
+- [ ] Unread count does not decrease incorrectly while window is unfocused.
+- [ ] Unread count decreases when mark-read succeeds.
+- [ ] Unread count is restored/reconciled after daemon refresh.
+- [ ] Muted chats may or may not contribute depending on previous behavior.
+- [ ] Archived chats may or may not contribute depending on previous behavior.
+- [ ] Incoming messages for current focused chat do not leave unread badge stuck.
+Search
+- [ ] Chat search field exists if previous UI had it.
+- [ ] Search filters chat list quickly.
+- [ ] Search is debounced.
+- [ ] Search does not block UI with large chat list.
+- [ ] Search matches chat name.
+- [ ] Search matches phone/JID if useful.
+- [ ] Search has clear button.
+- [ ] Search preserves selected chat where sensible.
+- [ ] Empty search restores full list.
+- [ ] Message search exists if previous UI had it.
+- [ ] Message search displays results clearly.
+- [ ] Clicking message search result opens chat and scrolls to message.
+- [ ] Search state is cleared or preserved intentionally across navigation.
+Contact / Chat Info
+- [ ] Info button opens chat details.
+- [ ] Details show avatar.
+- [ ] Details show name.
+- [ ] Details show phone/JID if appropriate.
+- [ ] Details show group/individual type.
+- [ ] Details show participants for groups if daemon exposes them.
+- [ ] Details show mute/archive/pin state if daemon exposes it.
+- [ ] Details show media/files/links if previous UI had it.
+- [ ] Details can close without disrupting selected chat.
+- [ ] Details view works on narrow layout.
+Status / Presence
+- [ ] Online/offline daemon state is visible.
+- [ ] WhatsApp connection state is visible when relevant.
+- [ ] Per-chat presence is shown if daemon exposes it.
+- [ ] Typing indicator is shown if daemon exposes it.
+- [ ] Last seen is shown if daemon exposes it.
+- [ ] UI does not fake unavailable presence data.
+- [ ] Status changes do not cause layout jumps.
+Actions
+- [ ] Refresh chats action works.
+- [ ] Reconnect action works.
+- [ ] Logout action works.
+- [ ] Copy message action works.
+- [ ] Copy chat ID/contact action exists if useful.
+- [ ] Open media action works.
+- [ ] Save media action works if supported.
+- [ ] Retry failed message action works if supported.
+- [ ] Delete message action exists if daemon supports it.
+- [ ] Reply action exists if daemon supports it.
+- [ ] Forward action exists if daemon supports it.
+- [ ] React action exists if daemon supports it.
+- [ ] Open chat info action works.
+- [ ] Keyboard shortcuts exist for common actions.
+- [ ] Shortcuts do not conflict with text input.
+Keyboard / Accessibility
+- [ ] Chat list is keyboard navigable.
+- [ ] Arrow keys can move chat selection.
+- [ ] Enter opens/selects chat.
+- [ ] Escape/back returns from conversation to chat list on narrow layout.
+- [ ] Tab order is logical.
+- [ ] Focus indicators are visible.
+- [ ] Buttons have accessible names.
+- [ ] Icon-only buttons have tooltips.
+- [ ] Screen readers get useful labels.
+- [ ] Text contrast is sufficient.
+- [ ] UI works with large font sizes.
+- [ ] UI works with high contrast themes.
+- [ ] Touch targets are large enough.
+- [ ] Right-click/context-menu is available where useful.
+- [ ] Selection and hover are not the only indicators of state.
+Performance
+- [ ] Initial startup is fast.
+- [ ] Initial chat load does not block render thread.
+- [ ] Chat list scrolling remains smooth with many chats.
+- [ ] Message list scrolling remains smooth with many messages.
+- [ ] Avatars load asynchronously.
+- [ ] Media thumbnails load asynchronously.
+- [ ] No synchronous file I/O in QML hot paths.
+- [ ] No expensive JS processing inside delegates.
+- [ ] Delegates avoid unnecessary bindings.
+- [ ] Delegates avoid unnecessary nested effects.
+- [ ] Model emits minimal necessary signals.
+- [ ] Large updates do not cause flicker.
+- [ ] Live updates do not reset scroll unnecessarily.
+- [ ] App remains responsive during history sync.
+- [ ] App remains responsive during reconnect.
+- [ ] App remains responsive during large message loads.
+- [ ] No memory leak from repeated chat switches.
+- [ ] No memory leak from repeated reconnects.
+- [ ] No duplicated gRPC subscriptions.
+- [ ] No excessive CPU when idle.
+- [ ] No excessive timers when idle.
+State Management
+- [ ] Controller exposes clear QML properties.
+- [ ] QML does not read null controller.
+- [ ] QML handles empty strings safely.
+- [ ] QML handles missing model roles safely.
+- [ ] Selection state is centralized.
+- [ ] Loading state is centralized.
+- [ ] Error/banner state is centralized.
+- [ ] History sync state is centralized.
+- [ ] Read/visibility state is centralized.
+- [ ] Stale async replies are ignored.
+- [ ] State transitions are deterministic.
+- [ ] Logout clears session-specific state.
+- [ ] Reconnect does not wipe useful UI state unless necessary.
+- [ ] Daemon disconnect does not crash active views.
+- [ ] Chat deletion/removal does not leave invalid selection.
+- [ ] Model resets do not leave QML delegates accessing destroyed data.
+Error Handling
+- [ ] Daemon unavailable error is clear.
+- [ ] WhatsApp disconnected error is clear.
+- [ ] Login error is clear.
+- [ ] Chat load error is clear.
+- [ ] Message load error is clear.
+- [ ] Send error is clear.
+- [ ] Media load error is clear.
+- [ ] Retry actions are available where useful.
+- [ ] Errors are not spammy.
+- [ ] Errors clear after successful recovery.
+- [ ] UI never crashes on malformed/missing daemon data.
+- [ ] UI never assumes optional proto fields exist.
+- [ ] Unknown enum values show safe fallback text.
+Data Formatting
+- [ ] Timestamps are localized.
+- [ ] Chat list timestamps are compact if shown.
+- [ ] Message timestamps are compact.
+- [ ] Date separators are localized.
+- [ ] Percent values are formatted consistently.
+- [ ] File sizes are human-readable.
+- [ ] Phone/JID display is readable.
+- [ ] Empty message fallback is sensible.
+- [ ] Unsupported message fallback is sensible.
+- [ ] Newlines in previews are collapsed.
+- [ ] Rich text is escaped unless intentionally rendered.
+- [ ] Emoji display works.
+- [ ] RTL text works reasonably.
+- [ ] Mixed RTL/LTR text does not break layout.
+Privacy / Safety
+- [ ] App does not log message contents unnecessarily.
+- [ ] App does not log QR code contents unnecessarily.
+- [ ] App does not expose sensitive data in debug output.
+- [ ] Notifications can avoid sensitive message previews if setting exists.
+- [ ] Local file paths are handled safely.
+- [ ] Media opening uses safe system mechanisms.
+- [ ] Logout does not leave sensitive UI visible.
+- [ ] QR code disappears after login/logout state changes.
+- [ ] Screenshots/thumbnails are not cached unexpectedly by custom code.
+KDE Integration
+- [ ] Uses Kirigami-native components.
+- [ ] Uses KDE icon names.
+- [ ] Uses KDE theme colors.
+- [ ] Uses KDE spacing units.
+- [ ] Uses KDE notification system if notifications are implemented.
+- [ ] Uses KAboutData metadata correctly.
+- [ ] Desktop file uses correct app id.
+- [ ] AppStream metadata is correct.
+- [ ] App icon is correct if available.
+- [ ] Window class/app id matches desktop file.
+- [ ] Actions have proper icons/tooltips.
+- [ ] Works under Plasma Wayland.
+- [ ] Works under X11 if expected.
+- [ ] Does not depend on GNOME/libadwaita concepts.
+Build / Packaging
+- [ ] Builds cleanly from fresh build directory.
+- [ ] QML module includes all active QML files.
+- [ ] Removed/unused QML files are not packaged.
+- [ ] Generated protobuf/gRPC code builds reproducibly.
+- [ ] Install target installs executable.
+- [ ] Install target installs desktop file.
+- [ ] Install target installs metainfo file.
+- [ ] Runtime can find QML modules after install.
+- [ ] Runtime can find Kirigami/Prison dependencies.
+- [ ] Binary name remains whatkevr.
+- [ ] App id remains in.codelif.Whatevr.
+- [ ] Existing GTK frontend remains untouched.
+- [ ] Build warnings are reviewed and either fixed or accepted.
+Testing
+- [ ] Offscreen QML smoke test passes.
+- [ ] Real interactive launch works.
+- [ ] Login flow tested with real daemon.
+- [ ] Already-logged-in startup tested.
+- [ ] Daemon unavailable startup tested.
+- [ ] WhatsApp disconnected state tested.
+- [ ] Reconnect flow tested.
+- [ ] Logout flow tested.
+- [ ] Large chat list tested.
+- [ ] Long message previews tested.
+- [ ] Multiline previews tested.
+- [ ] Empty chat list tested.
+- [ ] History sync active state tested.
+- [ ] History sync complete state tested.
+- [ ] Live chat update tested.
+- [ ] Chat selection tested.
+- [ ] Narrow layout tested.
+- [ ] Wide layout tested.
+- [ ] Dark theme tested.
+- [ ] Light theme tested.
+- [ ] High font scale tested.
+- [ ] Window focus/read behavior tested.
+- [ ] Minimized/unfocused read behavior tested.
+- [ ] Notification behavior tested if implemented.
+- [ ] Message list performance tested.
+- [ ] Reconnect loop tested.
+- [ ] No QML runtime warnings in normal use.
+- [ ] No crash on repeated chat switching.
+- [ ] No crash on daemon restart.
+Highest-Priority Next Implementation Items
+- [ ] Implement real message list model.
+- [ ] Implement selected chat message loading.
+- [ ] Implement read/mark-read behavior based on app focus and open chat.
+- [ ] Implement message compose/send.
+- [ ] Implement notification behavior.
+- [ ] Implement narrow-layout navigation.
+- [ ] Implement real conversation header details.
+- [ ] Add chat/message search if previous frontend had it.
+- [ ] Add media rendering.
+- [ ] Polish row/header spacing after real data testing.
