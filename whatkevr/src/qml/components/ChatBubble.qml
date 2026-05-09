@@ -17,7 +17,7 @@ Item {
     property bool mediaDownloading: false
     property string mediaDownloadError: ""
 
-    readonly property real listWidth: ListView.view ? ListView.view.width : 0
+    property real listWidth: 0
     readonly property real outerMargin: Kirigami.Units.largeSpacing
     readonly property real innerPadding: Kirigami.Units.largeSpacing
     readonly property real maxBubbleWidth: Math.min(listWidth * 0.7, Kirigami.Units.gridUnit * 26)

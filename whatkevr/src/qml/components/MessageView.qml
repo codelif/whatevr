@@ -7,10 +7,12 @@ Item {
 
     property alias model: list.model
     property bool atBottom: true
+    property bool pinToBottom: true
 
     function scrollToBottom() {
         if (list.count > 0) {
             list.positionViewAtEnd()
+            list.contentY = list.contentHeight - list.height
         }
     }
 
@@ -21,10 +23,14 @@ Item {
         clip: true
 
         spacing: Kirigami.Units.smallSpacing / 2
-        cacheBuffer: Math.max(0, height)
-        reuseItems: true
+        cacheBuffer: 100000
+        reuseItems: false
 
         flickableDirection: Flickable.VerticalFlick
+        boundsBehavior: Flickable.StopAtBounds
+        boundsMovement: Flickable.StopAtBounds
+        flickDeceleration: 4000
+        maximumFlickVelocity: 8000
 
         ScrollBar.vertical: ScrollBar {
             policy: ScrollBar.AlwaysOn
@@ -37,6 +43,7 @@ Item {
         }
 
         delegate: ChatBubble {
+            listWidth: list.width
             messageId: String(model.id || "")
             body: String(model.text || "")
             timeText: String(model.timeText || "")
@@ -68,19 +75,40 @@ Item {
             }
         }
 
+        onMovementStarted: root.pinToBottom = false
         onContentYChanged: {
             const distanceFromBottom = (contentHeight - height) - contentY
-            root.atBottom = distanceFromBottom <= Kirigami.Units.gridUnit * 2
+            root.atBottom = distanceFromBottom <= 4
         }
-
+        onContentHeightChanged: {
+            if (root.pinToBottom && contentHeight > height) {
+                contentY = contentHeight - height
+            }
+        }
         onCountChanged: {
             if (root.atBottom) {
-                Qt.callLater(positionViewAtEnd)
+                root.pinToBottom = true
+                Qt.callLater(() => {
+                    if (root.pinToBottom) contentY = contentHeight - height
+                })
+            }
+        }
+
+        Connections {
+            target: list.model
+            ignoreUnknownSignals: true
+            function onModelReset() {
+                root.pinToBottom = true
+                root.atBottom = true
+                Qt.callLater(() => {
+                    if (root.pinToBottom) list.contentY = list.contentHeight - list.height
+                })
             }
         }
 
         Component.onCompleted: {
-            Qt.callLater(positionViewAtEnd)
+            root.pinToBottom = true
+            Qt.callLater(() => { list.contentY = list.contentHeight - list.height })
         }
     }
 }
