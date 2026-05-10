@@ -134,9 +134,46 @@ void MessageListModel::upsertMessage(const whatevr::v1::Message &message)
     endInsertRows();
 }
 
+void MessageListModel::prependMessages(const QList<whatevr::v1::Message> &messages)
+{
+    if (messages.isEmpty()) {
+        return;
+    }
+
+    QList<MessageItem> toInsert;
+    toInsert.reserve(messages.size());
+    for (const auto &msg : messages) {
+        const MessageItem item = fromProto(msg);
+        if (indexOf(item.id) < 0) {
+            toInsert.append(item);
+        }
+    }
+    if (toInsert.isEmpty()) {
+        return;
+    }
+
+    std::sort(toInsert.begin(), toInsert.end(), [](const MessageItem &l, const MessageItem &r) {
+        if (l.timestampUnix != r.timestampUnix) {
+            return l.timestampUnix < r.timestampUnix;
+        }
+        return l.id < r.id;
+    });
+
+    beginInsertRows(QModelIndex(), 0, toInsert.size() - 1);
+    for (int i = 0; i < toInsert.size(); ++i) {
+        m_messages.insert(i, toInsert.at(i));
+    }
+    endInsertRows();
+}
+
 bool MessageListModel::isEmpty() const
 {
     return m_messages.isEmpty();
+}
+
+QString MessageListModel::oldestMessageId() const
+{
+    return m_messages.isEmpty() ? QString() : m_messages.first().id;
 }
 
 MessageListModel::MessageItem MessageListModel::fromProto(const whatevr::v1::Message &message)

@@ -38,9 +38,11 @@ public:
     [[nodiscard]] QHash<int, QByteArray> roleNames() const override;
 
     void replaceMessages(const QList<whatevr::v1::Message> &messages);
+    void prependMessages(const QList<whatevr::v1::Message> &messages);
     void clear();
     void upsertMessage(const whatevr::v1::Message &message);
     [[nodiscard]] bool isEmpty() const;
+    [[nodiscard]] QString oldestMessageId() const;
 
 private:
     struct MessageItem {
