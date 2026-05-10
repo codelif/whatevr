@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Effects
 import org.kde.kirigami as Kirigami
 
 Item {
@@ -8,7 +9,7 @@ Item {
     property string messageId: ""
     property string body: ""
     property string timeText: ""
-    property string statusText: ""
+    property int status: 0
     property bool outgoing: false
     property string mediaMimeType: ""
     property string mediaLocalPath: ""
@@ -31,11 +32,17 @@ Item {
             return 0
         }
         const capH = Kirigami.Units.gridUnit * 16
-        if (mediaIntrinsicWidth > 0 && mediaIntrinsicHeight > 0) {
-            let w = Math.min(maxContentWidth, mediaIntrinsicWidth)
-            const h = w * (mediaIntrinsicHeight / mediaIntrinsicWidth)
+        let intrW = mediaIntrinsicWidth
+        let intrH = mediaIntrinsicHeight
+        if ((intrW <= 0 || intrH <= 0) && img.implicitWidth > 0 && img.implicitHeight > 0) {
+            intrW = img.implicitWidth
+            intrH = img.implicitHeight
+        }
+        if (intrW > 0 && intrH > 0) {
+            let w = Math.min(maxContentWidth, intrW)
+            const h = w * (intrH / intrW)
             if (h > capH) {
-                w = capH * (mediaIntrinsicWidth / mediaIntrinsicHeight)
+                w = capH * (intrW / intrH)
             }
             return Math.max(w, Kirigami.Units.gridUnit * 8)
         }
@@ -45,11 +52,38 @@ Item {
         if (!isImage) {
             return 0
         }
-        if (mediaIntrinsicWidth > 0 && mediaIntrinsicHeight > 0) {
-            return imageDisplayWidth * (mediaIntrinsicHeight / mediaIntrinsicWidth)
+        let intrW = mediaIntrinsicWidth
+        let intrH = mediaIntrinsicHeight
+        if ((intrW <= 0 || intrH <= 0) && img.implicitWidth > 0 && img.implicitHeight > 0) {
+            intrW = img.implicitWidth
+            intrH = img.implicitHeight
+        }
+        if (intrW > 0 && intrH > 0) {
+            return imageDisplayWidth * (intrH / intrW)
         }
         return Kirigami.Units.gridUnit * 11
     }
+
+    // Status icon logic based on enum values from proto:
+    // 0=UNSPECIFIED, 1=PENDING, 2=SENT, 3=DELIVERED, 4=READ, 5=FAILED
+    readonly property bool statusIsFailed: status === 5
+    readonly property bool statusIsRead: status === 4
+    readonly property bool statusIsDoubleTick: status === 3 || status === 4  // delivered or read
+    readonly property string statusSingleIcon: {
+        switch (status) {
+        case 1: return "clock"                    // pending / sending
+        case 2: return "checkmark"                 // sent (single tick)
+        case 5: return "dialog-error-symbolic"      // failed
+        default: return ""
+        }
+    }
+    readonly property bool showStatusIcon: outgoing && (statusIsDoubleTick || statusSingleIcon.length > 0)
+
+    readonly property real statusIconSize: Kirigami.Units.iconSizes.small
+    // Double-tick is wider: two icons overlapping
+    readonly property real statusAreaWidth: statusIsDoubleTick
+        ? statusIconSize * 1.5
+        : statusIconSize
 
     readonly property real contentBlockWidth: {
         let w = 0
@@ -59,7 +93,12 @@ Item {
         if (body.length > 0) {
             w = Math.max(w, Math.min(maxContentWidth, bodyMetrics.advanceWidth))
         }
-        w = Math.max(w, Math.min(maxContentWidth, footerMetrics.advanceWidth + Kirigami.Units.smallSpacing))
+        // Footer width: time text + optional status icon
+        let footerW = footerMetrics.advanceWidth + Kirigami.Units.smallSpacing
+        if (root.showStatusIcon) {
+            footerW += root.statusAreaWidth + Kirigami.Units.smallSpacing
+        }
+        w = Math.max(w, Math.min(maxContentWidth, footerW))
         return Math.max(w, Kirigami.Units.gridUnit * 4)
     }
 
@@ -74,7 +113,7 @@ Item {
 
     TextMetrics {
         id: footerMetrics
-        text: root.timeText + (root.outgoing && root.statusText.length > 0 ? "  " + root.statusText : "")
+        text: root.timeText
         font: timeLabel.font
     }
 
@@ -126,9 +165,9 @@ Item {
                 id: mediaSlot
 
                 visible: root.isImage
-                x: 0
+                x: (root.contentBlockWidth - width) / 2
                 y: 0
-                width: root.contentBlockWidth
+                width: root.imageDisplayWidth
                 height: visible ? root.imageDisplayHeight : 0
 
                 Rectangle {
@@ -173,6 +212,7 @@ Item {
                 }
 
                 Image {
+                    id: img
                     anchors.fill: parent
                     visible: root.hasLocalImage
                     source: root.hasLocalImage ? Qt.resolvedUrl("file://" + root.mediaLocalPath) : ""
@@ -180,6 +220,21 @@ Item {
                     asynchronous: true
                     cache: true
                     smooth: true
+
+                    layer.enabled: visible
+                    layer.effect: MultiEffect {
+                        maskEnabled: true
+                        maskSource: imageMask
+                    }
+                }
+
+                Rectangle {
+                    id: imageMask
+
+                    anchors.fill: parent
+                    radius: Kirigami.Units.smallSpacing
+                    visible: false
+                    layer.enabled: true
                 }
             }
 
@@ -211,26 +266,67 @@ Item {
                     return off
                 }
                 width: root.contentBlockWidth
-                height: Math.max(timeLabel.implicitHeight, statusLabel.implicitHeight)
+                height: Math.max(timeLabel.implicitHeight, statusArea.visible ? statusArea.implicitHeight : 0)
 
-                Label {
-                    id: statusLabel
+                Item {
+                    id: statusArea
                     anchors.right: parent.right
-                    visible: root.outgoing && root.statusText.length > 0
-                    text: root.statusText
-                    color: root.statusText === i18nc("@label message delivery status", "Failed")
-                           ? Kirigami.Theme.negativeTextColor
-                           : Kirigami.Theme.disabledTextColor
-                    font.pointSize: Kirigami.Theme.smallFont.pointSize
+                    anchors.verticalCenter: timeLabel.verticalCenter
+                    visible: root.showStatusIcon
+                    implicitWidth: root.statusAreaWidth
+                    implicitHeight: root.statusIconSize
+
+                    // Single icon (clock, single checkmark, error)
+                    Kirigami.Icon {
+                        id: singleIcon
+                        anchors.centerIn: parent
+                        visible: !root.statusIsDoubleTick
+                        source: root.statusSingleIcon
+                        implicitWidth: root.statusIconSize
+                        implicitHeight: root.statusIconSize
+                        color: root.statusIsFailed
+                               ? Kirigami.Theme.negativeTextColor
+                               : Kirigami.Theme.disabledTextColor
+                        isMask: true
+                    }
+
+                    // Double tick (delivered / read)
+                    Item {
+                        id: doubleTick
+                        anchors.fill: parent
+                        visible: root.statusIsDoubleTick
+
+                        Kirigami.Icon {
+                            x: 0
+                            anchors.verticalCenter: parent.verticalCenter
+                            source: "checkmark"
+                            implicitWidth: root.statusIconSize
+                            implicitHeight: root.statusIconSize
+                            color: root.statusIsRead
+                                   ? Kirigami.Theme.highlightColor
+                                   : Kirigami.Theme.disabledTextColor
+                            isMask: true
+                        }
+                        Kirigami.Icon {
+                            x: root.statusIconSize * 0.5
+                            anchors.verticalCenter: parent.verticalCenter
+                            source: "checkmark"
+                            implicitWidth: root.statusIconSize
+                            implicitHeight: root.statusIconSize
+                            color: root.statusIsRead
+                                   ? Kirigami.Theme.highlightColor
+                                   : Kirigami.Theme.disabledTextColor
+                            isMask: true
+                        }
+                    }
                 }
 
                 Label {
                     id: timeLabel
-                    anchors.right: statusLabel.visible ? statusLabel.left : parent.right
-                    anchors.rightMargin: statusLabel.visible ? Kirigami.Units.smallSpacing : 0
+                    anchors.left: parent.left
                     text: root.timeText
                     color: Kirigami.Theme.disabledTextColor
-                    font.pointSize: Kirigami.Theme.smallFont.pointSize
+                    font.pointSize: Kirigami.Theme.smallFont.pointSize * 0.8
                 }
             }
         }

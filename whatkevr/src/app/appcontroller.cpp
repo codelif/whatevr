@@ -416,6 +416,7 @@ void AppController::selectChat(const QString &chatId)
     m_composerErrorText.clear();
     m_messagesLoadingMore = false;
     m_messagesHaveMore = false;
+    m_messagesLoading = !chatId.isEmpty();
     if (m_moreMessagesReply) {
         m_moreMessagesReply.reset();
     }

@@ -60,7 +60,7 @@ Item {
             messageId: String(model.id || "")
             body: String(model.text || "")
             timeText: String(model.timeText || "")
-            statusText: String(model.statusText || "")
+            status: Number(model.status || 0)
             outgoing: Boolean(model.isOutgoing)
             mediaMimeType: String(model.mediaMimeType || "")
             mediaLocalPath: String(model.mediaLocalPath || "")
