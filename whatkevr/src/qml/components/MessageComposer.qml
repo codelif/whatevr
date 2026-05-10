@@ -51,6 +51,7 @@ Frame {
                 display: AbstractButton.IconOnly
                 enabled: root.enabledForChat && !root.sending
                 onClicked: imageDialog.open()
+                Layout.alignment: Qt.AlignVCenter
             }
 
             ScrollView {
@@ -72,6 +73,7 @@ Frame {
                     wrapMode: TextArea.Wrap
                     background: null
                     selectByMouse: true
+                    verticalAlignment: TextEdit.AlignVCenter
 
                     Keys.onReturnPressed: event => {
                         if (event.modifiers & Qt.ShiftModifier) {
@@ -84,11 +86,13 @@ Frame {
                 }
             }
 
-            Button {
+            ToolButton {
                 icon.name: "document-send-symbolic"
                 text: i18nc("@action:button", "Send")
+                display: AbstractButton.IconOnly
                 enabled: root.enabledForChat && !root.sending && input.text.trim().length > 0
                 onClicked: root.submitText()
+                Layout.alignment: Qt.AlignVCenter
             }
         }
     }
