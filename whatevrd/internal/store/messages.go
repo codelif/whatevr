@@ -367,7 +367,7 @@ func (db *DB) ListPendingOutgoingMessages(ctx context.Context, limit int, now ti
 		       send_attempts, last_send_error, next_send_attempt
 		FROM messages
 		WHERE direction = ? AND status = ? AND next_send_attempt <= ?
-		ORDER BY timestamp ASC, id ASC
+		ORDER BY timestamp ASC, rowid ASC
 		LIMIT ?
 	`, DirectionOutgoing, StatusPending, now.Unix(), limit)
 	if err != nil {
@@ -483,7 +483,7 @@ func (db *DB) ReadCandidatesForChat(ctx context.Context, chatID string) ([]ReadC
 		SELECT id, chat_id, sender_id, timestamp
 		FROM messages
 		WHERE chat_id = ? AND direction = ? AND is_read = 0
-		ORDER BY timestamp ASC, id ASC
+		ORDER BY timestamp ASC, rowid ASC
 	`, chatID, DirectionIncoming)
 	if err != nil {
 		return nil, err

@@ -1,9 +1,14 @@
 package wa
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"net/http"
 	"os"
@@ -126,6 +131,12 @@ func (c *Client) SendMedia(ctx context.Context, chatID, filePath, caption string
 		return appstore.SavedTextMessage{}, err
 	}
 
+	var mediaWidth, mediaHeight int32
+	if cfg, _, err := image.DecodeConfig(bytes.NewReader(data)); err == nil {
+		mediaWidth = int32(cfg.Width)
+		mediaHeight = int32(cfg.Height)
+	}
+
 	saved, err := c.store.SaveMediaMessage(ctx, appstore.MediaMessageInput{
 		TextMessageInput: appstore.TextMessageInput{
 			ID:          internalMessageIDForChat(chatID, messageID),
@@ -140,6 +151,8 @@ func (c *Client) SendMedia(ctx context.Context, chatID, filePath, caption string
 		},
 		MediaMimeType:  mimeType,
 		MediaLocalPath: localPath,
+		MediaWidth:     mediaWidth,
+		MediaHeight:    mediaHeight,
 	})
 	if err != nil {
 		return appstore.SavedTextMessage{}, err
