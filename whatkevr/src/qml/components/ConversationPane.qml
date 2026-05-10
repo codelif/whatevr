@@ -86,6 +86,14 @@ Frame {
                 visible: running
             }
 
+            Kirigami.Action {
+                id: retryMessagesAction
+
+                text: i18nc("@action:button", "Retry")
+                icon.name: "view-refresh-symbolic"
+                onTriggered: AppController.retryMessages()
+            }
+
             Kirigami.PlaceholderMessage {
                 anchors.centerIn: parent
                 width: Math.min(parent.width - Kirigami.Units.largeSpacing * 4,
@@ -102,17 +110,15 @@ Frame {
                                 ? AppController.messageErrorText
                                 : i18nc("@info", "Messages you send and receive will appear here."))
 
-                helpfulAction: Kirigami.Action {
-                    visible: AppController.hasSelectedChat && AppController.messageErrorText.length > 0
-                    text: i18nc("@action:button", "Retry")
-                    icon.name: "view-refresh-symbolic"
-                    onTriggered: AppController.retryMessages()
-                }
+                helpfulAction: AppController.hasSelectedChat && AppController.messageErrorText.length > 0
+                               ? retryMessagesAction
+                               : null
             }
         }
 
         MessageComposer {
             Layout.fillWidth: true
+            visible: AppController.hasSelectedChat
             enabledForChat: AppController.composerEnabled
             sending: AppController.sendInFlight
             errorText: AppController.composerErrorText
