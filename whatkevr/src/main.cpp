@@ -9,6 +9,7 @@
 #include <KLocalizedString>
 
 #include "app/appcontroller.h"
+#include "app/wheelinputrouter.h"
 
 int main(int argc, char *argv[])
 {
@@ -39,6 +40,11 @@ int main(int argc, char *argv[])
     AppController appController;
     engine.rootContext()->setContextProperty(QStringLiteral("AppController"), &appController);
     qmlRegisterSingletonInstance("Whatevr", 1, 0, "AppController", &appController);
+
+    WheelInputRouter wheelInputRouter;
+    app.installEventFilter(&wheelInputRouter);
+    engine.rootContext()->setContextProperty(QStringLiteral("WheelInputRouter"), &wheelInputRouter);
+    qmlRegisterSingletonInstance("Whatevr", 1, 0, "WheelInputRouter", &wheelInputRouter);
 
     QObject::connect(
         &engine,

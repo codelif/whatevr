@@ -105,4 +105,12 @@ Item {
             Qt.callLater(() => { list.contentY = list.contentHeight - list.height })
         }
     }
+
+    KineticWheelScroller {
+        anchors.fill: list
+        target: list
+        wheelStep: Kirigami.Units.gridUnit * 4
+        maximumVelocity: 16000
+        onScrollStarted: root.pinToBottom = false
+    }
 }

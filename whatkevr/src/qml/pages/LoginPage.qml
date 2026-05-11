@@ -77,6 +77,12 @@ Item {
         }
     }
 
+    KineticWheelScroller {
+        anchors.fill: loginFlickable
+        target: loginFlickable
+        wheelStep: Kirigami.Units.gridUnit * 4
+    }
+
     component LeftPanel: Frame {
         Layout.fillWidth: true
         Layout.preferredWidth: root.wideLayout ? root.contentWidth * 0.46 : -1

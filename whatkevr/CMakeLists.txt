@@ -30,6 +30,8 @@ qt_add_executable(whatkevr
     src/main.cpp
     src/app/appcontroller.cpp
     src/app/appcontroller.h
+    src/app/wheelinputrouter.cpp
+    src/app/wheelinputrouter.h
     src/models/chatlistmodel.cpp
     src/models/chatlistmodel.h
     src/models/messagelistmodel.cpp
@@ -71,6 +73,7 @@ qt_add_qml_module(whatkevr
         src/qml/components/ChatListPane.qml
         src/qml/components/ConversationPane.qml
         src/qml/components/HistorySyncStrip.qml
+        src/qml/components/KineticWheelScroller.qml
         src/qml/components/ChatBubble.qml
         src/qml/components/MessageView.qml
         src/qml/components/MessageComposer.qml

@@ -75,47 +75,59 @@ Frame {
             text: AppController.bannerText
         }
 
-        ListView {
-            id: chatList
+        Item {
+            id: chatListViewport
 
             Layout.fillWidth: true
             Layout.fillHeight: true
-            clip: true
-            model: AppController.chatListModel
-            currentIndex: -1
-            boundsBehavior: Flickable.StopAtBounds
-            flickableDirection: Flickable.VerticalFlick
-            reuseItems: true
-            spacing: 0
-            cacheBuffer: Math.max(0, height)
-            ScrollBar.vertical: ScrollBar {
-                policy: ScrollBar.AlwaysOn
+
+            ListView {
+                id: chatList
+
+                anchors.fill: parent
+                clip: true
+                model: AppController.chatListModel
+                currentIndex: -1
+                boundsBehavior: Flickable.StopAtBounds
+                flickableDirection: Flickable.VerticalFlick
+                reuseItems: true
+                spacing: 0
+                cacheBuffer: Math.max(0, height)
+                ScrollBar.vertical: ScrollBar {
+                    policy: ScrollBar.AlwaysOn
+                }
+
+                delegate: ChatListDelegate {
+                    chatId: String(model.chatId || "")
+                    name: String(model.name || "")
+                    lastMessage: String(model.lastMessage || "")
+                    avatarLocalPath: String(model.avatarLocalPath || "")
+                    initials: String(model.initials || "?")
+                    unreadCount: Number(model.unreadCount || 0)
+                    current: AppController.selectedChatId === chatId
+                    onSelected: id => AppController.selectChat(id)
+                }
+
+                BusyIndicator {
+                    anchors.centerIn: parent
+                    running: AppController.chatsLoading && AppController.chatsEmpty
+                    visible: running
+                }
+
+                Kirigami.PlaceholderMessage {
+                    anchors.centerIn: parent
+                    width: Math.min(parent.width - Kirigami.Units.largeSpacing * 4,
+                                    Kirigami.Units.gridUnit * 16)
+                    visible: !AppController.chatsLoading && AppController.chatsEmpty
+                    text: i18nc("@info", "No chats yet")
+                    explanation: i18nc("@info", "Chats will appear here as history sync stores them locally.")
+                }
             }
 
-            delegate: ChatListDelegate {
-                chatId: String(model.chatId || "")
-                name: String(model.name || "")
-                lastMessage: String(model.lastMessage || "")
-                avatarLocalPath: String(model.avatarLocalPath || "")
-                initials: String(model.initials || "?")
-                unreadCount: Number(model.unreadCount || 0)
-                current: AppController.selectedChatId === chatId
-                onSelected: id => AppController.selectChat(id)
-            }
-
-            BusyIndicator {
-                anchors.centerIn: parent
-                running: AppController.chatsLoading && AppController.chatsEmpty
-                visible: running
-            }
-
-            Kirigami.PlaceholderMessage {
-                anchors.centerIn: parent
-                width: Math.min(parent.width - Kirigami.Units.largeSpacing * 4,
-                                Kirigami.Units.gridUnit * 16)
-                visible: !AppController.chatsLoading && AppController.chatsEmpty
-                text: i18nc("@info", "No chats yet")
-                explanation: i18nc("@info", "Chats will appear here as history sync stores them locally.")
+            KineticWheelScroller {
+                anchors.fill: chatList
+                target: chatList
+                wheelStep: Kirigami.Units.gridUnit * 4
             }
         }
     }
