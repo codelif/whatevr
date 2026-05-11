@@ -7,11 +7,13 @@ Item {
 
     property var target: null
     property real wheelStep: 80
-    property real maximumVelocity: 12000
-    property real timeConstant: 0.58
+    property real pixelDeltaScale: 0.72
+    property real angleDeltaScale: 0.85
+    property real maximumVelocity: 9000
+    property real timeConstant: 0.48
     property real launchThreshold: 12
     property real stopThreshold: 6
-    property real inertiaMultiplier: 1.55
+    property real inertiaMultiplier: 1.18
     property real pendingDelta: 0
     property real velocity: 0
     property bool kineticActive: false
@@ -100,11 +102,11 @@ Item {
 
     function wheelDelta(pixelY, angleY) {
         if (Math.abs(pixelY) > 0) {
-            return -pixelY
+            return -pixelY * pixelDeltaScale
         }
 
         if (Math.abs(angleY) > 0) {
-            return -(angleY / 120) * wheelStep
+            return -(angleY / 120) * wheelStep * angleDeltaScale
         }
 
         return 0
