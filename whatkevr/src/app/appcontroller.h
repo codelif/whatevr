@@ -68,8 +68,6 @@ class AppController final : public QObject
     Q_PROPERTY(bool chatsEmpty READ chatsEmpty NOTIFY chatsChanged FINAL)
     Q_PROPERTY(QAbstractItemModel *messageListModel READ messageListModel CONSTANT FINAL)
     Q_PROPERTY(bool messagesLoading READ messagesLoading NOTIFY messagesChanged FINAL)
-    Q_PROPERTY(bool messagesLoadingMore READ messagesLoadingMore NOTIFY messagesChanged FINAL)
-    Q_PROPERTY(bool messagesHaveMore READ messagesHaveMore NOTIFY messagesChanged FINAL)
     Q_PROPERTY(bool messagesEmpty READ messagesEmpty NOTIFY messagesChanged FINAL)
     Q_PROPERTY(QString messageErrorText READ messageErrorText NOTIFY messagesChanged FINAL)
     Q_PROPERTY(bool composerEnabled READ composerEnabled NOTIFY composerChanged FINAL)
@@ -110,8 +108,6 @@ public:
     [[nodiscard]] bool chatsEmpty() const;
     [[nodiscard]] QAbstractItemModel *messageListModel() const;
     [[nodiscard]] bool messagesLoading() const;
-    [[nodiscard]] bool messagesLoadingMore() const;
-    [[nodiscard]] bool messagesHaveMore() const;
     [[nodiscard]] bool messagesEmpty() const;
     [[nodiscard]] QString messageErrorText() const;
     [[nodiscard]] bool composerEnabled() const;
@@ -130,7 +126,6 @@ public:
     Q_INVOKABLE void triggerPrimaryAction();
     Q_INVOKABLE void selectChat(const QString &chatId);
     Q_INVOKABLE void retryMessages();
-    Q_INVOKABLE void loadMoreMessages();
     Q_INVOKABLE void sendText(const QString &text);
     Q_INVOKABLE void sendImage(const QString &fileUrl, const QString &caption = QString());
     Q_INVOKABLE void downloadMessageMedia(const QString &messageId);
@@ -141,8 +136,6 @@ Q_SIGNALS:
     void stateChanged();
     void chatsChanged();
     void messagesChanged();
-    void moreMessagesWillLoad();
-    void moreMessagesLoaded();
     void composerChanged();
     void selectionChanged();
     void historySyncChanged();
@@ -157,7 +150,6 @@ private:
     void requestReconnect();
     void requestChats();
     void requestMessages(const QString &chatId);
-    void requestMoreMessages();
     void ensureDaemonStream();
     void ensureLoginStream();
     void scheduleRetry(int delayMs = 2000);
@@ -187,8 +179,6 @@ private:
     qint64 m_qrExpiresAtUnix = 0;
     bool m_chatsLoading = false;
     bool m_messagesLoading = false;
-    bool m_messagesLoadingMore = false;
-    bool m_messagesHaveMore = false;
     QString m_messagesLoadingChatId;
     QString m_messageErrorText;
     bool m_sendInFlight = false;
@@ -213,7 +203,6 @@ private:
     std::unique_ptr<QGrpcCallReply> m_reconnectReply;
     std::unique_ptr<QGrpcCallReply> m_chatsReply;
     std::unique_ptr<QGrpcCallReply> m_messagesReply;
-    std::unique_ptr<QGrpcCallReply> m_moreMessagesReply;
     std::unique_ptr<QGrpcCallReply> m_sendTextReply;
     std::unique_ptr<QGrpcCallReply> m_sendMediaReply;
     QHash<QString, std::shared_ptr<QGrpcCallReply>> m_mediaDownloadReplies;

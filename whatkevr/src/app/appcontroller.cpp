@@ -304,15 +304,6 @@ bool AppController::messagesLoading() const
     return m_messagesLoading;
 }
 
-bool AppController::messagesLoadingMore() const
-{
-    return m_messagesLoadingMore;
-}
-
-bool AppController::messagesHaveMore() const
-{
-    return m_messagesHaveMore;
-}
 
 bool AppController::messagesEmpty() const
 {
@@ -414,12 +405,7 @@ void AppController::selectChat(const QString &chatId)
     m_selectedChatId = chatId;
     m_messageErrorText.clear();
     m_composerErrorText.clear();
-    m_messagesLoadingMore = false;
-    m_messagesHaveMore = false;
     m_messagesLoading = !chatId.isEmpty();
-    if (m_moreMessagesReply) {
-        m_moreMessagesReply.reset();
-    }
     m_messageListModel->clear();
     updateSelectedChatData();
     Q_EMIT selectionChanged();
@@ -438,13 +424,6 @@ void AppController::retryMessages()
     }
 }
 
-void AppController::loadMoreMessages()
-{
-    if (m_messagesLoadingMore || m_messagesLoading || !m_messagesHaveMore) {
-        return;
-    }
-    requestMoreMessages();
-}
 
 void AppController::sendText(const QString &text)
 {
@@ -806,14 +785,13 @@ void AppController::requestMessages(const QString &chatId)
         m_messagesReply.reset();
     }
 
-    static constexpr int kInitialLimit = 80;
+    static constexpr int kMessageLimit = MessageListModel::MaximumMessageCount;
 
     GetMessagesRequest request;
     request.setChatId(chatId);
-    request.setLimit(kInitialLimit);
+    request.setLimit(kMessageLimit);
 
     m_messagesLoading = true;
-    m_messagesHaveMore = false;
     m_messagesLoadingChatId = chatId;
     m_messageErrorText.clear();
     Q_EMIT messagesChanged();
@@ -851,72 +829,8 @@ void AppController::requestMessages(const QString &chatId)
         }
 
         if (m_selectedChatId == chatId) {
-            m_messagesHaveMore = response->messages().size() >= kInitialLimit;
             m_messageListModel->replaceMessages(response->messages());
         }
-        Q_EMIT messagesChanged();
-    });
-}
-
-void AppController::requestMoreMessages()
-{
-    if (!m_chatClient || m_selectedChatId.isEmpty() || m_messagesLoadingMore) {
-        return;
-    }
-
-    const QString beforeId = m_messageListModel->oldestMessageId();
-    if (beforeId.isEmpty()) {
-        return;
-    }
-
-    if (m_moreMessagesReply) {
-        m_moreMessagesReply.reset();
-    }
-
-    static constexpr int kPageLimit = 40;
-
-    GetMessagesRequest request;
-    request.setChatId(m_selectedChatId);
-    request.setLimit(kPageLimit);
-    request.setBeforeMessageId(beforeId);
-
-    m_messagesLoadingMore = true;
-    Q_EMIT messagesChanged();
-
-    const QString chatId = m_selectedChatId;
-    m_moreMessagesReply = m_chatClient->GetMessages(request);
-    auto *reply = m_moreMessagesReply.get();
-
-    connect(reply, &QGrpcCallReply::finished, this, [this, reply, chatId](const QGrpcStatus &status) {
-        if (m_moreMessagesReply.get() != reply) {
-            return;
-        }
-
-        m_messagesLoadingMore = false;
-
-        if (m_selectedChatId != chatId) {
-            m_moreMessagesReply.reset();
-            Q_EMIT messagesChanged();
-            return;
-        }
-
-        if (!status.isOk()) {
-            m_moreMessagesReply.reset();
-            Q_EMIT messagesChanged();
-            return;
-        }
-
-        const auto response = reply->read<GetMessagesResponse>();
-        m_moreMessagesReply.reset();
-        if (!response) {
-            Q_EMIT messagesChanged();
-            return;
-        }
-
-        m_messagesHaveMore = response->messages().size() >= kPageLimit;
-        Q_EMIT moreMessagesWillLoad();
-        m_messageListModel->prependMessages(response->messages());
-        Q_EMIT moreMessagesLoaded();
         Q_EMIT messagesChanged();
     });
 }

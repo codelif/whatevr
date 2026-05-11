@@ -25,12 +25,6 @@ Item {
             policy: ScrollBar.AlwaysOn
         }
 
-        Kirigami.WheelHandler {
-            target: statusFlickable
-            filterMouseEvents: true
-            keyNavigationEnabled: true
-        }
-
         ColumnLayout {
             id: layout
 

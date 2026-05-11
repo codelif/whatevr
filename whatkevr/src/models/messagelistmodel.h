@@ -33,16 +33,16 @@ public:
 
     explicit MessageListModel(QObject *parent = nullptr);
 
+    static constexpr int MaximumMessageCount = 80;
+
     [[nodiscard]] int rowCount(const QModelIndex &parent = QModelIndex()) const override;
     [[nodiscard]] QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
     [[nodiscard]] QHash<int, QByteArray> roleNames() const override;
 
     void replaceMessages(const QList<whatevr::v1::Message> &messages);
-    void prependMessages(const QList<whatevr::v1::Message> &messages);
     void clear();
     void upsertMessage(const whatevr::v1::Message &message);
     [[nodiscard]] bool isEmpty() const;
-    [[nodiscard]] QString oldestMessageId() const;
 
 private:
     struct MessageItem {
@@ -62,6 +62,7 @@ private:
     static MessageItem fromProto(const whatevr::v1::Message &message);
     static QString formatTime(qint64 timestampUnix);
     static QString statusText(int status);
+    void trimToMaximumSize();
     [[nodiscard]] int indexOf(const QString &messageId) const;
 
     QList<MessageItem> m_messages;

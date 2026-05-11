@@ -92,12 +92,6 @@ Frame {
                 policy: ScrollBar.AlwaysOn
             }
 
-            Kirigami.WheelHandler {
-                target: chatList
-                filterMouseEvents: true
-                keyNavigationEnabled: true
-            }
-
             delegate: ChatListDelegate {
                 chatId: String(model.chatId || "")
                 name: String(model.name || "")

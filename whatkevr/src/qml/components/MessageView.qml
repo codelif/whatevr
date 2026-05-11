@@ -9,24 +9,11 @@ Item {
     property bool atBottom: true
     property bool pinToBottom: true
 
-    // Saved before a prepend to restore scroll position afterwards
-    property real _prependSavedHeight: 0
-
     function scrollToBottom() {
         if (list.count > 0) {
             list.positionViewAtEnd()
             list.contentY = list.contentHeight - list.height
         }
-    }
-
-    BusyIndicator {
-        id: loadMoreIndicator
-        anchors.horizontalCenter: parent.horizontalCenter
-        anchors.top: parent.top
-        anchors.topMargin: Kirigami.Units.smallSpacing
-        running: AppController.messagesLoadingMore
-        visible: running
-        z: 1
     }
 
     ListView {
@@ -36,7 +23,7 @@ Item {
         clip: true
 
         spacing: Kirigami.Units.smallSpacing / 2
-        cacheBuffer: 100000
+        cacheBuffer: Math.max(0, height * 2)
         reuseItems: false
 
         flickableDirection: Flickable.VerticalFlick
@@ -47,12 +34,6 @@ Item {
 
         ScrollBar.vertical: ScrollBar {
             policy: ScrollBar.AlwaysOn
-        }
-
-        Kirigami.WheelHandler {
-            target: list
-            filterMouseEvents: true
-            keyNavigationEnabled: true
         }
 
         delegate: ChatBubble {
@@ -92,11 +73,6 @@ Item {
         onContentYChanged: {
             const distanceFromBottom = (contentHeight - height) - contentY
             root.atBottom = distanceFromBottom <= 4
-
-            // Trigger loading older messages when near the top
-            if (contentY <= height * 0.2 && AppController.messagesHaveMore && !AppController.messagesLoadingMore) {
-                AppController.loadMoreMessages()
-            }
         }
         onContentHeightChanged: {
             if (root.pinToBottom && contentHeight > height) {
@@ -120,23 +96,6 @@ Item {
                 root.atBottom = true
                 Qt.callLater(() => {
                     if (root.pinToBottom) list.contentY = list.contentHeight - list.height
-                })
-            }
-        }
-
-        Connections {
-            target: AppController
-            function onMoreMessagesWillLoad() {
-                root._prependSavedHeight = list.contentHeight
-            }
-            function onMoreMessagesLoaded() {
-                // Restore scroll position so the previously visible messages stay in place
-                Qt.callLater(() => {
-                    const delta = list.contentHeight - root._prependSavedHeight
-                    if (delta > 0) {
-                        list.contentY += delta
-                    }
-                    root._prependSavedHeight = 0
                 })
             }
         }
