@@ -21,7 +21,15 @@ Item {
     property double lastWheelTimestamp: 0
     property double lastImpulseTimestamp: 0
     property double lastInputTimestamp: 0
-    property real recentPeakVelocity: 0
+    property double lastRealDeltaTimestamp: 0
+    property real gestureTotalDistance: 0
+    property bool gestureActive: false
+    property bool gestureHeld: false
+    property int holdCancelTimeout: 95
+    property int launchMaxAge: 75
+    property real flickLaunchThreshold: 520
+    property real minimumFlickDistance: 24
+    property real velocitySampleThreshold: 1.5
     readonly property int scrollBeginPhase: 1
     readonly property int scrollUpdatePhase: 2
     readonly property int scrollEndPhase: 3
@@ -68,21 +76,35 @@ Item {
         return true
     }
 
+    function blocksAtBound(delta) {
+        if (!scrollable() || Math.abs(delta) < 0.01) {
+            return false
+        }
+
+        const y = target.contentY
+        return (delta < 0 && y <= minimumY() + 0.5)
+                || (delta > 0 && y >= maximumY() - 0.5)
+    }
+
     function sameDirection(a, b) {
         return a === 0 || b === 0 || (a > 0) === (b > 0)
     }
 
     function launchInertia(now) {
-        const launchVelocity = Math.abs(recentPeakVelocity) > Math.abs(velocity)
-                ? recentPeakVelocity
-                : velocity
-        if (Math.abs(launchVelocity) < launchThreshold || !canMove(launchVelocity)) {
+        if (gestureHeld || lastRealDeltaTimestamp <= 0 || now - lastRealDeltaTimestamp > launchMaxAge
+                || gestureTotalDistance < minimumFlickDistance) {
+            velocity = 0
             return false
         }
 
-        velocity = clamp(launchVelocity * inertiaMultiplier, -maximumVelocity, maximumVelocity)
-        recentPeakVelocity = velocity
+        if (Math.abs(velocity) < flickLaunchThreshold || !canMove(velocity)) {
+            velocity = 0
+            return false
+        }
+
+        velocity = clamp(velocity * inertiaMultiplier, -maximumVelocity, maximumVelocity)
         kineticActive = true
+        gestureActive = false
         lastInputTimestamp = now - 100
         lastImpulseTimestamp = 0
         if (!frameDriver.running) {
@@ -152,11 +174,21 @@ Item {
         lastWheelTimestamp = 0
         lastImpulseTimestamp = 0
         lastInputTimestamp = 0
-        recentPeakVelocity = 0
+        lastRealDeltaTimestamp = 0
+        gestureTotalDistance = 0
+        gestureActive = false
+        gestureHeld = false
         if (frameDriver.running) {
             frameDriver.stop()
         }
         finishInteraction()
+    }
+
+    function cancelHeldGesture() {
+        velocity = 0
+        gestureHeld = true
+        lastWheelTimestamp = 0
+        lastImpulseTimestamp = 0
     }
 
     Connections {
@@ -176,7 +208,22 @@ Item {
             if (Math.abs(delta) < 0.01) {
                 if (phase === root.scrollBeginPhase || phase === root.scrollEndPhase) {
                     WheelInputRouter.acceptWheel()
+                    if (phase === root.scrollBeginPhase) {
+                        root.velocity = 0
+                        root.lastWheelTimestamp = 0
+                        root.lastImpulseTimestamp = 0
+                        root.lastInputTimestamp = now
+                        root.lastRealDeltaTimestamp = 0
+                        root.gestureTotalDistance = 0
+                        root.gestureActive = true
+                        root.gestureHeld = false
+                        root.kineticActive = false
+                        if (frameDriver.running) {
+                            frameDriver.stop()
+                        }
+                    }
                     if (phase === root.scrollEndPhase && !root.launchInertia(now)) {
+                        root.gestureActive = false
                         root.finishInteraction()
                     }
                 }
@@ -184,12 +231,37 @@ Item {
             }
 
             if (!root.canMove(delta)) {
+                if (root.blocksAtBound(delta)) {
+                    WheelInputRouter.acceptWheel()
+                    root.velocity = 0
+                    root.lastRealDeltaTimestamp = 0
+                    root.gestureTotalDistance = 0
+                    root.gestureHeld = true
+                }
                 root.stopKinetic()
                 return
             }
 
             WheelInputRouter.acceptWheel()
             root.beginInteraction()
+
+            if (!root.gestureActive) {
+                root.gestureActive = true
+                root.gestureHeld = false
+                root.gestureTotalDistance = 0
+                root.lastRealDeltaTimestamp = 0
+                root.lastWheelTimestamp = 0
+                root.velocity = 0
+            } else if (root.lastRealDeltaTimestamp > 0 && now - root.lastRealDeltaTimestamp > root.holdCancelTimeout) {
+                root.cancelHeldGesture()
+            }
+
+            if (root.gestureHeld && Math.abs(delta) >= root.minimumFlickDistance) {
+                root.gestureHeld = false
+                root.gestureTotalDistance = 0
+                root.velocity = 0
+                root.lastWheelTimestamp = 0
+            }
 
             const hasPixelDelta = Math.abs(pixelY) > 0
             let dt = root.lastWheelTimestamp > 0
@@ -199,22 +271,16 @@ Item {
             root.lastWheelTimestamp = now
 
             const instantVelocity = delta / dt
-            const inputWeight = hasPixelDelta ? 0.70 : 0.52
-            const reversesHard = !root.sameDirection(root.velocity, instantVelocity)
-                    && Math.abs(instantVelocity) > Math.max(180, Math.abs(root.velocity) * 0.45)
-            const baseVelocity = root.sameDirection(root.velocity, instantVelocity) || !reversesHard
-                    ? root.velocity
-                    : 0
-            root.velocity = root.clamp(baseVelocity * (1 - inputWeight) + instantVelocity * inputWeight,
-                                       -root.maximumVelocity, root.maximumVelocity)
-            if (Math.abs(root.velocity) >= root.launchThreshold) {
-                if (root.sameDirection(root.recentPeakVelocity, root.velocity)) {
-                    if (Math.abs(root.velocity) > Math.abs(root.recentPeakVelocity)) {
-                        root.recentPeakVelocity = root.velocity
-                    }
-                } else if (reversesHard || Math.abs(root.velocity) > Math.abs(root.recentPeakVelocity) * 0.6) {
-                    root.recentPeakVelocity = root.velocity
-                }
+            root.gestureTotalDistance += Math.abs(delta)
+            if (!root.gestureHeld && Math.abs(delta) >= root.velocitySampleThreshold) {
+                const inputWeight = hasPixelDelta ? 0.58 : 0.44
+                const reversesHard = !root.sameDirection(root.velocity, instantVelocity)
+                        && Math.abs(instantVelocity) > Math.max(180, Math.abs(root.velocity) * 0.45)
+                const baseVelocity = root.sameDirection(root.velocity, instantVelocity) || !reversesHard
+                        ? root.velocity
+                        : 0
+                root.velocity = root.clamp(baseVelocity * (1 - inputWeight) + instantVelocity * inputWeight,
+                                           -root.maximumVelocity, root.maximumVelocity)
             }
 
             const actual = root.applyDelta(delta)
@@ -223,6 +289,7 @@ Item {
             }
             root.kineticActive = true
             root.lastInputTimestamp = now
+            root.lastRealDeltaTimestamp = now
             root.lastImpulseTimestamp = now
 
             if (!frameDriver.running) {
@@ -242,14 +309,11 @@ Item {
 
             const now = Date.now()
             const inputQuiet = now - root.lastInputTimestamp > 42
-            const peakFresh = now - root.lastImpulseTimestamp < 180
-            if (inputQuiet && peakFresh
-                    && root.sameDirection(root.velocity, root.recentPeakVelocity)
-                    && Math.abs(root.recentPeakVelocity) > Math.abs(root.velocity)) {
-                root.velocity = root.clamp(root.recentPeakVelocity * root.inertiaMultiplier,
-                                           -root.maximumVelocity, root.maximumVelocity)
-                root.recentPeakVelocity = root.velocity
-                root.lastImpulseTimestamp = 0
+            if (root.gestureActive) {
+                if (root.lastRealDeltaTimestamp > 0 && now - root.lastRealDeltaTimestamp > root.holdCancelTimeout) {
+                    root.cancelHeldGesture()
+                }
+                return
             }
 
             if (!root.kineticActive) {
@@ -261,14 +325,14 @@ Item {
 
             const dt = root.clamp(frameDriver.frameTime, 1 / 144, 1 / 30)
             const decay = Math.exp(-dt / root.timeConstant)
-            const kineticScale = inputQuiet ? 1.0 : 0.08
-            const delta = root.velocity * root.timeConstant * (1 - decay) * kineticScale
-            const actual = Math.abs(delta) >= 0.01 ? root.applyDelta(delta) : 0
-            root.velocity *= decay
-
             if (!inputQuiet) {
+                root.velocity *= decay
                 return
             }
+
+            const delta = root.velocity * root.timeConstant * (1 - decay)
+            const actual = Math.abs(delta) >= 0.01 ? root.applyDelta(delta) : 0
+            root.velocity *= decay
 
             if (Math.abs(root.velocity) < root.stopThreshold || (Math.abs(delta) >= 0.01 && Math.abs(actual) < 0.01)) {
                 root.stopKinetic()

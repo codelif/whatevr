@@ -9,11 +9,19 @@ Item {
     property bool atBottom: true
     property bool pinToBottom: true
 
-    function scrollToBottom() {
+    function maximumY() {
+        return list.originY + Math.max(0, list.contentHeight - list.height)
+    }
+
+    function pinToBottomNow() {
         if (list.count > 0) {
             list.positionViewAtEnd()
-            list.contentY = list.contentHeight - list.height
         }
+        list.contentY = maximumY()
+    }
+
+    function scrollToBottom() {
+        pinToBottomNow()
     }
 
     ListView {
@@ -69,21 +77,25 @@ Item {
             }
         }
 
-        onMovementStarted: root.pinToBottom = false
+        onDraggingChanged: {
+            if (dragging) {
+                root.pinToBottom = false
+            }
+        }
         onContentYChanged: {
-            const distanceFromBottom = (contentHeight - height) - contentY
+            const distanceFromBottom = root.maximumY() - contentY
             root.atBottom = distanceFromBottom <= 4
         }
         onContentHeightChanged: {
             if (root.pinToBottom && contentHeight > height) {
-                contentY = contentHeight - height
+                root.pinToBottomNow()
             }
         }
         onCountChanged: {
             if (root.atBottom) {
                 root.pinToBottom = true
                 Qt.callLater(() => {
-                    if (root.pinToBottom) contentY = contentHeight - height
+                    if (root.pinToBottom) root.pinToBottomNow()
                 })
             }
         }
@@ -95,14 +107,14 @@ Item {
                 root.pinToBottom = true
                 root.atBottom = true
                 Qt.callLater(() => {
-                    if (root.pinToBottom) list.contentY = list.contentHeight - list.height
+                    if (root.pinToBottom) root.pinToBottomNow()
                 })
             }
         }
 
         Component.onCompleted: {
             root.pinToBottom = true
-            Qt.callLater(() => { list.contentY = list.contentHeight - list.height })
+            Qt.callLater(() => { root.pinToBottomNow() })
         }
     }
 
