@@ -27,41 +27,57 @@ Item {
     readonly property bool isImage: mediaMimeType.startsWith("image/")
     readonly property bool hasLocalImage: isImage && mediaLocalPath.length > 0
 
+    // Image geometry must not depend on Image.implicitWidth/implicitHeight.
+    // Those values arrive after decode and would resize the delegate while the
+    // ListView is already scrolling. Reserve a frame from message metadata when
+    // it is present; otherwise use a stable thumbnail shape for the lifetime of
+    // this delegate.
+    readonly property real minImageWidth: Math.min(maxContentWidth, Kirigami.Units.gridUnit * 8)
+    readonly property real fallbackImageWidth: Kirigami.Units.gridUnit * 18
+    readonly property real maxImageHeight: Kirigami.Units.gridUnit * 16
+    readonly property real minImageHeight: Kirigami.Units.gridUnit * 6
+    readonly property real fallbackImageAspectRatio: 16 / 10
+    property real reservedImageAspectRatio: fallbackImageAspectRatio
+    property real reservedImageNaturalWidth: fallbackImageWidth
+
+    function normalisedImageAspectRatio(width, height) {
+        if (width <= 0 || height <= 0) {
+            return fallbackImageAspectRatio
+        }
+
+        // Keep pathological metadata from making unusable one-pixel-wide or
+        // ultra-wide bubbles. The Image itself still preserves its aspect ratio
+        // inside this reserved frame.
+        return Math.max(0.55, Math.min(width / height, 2.2))
+    }
+
+    function resetReservedImageGeometry() {
+        reservedImageAspectRatio = normalisedImageAspectRatio(mediaIntrinsicWidth, mediaIntrinsicHeight)
+        reservedImageNaturalWidth = mediaIntrinsicWidth > 0 ? mediaIntrinsicWidth : fallbackImageWidth
+    }
+
+    onMessageIdChanged: resetReservedImageGeometry()
+    onMediaMimeTypeChanged: resetReservedImageGeometry()
+    Component.onCompleted: resetReservedImageGeometry()
+
     readonly property real imageDisplayWidth: {
         if (!isImage) {
             return 0
         }
-        const capH = Kirigami.Units.gridUnit * 16
-        let intrW = mediaIntrinsicWidth
-        let intrH = mediaIntrinsicHeight
-        if ((intrW <= 0 || intrH <= 0) && img.implicitWidth > 0 && img.implicitHeight > 0) {
-            intrW = img.implicitWidth
-            intrH = img.implicitHeight
+
+        let width = Math.min(maxContentWidth, Math.max(minImageWidth, reservedImageNaturalWidth))
+        if (width / reservedImageAspectRatio > maxImageHeight) {
+            width = maxImageHeight * reservedImageAspectRatio
         }
-        if (intrW > 0 && intrH > 0) {
-            let w = Math.min(maxContentWidth, intrW)
-            const h = w * (intrH / intrW)
-            if (h > capH) {
-                w = capH * (intrW / intrH)
-            }
-            return Math.max(w, Kirigami.Units.gridUnit * 8)
-        }
-        return Math.min(maxContentWidth, Kirigami.Units.gridUnit * 18)
+        return Math.min(maxContentWidth, Math.max(minImageWidth, width))
     }
+
     readonly property real imageDisplayHeight: {
         if (!isImage) {
             return 0
         }
-        let intrW = mediaIntrinsicWidth
-        let intrH = mediaIntrinsicHeight
-        if ((intrW <= 0 || intrH <= 0) && img.implicitWidth > 0 && img.implicitHeight > 0) {
-            intrW = img.implicitWidth
-            intrH = img.implicitHeight
-        }
-        if (intrW > 0 && intrH > 0) {
-            return imageDisplayWidth * (intrH / intrW)
-        }
-        return Kirigami.Units.gridUnit * 11
+
+        return Math.max(minImageHeight, Math.min(maxImageHeight, imageDisplayWidth / reservedImageAspectRatio))
     }
 
     // Status icon logic based on enum values from proto:
@@ -169,62 +185,42 @@ Item {
                 y: 0
                 width: root.imageDisplayWidth
                 height: visible ? root.imageDisplayHeight : 0
+                clip: true
 
                 Rectangle {
+                    id: mediaBackground
+
                     anchors.fill: parent
-                    visible: !root.hasLocalImage
-                    color: Qt.alpha(Kirigami.Theme.textColor, 0.06)
                     radius: Kirigami.Units.smallSpacing
+                    color: Qt.alpha(Kirigami.Theme.textColor, 0.06)
                     border.color: Qt.alpha(Kirigami.Theme.textColor, 0.12)
-
-                    Column {
-                        anchors.centerIn: parent
-                        spacing: Kirigami.Units.smallSpacing
-
-                        BusyIndicator {
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            visible: root.mediaDownloading
-                            running: visible
-                            implicitWidth: Kirigami.Units.gridUnit * 2
-                            implicitHeight: Kirigami.Units.gridUnit * 2
-                        }
-
-                        Button {
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            visible: !root.mediaDownloading
-                            icon.name: "folder-download-symbolic"
-                            text: i18nc("@action:button", "Load image")
-                            enabled: root.messageId.length > 0
-                            onClicked: AppController.downloadMessageMedia(root.messageId)
-                        }
-
-                        Label {
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            width: Math.min(implicitWidth, mediaSlot.width - Kirigami.Units.largeSpacing * 2)
-                            visible: !root.mediaDownloading && root.mediaDownloadError.length > 0
-                            text: root.mediaDownloadError
-                            color: Kirigami.Theme.negativeTextColor
-                            font.pointSize: Kirigami.Theme.smallFont.pointSize
-                            wrapMode: Text.Wrap
-                            horizontalAlignment: Text.AlignHCenter
-                        }
-                    }
                 }
 
                 Image {
                     id: img
+
                     anchors.fill: parent
                     visible: root.hasLocalImage
+                    opacity: status === Image.Ready ? 1 : 0
                     source: root.hasLocalImage ? Qt.resolvedUrl("file://" + root.mediaLocalPath) : ""
                     fillMode: Image.PreserveAspectFit
                     asynchronous: true
                     cache: true
                     smooth: true
+                    sourceSize.width: Math.max(1, Math.ceil(width))
+                    sourceSize.height: Math.max(1, Math.ceil(height))
 
-                    layer.enabled: visible
+                    layer.enabled: visible && status === Image.Ready
                     layer.effect: MultiEffect {
                         maskEnabled: true
                         maskSource: imageMask
+                    }
+
+                    Behavior on opacity {
+                        NumberAnimation {
+                            duration: Kirigami.Units.shortDuration
+                            easing.type: Easing.OutCubic
+                        }
                     }
                 }
 
@@ -235,6 +231,68 @@ Item {
                     radius: Kirigami.Units.smallSpacing
                     visible: false
                     layer.enabled: true
+                }
+
+                Item {
+                    id: imageOverlay
+
+                    anchors.fill: parent
+                    visible: !root.hasLocalImage
+                             || root.mediaDownloading
+                             || img.status === Image.Loading
+                             || img.status === Image.Error
+                             || root.mediaDownloadError.length > 0
+
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: mediaBackground.radius
+                        color: Qt.alpha(Kirigami.Theme.backgroundColor, root.hasLocalImage ? 0.34 : 0.0)
+                    }
+
+                    Column {
+                        anchors.centerIn: parent
+                        width: Math.max(0, parent.width - Kirigami.Units.largeSpacing * 2)
+                        spacing: Kirigami.Units.smallSpacing
+
+                        BusyIndicator {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            visible: root.mediaDownloading || (root.hasLocalImage && img.status === Image.Loading)
+                            running: visible
+                            implicitWidth: Kirigami.Units.gridUnit * 2
+                            implicitHeight: Kirigami.Units.gridUnit * 2
+                        }
+
+                        Button {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            visible: !root.hasLocalImage && !root.mediaDownloading
+                            icon.name: "folder-download-symbolic"
+                            text: i18nc("@action:button", "Load image")
+                            enabled: root.messageId.length > 0
+                            onClicked: AppController.downloadMessageMedia(root.messageId)
+                        }
+
+                        Label {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            width: parent.width
+                            visible: img.status === Image.Error && root.hasLocalImage
+                            text: i18nc("@info", "Image could not be displayed")
+                            color: Kirigami.Theme.negativeTextColor
+                            font.pointSize: Kirigami.Theme.smallFont.pointSize
+                            wrapMode: Text.Wrap
+                            horizontalAlignment: Text.AlignHCenter
+                        }
+
+                        Label {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            width: parent.width
+                            visible: !root.mediaDownloading && root.mediaDownloadError.length > 0
+                            text: root.mediaDownloadError
+                            color: Kirigami.Theme.negativeTextColor
+                            font.pointSize: Kirigami.Theme.smallFont.pointSize
+                            wrapMode: Text.Wrap
+                            horizontalAlignment: Text.AlignHCenter
+                        }
+                    }
                 }
             }
 
