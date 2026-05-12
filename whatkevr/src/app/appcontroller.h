@@ -156,6 +156,7 @@ private:
     void requestChats();
     void requestMessages(const QString &chatId);
     void requestOlderMessages();
+    void requestSelectedChatReadIfActive();
     void ensureDaemonStream();
     void ensureLoginStream();
     void scheduleRetry(int delayMs = 2000);
@@ -213,6 +214,7 @@ private:
     std::unique_ptr<QGrpcCallReply> m_chatsReply;
     std::unique_ptr<QGrpcCallReply> m_messagesReply;
     std::unique_ptr<QGrpcCallReply> m_olderMessagesReply;
+    std::unique_ptr<QGrpcCallReply> m_markChatReadReply;
     std::unique_ptr<QGrpcCallReply> m_sendTextReply;
     std::unique_ptr<QGrpcCallReply> m_sendMediaReply;
     QHash<QString, std::shared_ptr<QGrpcCallReply>> m_mediaDownloadReplies;

@@ -60,3 +60,4 @@ Cargo.lock
 
 /whatkevr/build/
 *.log
+.mcpcode/

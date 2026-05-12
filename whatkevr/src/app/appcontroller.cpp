@@ -3,6 +3,7 @@
 #include <QDir>
 #include <QDateTime>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QUrl>
@@ -31,6 +32,7 @@ using whatevr::v1::ListChatsRequest;
 using whatevr::v1::ListChatsResponse;
 using whatevr::v1::LoginEvent;
 using whatevr::v1::LoginStateChanged;
+using whatevr::v1::MarkChatReadRequest;
 using whatevr::v1::DownloadMessageMediaRequest;
 using whatevr::v1::DownloadMessageMediaResponse;
 using whatevr::v1::SendMediaRequest;
@@ -138,6 +140,12 @@ AppController::AppController(QObject *parent)
     m_qrTimer = new QTimer(this);
     m_qrTimer->setInterval(1000);
     connect(m_qrTimer, &QTimer::timeout, this, &AppController::updateQrExpiryText);
+
+    connect(qGuiApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
+        if (state == Qt::ApplicationActive) {
+            requestSelectedChatReadIfActive();
+        }
+    });
 
     QTimer::singleShot(0, this, &AppController::bootstrap);
 }
@@ -427,6 +435,7 @@ void AppController::selectChat(const QString &chatId)
 
     if (!m_selectedChatId.isEmpty()) {
         requestMessages(m_selectedChatId);
+        requestSelectedChatReadIfActive();
     }
 }
 
@@ -927,6 +936,33 @@ void AppController::requestOlderMessages()
     });
 }
 
+void AppController::requestSelectedChatReadIfActive()
+{
+    if (!m_chatClient || m_selectedChatId.isEmpty() || QGuiApplication::applicationState() != Qt::ApplicationActive) {
+        return;
+    }
+
+    MarkChatReadRequest request;
+    request.setChatId(m_selectedChatId);
+
+    m_markChatReadReply = m_chatClient->MarkChatRead(request);
+    auto *reply = m_markChatReadReply.get();
+    const QString chatId = m_selectedChatId;
+
+    connect(reply, &QGrpcCallReply::finished, this, [this, reply, chatId](const QGrpcStatus &status) {
+        if (m_markChatReadReply.get() != reply) {
+            return;
+        }
+
+        m_markChatReadReply.reset();
+        if (!status.isOk() || m_selectedChatId != chatId) {
+            return;
+        }
+
+        requestChats();
+    });
+}
+
 void AppController::ensureDaemonStream()
 {
     if (!m_daemonClient || m_daemonStream) {
@@ -1173,6 +1209,7 @@ void AppController::applyMessageEvent(const whatevr::v1::Message &message)
 
     m_messageListModel->upsertMessage(message);
     Q_EMIT messagesChanged();
+    requestSelectedChatReadIfActive();
 }
 
 void AppController::applyHistorySyncProgress(const HistorySyncProgress &progress)
