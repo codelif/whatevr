@@ -146,13 +146,15 @@ type HistorySyncEvent struct {
 }
 
 type Chat struct {
-	ID              string
-	Name            string
-	LastMessage     string
-	LastMessageTime int64
-	UnreadCount     int32
-	IsGroup         bool
-	AvatarLocalPath string
+	ID                   string
+	Name                 string
+	LastMessage          string
+	LastMessageTime      int64
+	LastMessageDirection string
+	LastMessageStatus    string
+	UnreadCount          int32
+	IsGroup              bool
+	AvatarLocalPath      string
 }
 
 type Message struct {

@@ -2273,16 +2273,18 @@ func (x *SendMediaResponse) GetMessage() *Message {
 }
 
 type Chat struct {
-	state               protoimpl.MessageState `protogen:"open.v1"`
-	Id                  string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Name                string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
-	LastMessage         string                 `protobuf:"bytes,3,opt,name=last_message,json=lastMessage,proto3" json:"last_message,omitempty"`
-	LastMessageTimeUnix int64                  `protobuf:"varint,4,opt,name=last_message_time_unix,json=lastMessageTimeUnix,proto3" json:"last_message_time_unix,omitempty"`
-	UnreadCount         int32                  `protobuf:"varint,5,opt,name=unread_count,json=unreadCount,proto3" json:"unread_count,omitempty"`
-	IsGroup             bool                   `protobuf:"varint,6,opt,name=is_group,json=isGroup,proto3" json:"is_group,omitempty"`
-	AvatarLocalPath     string                 `protobuf:"bytes,7,opt,name=avatar_local_path,json=avatarLocalPath,proto3" json:"avatar_local_path,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	Id                   string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Name                 string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	LastMessage          string                 `protobuf:"bytes,3,opt,name=last_message,json=lastMessage,proto3" json:"last_message,omitempty"`
+	LastMessageTimeUnix  int64                  `protobuf:"varint,4,opt,name=last_message_time_unix,json=lastMessageTimeUnix,proto3" json:"last_message_time_unix,omitempty"`
+	UnreadCount          int32                  `protobuf:"varint,5,opt,name=unread_count,json=unreadCount,proto3" json:"unread_count,omitempty"`
+	IsGroup              bool                   `protobuf:"varint,6,opt,name=is_group,json=isGroup,proto3" json:"is_group,omitempty"`
+	AvatarLocalPath      string                 `protobuf:"bytes,7,opt,name=avatar_local_path,json=avatarLocalPath,proto3" json:"avatar_local_path,omitempty"`
+	LastMessageDirection MessageDirection       `protobuf:"varint,8,opt,name=last_message_direction,json=lastMessageDirection,proto3,enum=whatevr.v1.MessageDirection" json:"last_message_direction,omitempty"`
+	LastMessageStatus    MessageStatus          `protobuf:"varint,9,opt,name=last_message_status,json=lastMessageStatus,proto3,enum=whatevr.v1.MessageStatus" json:"last_message_status,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *Chat) Reset() {
@@ -2362,6 +2364,20 @@ func (x *Chat) GetAvatarLocalPath() string {
 		return x.AvatarLocalPath
 	}
 	return ""
+}
+
+func (x *Chat) GetLastMessageDirection() MessageDirection {
+	if x != nil {
+		return x.LastMessageDirection
+	}
+	return MessageDirection_MESSAGE_DIRECTION_UNSPECIFIED
+}
+
+func (x *Chat) GetLastMessageStatus() MessageStatus {
+	if x != nil {
+		return x.LastMessageStatus
+	}
+	return MessageStatus_MESSAGE_STATUS_UNSPECIFIED
 }
 
 type Message struct {
@@ -2616,7 +2632,7 @@ const file_whatevr_proto_rawDesc = "" +
 	"\tfile_path\x18\x02 \x01(\tR\bfilePath\x12\x18\n" +
 	"\acaption\x18\x03 \x01(\tR\acaption\"B\n" +
 	"\x11SendMediaResponse\x12-\n" +
-	"\amessage\x18\x01 \x01(\v2\x13.whatevr.v1.MessageR\amessage\"\xec\x01\n" +
+	"\amessage\x18\x01 \x01(\v2\x13.whatevr.v1.MessageR\amessage\"\x8b\x03\n" +
 	"\x04Chat\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12!\n" +
@@ -2624,7 +2640,9 @@ const file_whatevr_proto_rawDesc = "" +
 	"\x16last_message_time_unix\x18\x04 \x01(\x03R\x13lastMessageTimeUnix\x12!\n" +
 	"\funread_count\x18\x05 \x01(\x05R\vunreadCount\x12\x19\n" +
 	"\bis_group\x18\x06 \x01(\bR\aisGroup\x12*\n" +
-	"\x11avatar_local_path\x18\a \x01(\tR\x0favatarLocalPath\"\x8f\x03\n" +
+	"\x11avatar_local_path\x18\a \x01(\tR\x0favatarLocalPath\x12R\n" +
+	"\x16last_message_direction\x18\b \x01(\x0e2\x1c.whatevr.v1.MessageDirectionR\x14lastMessageDirection\x12I\n" +
+	"\x13last_message_status\x18\t \x01(\x0e2\x19.whatevr.v1.MessageStatusR\x11lastMessageStatus\"\x8f\x03\n" +
 	"\aMessage\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x17\n" +
 	"\achat_id\x18\x02 \x01(\tR\x06chatId\x12\x1b\n" +
@@ -2769,41 +2787,43 @@ var file_whatevr_proto_depIdxs = []int32{
 	42, // 19: whatevr.v1.DownloadMessageMediaResponse.message:type_name -> whatevr.v1.Message
 	42, // 20: whatevr.v1.SendTextResponse.message:type_name -> whatevr.v1.Message
 	42, // 21: whatevr.v1.SendMediaResponse.message:type_name -> whatevr.v1.Message
-	1,  // 22: whatevr.v1.Message.direction:type_name -> whatevr.v1.MessageDirection
-	2,  // 23: whatevr.v1.Message.status:type_name -> whatevr.v1.MessageStatus
-	4,  // 24: whatevr.v1.DaemonService.GetStatus:input_type -> whatevr.v1.GetStatusRequest
-	6,  // 25: whatevr.v1.DaemonService.SubscribeEvents:input_type -> whatevr.v1.SubscribeEventsRequest
-	12, // 26: whatevr.v1.DaemonService.Reconnect:input_type -> whatevr.v1.ReconnectRequest
-	18, // 27: whatevr.v1.LoginService.SubscribeLoginEvents:input_type -> whatevr.v1.SubscribeLoginEventsRequest
-	21, // 28: whatevr.v1.LoginService.Logout:input_type -> whatevr.v1.LogoutRequest
-	23, // 29: whatevr.v1.FrontendService.HoldSession:input_type -> whatevr.v1.HoldSessionRequest
-	25, // 30: whatevr.v1.FrontendService.UpdateSessionState:input_type -> whatevr.v1.UpdateSessionStateRequest
-	27, // 31: whatevr.v1.ChatService.ListChats:input_type -> whatevr.v1.ListChatsRequest
-	29, // 32: whatevr.v1.ChatService.GetMessages:input_type -> whatevr.v1.GetMessagesRequest
-	31, // 33: whatevr.v1.ChatService.MarkChatRead:input_type -> whatevr.v1.MarkChatReadRequest
-	33, // 34: whatevr.v1.ChatService.SetChatPresence:input_type -> whatevr.v1.SetChatPresenceRequest
-	35, // 35: whatevr.v1.ChatService.DownloadMessageMedia:input_type -> whatevr.v1.DownloadMessageMediaRequest
-	37, // 36: whatevr.v1.SendService.SendText:input_type -> whatevr.v1.SendTextRequest
-	39, // 37: whatevr.v1.SendService.SendMedia:input_type -> whatevr.v1.SendMediaRequest
-	5,  // 38: whatevr.v1.DaemonService.GetStatus:output_type -> whatevr.v1.GetStatusResponse
-	7,  // 39: whatevr.v1.DaemonService.SubscribeEvents:output_type -> whatevr.v1.DaemonEvent
-	13, // 40: whatevr.v1.DaemonService.Reconnect:output_type -> whatevr.v1.ReconnectResponse
-	19, // 41: whatevr.v1.LoginService.SubscribeLoginEvents:output_type -> whatevr.v1.LoginEvent
-	22, // 42: whatevr.v1.LoginService.Logout:output_type -> whatevr.v1.LogoutResponse
-	24, // 43: whatevr.v1.FrontendService.HoldSession:output_type -> whatevr.v1.FrontendSessionEvent
-	26, // 44: whatevr.v1.FrontendService.UpdateSessionState:output_type -> whatevr.v1.UpdateSessionStateResponse
-	28, // 45: whatevr.v1.ChatService.ListChats:output_type -> whatevr.v1.ListChatsResponse
-	30, // 46: whatevr.v1.ChatService.GetMessages:output_type -> whatevr.v1.GetMessagesResponse
-	32, // 47: whatevr.v1.ChatService.MarkChatRead:output_type -> whatevr.v1.MarkChatReadResponse
-	34, // 48: whatevr.v1.ChatService.SetChatPresence:output_type -> whatevr.v1.SetChatPresenceResponse
-	36, // 49: whatevr.v1.ChatService.DownloadMessageMedia:output_type -> whatevr.v1.DownloadMessageMediaResponse
-	38, // 50: whatevr.v1.SendService.SendText:output_type -> whatevr.v1.SendTextResponse
-	40, // 51: whatevr.v1.SendService.SendMedia:output_type -> whatevr.v1.SendMediaResponse
-	38, // [38:52] is the sub-list for method output_type
-	24, // [24:38] is the sub-list for method input_type
-	24, // [24:24] is the sub-list for extension type_name
-	24, // [24:24] is the sub-list for extension extendee
-	0,  // [0:24] is the sub-list for field type_name
+	1,  // 22: whatevr.v1.Chat.last_message_direction:type_name -> whatevr.v1.MessageDirection
+	2,  // 23: whatevr.v1.Chat.last_message_status:type_name -> whatevr.v1.MessageStatus
+	1,  // 24: whatevr.v1.Message.direction:type_name -> whatevr.v1.MessageDirection
+	2,  // 25: whatevr.v1.Message.status:type_name -> whatevr.v1.MessageStatus
+	4,  // 26: whatevr.v1.DaemonService.GetStatus:input_type -> whatevr.v1.GetStatusRequest
+	6,  // 27: whatevr.v1.DaemonService.SubscribeEvents:input_type -> whatevr.v1.SubscribeEventsRequest
+	12, // 28: whatevr.v1.DaemonService.Reconnect:input_type -> whatevr.v1.ReconnectRequest
+	18, // 29: whatevr.v1.LoginService.SubscribeLoginEvents:input_type -> whatevr.v1.SubscribeLoginEventsRequest
+	21, // 30: whatevr.v1.LoginService.Logout:input_type -> whatevr.v1.LogoutRequest
+	23, // 31: whatevr.v1.FrontendService.HoldSession:input_type -> whatevr.v1.HoldSessionRequest
+	25, // 32: whatevr.v1.FrontendService.UpdateSessionState:input_type -> whatevr.v1.UpdateSessionStateRequest
+	27, // 33: whatevr.v1.ChatService.ListChats:input_type -> whatevr.v1.ListChatsRequest
+	29, // 34: whatevr.v1.ChatService.GetMessages:input_type -> whatevr.v1.GetMessagesRequest
+	31, // 35: whatevr.v1.ChatService.MarkChatRead:input_type -> whatevr.v1.MarkChatReadRequest
+	33, // 36: whatevr.v1.ChatService.SetChatPresence:input_type -> whatevr.v1.SetChatPresenceRequest
+	35, // 37: whatevr.v1.ChatService.DownloadMessageMedia:input_type -> whatevr.v1.DownloadMessageMediaRequest
+	37, // 38: whatevr.v1.SendService.SendText:input_type -> whatevr.v1.SendTextRequest
+	39, // 39: whatevr.v1.SendService.SendMedia:input_type -> whatevr.v1.SendMediaRequest
+	5,  // 40: whatevr.v1.DaemonService.GetStatus:output_type -> whatevr.v1.GetStatusResponse
+	7,  // 41: whatevr.v1.DaemonService.SubscribeEvents:output_type -> whatevr.v1.DaemonEvent
+	13, // 42: whatevr.v1.DaemonService.Reconnect:output_type -> whatevr.v1.ReconnectResponse
+	19, // 43: whatevr.v1.LoginService.SubscribeLoginEvents:output_type -> whatevr.v1.LoginEvent
+	22, // 44: whatevr.v1.LoginService.Logout:output_type -> whatevr.v1.LogoutResponse
+	24, // 45: whatevr.v1.FrontendService.HoldSession:output_type -> whatevr.v1.FrontendSessionEvent
+	26, // 46: whatevr.v1.FrontendService.UpdateSessionState:output_type -> whatevr.v1.UpdateSessionStateResponse
+	28, // 47: whatevr.v1.ChatService.ListChats:output_type -> whatevr.v1.ListChatsResponse
+	30, // 48: whatevr.v1.ChatService.GetMessages:output_type -> whatevr.v1.GetMessagesResponse
+	32, // 49: whatevr.v1.ChatService.MarkChatRead:output_type -> whatevr.v1.MarkChatReadResponse
+	34, // 50: whatevr.v1.ChatService.SetChatPresence:output_type -> whatevr.v1.SetChatPresenceResponse
+	36, // 51: whatevr.v1.ChatService.DownloadMessageMedia:output_type -> whatevr.v1.DownloadMessageMediaResponse
+	38, // 52: whatevr.v1.SendService.SendText:output_type -> whatevr.v1.SendTextResponse
+	40, // 53: whatevr.v1.SendService.SendMedia:output_type -> whatevr.v1.SendMediaResponse
+	40, // [40:54] is the sub-list for method output_type
+	26, // [26:40] is the sub-list for method input_type
+	26, // [26:26] is the sub-list for extension type_name
+	26, // [26:26] is the sub-list for extension extendee
+	0,  // [0:26] is the sub-list for field type_name
 }
 
 func init() { file_whatevr_proto_init() }

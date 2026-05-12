@@ -129,11 +129,13 @@ func (db *DB) SaveTextMessage(ctx context.Context, input TextMessageInput) (Save
 			UPDATE chats
 			SET name = CASE WHEN ? != '' THEN ? ELSE name END,
 				last_message = CASE WHEN ? >= last_message_time THEN ? ELSE last_message END,
+				last_message_direction = CASE WHEN ? >= last_message_time THEN ? ELSE last_message_direction END,
+				last_message_status = CASE WHEN ? >= last_message_time THEN ? ELSE last_message_status END,
 				last_message_time = CASE WHEN ? >= last_message_time THEN ? ELSE last_message_time END,
 				unread_count = unread_count + ?,
 				is_group = ?
 			WHERE id = ?
-		`, input.ChatName, input.ChatName, input.Timestamp.Unix(), input.Text, input.Timestamp.Unix(), input.Timestamp.Unix(), unreadIncrement, boolToInt(input.IsGroup), input.ChatID); err != nil {
+		`, input.ChatName, input.ChatName, input.Timestamp.Unix(), input.Text, input.Timestamp.Unix(), input.Direction, input.Timestamp.Unix(), input.Status, input.Timestamp.Unix(), input.Timestamp.Unix(), unreadIncrement, boolToInt(input.IsGroup), input.ChatID); err != nil {
 			return SavedTextMessage{}, err
 		}
 	}
@@ -162,8 +164,8 @@ func upsertChat(ctx context.Context, tx *sql.Tx, input TextMessageInput) error {
 	}
 
 	_, err := tx.ExecContext(ctx, `
-		INSERT INTO chats (id, name, last_message, last_message_time, unread_count, is_group)
-		VALUES (?, ?, '', 0, 0, ?)
+		INSERT INTO chats (id, name, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group)
+		VALUES (?, ?, '', 0, '', '', 0, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name = CASE WHEN ? != '' THEN ? ELSE chats.name END,
 			is_group = excluded.is_group
@@ -254,11 +256,13 @@ func (db *DB) SaveMediaMessage(ctx context.Context, input MediaMessageInput) (Sa
 			UPDATE chats
 			SET name = CASE WHEN ? != '' THEN ? ELSE name END,
 				last_message = CASE WHEN ? >= last_message_time THEN ? ELSE last_message END,
+				last_message_direction = CASE WHEN ? >= last_message_time THEN ? ELSE last_message_direction END,
+				last_message_status = CASE WHEN ? >= last_message_time THEN ? ELSE last_message_status END,
 				last_message_time = CASE WHEN ? >= last_message_time THEN ? ELSE last_message_time END,
 				unread_count = unread_count + ?,
 				is_group = ?
 			WHERE id = ?
-		`, input.ChatName, input.ChatName, input.Timestamp.Unix(), lastMessage, input.Timestamp.Unix(), input.Timestamp.Unix(), unreadIncrement, boolToInt(input.IsGroup), input.ChatID); err != nil {
+		`, input.ChatName, input.ChatName, input.Timestamp.Unix(), lastMessage, input.Timestamp.Unix(), input.Direction, input.Timestamp.Unix(), input.Status, input.Timestamp.Unix(), input.Timestamp.Unix(), unreadIncrement, boolToInt(input.IsGroup), input.ChatID); err != nil {
 			return SavedTextMessage{}, err
 		}
 	}
@@ -443,6 +447,15 @@ func (db *DB) UpdateMessageStatus(ctx context.Context, id, status string) (Messa
 	`, nextStatus, id); err != nil {
 		return Message{}, false, err
 	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE chats
+		SET last_message_status = ?
+		WHERE id = ? AND last_message_time = ?
+	`, nextStatus, message.ChatID, message.TimestampUnix); err != nil {
+		return Message{}, false, err
+	}
+
 	if err := tx.Commit(); err != nil {
 		return Message{}, false, err
 	}
@@ -548,7 +561,7 @@ func getChatRow(ctx context.Context, queryer interface {
 	var chat Chat
 	var isGroup int
 	err := queryer.QueryRowContext(ctx, `
-		SELECT id, name, last_message, last_message_time, unread_count, is_group, avatar_local_path, avatar_picture_id
+		SELECT id, name, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group, avatar_local_path, avatar_picture_id
 		FROM chats
 		WHERE id = ?
 	`, id).Scan(
@@ -556,6 +569,8 @@ func getChatRow(ctx context.Context, queryer interface {
 		&chat.Name,
 		&chat.LastMessage,
 		&chat.LastMessageTime,
+		&chat.LastMessageDirection,
+		&chat.LastMessageStatus,
 		&chat.UnreadCount,
 		&isGroup,
 		&chat.AvatarLocalPath,
@@ -609,6 +624,8 @@ func scanChat(scanner interface{ Scan(...any) error }) (Chat, error) {
 		&chat.Name,
 		&chat.LastMessage,
 		&chat.LastMessageTime,
+		&chat.LastMessageDirection,
+		&chat.LastMessageStatus,
 		&chat.UnreadCount,
 		&isGroup,
 		&chat.AvatarLocalPath,

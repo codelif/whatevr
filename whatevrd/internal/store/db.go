@@ -9,7 +9,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 1
+const schemaVersion = 2
 
 type DB struct {
 	conn *sql.DB
@@ -75,6 +75,8 @@ func (db *DB) migrate(ctx context.Context) error {
 			name TEXT NOT NULL,
 			last_message TEXT NOT NULL DEFAULT '',
 			last_message_time INTEGER NOT NULL DEFAULT 0,
+			last_message_direction TEXT NOT NULL DEFAULT '',
+			last_message_status TEXT NOT NULL DEFAULT '',
 			unread_count INTEGER NOT NULL DEFAULT 0,
 			is_group INTEGER NOT NULL DEFAULT 0
 		)`,
@@ -110,6 +112,10 @@ func (db *DB) migrate(ctx context.Context) error {
 	}
 
 	if err := db.ensureChatsAvatarColumns(ctx); err != nil {
+		return err
+	}
+
+	if err := db.ensureChatSummaryColumns(ctx); err != nil {
 		return err
 	}
 
@@ -191,6 +197,66 @@ func (db *DB) ensureChatsAvatarColumns(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (db *DB) ensureChatSummaryColumns(ctx context.Context) error {
+	rows, err := db.conn.QueryContext(ctx, `PRAGMA table_info(chats)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	existing := make(map[string]bool)
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull, pk int
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			return err
+		}
+		existing[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	alterations := []struct {
+		col string
+		def string
+	}{
+		{"last_message_direction", `ALTER TABLE chats ADD COLUMN last_message_direction TEXT NOT NULL DEFAULT ''`},
+		{"last_message_status", `ALTER TABLE chats ADD COLUMN last_message_status TEXT NOT NULL DEFAULT ''`},
+	}
+	for _, a := range alterations {
+		if existing[a.col] {
+			continue
+		}
+		if _, err := db.conn.ExecContext(ctx, a.def); err != nil {
+			return fmt.Errorf("add chats.%s: %w", a.col, err)
+		}
+	}
+
+	_, err = db.conn.ExecContext(ctx, `
+		UPDATE chats
+		SET last_message_direction = COALESCE((
+			SELECT direction
+			FROM messages
+			WHERE messages.chat_id = chats.id
+			ORDER BY timestamp DESC, id DESC
+			LIMIT 1
+		), ''),
+		last_message_status = COALESCE((
+			SELECT status
+			FROM messages
+			WHERE messages.chat_id = chats.id
+			ORDER BY timestamp DESC, id DESC
+			LIMIT 1
+		), '')
+		WHERE last_message_time > 0
+		  AND (last_message_direction = '' OR last_message_status = '')
+	`)
+	return err
 }
 
 func (db *DB) ensureMediaColumns(ctx context.Context) error {

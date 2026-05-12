@@ -18,6 +18,8 @@ public:
         NameRole,
         LastMessageRole,
         LastMessageTimeUnixRole,
+        LastMessageDirectionRole,
+        LastMessageStatusRole,
         UnreadCountRole,
         IsGroupRole,
         AvatarLocalPathRole,
@@ -44,6 +46,8 @@ private:
         QString name;
         QString lastMessage;
         qint64 lastMessageTimeUnix = 0;
+        int lastMessageDirection = 0;
+        int lastMessageStatus = 0;
         int unreadCount = 0;
         bool isGroup = false;
         QString avatarLocalPath;

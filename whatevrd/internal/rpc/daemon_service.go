@@ -177,13 +177,15 @@ func toProtoHistorySyncType(t app.HistorySyncType) pb.HistorySyncType {
 
 func toProtoChat(chat app.Chat) *pb.Chat {
 	return &pb.Chat{
-		Id:                  chat.ID,
-		Name:                chat.Name,
-		LastMessage:         chat.LastMessage,
-		LastMessageTimeUnix: chat.LastMessageTime,
-		UnreadCount:         chat.UnreadCount,
-		IsGroup:             chat.IsGroup,
-		AvatarLocalPath:     chat.AvatarLocalPath,
+		Id:                   chat.ID,
+		Name:                 chat.Name,
+		LastMessage:          chat.LastMessage,
+		LastMessageTimeUnix:  chat.LastMessageTime,
+		UnreadCount:          chat.UnreadCount,
+		IsGroup:              chat.IsGroup,
+		AvatarLocalPath:      chat.AvatarLocalPath,
+		LastMessageDirection: toProtoMessageDirection(chat.LastMessageDirection),
+		LastMessageStatus:    toProtoMessageStatus(chat.LastMessageStatus),
 	}
 }
 

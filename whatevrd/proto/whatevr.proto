@@ -256,6 +256,8 @@ message Chat {
   int32 unread_count = 5;
   bool is_group = 6;
   string avatar_local_path = 7;
+  MessageDirection last_message_direction = 8;
+  MessageStatus last_message_status = 9;
 }
 
 message Message {

@@ -34,6 +34,10 @@ QVariant ChatListModel::data(const QModelIndex &index, int role) const
         return chat.lastMessage;
     case LastMessageTimeUnixRole:
         return chat.lastMessageTimeUnix;
+    case LastMessageDirectionRole:
+        return chat.lastMessageDirection;
+    case LastMessageStatusRole:
+        return chat.lastMessageStatus;
     case UnreadCountRole:
         return chat.unreadCount;
     case IsGroupRole:
@@ -54,6 +58,8 @@ QHash<int, QByteArray> ChatListModel::roleNames() const
         {NameRole, "name"},
         {LastMessageRole, "lastMessage"},
         {LastMessageTimeUnixRole, "lastMessageTimeUnix"},
+        {LastMessageDirectionRole, "lastMessageDirection"},
+        {LastMessageStatusRole, "lastMessageStatus"},
         {UnreadCountRole, "unreadCount"},
         {IsGroupRole, "isGroup"},
         {AvatarLocalPathRole, "avatarLocalPath"},
@@ -173,6 +179,8 @@ ChatListModel::ChatItem ChatListModel::fromProto(const whatevr::v1::Chat &chat)
         .name = chat.name(),
         .lastMessage = chat.lastMessage(),
         .lastMessageTimeUnix = chat.lastMessageTimeUnix(),
+        .lastMessageDirection = static_cast<int>(chat.lastMessageDirection()),
+        .lastMessageStatus = static_cast<int>(chat.lastMessageStatus()),
         .unreadCount = chat.unreadCount(),
         .isGroup = chat.isGroup(),
         .avatarLocalPath = chat.avatarLocalPath(),
@@ -222,6 +230,8 @@ bool ChatListModel::sameChatData(const ChatItem &left, const ChatItem &right)
         && left.name == right.name
         && left.lastMessage == right.lastMessage
         && left.lastMessageTimeUnix == right.lastMessageTimeUnix
+        && left.lastMessageDirection == right.lastMessageDirection
+        && left.lastMessageStatus == right.lastMessageStatus
         && left.unreadCount == right.unreadCount
         && left.isGroup == right.isGroup
         && left.avatarLocalPath == right.avatarLocalPath;

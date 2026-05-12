@@ -101,6 +101,8 @@ Frame {
                     chatId: String(model.chatId || "")
                     name: String(model.name || "")
                     lastMessage: String(model.lastMessage || "")
+                    lastMessageDirection: Number(model.lastMessageDirection || 0)
+                    lastMessageStatus: Number(model.lastMessageStatus || 0)
                     avatarLocalPath: String(model.avatarLocalPath || "")
                     initials: String(model.initials || "?")
                     unreadCount: Number(model.unreadCount || 0)

@@ -7,14 +7,16 @@ import (
 )
 
 type Chat struct {
-	ID              string
-	Name            string
-	LastMessage     string
-	LastMessageTime int64
-	UnreadCount     int32
-	IsGroup         bool
-	AvatarLocalPath string
-	AvatarPictureID string
+	ID                   string
+	Name                 string
+	LastMessage          string
+	LastMessageTime      int64
+	LastMessageDirection string
+	LastMessageStatus    string
+	UnreadCount          int32
+	IsGroup              bool
+	AvatarLocalPath      string
+	AvatarPictureID      string
 }
 
 func (db *DB) ListChats(ctx context.Context, limit, offset int) ([]Chat, error) {
@@ -26,7 +28,7 @@ func (db *DB) ListChats(ctx context.Context, limit, offset int) ([]Chat, error) 
 	}
 
 	rows, err := db.conn.QueryContext(ctx, `
-		SELECT id, name, last_message, last_message_time, unread_count, is_group, avatar_local_path, avatar_picture_id
+		SELECT id, name, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group, avatar_local_path, avatar_picture_id
 		FROM chats
 		ORDER BY last_message_time DESC, id ASC
 		LIMIT ? OFFSET ?
@@ -71,8 +73,8 @@ func (db *DB) EnsureChat(ctx context.Context, chatID, name string, isGroup bool)
 	}
 
 	if _, err := db.conn.ExecContext(ctx, `
-		INSERT INTO chats (id, name, last_message, last_message_time, unread_count, is_group)
-		VALUES (?, ?, '', 0, 0, ?)
+		INSERT INTO chats (id, name, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group)
+		VALUES (?, ?, '', 0, '', '', 0, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name = CASE WHEN ? != '' THEN ? ELSE chats.name END,
 			is_group = ?
@@ -251,8 +253,8 @@ func (db *DB) MigrateChatID(ctx context.Context, fromChatID, toChatID string) (C
 	}
 
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO chats (id, name, last_message, last_message_time, unread_count, is_group, avatar_local_path, avatar_picture_id)
-		SELECT ?, name, last_message, last_message_time, unread_count, is_group, avatar_local_path, avatar_picture_id
+		INSERT INTO chats (id, name, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group, avatar_local_path, avatar_picture_id)
+		SELECT ?, name, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group, avatar_local_path, avatar_picture_id
 		FROM chats
 		WHERE id = ?
 		ON CONFLICT(id) DO UPDATE SET
@@ -265,6 +267,16 @@ func (db *DB) MigrateChatID(ctx context.Context, fromChatID, toChatID string) (C
 				WHEN excluded.last_message_time >= chats.last_message_time
 				THEN excluded.last_message
 				ELSE chats.last_message
+			END,
+			last_message_direction = CASE
+				WHEN excluded.last_message_time >= chats.last_message_time
+				THEN excluded.last_message_direction
+				ELSE chats.last_message_direction
+			END,
+			last_message_status = CASE
+				WHEN excluded.last_message_time >= chats.last_message_time
+				THEN excluded.last_message_status
+				ELSE chats.last_message_status
 			END,
 			last_message_time = MAX(chats.last_message_time, excluded.last_message_time),
 			unread_count = chats.unread_count + excluded.unread_count,

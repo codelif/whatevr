@@ -9,10 +9,27 @@ ItemDelegate {
     property string chatId: ""
     property string name: ""
     property string lastMessage: ""
+    property int lastMessageDirection: 0
+    property int lastMessageStatus: 0
     property string avatarLocalPath: ""
     property string initials: "?"
     property int unreadCount: 0
     property bool current: false
+    readonly property bool hasLastMessage: lastMessage.length > 0
+    readonly property bool lastMessageIsOutgoing: lastMessageDirection === 2
+    readonly property bool showDeliveryStatus: hasLastMessage && lastMessageIsOutgoing
+    readonly property real deliveryIconSize: Kirigami.Units.iconSizes.small
+    readonly property bool deliveryStatusIsDoubleTick: lastMessageStatus === 3 || lastMessageStatus === 4
+    readonly property bool deliveryStatusIsRead: lastMessageStatus === 4
+    readonly property string deliveryStatusSingleIcon: {
+        switch (lastMessageStatus) {
+        case 1: return "clock"
+        case 2: return "checkmark"
+        case 5: return "dialog-error-symbolic"
+        default: return ""
+        }
+    }
+
 
     signal selected(string chatId)
 
@@ -61,15 +78,71 @@ ItemDelegate {
                 font.weight: unreadCount > 0 ? Font.DemiBold : Font.Medium
             }
 
-            Label {
+            RowLayout {
                 Layout.fillWidth: true
-                text: lastMessage.length > 0
-                      ? lastMessage.replace(/[\r\n]+/g, " ")
-                      : i18nc("@info", "No messages yet")
-                elide: Text.ElideRight
-                maximumLineCount: 1
-                color: unreadCount > 0 ? Kirigami.Theme.textColor : Kirigami.Theme.disabledTextColor
-                opacity: unreadCount > 0 ? 0.84 : 1.0
+                Layout.minimumWidth: 0
+                spacing: Kirigami.Units.smallSpacing
+
+                Item {
+                    visible: root.showDeliveryStatus
+                    Layout.preferredWidth: root.deliveryStatusIsDoubleTick
+                                           ? root.deliveryIconSize * 1.5
+                                           : root.deliveryIconSize
+                    Layout.preferredHeight: root.deliveryIconSize
+                    Layout.alignment: Qt.AlignVCenter
+
+                    Kirigami.Icon {
+                        anchors.centerIn: parent
+                        visible: !root.deliveryStatusIsDoubleTick && root.deliveryStatusSingleIcon.length > 0
+                        source: root.deliveryStatusSingleIcon
+                        implicitWidth: root.deliveryIconSize
+                        implicitHeight: root.deliveryIconSize
+                        color: root.lastMessageStatus === 5
+                               ? Kirigami.Theme.negativeTextColor
+                               : Kirigami.Theme.disabledTextColor
+                    }
+
+                    Item {
+                        anchors.centerIn: parent
+                        visible: root.deliveryStatusIsDoubleTick
+                        width: root.deliveryIconSize * 1.5
+                        height: root.deliveryIconSize
+
+                        Kirigami.Icon {
+                            x: 0
+                            anchors.verticalCenter: parent.verticalCenter
+                            source: "checkmark"
+                            implicitWidth: root.deliveryIconSize
+                            implicitHeight: root.deliveryIconSize
+                            color: root.deliveryStatusIsRead
+                                   ? Kirigami.Theme.highlightColor
+                                   : Kirigami.Theme.disabledTextColor
+                        }
+
+                        Kirigami.Icon {
+                            x: root.deliveryIconSize * 0.5
+                            anchors.verticalCenter: parent.verticalCenter
+                            source: "checkmark"
+                            implicitWidth: root.deliveryIconSize
+                            implicitHeight: root.deliveryIconSize
+                            color: root.deliveryStatusIsRead
+                                   ? Kirigami.Theme.highlightColor
+                                   : Kirigami.Theme.disabledTextColor
+                        }
+                    }
+                }
+
+                Label {
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    text: root.hasLastMessage
+                          ? root.lastMessage.replace(/[\r\n]+/g, " ")
+                          : i18nc("@info", "No messages yet")
+                    elide: Text.ElideRight
+                    maximumLineCount: 1
+                    color: unreadCount > 0 ? Kirigami.Theme.textColor : Kirigami.Theme.disabledTextColor
+                    opacity: unreadCount > 0 ? 0.84 : 1.0
+                }
             }
         }
 
