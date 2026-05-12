@@ -583,12 +583,14 @@ func toDaemonMessage(message appstore.Message) app.Message {
 
 func toDaemonChat(chat appstore.Chat) app.Chat {
 	return app.Chat{
-		ID:              chat.ID,
-		Name:            chat.Name,
-		LastMessage:     chat.LastMessage,
-		LastMessageTime: chat.LastMessageTime,
-		UnreadCount:     chat.UnreadCount,
-		IsGroup:         chat.IsGroup,
-		AvatarLocalPath: chat.AvatarLocalPath,
+		ID:                   chat.ID,
+		Name:                 chat.Name,
+		LastMessage:          chat.LastMessage,
+		LastMessageTime:      chat.LastMessageTime,
+		LastMessageDirection: chat.LastMessageDirection,
+		LastMessageStatus:    chat.LastMessageStatus,
+		UnreadCount:          chat.UnreadCount,
+		IsGroup:              chat.IsGroup,
+		AvatarLocalPath:      chat.AvatarLocalPath,
 	}
 }

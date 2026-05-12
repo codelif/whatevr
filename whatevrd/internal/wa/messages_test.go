@@ -75,6 +75,28 @@ func TestReceiptStatusIgnoresUnsupportedTypes(t *testing.T) {
 	}
 }
 
+func TestToDaemonChatPreservesLastMessageStatus(t *testing.T) {
+	chat := appstore.Chat{
+		ID:                   "chat-1",
+		Name:                 "Chat One",
+		LastMessage:          "hello",
+		LastMessageTime:      123,
+		LastMessageDirection: appstore.DirectionOutgoing,
+		LastMessageStatus:    appstore.StatusDelivered,
+		UnreadCount:          2,
+		IsGroup:              true,
+		AvatarLocalPath:      "/tmp/avatar.jpg",
+	}
+
+	got := toDaemonChat(chat)
+	if got.LastMessageDirection != chat.LastMessageDirection {
+		t.Fatalf("LastMessageDirection = %q, want %q", got.LastMessageDirection, chat.LastMessageDirection)
+	}
+	if got.LastMessageStatus != chat.LastMessageStatus {
+		t.Fatalf("LastMessageStatus = %q, want %q", got.LastMessageStatus, chat.LastMessageStatus)
+	}
+}
+
 func TestHistorySyncTypeMapping(t *testing.T) {
 	cases := []struct {
 		in   waHistorySync.HistorySync_HistorySyncType
