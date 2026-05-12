@@ -184,7 +184,7 @@ func (c *Client) ingestMessage(ctx context.Context, evt *events.Message, opts in
 		}
 		if !saved.Inserted {
 			if opts.source == sourceHistorySync && opts.historyStatus != "" {
-				c.maybeUpgradeStatusFromHistory(ctx, textInput.ID, opts.historyStatus)
+				c.maybeUpdateStatusFromHistory(ctx, textInput.ID, opts.historyStatus)
 			}
 			if opts.chatNameOverride != "" && opts.source == sourceLive {
 				c.daemon.PublishChatUpdated(toDaemonChat(saved.Chat))
@@ -211,7 +211,7 @@ func (c *Client) ingestMessage(ctx context.Context, evt *events.Message, opts in
 		}
 		if !saved.Inserted {
 			if opts.source == sourceHistorySync && opts.historyStatus != "" {
-				c.maybeUpgradeStatusFromHistory(ctx, mediaInput.ID, opts.historyStatus)
+				c.maybeUpdateStatusFromHistory(ctx, mediaInput.ID, opts.historyStatus)
 			}
 			if opts.chatNameOverride != "" && opts.source == sourceLive {
 				c.daemon.PublishChatUpdated(toDaemonChat(saved.Chat))
@@ -337,15 +337,13 @@ func (c *Client) textMessageInput(ctx context.Context, evt *events.Message, opts
 	}, true
 }
 
-// maybeUpgradeStatusFromHistory bumps an already-stored message's status to
-// the value reported by history sync if (and only if) the new status is
-// strictly higher rank. UpdateMessageStatus uses nextMessageStatus(), which
-// already enforces forward-only progression, so this is safe to call
-// unconditionally.
-func (c *Client) maybeUpgradeStatusFromHistory(ctx context.Context, internalID, status string) {
-	message, changed, err := c.store.UpdateMessageStatus(ctx, internalID, status)
+// maybeUpdateStatusFromHistory applies the status reported by history sync.
+// History sync is the same source official WhatsApp clients use for their
+// stored message state, so it may correct a prior optimistic receipt mapping.
+func (c *Client) maybeUpdateStatusFromHistory(ctx context.Context, internalID, status string) {
+	message, changed, err := c.store.UpdateMessageStatusFromHistory(ctx, internalID, status)
 	if err != nil {
-		c.log.Warnf("Failed to upgrade history-sync status for %s: %v", internalID, err)
+		c.log.Warnf("Failed to apply history-sync status for %s: %v", internalID, err)
 		return
 	}
 	if !changed {

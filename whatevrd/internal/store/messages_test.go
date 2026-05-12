@@ -501,6 +501,78 @@ func TestUpdateMessageStatusProgression(t *testing.T) {
 	}
 }
 
+func TestUpdateMessageStatusFromHistoryCorrectsFalseDelivered(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	_, err = db.SaveTextMessage(ctx, TextMessageInput{
+		ID:          "chat-1:sent-1",
+		ChatID:      "chat-1",
+		ChatName:    "Test Chat",
+		SenderID:    "me",
+		Text:        "hello",
+		Timestamp:   time.Unix(100, 0),
+		Direction:   DirectionOutgoing,
+		Status:      StatusDelivered,
+		CountUnread: false,
+	})
+	if err != nil {
+		t.Fatalf("save outgoing message: %v", err)
+	}
+
+	message, changed, err := db.UpdateMessageStatusFromHistory(ctx, "chat-1:sent-1", StatusSent)
+	if err != nil {
+		t.Fatalf("correct from history: %v", err)
+	}
+	if !changed || message.Status != StatusSent {
+		t.Fatalf("unexpected history correction: %+v changed=%v", message, changed)
+	}
+
+	chat, err := db.GetChat(ctx, "chat-1")
+	if err != nil {
+		t.Fatalf("get chat: %v", err)
+	}
+	if chat.LastMessageStatus != StatusSent {
+		t.Fatalf("chat last status = %q, want %q", chat.LastMessageStatus, StatusSent)
+	}
+}
+
+func TestUpdateMessageStatusFromHistoryDoesNotDowngradeRead(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	_, err = db.SaveTextMessage(ctx, TextMessageInput{
+		ID:          "chat-1:read-1",
+		ChatID:      "chat-1",
+		ChatName:    "Test Chat",
+		SenderID:    "me",
+		Text:        "hello",
+		Timestamp:   time.Unix(100, 0),
+		Direction:   DirectionOutgoing,
+		Status:      StatusRead,
+		CountUnread: false,
+	})
+	if err != nil {
+		t.Fatalf("save outgoing message: %v", err)
+	}
+
+	message, changed, err := db.UpdateMessageStatusFromHistory(ctx, "chat-1:read-1", StatusSent)
+	if err != nil {
+		t.Fatalf("history update: %v", err)
+	}
+	if changed || message.Status != StatusRead {
+		t.Fatalf("unexpected read downgrade: %+v changed=%v", message, changed)
+	}
+}
+
 func TestListPendingOutgoingMessages(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))

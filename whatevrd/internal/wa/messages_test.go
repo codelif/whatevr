@@ -5,6 +5,7 @@ import (
 
 	waHistorySync "go.mau.fi/whatsmeow/proto/waHistorySync"
 	waWeb "go.mau.fi/whatsmeow/proto/waWeb"
+	"go.mau.fi/whatsmeow/types"
 
 	"whatevrd/internal/app"
 	appstore "whatevrd/internal/store"
@@ -40,6 +41,37 @@ func TestMapWebMessageStatusReturnsEmptyForNil(t *testing.T) {
 
 	if got := mapWebMessageStatus(&waWeb.WebMessageInfo{}); got != "" {
 		t.Errorf("mapWebMessageStatus(empty) = %q, want empty", got)
+	}
+}
+
+func TestReceiptStatusSenderIsSentOnly(t *testing.T) {
+	cases := []struct {
+		name string
+		in   types.ReceiptType
+		want string
+	}{
+		{"delivered", types.ReceiptTypeDelivered, appstore.StatusDelivered},
+		{"sender", types.ReceiptTypeSender, appstore.StatusSent},
+		{"read", types.ReceiptTypeRead, appstore.StatusRead},
+		{"played", types.ReceiptTypePlayed, appstore.StatusRead},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := receiptStatus(tc.in)
+			if !ok {
+				t.Fatalf("receiptStatus(%v) returned ok=false", tc.in)
+			}
+			if got != tc.want {
+				t.Fatalf("receiptStatus(%v) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestReceiptStatusIgnoresUnsupportedTypes(t *testing.T) {
+	if got, ok := receiptStatus(types.ReceiptTypeInactive); ok || got != "" {
+		t.Fatalf("receiptStatus(inactive) = %q, %v; want empty, false", got, ok)
 	}
 }
 

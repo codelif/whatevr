@@ -476,8 +476,10 @@ func (c *Client) MarkChatRead(ctx context.Context, chatID string) (appstore.Chat
 
 func receiptStatus(receiptType types.ReceiptType) (string, bool) {
 	switch receiptType {
-	case types.ReceiptTypeDelivered, types.ReceiptTypeSender:
+	case types.ReceiptTypeDelivered:
 		return appstore.StatusDelivered, true
+	case types.ReceiptTypeSender:
+		return appstore.StatusSent, true
 	case types.ReceiptTypeRead, types.ReceiptTypeReadSelf, types.ReceiptTypePlayed, types.ReceiptTypePlayedSelf:
 		return appstore.StatusRead, true
 	case types.ReceiptTypeServerError:

@@ -424,6 +424,14 @@ func (db *DB) UpdateMessageSendAttempt(ctx context.Context, id string, attempts 
 }
 
 func (db *DB) UpdateMessageStatus(ctx context.Context, id, status string) (Message, bool, error) {
+	return db.updateMessageStatus(ctx, id, status, nextMessageStatus)
+}
+
+func (db *DB) UpdateMessageStatusFromHistory(ctx context.Context, id, status string) (Message, bool, error) {
+	return db.updateMessageStatus(ctx, id, status, nextHistoryMessageStatus)
+}
+
+func (db *DB) updateMessageStatus(ctx context.Context, id, status string, nextStatus func(string, string) (string, bool)) (Message, bool, error) {
 	tx, err := db.conn.BeginTx(ctx, nil)
 	if err != nil {
 		return Message{}, false, err
@@ -435,7 +443,7 @@ func (db *DB) UpdateMessageStatus(ctx context.Context, id, status string) (Messa
 		return Message{}, false, err
 	}
 
-	nextStatus, changed := nextMessageStatus(message.Status, status)
+	updatedStatus, changed := nextStatus(message.Status, status)
 	if !changed {
 		return message, false, nil
 	}
@@ -444,7 +452,7 @@ func (db *DB) UpdateMessageStatus(ctx context.Context, id, status string) (Messa
 		UPDATE messages
 		SET status = ?
 		WHERE id = ?
-	`, nextStatus, id); err != nil {
+	`, updatedStatus, id); err != nil {
 		return Message{}, false, err
 	}
 
@@ -452,7 +460,7 @@ func (db *DB) UpdateMessageStatus(ctx context.Context, id, status string) (Messa
 		UPDATE chats
 		SET last_message_status = ?
 		WHERE id = ? AND last_message_time = ?
-	`, nextStatus, message.ChatID, message.TimestampUnix); err != nil {
+	`, updatedStatus, message.ChatID, message.TimestampUnix); err != nil {
 		return Message{}, false, err
 	}
 
@@ -460,7 +468,7 @@ func (db *DB) UpdateMessageStatus(ctx context.Context, id, status string) (Messa
 		return Message{}, false, err
 	}
 
-	message.Status = nextStatus
+	message.Status = updatedStatus
 	return message, true, nil
 }
 
@@ -658,6 +666,13 @@ func nextMessageStatus(current, incoming string) (string, bool) {
 	}
 
 	return current, false
+}
+
+func nextHistoryMessageStatus(current, incoming string) (string, bool) {
+	if current == StatusDelivered && incoming == StatusSent {
+		return incoming, true
+	}
+	return nextMessageStatus(current, incoming)
 }
 
 func messageStatusRank(status string) int {
