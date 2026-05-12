@@ -96,13 +96,38 @@ void MessageListModel::replaceMessages(const QList<whatevr::v1::Message> &messag
         return left.id < right.id;
     });
 
-    while (next.size() > MaximumMessageCount) {
-        next.removeFirst();
-    }
-
     beginResetModel();
     m_messages = std::move(next);
     endResetModel();
+}
+
+void MessageListModel::prependMessages(const QList<whatevr::v1::Message> &messages)
+{
+    QList<MessageItem> older;
+    older.reserve(messages.size());
+    for (const auto &message : messages) {
+        const MessageItem item = fromProto(message);
+        if (indexOf(item.id) < 0) {
+            older.append(item);
+        }
+    }
+
+    if (older.isEmpty()) {
+        return;
+    }
+
+    std::sort(older.begin(), older.end(), [](const MessageItem &left, const MessageItem &right) {
+        if (left.timestampUnix != right.timestampUnix) {
+            return left.timestampUnix < right.timestampUnix;
+        }
+        return left.id < right.id;
+    });
+
+    beginInsertRows(QModelIndex(), 0, older.size() - 1);
+    for (int i = older.size() - 1; i >= 0; --i) {
+        m_messages.prepend(older.at(i));
+    }
+    endInsertRows();
 }
 
 void MessageListModel::clear()
@@ -136,13 +161,21 @@ void MessageListModel::upsertMessage(const whatevr::v1::Message &message)
     beginInsertRows(QModelIndex(), insertAt, insertAt);
     m_messages.insert(insertAt, item);
     endInsertRows();
-
-    trimToMaximumSize();
 }
 
 bool MessageListModel::isEmpty() const
 {
     return m_messages.isEmpty();
+}
+
+int MessageListModel::messageCount() const
+{
+    return m_messages.size();
+}
+
+QString MessageListModel::oldestMessageId() const
+{
+    return m_messages.isEmpty() ? QString() : m_messages.first().id;
 }
 
 MessageListModel::MessageItem MessageListModel::fromProto(const whatevr::v1::Message &message)
@@ -189,20 +222,6 @@ QString MessageListModel::statusText(int status)
     default:
         return QString();
     }
-}
-
-void MessageListModel::trimToMaximumSize()
-{
-    if (m_messages.size() <= MaximumMessageCount) {
-        return;
-    }
-
-    const int removeCount = m_messages.size() - MaximumMessageCount;
-    beginRemoveRows(QModelIndex(), 0, removeCount - 1);
-    for (int i = 0; i < removeCount; ++i) {
-        m_messages.removeFirst();
-    }
-    endRemoveRows();
 }
 
 int MessageListModel::indexOf(const QString &messageId) const

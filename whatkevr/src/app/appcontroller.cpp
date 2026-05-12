@@ -304,6 +304,15 @@ bool AppController::messagesLoading() const
     return m_messagesLoading;
 }
 
+bool AppController::olderMessagesLoading() const
+{
+    return m_olderMessagesLoading;
+}
+
+bool AppController::canLoadOlderMessages() const
+{
+    return m_canLoadOlderMessages;
+}
 
 bool AppController::messagesEmpty() const
 {
@@ -406,6 +415,10 @@ void AppController::selectChat(const QString &chatId)
     m_messageErrorText.clear();
     m_composerErrorText.clear();
     m_messagesLoading = !chatId.isEmpty();
+    m_olderMessagesLoading = false;
+    m_canLoadOlderMessages = false;
+    m_olderMessagesLoadingChatId.clear();
+    m_olderMessagesReply.reset();
     m_messageListModel->clear();
     updateSelectedChatData();
     Q_EMIT selectionChanged();
@@ -422,6 +435,11 @@ void AppController::retryMessages()
     if (!m_selectedChatId.isEmpty()) {
         requestMessages(m_selectedChatId);
     }
+}
+
+void AppController::loadOlderMessages()
+{
+    requestOlderMessages();
 }
 
 
@@ -594,6 +612,9 @@ void AppController::logout()
         m_selectedChatAvatarLocalPath.clear();
         m_loginRequired = true;
         m_historySyncVisible = false;
+        m_messagesLoading = false;
+        m_olderMessagesLoading = false;
+        m_canLoadOlderMessages = false;
         m_chatListModel->replaceChats({});
         m_messageListModel->clear();
         m_messageErrorText.clear();
@@ -765,6 +786,7 @@ void AppController::requestChats()
         if (!m_selectedChatId.isEmpty() && m_chatListModel->indexOf(m_selectedChatId) < 0) {
             m_selectedChatId.clear();
             m_messageListModel->clear();
+            m_canLoadOlderMessages = false;
             m_messageErrorText.clear();
             Q_EMIT messagesChanged();
         }
@@ -784,6 +806,9 @@ void AppController::requestMessages(const QString &chatId)
     if (m_messagesReply) {
         m_messagesReply.reset();
     }
+    if (m_olderMessagesReply) {
+        m_olderMessagesReply.reset();
+    }
 
     static constexpr int kMessageLimit = MessageListModel::MaximumMessageCount;
 
@@ -792,7 +817,10 @@ void AppController::requestMessages(const QString &chatId)
     request.setLimit(kMessageLimit);
 
     m_messagesLoading = true;
+    m_olderMessagesLoading = false;
+    m_canLoadOlderMessages = false;
     m_messagesLoadingChatId = chatId;
+    m_olderMessagesLoadingChatId.clear();
     m_messageErrorText.clear();
     Q_EMIT messagesChanged();
 
@@ -830,6 +858,70 @@ void AppController::requestMessages(const QString &chatId)
 
         if (m_selectedChatId == chatId) {
             m_messageListModel->replaceMessages(response->messages());
+            m_canLoadOlderMessages = response->messages().size() >= kMessageLimit;
+        }
+        Q_EMIT messagesChanged();
+    });
+}
+
+void AppController::requestOlderMessages()
+{
+    if (!m_chatClient || m_selectedChatId.isEmpty() || m_olderMessagesLoading || !m_canLoadOlderMessages) {
+        return;
+    }
+
+    const QString beforeMessageId = m_messageListModel->oldestMessageId();
+    if (beforeMessageId.isEmpty()) {
+        m_canLoadOlderMessages = false;
+        Q_EMIT messagesChanged();
+        return;
+    }
+
+    static constexpr int kMessageLimit = MessageListModel::MaximumMessageCount;
+
+    GetMessagesRequest request;
+    request.setChatId(m_selectedChatId);
+    request.setLimit(kMessageLimit);
+    request.setBeforeMessageId(beforeMessageId);
+
+    m_olderMessagesLoading = true;
+    m_olderMessagesLoadingChatId = m_selectedChatId;
+    Q_EMIT messagesChanged();
+
+    m_olderMessagesReply = m_chatClient->GetMessages(request);
+    auto *reply = m_olderMessagesReply.get();
+    const QString chatId = m_selectedChatId;
+
+    connect(reply, &QGrpcCallReply::finished, this, [this, reply, chatId](const QGrpcStatus &status) {
+        if (m_olderMessagesReply.get() != reply) {
+            return;
+        }
+
+        if (m_olderMessagesLoadingChatId != chatId) {
+            m_olderMessagesReply.reset();
+            return;
+        }
+
+        m_olderMessagesLoading = false;
+
+        if (!status.isOk()) {
+            m_olderMessagesReply.reset();
+            m_canLoadOlderMessages = false;
+            Q_EMIT messagesChanged();
+            return;
+        }
+
+        const auto response = reply->read<GetMessagesResponse>();
+        m_olderMessagesReply.reset();
+        if (!response) {
+            m_canLoadOlderMessages = false;
+            Q_EMIT messagesChanged();
+            return;
+        }
+
+        if (m_selectedChatId == chatId) {
+            m_messageListModel->prependMessages(response->messages());
+            m_canLoadOlderMessages = response->messages().size() >= kMessageLimit;
         }
         Q_EMIT messagesChanged();
     });

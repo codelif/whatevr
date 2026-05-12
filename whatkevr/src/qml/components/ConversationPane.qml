@@ -74,15 +74,17 @@ Frame {
                 anchors.fill: parent
                 anchors.margins: Kirigami.Units.smallSpacing
                 visible: AppController.hasSelectedChat
-                         && !AppController.messagesLoading
                          && AppController.messageErrorText.length === 0
                          && !AppController.messagesEmpty
                 model: AppController.messageListModel
+                loadingOlderMessages: AppController.olderMessagesLoading
+                canLoadOlderMessages: AppController.canLoadOlderMessages
+                onLoadOlderMessagesRequested: AppController.loadOlderMessages()
             }
 
             BusyIndicator {
                 anchors.centerIn: parent
-                running: AppController.messagesLoading
+                running: AppController.messagesLoading && AppController.messagesEmpty
                 visible: running
             }
 
@@ -98,7 +100,7 @@ Frame {
                 anchors.centerIn: parent
                 width: Math.min(parent.width - Kirigami.Units.largeSpacing * 4,
                                 Kirigami.Units.gridUnit * 22)
-                visible: !messageView.visible && !AppController.messagesLoading
+                visible: !messageView.visible && !(AppController.messagesLoading && AppController.messagesEmpty)
                 text: !AppController.hasSelectedChat
                       ? i18nc("@info", "Select a chat")
                       : (AppController.messageErrorText.length > 0
