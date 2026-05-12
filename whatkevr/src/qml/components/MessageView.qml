@@ -15,11 +15,16 @@ Item {
     property bool preservingPrependPosition: false
     property real contentHeightBeforePrepend: 0
     property real contentYBeforePrepend: 0
+    property real originYBeforePrepend: 0
 
     signal loadOlderMessagesRequested()
 
     function maximumY() {
         return list.originY + Math.max(0, list.contentHeight - list.height)
+    }
+
+    function clampContentY(value) {
+        return Math.max(list.originY, Math.min(maximumY(), value))
     }
 
     function pinToBottomNow() {
@@ -33,27 +38,53 @@ Item {
         pinToBottomNow()
     }
 
+    function beginPrependPositionPreservation() {
+        pinToBottom = false
+        preservingPrependPosition = true
+        contentHeightBeforePrepend = list.contentHeight
+        contentYBeforePrepend = list.contentY
+        originYBeforePrepend = list.originY
+    }
+
+    function restorePrependPosition() {
+        if (!preservingPrependPosition) {
+            return
+        }
+
+        const insertedHeight = Math.max(0, list.contentHeight - contentHeightBeforePrepend)
+        const originYDelta = list.originY - originYBeforePrepend
+        list.contentY = clampContentY(contentYBeforePrepend + originYDelta + insertedHeight)
+    }
+
+    function finishPrependPositionPreservation() {
+        if (!preservingPrependPosition) {
+            return
+        }
+
+        restorePrependPosition()
+        preservingPrependPosition = false
+        maybeLoadOlderMessages()
+    }
+
     function maybeLoadOlderMessages() {
         if (!canLoadOlderMessages || loadingOlderMessages || preservingPrependPosition || list.count === 0) {
             return
         }
 
         if (list.contentY <= list.originY + topLoadThreshold) {
-            preservingPrependPosition = true
-            contentHeightBeforePrepend = list.contentHeight
-            contentYBeforePrepend = list.contentY
+            beginPrependPositionPreservation()
             loadOlderMessagesRequested()
+            Qt.callLater(() => {
+                if (!loadingOlderMessages && preservingPrependPosition) {
+                    finishPrependPositionPreservation()
+                }
+            })
         }
     }
 
     onLoadingOlderMessagesChanged: {
         if (!loadingOlderMessages && preservingPrependPosition) {
-            Qt.callLater(() => {
-                const delta = list.contentHeight - contentHeightBeforePrepend
-                list.contentY = Math.max(list.originY, contentYBeforePrepend + Math.max(0, delta))
-                preservingPrependPosition = false
-                maybeLoadOlderMessages()
-            })
+            Qt.callLater(() => { finishPrependPositionPreservation() })
         }
     }
 
@@ -121,12 +152,21 @@ Item {
             root.maybeLoadOlderMessages()
         }
         onContentHeightChanged: {
-            if (!root.preservingPrependPosition && root.pinToBottom && contentHeight > height) {
+            if (root.preservingPrependPosition) {
+                root.restorePrependPosition()
+            } else if (root.pinToBottom && contentHeight > height) {
                 root.pinToBottomNow()
             }
         }
+        onOriginYChanged: {
+            if (root.preservingPrependPosition) {
+                root.restorePrependPosition()
+            }
+        }
         onCountChanged: {
-            if (root.atBottom) {
+            if (root.preservingPrependPosition) {
+                root.restorePrependPosition()
+            } else if (root.atBottom) {
                 root.pinToBottom = true
                 Qt.callLater(() => {
                     if (root.pinToBottom) root.pinToBottomNow()
