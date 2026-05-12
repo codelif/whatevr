@@ -349,7 +349,7 @@ func (c *Client) maybeUpdateStatusFromHistory(ctx context.Context, internalID, s
 	if !changed {
 		return
 	}
-	c.daemon.PublishMessageUpdated(toDaemonMessage(message))
+	c.publishMessageStatusUpdated(ctx, message)
 }
 
 func messageDirectionAndStatus(info types.MessageInfo, opts ingestOptions) (string, string) {

@@ -392,7 +392,7 @@ func (c *Client) markPendingMessageSent(ctx context.Context, messageID string) {
 		return
 	}
 	if changed {
-		c.daemon.PublishMessageUpdated(toDaemonMessage(message))
+		c.publishMessageStatusUpdated(ctx, message)
 	}
 }
 
@@ -404,7 +404,7 @@ func (c *Client) markPendingMessageFailed(ctx context.Context, messageID string,
 	}
 	c.log.Warnf("Queued message %s permanently failed: %s", messageID, reason)
 	if changed {
-		c.daemon.PublishMessageUpdated(toDaemonMessage(message))
+		c.publishMessageStatusUpdated(ctx, message)
 	}
 }
 
@@ -434,8 +434,23 @@ func (c *Client) handleReceipt(evt *events.Receipt) {
 			continue
 		}
 
-		c.daemon.PublishMessageUpdated(toDaemonMessage(message))
+		c.publishMessageStatusUpdated(context.Background(), message)
 	}
+}
+
+func (c *Client) publishMessageStatusUpdated(ctx context.Context, message appstore.Message) {
+	c.daemon.PublishMessageUpdated(toDaemonMessage(message))
+
+	chat, err := c.store.GetChat(ctx, message.ChatID)
+	if err != nil {
+		c.log.Warnf("Failed to load chat after status update for %s: %v", message.ID, err)
+		return
+	}
+	if chat.LastMessageTime != message.TimestampUnix {
+		return
+	}
+
+	c.daemon.PublishChatUpdated(toDaemonChat(chat))
 }
 
 func (c *Client) MarkChatRead(ctx context.Context, chatID string) (appstore.Chat, error) {
