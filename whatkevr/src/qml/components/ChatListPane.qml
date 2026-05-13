@@ -3,63 +3,37 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 
-Frame {
+Kirigami.Page {
     id: root
+
+    signal chatSelected(string chatId)
 
     Layout.fillHeight: true
     Layout.minimumWidth: Kirigami.Units.gridUnit * 17
     Layout.preferredWidth: Kirigami.Units.gridUnit * 20
     Layout.maximumWidth: Kirigami.Units.gridUnit * 24
+    title: i18nc("@title", "Chats")
     padding: 0
+    Kirigami.Theme.colorSet: Kirigami.Theme.View
 
-    background: Rectangle {
-        color: Kirigami.Theme.backgroundColor
-        border.color: Qt.alpha(Kirigami.Theme.textColor, 0.10)
-    }
+    actions: [
+        Kirigami.Action {
+            icon.name: "view-refresh-symbolic"
+            text: i18nc("@action:button", "Refresh")
+            visible: AppController.bannerText.length > 0
+            enabled: AppController.primaryActionEnabled
+            onTriggered: AppController.triggerPrimaryAction()
+        },
+        Kirigami.Action {
+            icon.name: "system-log-out-symbolic"
+            text: i18nc("@action:button", "Log out")
+            onTriggered: AppController.logout()
+        }
+    ]
 
-    contentItem: ColumnLayout {
+    ColumnLayout {
+        anchors.fill: parent
         spacing: 0
-
-        ToolBar {
-            Layout.fillWidth: true
-            Layout.preferredHeight: Kirigami.Units.gridUnit * 3.2
-
-            contentItem: RowLayout {
-                anchors.fill: parent
-                anchors.leftMargin: Kirigami.Units.largeSpacing
-                anchors.rightMargin: Kirigami.Units.smallSpacing
-                spacing: Kirigami.Units.smallSpacing
-
-                Kirigami.Heading {
-                    Layout.fillWidth: true
-                    level: 2
-                    text: i18nc("@title", "Chats")
-                    elide: Text.ElideRight
-                }
-
-                ToolButton {
-                    icon.name: "view-refresh-symbolic"
-                    text: i18nc("@action:button", "Refresh")
-                    display: AbstractButton.IconOnly
-                    visible: AppController.bannerText.length > 0
-                    enabled: AppController.primaryActionEnabled
-                    onClicked: AppController.triggerPrimaryAction()
-                }
-
-                ToolButton {
-                    icon.name: "system-log-out-symbolic"
-                    text: i18nc("@action:button", "Log out")
-                    display: AbstractButton.IconOnly
-                    onClicked: AppController.logout()
-                }
-            }
-        }
-
-        Rectangle {
-            Layout.fillWidth: true
-            implicitHeight: 1
-            color: Qt.alpha(Kirigami.Theme.textColor, 0.10)
-        }
 
         HistorySyncStrip {
             Layout.margins: Kirigami.Units.largeSpacing
@@ -106,7 +80,10 @@ Frame {
                     initials: String(model.initials || "?")
                     unreadCount: Number(model.unreadCount || 0)
                     current: AppController.selectedChatId === chatId
-                    onSelected: id => AppController.selectChat(id)
+                    onSelected: id => {
+                        AppController.selectChat(id)
+                        root.chatSelected(id)
+                    }
                 }
 
                 BusyIndicator {

@@ -4,86 +4,77 @@ import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 import org.kde.prison as Prison
 
-Item {
+Kirigami.ScrollablePage {
     id: root
 
+    title: i18nc("@title", "Sign In")
+    padding: 0
+
     readonly property bool wideLayout: width >= Kirigami.Units.gridUnit * 52
-    readonly property real contentWidth: Math.min(width - Kirigami.Units.largeSpacing * 4,
-                                                  Kirigami.Units.gridUnit * 76)
+    readonly property real pageContentWidth: Math.min(width - Kirigami.Units.largeSpacing * 4,
+                                                      Kirigami.Units.gridUnit * 76)
     readonly property real qrSide: Math.max(Kirigami.Units.gridUnit * 12,
                                             Math.min(wideLayout ? Kirigami.Units.gridUnit * 20
                                                                 : width - Kirigami.Units.largeSpacing * 8,
                                                      Kirigami.Units.gridUnit * 20))
 
-    Flickable {
-        id: loginFlickable
+    ColumnLayout {
+        id: layout
 
-        anchors.fill: parent
-        contentWidth: width
-        contentHeight: layout.implicitHeight + Kirigami.Units.largeSpacing * 4
-        clip: true
-        boundsBehavior: Flickable.DragAndOvershootBounds
-        boundsMovement: Flickable.FollowBoundsBehavior
-        flickableDirection: Flickable.VerticalFlick
-        flickDeceleration: 1400
-        maximumFlickVelocity: 12000
-        ScrollBar.vertical: DiscreetScrollBar {}
+        width: root.pageContentWidth
+        x: Math.max(0, (parent.width - width) / 2)
+        y: Kirigami.Units.largeSpacing * 2
+        spacing: Kirigami.Units.largeSpacing * 1.5
 
-        ColumnLayout {
-            id: layout
+        Item {
+            Layout.fillWidth: true
+            implicitHeight: 0
+        }
 
-            width: root.contentWidth
-            anchors.horizontalCenter: parent.horizontalCenter
-            anchors.top: parent.top
-            anchors.topMargin: Kirigami.Units.largeSpacing * 2
-            spacing: Kirigami.Units.largeSpacing * 1.5
+        Kirigami.InlineMessage {
+            Layout.fillWidth: true
+            visible: AppController.bannerText.length > 0
+            type: Kirigami.MessageType.Warning
+            showCloseButton: false
+            text: AppController.bannerText
+        }
 
-            Kirigami.InlineMessage {
-                Layout.fillWidth: true
-                visible: AppController.bannerText.length > 0
-                type: Kirigami.MessageType.Warning
-                showCloseButton: false
-                text: AppController.bannerText
+        Item {
+            Layout.fillWidth: true
+            implicitHeight: root.wideLayout ? heroRow.implicitHeight : heroColumn.implicitHeight
+
+            RowLayout {
+                id: heroRow
+
+                visible: root.wideLayout
+                anchors.fill: parent
+                spacing: Kirigami.Units.largeSpacing * 2
+
+                LeftPanel {}
+                QrPanel {}
             }
 
-            Item {
-                Layout.fillWidth: true
-                implicitHeight: root.wideLayout ? heroRow.implicitHeight : heroColumn.implicitHeight
+            ColumnLayout {
+                id: heroColumn
 
-                RowLayout {
-                    id: heroRow
+                visible: !root.wideLayout
+                anchors.fill: parent
+                spacing: Kirigami.Units.largeSpacing * 1.5
 
-                    visible: root.wideLayout
-                    anchors.fill: parent
-                    spacing: Kirigami.Units.largeSpacing * 2
-
-                    LeftPanel {}
-                    QrPanel {}
-                }
-
-                ColumnLayout {
-                    id: heroColumn
-
-                    visible: !root.wideLayout
-                    anchors.fill: parent
-                    spacing: Kirigami.Units.largeSpacing * 1.5
-
-                    QrPanel {}
-                    LeftPanel {}
-                }
+                QrPanel {}
+                LeftPanel {}
             }
         }
-    }
 
-    KineticWheelScroller {
-        anchors.fill: loginFlickable
-        target: loginFlickable
-        wheelStep: Kirigami.Units.gridUnit * 4
+        Item {
+            Layout.fillWidth: true
+            implicitHeight: Kirigami.Units.largeSpacing * 2
+        }
     }
 
     component LeftPanel: Frame {
         Layout.fillWidth: true
-        Layout.preferredWidth: root.wideLayout ? root.contentWidth * 0.46 : -1
+        Layout.preferredWidth: root.wideLayout ? root.pageContentWidth * 0.46 : -1
         padding: Kirigami.Units.largeSpacing * 1.5
 
         background: Rectangle {
@@ -220,7 +211,7 @@ Item {
 
     component QrPanel: Frame {
         Layout.alignment: Qt.AlignHCenter
-        Layout.preferredWidth: root.wideLayout ? root.contentWidth * 0.40 : -1
+        Layout.preferredWidth: root.wideLayout ? root.pageContentWidth * 0.40 : -1
         Layout.fillWidth: !root.wideLayout
         padding: Kirigami.Units.largeSpacing * 1.5
 

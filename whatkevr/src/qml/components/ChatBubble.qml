@@ -6,6 +6,9 @@ import org.kde.kirigami as Kirigami
 Item {
     id: root
 
+    Kirigami.Theme.inherit: false
+    Kirigami.Theme.colorSet: Kirigami.Theme.View
+
     property string messageId: ""
     property string body: ""
     property string timeText: ""
@@ -157,9 +160,9 @@ Item {
         corners.bottomRightRadius: bubbleRadius
 
         color: root.outgoing
-               ? Qt.alpha(activePalette.highlight, 0.30)
-               : activePalette.window
-        border.color: Qt.alpha(activePalette.windowText, root.outgoing ? 0.05 : 0.12)
+                ? Qt.alpha(activePalette.highlight, 0.30)
+                : Kirigami.Theme.backgroundColor
+        border.color: Qt.alpha(Kirigami.Theme.textColor, root.outgoing ? 0.05 : 0.12)
         border.width: 1
 
         Item {
@@ -197,8 +200,8 @@ Item {
 
                     anchors.fill: parent
                     radius: Kirigami.Units.cornerRadius
-                    color: Qt.alpha(activePalette.windowText, 0.06)
-                    border.color: Qt.alpha(activePalette.windowText, 0.12)
+                    color: Qt.alpha(Kirigami.Theme.textColor, 0.06)
+                    border.color: Qt.alpha(Kirigami.Theme.textColor, 0.12)
                 }
 
                 Image {
@@ -251,7 +254,7 @@ Item {
                     Rectangle {
                         anchors.fill: parent
                         radius: mediaBackground.radius
-                        color: Qt.alpha(activePalette.window, root.hasLocalImage ? 0.34 : 0.0)
+                        color: Qt.alpha(Kirigami.Theme.backgroundColor, root.hasLocalImage ? 0.34 : 0.0)
                     }
 
                     Column {
@@ -311,7 +314,7 @@ Item {
                 text: root.body
                 wrapMode: Text.Wrap
                 textFormat: Text.PlainText
-                color: activePalette.windowText
+                color: Kirigami.Theme.textColor
             }
 
             Item {

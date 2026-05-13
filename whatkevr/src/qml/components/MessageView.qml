@@ -5,6 +5,8 @@ import org.kde.kirigami as Kirigami
 Item {
     id: root
 
+    Kirigami.Theme.colorSet: Kirigami.Theme.View
+
     property alias model: list.model
     property bool atBottom: true
     property bool pinToBottom: true

@@ -79,9 +79,7 @@ qt_add_qml_module(whatkevr
         src/qml/components/ChatBubble.qml
         src/qml/components/MessageView.qml
         src/qml/components/MessageComposer.qml
-        src/qml/pages/ChatsPage.qml
         src/qml/pages/LoginPage.qml
-        src/qml/pages/ShellPage.qml
         src/qml/pages/StatusPage.qml
 )
 

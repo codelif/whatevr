@@ -3,47 +3,35 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 
-Item {
+Kirigami.ScrollablePage {
     id: root
 
-    readonly property real contentWidth: Math.min(width - Kirigami.Units.largeSpacing * 4,
-                                                  Kirigami.Units.gridUnit * 42)
+    title: AppController.statusTitle
+    padding: 0
 
-    Flickable {
-        id: statusFlickable
+    readonly property real pageContentWidth: Math.min(width - Kirigami.Units.largeSpacing * 4,
+                                                      Kirigami.Units.gridUnit * 42)
 
-        anchors.fill: parent
-        contentWidth: width
-        contentHeight: layout.implicitHeight + Kirigami.Units.largeSpacing * 4
-        clip: true
-        boundsBehavior: Flickable.DragAndOvershootBounds
-        boundsMovement: Flickable.FollowBoundsBehavior
-        flickableDirection: Flickable.VerticalFlick
-        flickDeceleration: 1400
-        maximumFlickVelocity: 12000
-        ScrollBar.vertical: DiscreetScrollBar {}
+    ColumnLayout {
+        id: layout
 
-        ColumnLayout {
-            id: layout
+        width: root.pageContentWidth
+        x: Math.max(0, (parent.width - width) / 2)
+        y: Math.max(Kirigami.Units.largeSpacing * 2,
+                    (parent.height - implicitHeight) / 2)
+        spacing: Kirigami.Units.largeSpacing * 1.5
 
-            width: root.contentWidth
-            anchors.horizontalCenter: parent.horizontalCenter
-            anchors.verticalCenter: parent.height >= implicitHeight ? parent.verticalCenter : undefined
-            anchors.top: parent.height < implicitHeight ? parent.top : undefined
-            anchors.topMargin: Kirigami.Units.largeSpacing * 2
-            spacing: Kirigami.Units.largeSpacing * 1.5
+        Kirigami.InlineMessage {
+            Layout.fillWidth: true
+            visible: AppController.bannerText.length > 0
+            type: Kirigami.MessageType.Warning
+            showCloseButton: false
+            text: AppController.bannerText
+        }
 
-            Kirigami.InlineMessage {
-                Layout.fillWidth: true
-                visible: AppController.bannerText.length > 0
-                type: Kirigami.MessageType.Warning
-                showCloseButton: false
-                text: AppController.bannerText
-            }
-
-            Frame {
-                Layout.fillWidth: true
-                padding: Kirigami.Units.largeSpacing * 1.5
+        Frame {
+            Layout.fillWidth: true
+            padding: Kirigami.Units.largeSpacing * 1.5
 
                 background: Rectangle {
                     radius: Kirigami.Units.cornerRadius
@@ -103,7 +91,11 @@ Item {
                         }
                     }
                 }
-            }
+        }
+
+        Item {
+            Layout.fillWidth: true
+            implicitHeight: Kirigami.Units.largeSpacing * 2
         }
     }
 }

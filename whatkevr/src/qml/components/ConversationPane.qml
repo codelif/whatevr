@@ -3,83 +3,103 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 
-Frame {
+Kirigami.Page {
     id: root
 
     Layout.fillWidth: true
     Layout.fillHeight: true
+    title: AppController.hasSelectedChat
+           ? AppController.selectedChatName
+           : i18nc("@title", "Select a chat")
     padding: 0
+    Kirigami.Theme.colorSet: Kirigami.Theme.Window
 
-    background: Rectangle {
-        color: Kirigami.Theme.alternateBackgroundColor
-    }
-
-    contentItem: ColumnLayout {
-        spacing: 0
-
-        ToolBar {
-            Layout.fillWidth: true
-            Layout.preferredHeight: Kirigami.Units.gridUnit * 3.2
-
-            contentItem: RowLayout {
-                anchors.fill: parent
-                anchors.leftMargin: Kirigami.Units.largeSpacing
-                anchors.rightMargin: Kirigami.Units.smallSpacing
-                spacing: Kirigami.Units.largeSpacing
-
-                AvatarImage {
-                    Layout.preferredWidth: Kirigami.Units.gridUnit * 2.1
-                    Layout.preferredHeight: Layout.preferredWidth
-                    visible: AppController.hasSelectedChat
-                    avatarLocalPath: AppController.selectedChatAvatarLocalPath
-                    initials: AppController.selectedChatName.length > 0
-                              ? AppController.selectedChatName.slice(0, 1).toUpperCase()
-                              : "?"
-                    backgroundColor: Qt.alpha(foregroundColor, 0.16)
-                }
-
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    Layout.alignment: Qt.AlignVCenter
-                    spacing: 0
-
-                    Label {
-                        Layout.fillWidth: true
-                        text: AppController.hasSelectedChat
-                              ? AppController.selectedChatName
-                              : i18nc("@title", "Select a chat")
-                        font.weight: Font.DemiBold
-                        elide: Text.ElideRight
-                        maximumLineCount: 1
-                    }
-
-                    Label {
-                        Layout.fillWidth: true
-                        visible: AppController.hasSelectedChat
-                                 && AppController.selectedChatPresenceText.length > 0
-                        text: AppController.selectedChatPresenceText
-                        color: Kirigami.Theme.disabledTextColor
-                        font.pointSize: Kirigami.Theme.smallFont.pointSize * 0.88
-                        elide: Text.ElideRight
-                        maximumLineCount: 1
-                    }
-                }
-
-                ToolButton {
-                    icon.name: "documentinfo-symbolic"
-                    text: i18nc("@action:button", "Information")
-                    display: AbstractButton.IconOnly
-                    enabled: false
-                    visible: AppController.hasSelectedChat
-                }
+    function initialsForName(name) {
+        const parts = name.trim().split(/\s+/)
+        let initials = ""
+        for (const part of parts) {
+            if (part.length > 0) {
+                initials += part.charAt(0).toUpperCase()
+            }
+            if (initials.length >= 2) {
+                break
             }
         }
+        return initials.length > 0 ? initials : "?"
+    }
 
-        Rectangle {
-            Layout.fillWidth: true
-            implicitHeight: 1
-            color: Qt.alpha(Kirigami.Theme.textColor, 0.10)
+    titleDelegate: RowLayout {
+        id: headerTitle
+
+        readonly property bool hasPresenceText: AppController.hasSelectedChat
+                                                && AppController.selectedChatPresenceText.length > 0
+        readonly property real avatarSize: Kirigami.Units.gridUnit * 1.8
+        readonly property real subtextPixelSize: Math.max(8, Math.round(Kirigami.Theme.smallFont.pixelSize * 0.82))
+
+        Layout.fillWidth: true
+        Layout.minimumWidth: 0
+        implicitHeight: avatarSize
+        spacing: Kirigami.Units.smallSpacing
+
+        AvatarImage {
+            visible: AppController.hasSelectedChat
+            Layout.alignment: Qt.AlignVCenter
+            Layout.preferredWidth: headerTitle.avatarSize
+            Layout.preferredHeight: headerTitle.avatarSize
+            avatarLocalPath: AppController.selectedChatAvatarLocalPath
+            initials: root.initialsForName(AppController.selectedChatName)
         }
+
+        Item {
+            Layout.fillWidth: true
+            Layout.minimumWidth: 0
+            Layout.alignment: Qt.AlignVCenter
+            Layout.preferredHeight: headerTitle.avatarSize
+
+            Label {
+                id: titleLabel
+
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.verticalCenterOffset: headerTitle.hasPresenceText
+                                      ? -(subtextLabel.implicitHeight + Kirigami.Units.smallSpacing / 3) / 2
+                                      : 0
+                text: root.title
+                elide: Text.ElideRight
+                font.weight: Font.DemiBold
+            }
+
+            Label {
+                id: subtextLabel
+
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: titleLabel.bottom
+                anchors.topMargin: Kirigami.Units.smallSpacing / 3
+                visible: AppController.hasSelectedChat
+                text: headerTitle.hasPresenceText ? AppController.selectedChatPresenceText : " "
+                elide: Text.ElideRight
+                opacity: headerTitle.hasPresenceText ? 1 : 0
+                color: Kirigami.Theme.disabledTextColor
+                font.family: Kirigami.Theme.smallFont.family
+                font.pixelSize: headerTitle.subtextPixelSize
+            }
+        }
+    }
+
+    actions: [
+        Kirigami.Action {
+            icon.name: "documentinfo-symbolic"
+            text: i18nc("@action:button", "Information")
+            enabled: false
+            visible: AppController.hasSelectedChat
+        }
+    ]
+
+    ColumnLayout {
+        anchors.fill: parent
+        spacing: 0
 
         Item {
             id: timelineArea
