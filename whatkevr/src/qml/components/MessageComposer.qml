@@ -13,6 +13,7 @@ Frame {
 
     signal sendTextRequested(string text)
     signal sendImageRequested(string fileUrl, string caption)
+    signal composingChanged(bool composing)
 
     padding: Kirigami.Units.smallSpacing
 
@@ -33,9 +34,37 @@ Frame {
         if (!root.enabledForChat || text.length === 0 || root.sending) {
             return
         }
+        root.setComposing(false)
         root.sendTextRequested(text)
         input.clear()
     }
+
+    function setComposing(composing) {
+        if (composing && (!root.enabledForChat || root.sending || input.text.trim().length === 0)) {
+            composing = false
+        }
+
+        if (composingTimer.running !== composing) {
+            composingTimer.running = composing
+        }
+        if (pauseTimer.running && !composing) {
+            pauseTimer.stop()
+        }
+        root.composingChanged(composing)
+    }
+
+    function noteDraftActivity() {
+        if (!root.enabledForChat || root.sending || input.text.trim().length === 0) {
+            root.setComposing(false)
+            return
+        }
+
+        root.setComposing(true)
+        pauseTimer.restart()
+    }
+
+    onEnabledForChatChanged: if (!enabledForChat) root.setComposing(false)
+    onSendingChanged: if (sending) root.setComposing(false)
 
     contentItem: ColumnLayout {
         spacing: Kirigami.Units.smallSpacing
@@ -82,6 +111,8 @@ Frame {
                     selectByMouse: true
                     verticalAlignment: TextEdit.AlignVCenter
 
+                    onTextChanged: root.noteDraftActivity()
+
                     Keys.onReturnPressed: event => {
                         if (event.modifiers & Qt.ShiftModifier) {
                             event.accepted = false
@@ -104,12 +135,31 @@ Frame {
         }
     }
 
+    Timer {
+        id: composingTimer
+
+        interval: 10000
+        repeat: true
+        onTriggered: root.noteDraftActivity()
+    }
+
+    Timer {
+        id: pauseTimer
+
+        interval: 5000
+        repeat: false
+        onTriggered: root.setComposing(false)
+    }
+
     Platform.FileDialog {
         id: imageDialog
 
         title: i18nc("@title:window", "Attach image")
         nameFilters: [i18nc("@item:inlistbox", "Images (*.png *.jpg *.jpeg *.webp *.gif)")]
         fileMode: Platform.FileDialog.OpenFile
-        onAccepted: root.sendImageRequested(file, input.text.trim())
+        onAccepted: {
+            root.setComposing(false)
+            root.sendImageRequested(file, input.text.trim())
+        }
     }
 }

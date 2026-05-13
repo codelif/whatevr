@@ -141,6 +141,7 @@ public:
     Q_INVOKABLE void loadOlderMessages();
     Q_INVOKABLE void sendText(const QString &text);
     Q_INVOKABLE void sendImage(const QString &fileUrl, const QString &caption = QString());
+    Q_INVOKABLE void setSelectedChatComposing(bool composing);
     Q_INVOKABLE void downloadMessageMedia(const QString &messageId);
     Q_INVOKABLE bool isMessageMediaDownloading(const QString &messageId) const;
     Q_INVOKABLE void logout();
@@ -166,6 +167,7 @@ private:
     void requestOlderMessages();
     void requestSelectedChatReadIfActive();
     void requestSelectedChatPresence();
+    void setChatComposing(const QString &chatId, bool composing);
     void ensureFrontendSession();
     void updateFrontendSessionState();
     void ensureDaemonStream();
@@ -234,6 +236,7 @@ private:
     std::unique_ptr<QGrpcCallReply> m_olderMessagesReply;
     std::unique_ptr<QGrpcCallReply> m_markChatReadReply;
     std::unique_ptr<QGrpcCallReply> m_subscribeChatPresenceReply;
+    QHash<QString, std::shared_ptr<QGrpcCallReply>> m_setChatPresenceReplies;
     std::unique_ptr<QGrpcCallReply> m_updateSessionStateReply;
     std::unique_ptr<QGrpcCallReply> m_sendTextReply;
     std::unique_ptr<QGrpcCallReply> m_sendMediaReply;
@@ -245,4 +248,5 @@ private:
     std::unique_ptr<QGrpcServerStream> m_loginStream;
     QTimer *m_retryTimer = nullptr;
     QTimer *m_qrTimer = nullptr;
+    QString m_localComposingChatId;
 };

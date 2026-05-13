@@ -37,6 +37,7 @@ using whatevr::v1::LoginEvent;
 using whatevr::v1::LoginStateChanged;
 using whatevr::v1::MarkChatReadRequest;
 using whatevr::v1::MediaDownloadChanged;
+using whatevr::v1::SetChatPresenceRequest;
 using whatevr::v1::SubscribeChatPresenceRequest;
 using whatevr::v1::DownloadMessageMediaRequest;
 using whatevr::v1::DownloadMessageMediaResponse;
@@ -173,6 +174,9 @@ AppController::AppController(QObject *parent)
 
     connect(qGuiApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
         updateFrontendSessionState();
+        if (state != Qt::ApplicationActive && !m_localComposingChatId.isEmpty()) {
+            setChatComposing(m_localComposingChatId, false);
+        }
         if (state == Qt::ApplicationActive) {
             requestSelectedChatReadIfActive();
         }
@@ -465,6 +469,10 @@ void AppController::selectChat(const QString &chatId)
         return;
     }
 
+    if (!m_localComposingChatId.isEmpty()) {
+        setChatComposing(m_localComposingChatId, false);
+    }
+
     m_selectedChatId = chatId;
     m_selectedChatComposing = false;
     m_selectedChatAvailability = 0;
@@ -509,6 +517,8 @@ void AppController::sendText(const QString &text)
     if (!m_sendClient || m_sendTextReply || m_selectedChatId.isEmpty() || trimmed.isEmpty()) {
         return;
     }
+
+    setChatComposing(m_selectedChatId, false);
 
     SendTextRequest request;
     request.setChatId(m_selectedChatId);
@@ -560,6 +570,8 @@ void AppController::sendImage(const QString &fileUrl, const QString &caption)
         return;
     }
 
+    setChatComposing(m_selectedChatId, false);
+
     SendMediaRequest request;
     request.setChatId(m_selectedChatId);
     request.setFilePath(filePath);
@@ -597,6 +609,15 @@ void AppController::sendImage(const QString &fileUrl, const QString &caption)
 
         Q_EMIT composerChanged();
     });
+}
+
+void AppController::setSelectedChatComposing(bool composing)
+{
+    if (m_selectedChatId.isEmpty()) {
+        return;
+    }
+
+    setChatComposing(m_selectedChatId, composing);
 }
 
 void AppController::downloadMessageMedia(const QString &messageId)
@@ -1035,6 +1056,39 @@ void AppController::requestSelectedChatPresence()
     request.setChatId(m_selectedChatId);
 
     m_subscribeChatPresenceReply = m_chatClient->SubscribeChatPresence(request);
+}
+
+void AppController::setChatComposing(const QString &chatId, bool composing)
+{
+    if (!m_chatClient || chatId.isEmpty()) {
+        return;
+    }
+    if (!composing && m_localComposingChatId != chatId) {
+        return;
+    }
+
+    SetChatPresenceRequest request;
+    request.setChatId(chatId);
+    request.setComposing(composing);
+
+    auto reply = m_chatClient->SetChatPresence(request);
+    auto *replyPtr = reply.get();
+    m_setChatPresenceReplies.insert(chatId, std::move(reply));
+
+    if (composing) {
+        m_localComposingChatId = chatId;
+    } else {
+        m_localComposingChatId.clear();
+    }
+
+    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, chatId](const QGrpcStatus &) {
+        auto it = m_setChatPresenceReplies.find(chatId);
+        if (it == m_setChatPresenceReplies.end() || it.value().get() != replyPtr) {
+            return;
+        }
+
+        m_setChatPresenceReplies.erase(it);
+    });
 }
 
 void AppController::ensureFrontendSession()

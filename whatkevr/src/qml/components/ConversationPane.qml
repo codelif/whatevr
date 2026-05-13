@@ -19,6 +19,7 @@ Frame {
 
         ToolBar {
             Layout.fillWidth: true
+            Layout.preferredHeight: Kirigami.Units.gridUnit * 3.2
 
             contentItem: RowLayout {
                 anchors.fill: parent
@@ -58,7 +59,7 @@ Frame {
                                  && AppController.selectedChatPresenceText.length > 0
                         text: AppController.selectedChatPresenceText
                         color: Kirigami.Theme.disabledTextColor
-                        font.pointSize: Kirigami.Theme.smallFont.pointSize
+                        font.pointSize: Kirigami.Theme.smallFont.pointSize * 0.88
                         elide: Text.ElideRight
                         maximumLineCount: 1
                     }
@@ -144,6 +145,7 @@ Frame {
             errorText: AppController.composerErrorText
             onSendTextRequested: text => AppController.sendText(text)
             onSendImageRequested: (fileUrl, caption) => AppController.sendImage(fileUrl, caption)
+            onComposingChanged: composing => AppController.setSelectedChatComposing(composing)
         }
     }
 }

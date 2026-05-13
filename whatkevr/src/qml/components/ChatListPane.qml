@@ -22,6 +22,7 @@ Frame {
 
         ToolBar {
             Layout.fillWidth: true
+            Layout.preferredHeight: Kirigami.Units.gridUnit * 3.2
 
             contentItem: RowLayout {
                 anchors.fill: parent
