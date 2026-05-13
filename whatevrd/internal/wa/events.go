@@ -68,7 +68,19 @@ func (c *Client) handleEvent(eventGen uint64, raw any) {
 	case *events.ChatPresence:
 		chatJID := c.normalizeJIDForChat(c.backgroundContext(), evt.Chat)
 		isComposing := evt.State == types.ChatPresenceComposing
+		c.log.Infof("Received WhatsApp chat presence event: chat=%s sender=%s state=%s media=%s composing=%t", chatJID, evt.Sender, evt.State, evt.Media, isComposing)
 		c.daemon.PublishChatPresence(chatJID.String(), evt.Sender.String(), isComposing)
+	case *events.Presence:
+		chatJID := c.normalizeJIDForChat(c.backgroundContext(), evt.From)
+		availability := app.ContactAvailabilityOnline
+		var lastSeenUnix int64
+		if evt.Unavailable {
+			availability = app.ContactAvailabilityOffline
+			if !evt.LastSeen.IsZero() {
+				lastSeenUnix = evt.LastSeen.Unix()
+			}
+		}
+		c.daemon.PublishContactAvailability(chatJID.String(), availability, lastSeenUnix)
 	}
 }
 

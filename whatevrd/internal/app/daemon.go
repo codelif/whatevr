@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+var composingPresenceTTL = 15 * time.Second
+
 type Status struct {
 	State               State
 	Detail              string
@@ -18,14 +20,17 @@ type Status struct {
 }
 
 type Daemon struct {
-	paths      Paths
-	state      atomic.Int32
-	nextSubID  atomic.Uint64
-	subMu      sync.Mutex
-	daemonSubs map[uint64]chan DaemonEvent
-	loginSubs  map[uint64]chan LoginEvent
-	latestQR   *QRCode
-	lastDetail string
+	paths             Paths
+	state             atomic.Int32
+	nextSubID         atomic.Uint64
+	subMu             sync.Mutex
+	daemonSubs        map[uint64]chan DaemonEvent
+	loginSubs         map[uint64]chan LoginEvent
+	latestQR          *QRCode
+	lastDetail        string
+	presenceByChatID  map[string]presenceState
+	latestHistorySync *HistorySyncEvent
+	mediaDownloads    map[string]MediaDownloadEvent
 
 	retryAttempt  atomic.Int32
 	nextRetryUnix atomic.Int64
@@ -37,9 +42,11 @@ type Daemon struct {
 
 func NewDaemon(paths Paths) *Daemon {
 	d := &Daemon{
-		paths:      paths,
-		daemonSubs: make(map[uint64]chan DaemonEvent),
-		loginSubs:  make(map[uint64]chan LoginEvent),
+		paths:            paths,
+		daemonSubs:       make(map[uint64]chan DaemonEvent),
+		loginSubs:        make(map[uint64]chan LoginEvent),
+		presenceByChatID: make(map[string]presenceState),
+		mediaDownloads:   make(map[string]MediaDownloadEvent),
 	}
 	d.SetState(StateStarting)
 	return d
@@ -101,12 +108,31 @@ type DaemonEvent struct {
 	PreviousChatID string
 	SenderID       string
 	IsComposing    bool
+	Availability   ContactAvailability
+	LastSeenUnix   int64
 	RetryAttempt   int32
 	NextRetryUnix  int64
 	CanReconnect   bool
 
-	HistorySync HistorySyncEvent
+	HistorySync   HistorySyncEvent
+	MediaDownload MediaDownloadEvent
 }
+
+type presenceState struct {
+	SenderID             string
+	IsComposing          bool
+	ComposingUpdatedTime time.Time
+	Availability         ContactAvailability
+	LastSeenUnix         int64
+}
+
+type ContactAvailability int32
+
+const (
+	ContactAvailabilityUnspecified ContactAvailability = iota
+	ContactAvailabilityOnline
+	ContactAvailabilityOffline
+)
 
 type DaemonEventKind int
 
@@ -118,6 +144,7 @@ const (
 	DaemonEventChatPresence
 	DaemonEventHistorySyncProgress
 	DaemonEventHistoryBackfilled
+	DaemonEventMediaDownloadChanged
 )
 
 type HistorySyncType int32
@@ -143,6 +170,13 @@ type HistorySyncEvent struct {
 
 	ChatID        string
 	MessagesAdded uint32
+}
+
+type MediaDownloadEvent struct {
+	MessageID   string
+	ChatID      string
+	Downloading bool
+	ErrorText   string
 }
 
 type Chat struct {
@@ -207,6 +241,11 @@ func (d *Daemon) SubscribeDaemonEvents() (<-chan DaemonEvent, func()) {
 	d.daemonSubs[id] = ch
 	state := State(d.state.Load())
 	detail := d.lastDetail
+	latestHistorySync := d.latestHistorySync
+	mediaDownloads := make([]MediaDownloadEvent, 0, len(d.mediaDownloads))
+	for _, download := range d.mediaDownloads {
+		mediaDownloads = append(mediaDownloads, download)
+	}
 	d.subMu.Unlock()
 
 	ch <- DaemonEvent{
@@ -216,6 +255,12 @@ func (d *Daemon) SubscribeDaemonEvents() (<-chan DaemonEvent, func()) {
 		RetryAttempt:  d.retryAttempt.Load(),
 		NextRetryUnix: d.nextRetryUnix.Load(),
 		CanReconnect:  d.canReconnect.Load(),
+	}
+	if latestHistorySync != nil {
+		ch <- DaemonEvent{Kind: DaemonEventHistorySyncProgress, HistorySync: *latestHistorySync}
+	}
+	for _, download := range mediaDownloads {
+		ch <- DaemonEvent{Kind: DaemonEventMediaDownloadChanged, MediaDownload: download}
 	}
 
 	return ch, func() {
@@ -289,6 +334,15 @@ func (d *Daemon) PublishChatMigrated(previousChatID string, chat Chat) {
 }
 
 func (d *Daemon) PublishHistorySyncProgress(evt HistorySyncEvent) {
+	d.subMu.Lock()
+	if evt.IsComplete {
+		d.latestHistorySync = nil
+	} else {
+		copy := evt
+		d.latestHistorySync = &copy
+	}
+	d.subMu.Unlock()
+
 	d.broadcastDaemonEvent(DaemonEvent{
 		Kind:        DaemonEventHistorySyncProgress,
 		HistorySync: evt,
@@ -306,12 +360,115 @@ func (d *Daemon) PublishHistoryBackfilled(chatID string, messagesAdded uint32) {
 }
 
 func (d *Daemon) PublishChatPresence(chatID, senderID string, isComposing bool) {
+	updatedAt := time.Now()
+
+	d.subMu.Lock()
+	state := d.presenceByChatID[chatID]
+	state.SenderID = senderID
+	state.IsComposing = isComposing
+	state.ComposingUpdatedTime = updatedAt
+	d.presenceByChatID[chatID] = state
+	d.subMu.Unlock()
+
 	d.broadcastDaemonEvent(DaemonEvent{
 		Kind:        DaemonEventChatPresence,
 		Chat:        Chat{ID: chatID},
 		SenderID:    senderID,
 		IsComposing: isComposing,
 	})
+
+	if isComposing {
+		d.scheduleComposingPresenceExpiry(chatID, senderID, updatedAt)
+	}
+}
+
+func (d *Daemon) scheduleComposingPresenceExpiry(chatID, senderID string, updatedAt time.Time) {
+	ttl := composingPresenceTTL
+	go func() {
+		<-time.After(ttl)
+		d.expireComposingPresence(chatID, senderID, updatedAt)
+	}()
+}
+
+func (d *Daemon) expireComposingPresence(chatID, senderID string, updatedAt time.Time) {
+	d.subMu.Lock()
+	state, ok := d.presenceByChatID[chatID]
+	if !ok || !state.IsComposing || state.SenderID != senderID || !state.ComposingUpdatedTime.Equal(updatedAt) {
+		d.subMu.Unlock()
+		return
+	}
+	state.IsComposing = false
+	d.presenceByChatID[chatID] = state
+	d.subMu.Unlock()
+
+	d.broadcastDaemonEvent(DaemonEvent{
+		Kind:        DaemonEventChatPresence,
+		Chat:        Chat{ID: chatID},
+		SenderID:    senderID,
+		IsComposing: false,
+	})
+}
+
+func (d *Daemon) PublishContactAvailability(chatID string, availability ContactAvailability, lastSeenUnix int64) {
+	d.subMu.Lock()
+	state := d.presenceByChatID[chatID]
+	state.Availability = availability
+	if lastSeenUnix > 0 {
+		state.LastSeenUnix = lastSeenUnix
+	}
+	d.presenceByChatID[chatID] = state
+	d.subMu.Unlock()
+
+	d.broadcastDaemonEvent(DaemonEvent{
+		Kind:         DaemonEventChatPresence,
+		Chat:         Chat{ID: chatID},
+		Availability: availability,
+		LastSeenUnix: lastSeenUnix,
+	})
+}
+
+func (d *Daemon) PublishCachedChatPresence(chatID string) bool {
+	d.subMu.Lock()
+	state, ok := d.presenceByChatID[chatID]
+	d.subMu.Unlock()
+	if !ok {
+		return false
+	}
+
+	if state.IsComposing && time.Since(state.ComposingUpdatedTime) > composingPresenceTTL {
+		state.IsComposing = false
+	}
+
+	if state.Availability != ContactAvailabilityUnspecified || state.LastSeenUnix > 0 {
+		d.broadcastDaemonEvent(DaemonEvent{
+			Kind:         DaemonEventChatPresence,
+			Chat:         Chat{ID: chatID},
+			Availability: state.Availability,
+			LastSeenUnix: state.LastSeenUnix,
+		})
+	}
+	if state.IsComposing {
+		d.broadcastDaemonEvent(DaemonEvent{
+			Kind:        DaemonEventChatPresence,
+			Chat:        Chat{ID: chatID},
+			SenderID:    state.SenderID,
+			IsComposing: state.IsComposing,
+		})
+	}
+	return true
+}
+
+func (d *Daemon) PublishMediaDownloadChanged(messageID, chatID string, downloading bool, errorText string) {
+	evt := MediaDownloadEvent{MessageID: messageID, ChatID: chatID, Downloading: downloading, ErrorText: errorText}
+	d.subMu.Lock()
+	if downloading {
+		d.mediaDownloads[messageID] = evt
+	} else {
+		delete(d.mediaDownloads, messageID)
+	}
+	d.subMu.Unlock()
+
+	d.broadcastDaemonEvent(DaemonEvent{Kind: DaemonEventMediaDownloadChanged, MediaDownload: evt})
 }
 
 func (d *Daemon) broadcastLoginEvent(event LoginEvent) {
