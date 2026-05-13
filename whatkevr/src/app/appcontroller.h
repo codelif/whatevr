@@ -3,6 +3,7 @@
 #include <QAbstractItemModel>
 #include <QHash>
 #include <QObject>
+#include <QSet>
 #include <QString>
 
 #include <cstdint>
@@ -21,12 +22,17 @@ class ConnectionChanged;
 class LoginStateChanged;
 class LoginEvent;
 class ChatUpdated;
+class ChatPresenceChanged;
+class MediaDownloadChanged;
 class HistorySyncProgress;
 class Message;
 namespace DaemonService {
 class Client;
 }
 namespace LoginService {
+class Client;
+}
+namespace FrontendService {
 class Client;
 }
 namespace ChatService {
@@ -78,6 +84,7 @@ class AppController final : public QObject
     Q_PROPERTY(QString selectedChatId READ selectedChatId NOTIFY selectionChanged FINAL)
     Q_PROPERTY(QString selectedChatName READ selectedChatName NOTIFY selectionChanged FINAL)
     Q_PROPERTY(QString selectedChatAvatarLocalPath READ selectedChatAvatarLocalPath NOTIFY selectionChanged FINAL)
+    Q_PROPERTY(QString selectedChatPresenceText READ selectedChatPresenceText NOTIFY selectionChanged FINAL)
     Q_PROPERTY(bool hasSelectedChat READ hasSelectedChat NOTIFY selectionChanged FINAL)
     Q_PROPERTY(bool historySyncVisible READ historySyncVisible NOTIFY historySyncChanged FINAL)
     Q_PROPERTY(int historySyncPercent READ historySyncPercent NOTIFY historySyncChanged FINAL)
@@ -120,6 +127,7 @@ public:
     [[nodiscard]] QString selectedChatId() const;
     [[nodiscard]] QString selectedChatName() const;
     [[nodiscard]] QString selectedChatAvatarLocalPath() const;
+    [[nodiscard]] QString selectedChatPresenceText() const;
     [[nodiscard]] bool hasSelectedChat() const;
     [[nodiscard]] bool historySyncVisible() const;
     [[nodiscard]] int historySyncPercent() const;
@@ -157,6 +165,9 @@ private:
     void requestMessages(const QString &chatId);
     void requestOlderMessages();
     void requestSelectedChatReadIfActive();
+    void requestSelectedChatPresence();
+    void ensureFrontendSession();
+    void updateFrontendSessionState();
     void ensureDaemonStream();
     void ensureLoginStream();
     void scheduleRetry(int delayMs = 2000);
@@ -166,6 +177,8 @@ private:
     void applyLoginStateChanged(const whatevr::v1::LoginStateChanged &change);
     void applyLoginEvent(const whatevr::v1::LoginEvent &event);
     void applyChatUpdated(const whatevr::v1::ChatUpdated &update);
+    void applyChatPresenceChanged(const whatevr::v1::ChatPresenceChanged &presence);
+    void applyMediaDownloadChanged(const whatevr::v1::MediaDownloadChanged &download);
     void applyMessageEvent(const whatevr::v1::Message &message);
     void applyHistorySyncProgress(const whatevr::v1::HistorySyncProgress &progress);
     void updateQrExpiryText();
@@ -196,6 +209,10 @@ private:
     QString m_selectedChatId;
     QString m_selectedChatName;
     QString m_selectedChatAvatarLocalPath;
+    QString m_frontendSessionId;
+    bool m_selectedChatComposing = false;
+    int m_selectedChatAvailability = 0;
+    qint64 m_selectedChatLastSeenUnix = 0;
     bool m_historySyncVisible = false;
     int m_historySyncPercent = 0;
     QString m_historySyncTitle;
@@ -207,6 +224,7 @@ private:
     std::shared_ptr<QAbstractGrpcChannel> m_channel;
     std::unique_ptr<whatevr::v1::DaemonService::Client> m_daemonClient;
     std::unique_ptr<whatevr::v1::LoginService::Client> m_loginClient;
+    std::unique_ptr<whatevr::v1::FrontendService::Client> m_frontendClient;
     std::unique_ptr<whatevr::v1::ChatService::Client> m_chatClient;
     std::unique_ptr<whatevr::v1::SendService::Client> m_sendClient;
     std::unique_ptr<QGrpcCallReply> m_statusReply;
@@ -215,10 +233,14 @@ private:
     std::unique_ptr<QGrpcCallReply> m_messagesReply;
     std::unique_ptr<QGrpcCallReply> m_olderMessagesReply;
     std::unique_ptr<QGrpcCallReply> m_markChatReadReply;
+    std::unique_ptr<QGrpcCallReply> m_subscribeChatPresenceReply;
+    std::unique_ptr<QGrpcCallReply> m_updateSessionStateReply;
     std::unique_ptr<QGrpcCallReply> m_sendTextReply;
     std::unique_ptr<QGrpcCallReply> m_sendMediaReply;
     QHash<QString, std::shared_ptr<QGrpcCallReply>> m_mediaDownloadReplies;
+    QSet<QString> m_mediaDownloadingMessageIds;
     std::unique_ptr<QGrpcCallReply> m_logoutReply;
+    std::unique_ptr<QGrpcServerStream> m_frontendSessionStream;
     std::unique_ptr<QGrpcServerStream> m_daemonStream;
     std::unique_ptr<QGrpcServerStream> m_loginStream;
     QTimer *m_retryTimer = nullptr;

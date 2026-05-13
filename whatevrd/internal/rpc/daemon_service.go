@@ -121,9 +121,11 @@ func toProtoDaemonEvent(event app.DaemonEvent) *pb.DaemonEvent {
 		return &pb.DaemonEvent{
 			Payload: &pb.DaemonEvent_ChatPresenceChanged{
 				ChatPresenceChanged: &pb.ChatPresenceChanged{
-					ChatId:      event.Chat.ID,
-					SenderId:    event.SenderID,
-					IsComposing: event.IsComposing,
+					ChatId:       event.Chat.ID,
+					SenderId:     event.SenderID,
+					IsComposing:  event.IsComposing,
+					Availability: toProtoContactAvailability(event.Availability),
+					LastSeenUnix: event.LastSeenUnix,
 				},
 			},
 		}
@@ -149,8 +151,30 @@ func toProtoDaemonEvent(event app.DaemonEvent) *pb.DaemonEvent {
 				},
 			},
 		}
+	case app.DaemonEventMediaDownloadChanged:
+		return &pb.DaemonEvent{
+			Payload: &pb.DaemonEvent_MediaDownloadChanged{
+				MediaDownloadChanged: &pb.MediaDownloadChanged{
+					MessageId:   event.MediaDownload.MessageID,
+					ChatId:      event.MediaDownload.ChatID,
+					Downloading: event.MediaDownload.Downloading,
+					ErrorText:   event.MediaDownload.ErrorText,
+				},
+			},
+		}
 	default:
 		return nil
+	}
+}
+
+func toProtoContactAvailability(availability app.ContactAvailability) pb.ContactAvailability {
+	switch availability {
+	case app.ContactAvailabilityOnline:
+		return pb.ContactAvailability_CONTACT_AVAILABILITY_ONLINE
+	case app.ContactAvailabilityOffline:
+		return pb.ContactAvailability_CONTACT_AVAILABILITY_OFFLINE
+	default:
+		return pb.ContactAvailability_CONTACT_AVAILABILITY_UNSPECIFIED
 	}
 }
 

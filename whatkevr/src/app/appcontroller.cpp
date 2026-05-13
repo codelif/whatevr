@@ -4,9 +4,11 @@
 #include <QDateTime>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QLocale>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QUrl>
+#include <QUuid>
 
 #include <KLocalizedString>
 
@@ -21,6 +23,7 @@
 #include "whatevr/v1/whatevr_client.grpc.qpb.h"
 
 using whatevr::v1::ChatUpdated;
+using whatevr::v1::ChatPresenceChanged;
 using whatevr::v1::ConnectionChanged;
 using whatevr::v1::DaemonStateGadget::DaemonState;
 using whatevr::v1::GetStatusRequest;
@@ -33,14 +36,18 @@ using whatevr::v1::ListChatsResponse;
 using whatevr::v1::LoginEvent;
 using whatevr::v1::LoginStateChanged;
 using whatevr::v1::MarkChatReadRequest;
+using whatevr::v1::MediaDownloadChanged;
+using whatevr::v1::SubscribeChatPresenceRequest;
 using whatevr::v1::DownloadMessageMediaRequest;
 using whatevr::v1::DownloadMessageMediaResponse;
+using whatevr::v1::HoldSessionRequest;
 using whatevr::v1::SendMediaRequest;
 using whatevr::v1::SendMediaResponse;
 using whatevr::v1::SendTextRequest;
 using whatevr::v1::SendTextResponse;
 using whatevr::v1::SubscribeEventsRequest;
 using whatevr::v1::SubscribeLoginEventsRequest;
+using whatevr::v1::UpdateSessionStateRequest;
 
 namespace {
 
@@ -101,6 +108,28 @@ QString formatQrExpiry(qint64 expiresAtUnix)
     return i18ncp("@info countdown", "Expires in %1 minute", "Expires in %1 minutes", minutes);
 }
 
+QString formatLastSeen(qint64 lastSeenUnix)
+{
+    if (lastSeenUnix <= 0) {
+        return QString();
+    }
+
+    const QDateTime lastSeen = QDateTime::fromSecsSinceEpoch(lastSeenUnix).toLocalTime();
+    if (!lastSeen.isValid()) {
+        return QString();
+    }
+
+    const QDate today = QDate::currentDate();
+    if (lastSeen.date() == today) {
+        return i18nc("@info chat presence", "last seen today at %1", QLocale().toString(lastSeen.time(), QLocale::ShortFormat));
+    }
+    if (lastSeen.date() == today.addDays(-1)) {
+        return i18nc("@info chat presence", "last seen yesterday at %1", QLocale().toString(lastSeen.time(), QLocale::ShortFormat));
+    }
+
+    return i18nc("@info chat presence", "last seen %1", QLocale().toString(lastSeen, QLocale::ShortFormat));
+}
+
 QString syncTypeLabel(whatevr::v1::HistorySyncTypeGadget::HistorySyncType type)
 {
     using whatevr::v1::HistorySyncTypeGadget::HistorySyncType;
@@ -132,6 +161,7 @@ AppController::AppController(QObject *parent)
 {
     m_chatListModel = new ChatListModel(this);
     m_messageListModel = new MessageListModel(this);
+    m_frontendSessionId = QUuid::createUuid().toString(QUuid::WithoutBraces);
 
     m_retryTimer = new QTimer(this);
     m_retryTimer->setSingleShot(true);
@@ -142,6 +172,7 @@ AppController::AppController(QObject *parent)
     connect(m_qrTimer, &QTimer::timeout, this, &AppController::updateQrExpiryText);
 
     connect(qGuiApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
+        updateFrontendSessionState();
         if (state == Qt::ApplicationActive) {
             requestSelectedChatReadIfActive();
         }
@@ -362,6 +393,20 @@ QString AppController::selectedChatAvatarLocalPath() const
     return m_selectedChatAvatarLocalPath;
 }
 
+QString AppController::selectedChatPresenceText() const
+{
+    if (!hasSelectedChat()) {
+        return QString();
+    }
+    if (m_selectedChatComposing) {
+        return i18nc("@info chat presence", "typing...");
+    }
+    if (m_selectedChatAvailability == 1) {
+        return i18nc("@info chat presence", "online");
+    }
+    return formatLastSeen(m_selectedChatLastSeenUnix);
+}
+
 bool AppController::hasSelectedChat() const
 {
     return !m_selectedChatId.isEmpty();
@@ -399,6 +444,7 @@ void AppController::refresh()
     }
 
     requestStatus();
+    ensureFrontendSession();
     ensureDaemonStream();
     ensureLoginStream();
 }
@@ -420,6 +466,9 @@ void AppController::selectChat(const QString &chatId)
     }
 
     m_selectedChatId = chatId;
+    m_selectedChatComposing = false;
+    m_selectedChatAvailability = 0;
+    m_selectedChatLastSeenUnix = 0;
     m_messageErrorText.clear();
     m_composerErrorText.clear();
     m_messagesLoading = !chatId.isEmpty();
@@ -432,8 +481,10 @@ void AppController::selectChat(const QString &chatId)
     Q_EMIT selectionChanged();
     Q_EMIT messagesChanged();
     Q_EMIT composerChanged();
+    updateFrontendSessionState();
 
     if (!m_selectedChatId.isEmpty()) {
+        requestSelectedChatPresence();
         requestMessages(m_selectedChatId);
         requestSelectedChatReadIfActive();
     }
@@ -574,7 +625,6 @@ void AppController::downloadMessageMedia(const QString &messageId)
 
         if (!status.isOk()) {
             m_mediaDownloadReplies.remove(id);
-            Q_EMIT mediaDownloadChanged(id);
             const QString errorText = status.message().isEmpty()
                 ? i18nc("@info", "Unable to download image")
                 : status.message();
@@ -584,7 +634,6 @@ void AppController::downloadMessageMedia(const QString &messageId)
 
         const auto response = replyPtr->read<DownloadMessageMediaResponse>();
         m_mediaDownloadReplies.remove(id);
-        Q_EMIT mediaDownloadChanged(id);
         if (response && response->hasMessage()) {
             applyMessageEvent(response->message());
         }
@@ -593,7 +642,7 @@ void AppController::downloadMessageMedia(const QString &messageId)
 
 bool AppController::isMessageMediaDownloading(const QString &messageId) const
 {
-    return m_mediaDownloadReplies.contains(messageId.trimmed());
+    return m_mediaDownloadingMessageIds.contains(messageId.trimmed());
 }
 
 void AppController::logout()
@@ -619,6 +668,9 @@ void AppController::logout()
         m_selectedChatId.clear();
         m_selectedChatName.clear();
         m_selectedChatAvatarLocalPath.clear();
+        m_selectedChatComposing = false;
+        m_selectedChatAvailability = 0;
+        m_selectedChatLastSeenUnix = 0;
         m_loginRequired = true;
         m_historySyncVisible = false;
         m_messagesLoading = false;
@@ -626,6 +678,9 @@ void AppController::logout()
         m_canLoadOlderMessages = false;
         m_chatListModel->replaceChats({});
         m_messageListModel->clear();
+        const auto downloadingIds = m_mediaDownloadingMessageIds.values();
+        m_mediaDownloadingMessageIds.clear();
+        m_mediaDownloadReplies.clear();
         m_messageErrorText.clear();
         m_composerErrorText.clear();
         Q_EMIT selectionChanged();
@@ -633,6 +688,9 @@ void AppController::logout()
         Q_EMIT messagesChanged();
         Q_EMIT composerChanged();
         Q_EMIT historySyncChanged();
+        for (const auto &id : downloadingIds) {
+            Q_EMIT mediaDownloadChanged(id);
+        }
         emitStateChanged();
     });
 }
@@ -675,6 +733,9 @@ void AppController::attachClients()
     if (!m_loginClient) {
         m_loginClient = std::make_unique<whatevr::v1::LoginService::Client>(this);
     }
+    if (!m_frontendClient) {
+        m_frontendClient = std::make_unique<whatevr::v1::FrontendService::Client>(this);
+    }
     if (!m_chatClient) {
         m_chatClient = std::make_unique<whatevr::v1::ChatService::Client>(this);
     }
@@ -684,6 +745,7 @@ void AppController::attachClients()
 
     m_daemonClient->attachChannel(m_channel);
     m_loginClient->attachChannel(m_channel);
+    m_frontendClient->attachChannel(m_channel);
     m_chatClient->attachChannel(m_channel);
     m_sendClient->attachChannel(m_channel);
     Q_EMIT composerChanged();
@@ -963,6 +1025,61 @@ void AppController::requestSelectedChatReadIfActive()
     });
 }
 
+void AppController::requestSelectedChatPresence()
+{
+    if (!m_chatClient || m_selectedChatId.isEmpty()) {
+        return;
+    }
+
+    SubscribeChatPresenceRequest request;
+    request.setChatId(m_selectedChatId);
+
+    m_subscribeChatPresenceReply = m_chatClient->SubscribeChatPresence(request);
+}
+
+void AppController::ensureFrontendSession()
+{
+    if (!m_frontendClient || m_frontendSessionStream || m_frontendSessionId.isEmpty()) {
+        return;
+    }
+
+    HoldSessionRequest request;
+    request.setClientName(applicationDisplayName());
+    request.setSessionId(m_frontendSessionId);
+
+    m_frontendSessionStream = m_frontendClient->HoldSession(request);
+    auto *stream = m_frontendSessionStream.get();
+    updateFrontendSessionState();
+
+    connect(stream, &QGrpcServerStream::finished, this, [this, stream](const QGrpcStatus &status) {
+        if (m_frontendSessionStream.get() != stream) {
+            return;
+        }
+
+        m_frontendSessionStream.reset();
+        if (!status.isOk()) {
+            handleTransportFailure(i18nc("@info", "Frontend session stream ended"), status.message());
+            return;
+        }
+
+        scheduleRetry();
+    });
+}
+
+void AppController::updateFrontendSessionState()
+{
+    if (!m_frontendClient || m_frontendSessionId.isEmpty()) {
+        return;
+    }
+
+    UpdateSessionStateRequest request;
+    request.setSessionId(m_frontendSessionId);
+    request.setFocused(QGuiApplication::applicationState() == Qt::ApplicationActive);
+    request.setActiveChatId(m_selectedChatId);
+
+    m_updateSessionStateReply = m_frontendClient->UpdateSessionState(request);
+}
+
 void AppController::ensureDaemonStream()
 {
     if (!m_daemonClient || m_daemonStream) {
@@ -992,6 +1109,9 @@ void AppController::ensureDaemonStream()
         case whatevr::v1::DaemonEvent::PayloadFields::ChatUpdated:
             applyChatUpdated(event->chatUpdated());
             break;
+        case whatevr::v1::DaemonEvent::PayloadFields::ChatPresenceChanged:
+            applyChatPresenceChanged(event->chatPresenceChanged());
+            break;
         case whatevr::v1::DaemonEvent::PayloadFields::NewMessage:
             applyMessageEvent(event->newMessage().message());
             break;
@@ -1000,6 +1120,9 @@ void AppController::ensureDaemonStream()
             break;
         case whatevr::v1::DaemonEvent::PayloadFields::HistorySyncProgress:
             applyHistorySyncProgress(event->historySyncProgress());
+            break;
+        case whatevr::v1::DaemonEvent::PayloadFields::MediaDownloadChanged:
+            applyMediaDownloadChanged(event->mediaDownloadChanged());
             break;
         default:
             break;
@@ -1201,6 +1324,54 @@ void AppController::applyChatUpdated(const ChatUpdated &update)
     Q_EMIT selectionChanged();
 }
 
+void AppController::applyChatPresenceChanged(const ChatPresenceChanged &presence)
+{
+    const int availability = static_cast<int>(presence.availability());
+    if (presence.chatId() != m_selectedChatId) {
+        return;
+    }
+
+    bool changed = false;
+    if (availability == 0 && m_selectedChatComposing != presence.isComposing()) {
+        m_selectedChatComposing = presence.isComposing();
+        changed = true;
+    }
+    if (availability != 0 && m_selectedChatAvailability != availability) {
+        m_selectedChatAvailability = availability;
+        changed = true;
+    }
+    if (presence.lastSeenUnix() > 0 && m_selectedChatLastSeenUnix != presence.lastSeenUnix()) {
+        m_selectedChatLastSeenUnix = presence.lastSeenUnix();
+        changed = true;
+    }
+
+    if (changed) {
+        Q_EMIT selectionChanged();
+    }
+}
+
+void AppController::applyMediaDownloadChanged(const MediaDownloadChanged &download)
+{
+    const QString messageId = download.messageId().trimmed();
+    if (messageId.isEmpty()) {
+        return;
+    }
+
+    const bool wasDownloading = m_mediaDownloadingMessageIds.contains(messageId);
+    if (download.downloading()) {
+        m_mediaDownloadingMessageIds.insert(messageId);
+    } else {
+        m_mediaDownloadingMessageIds.remove(messageId);
+    }
+
+    if (wasDownloading != download.downloading()) {
+        Q_EMIT mediaDownloadChanged(messageId);
+    }
+    if (!download.downloading() && !download.errorText().isEmpty()) {
+        Q_EMIT mediaDownloadFailed(messageId, download.errorText());
+    }
+}
+
 void AppController::applyMessageEvent(const whatevr::v1::Message &message)
 {
     if (message.chatId() != m_selectedChatId) {
@@ -1269,6 +1440,9 @@ void AppController::updateSelectedChatData()
     if (m_selectedChatId.isEmpty()) {
         m_selectedChatName.clear();
         m_selectedChatAvatarLocalPath.clear();
+        m_selectedChatComposing = false;
+        m_selectedChatAvailability = 0;
+        m_selectedChatLastSeenUnix = 0;
         return;
     }
 

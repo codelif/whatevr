@@ -100,6 +100,26 @@ func (c *Client) SetChatPresence(ctx context.Context, chatID string, composing b
 	return client.SendChatPresence(ctx, jid, state, types.ChatPresenceMediaText)
 }
 
+func (c *Client) SubscribeChatPresence(ctx context.Context, chatID string) error {
+	client := c.currentClient()
+	if client == nil || !client.IsLoggedIn() {
+		return nil
+	}
+
+	jid, err := types.ParseJID(chatID)
+	if err != nil {
+		return grpcstatus.Errorf(codes.InvalidArgument, "invalid chat_id: %v", err)
+	}
+	if jid.Server == types.GroupServer {
+		return nil
+	}
+
+	if err := client.SendPresence(ctx, types.PresenceAvailable); err != nil {
+		return err
+	}
+	return client.SubscribePresence(ctx, jid)
+}
+
 func (c *Client) SendMedia(ctx context.Context, chatID, filePath, caption string) (appstore.SavedTextMessage, error) {
 	client := c.currentClient()
 	if client == nil {

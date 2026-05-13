@@ -40,6 +40,12 @@ enum HistorySyncType {
   HISTORY_SYNC_TYPE_ON_DEMAND = 7;
 }
 
+enum ContactAvailability {
+  CONTACT_AVAILABILITY_UNSPECIFIED = 0;
+  CONTACT_AVAILABILITY_ONLINE = 1;
+  CONTACT_AVAILABILITY_OFFLINE = 2;
+}
+
 service DaemonService {
   rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
   rpc SubscribeEvents(SubscribeEventsRequest) returns (stream DaemonEvent);
@@ -61,6 +67,7 @@ service ChatService {
   rpc GetMessages(GetMessagesRequest) returns (GetMessagesResponse);
   rpc MarkChatRead(MarkChatReadRequest) returns (MarkChatReadResponse);
   rpc SetChatPresence(SetChatPresenceRequest) returns (SetChatPresenceResponse);
+  rpc SubscribeChatPresence(SubscribeChatPresenceRequest) returns (SubscribeChatPresenceResponse);
   rpc DownloadMessageMedia(DownloadMessageMediaRequest) returns (DownloadMessageMediaResponse);
 }
 
@@ -97,6 +104,7 @@ message DaemonEvent {
     ChatPresenceChanged chat_presence_changed = 6;
     HistorySyncProgress history_sync_progress = 7;
     HistoryBackfilled history_backfilled = 8;
+    MediaDownloadChanged media_download_changed = 9;
   }
 }
 
@@ -121,6 +129,15 @@ message ChatPresenceChanged {
   string chat_id = 1;
   string sender_id = 2;
   bool is_composing = 3;
+  ContactAvailability availability = 4;
+  int64 last_seen_unix = 5;
+}
+
+message MediaDownloadChanged {
+  string message_id = 1;
+  string chat_id = 2;
+  bool downloading = 3;
+  string error_text = 4;
 }
 
 message ConnectionChanged {
@@ -220,6 +237,12 @@ message SetChatPresenceRequest {
 }
 
 message SetChatPresenceResponse {}
+
+message SubscribeChatPresenceRequest {
+  string chat_id = 1;
+}
+
+message SubscribeChatPresenceResponse {}
 
 message DownloadMessageMediaRequest {
   string message_id = 1;

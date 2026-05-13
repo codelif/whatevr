@@ -37,13 +37,31 @@ Frame {
                     backgroundColor: Qt.alpha(foregroundColor, 0.16)
                 }
 
-                Label {
+                ColumnLayout {
                     Layout.fillWidth: true
-                    text: AppController.hasSelectedChat
-                          ? AppController.selectedChatName
-                          : i18nc("@title", "Select a chat")
-                    font.weight: Font.DemiBold
-                    elide: Text.ElideRight
+                    Layout.alignment: Qt.AlignVCenter
+                    spacing: 0
+
+                    Label {
+                        Layout.fillWidth: true
+                        text: AppController.hasSelectedChat
+                              ? AppController.selectedChatName
+                              : i18nc("@title", "Select a chat")
+                        font.weight: Font.DemiBold
+                        elide: Text.ElideRight
+                        maximumLineCount: 1
+                    }
+
+                    Label {
+                        Layout.fillWidth: true
+                        visible: AppController.hasSelectedChat
+                                 && AppController.selectedChatPresenceText.length > 0
+                        text: AppController.selectedChatPresenceText
+                        color: Kirigami.Theme.disabledTextColor
+                        font.pointSize: Kirigami.Theme.smallFont.pointSize
+                        elide: Text.ElideRight
+                        maximumLineCount: 1
+                    }
                 }
 
                 ToolButton {

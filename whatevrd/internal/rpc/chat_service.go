@@ -30,6 +30,7 @@ type ChatStore interface {
 type ChatActionController interface {
 	MarkChatRead(context.Context, string) (appstore.Chat, error)
 	SetChatPresence(context.Context, string, bool) error
+	SubscribeChatPresence(context.Context, string) error
 	DownloadMessageMedia(context.Context, string) (appstore.Message, error)
 }
 
@@ -136,6 +137,21 @@ func (s *ChatService) SetChatPresence(ctx context.Context, req *pb.SetChatPresen
 		return nil, err
 	}
 	return &pb.SetChatPresenceResponse{}, nil
+}
+
+func (s *ChatService) SubscribeChatPresence(ctx context.Context, req *pb.SubscribeChatPresenceRequest) (*pb.SubscribeChatPresenceResponse, error) {
+	if s.actions == nil {
+		return nil, status.Error(codes.Unimplemented, "chat action controller is not available")
+	}
+	if strings.TrimSpace(req.GetChatId()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "chat_id is required")
+	}
+
+	if err := s.actions.SubscribeChatPresence(ctx, req.GetChatId()); err != nil {
+		return nil, err
+	}
+	s.daemon.PublishCachedChatPresence(req.GetChatId())
+	return &pb.SubscribeChatPresenceResponse{}, nil
 }
 
 func (s *ChatService) DownloadMessageMedia(ctx context.Context, req *pb.DownloadMessageMediaRequest) (*pb.DownloadMessageMediaResponse, error) {
