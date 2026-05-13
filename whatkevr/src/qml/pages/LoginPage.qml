@@ -27,9 +27,7 @@ Item {
         flickableDirection: Flickable.VerticalFlick
         flickDeceleration: 1400
         maximumFlickVelocity: 12000
-        ScrollBar.vertical: ScrollBar {
-            policy: ScrollBar.AlwaysOn
-        }
+        ScrollBar.vertical: DiscreetScrollBar {}
 
         ColumnLayout {
             id: layout
@@ -89,7 +87,7 @@ Item {
         padding: Kirigami.Units.largeSpacing * 1.5
 
         background: Rectangle {
-            radius: Kirigami.Units.largeSpacing * 1.2
+            radius: Kirigami.Units.cornerRadius
             color: Kirigami.Theme.alternateBackgroundColor
             border.color: Qt.alpha(Kirigami.Theme.textColor, 0.08)
         }
@@ -136,7 +134,7 @@ Item {
                 padding: Kirigami.Units.largeSpacing
 
                 background: Rectangle {
-                    radius: Kirigami.Units.largeSpacing
+                    radius: Kirigami.Units.cornerRadius
                     color: Kirigami.Theme.backgroundColor
                     border.color: Qt.alpha(Kirigami.Theme.textColor, 0.06)
                 }
@@ -227,7 +225,7 @@ Item {
         padding: Kirigami.Units.largeSpacing * 1.5
 
         background: Rectangle {
-            radius: Kirigami.Units.largeSpacing * 1.2
+            radius: Kirigami.Units.cornerRadius
             gradient: Gradient {
                 GradientStop { position: 0.0; color: Kirigami.Theme.backgroundColor }
                 GradientStop { position: 1.0; color: Qt.alpha(Kirigami.Theme.highlightColor, 0.04) }
@@ -251,7 +249,7 @@ Item {
 
                 Rectangle {
                     anchors.fill: parent
-                    radius: Kirigami.Units.largeSpacing
+                    radius: Kirigami.Units.cornerRadius
                     color: "white"
                     border.color: Qt.alpha(Kirigami.Theme.textColor, 0.10)
                 }

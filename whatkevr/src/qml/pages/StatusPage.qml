@@ -21,9 +21,7 @@ Item {
         flickableDirection: Flickable.VerticalFlick
         flickDeceleration: 1400
         maximumFlickVelocity: 12000
-        ScrollBar.vertical: ScrollBar {
-            policy: ScrollBar.AlwaysOn
-        }
+        ScrollBar.vertical: DiscreetScrollBar {}
 
         ColumnLayout {
             id: layout
@@ -48,7 +46,7 @@ Item {
                 padding: Kirigami.Units.largeSpacing * 1.5
 
                 background: Rectangle {
-                    radius: Kirigami.Units.largeSpacing * 1.2
+                    radius: Kirigami.Units.cornerRadius
                     color: Kirigami.Theme.alternateBackgroundColor
                     border.color: Qt.alpha(Kirigami.Theme.textColor, 0.08)
                 }

@@ -1,15 +1,15 @@
 import QtQuick
 import QtQuick.Controls
-import QtQuick.Effects
 import org.kde.kirigami as Kirigami
+import org.kde.kirigamiaddons.components as KirigamiAddons
 
 Item {
     id: root
 
     property string avatarLocalPath: ""
     property string initials: "?"
-    property color backgroundColor: Qt.alpha(Kirigami.Theme.highlightColor, 0.14)
-    property color foregroundColor: Kirigami.Theme.highlightColor
+    property color backgroundColor: Qt.alpha(activePalette.highlight, 0.14)
+    property color foregroundColor: activePalette.highlight
 
     implicitWidth: Kirigami.Units.gridUnit * 2.45
     implicitHeight: implicitWidth
@@ -17,39 +17,29 @@ Item {
     Kirigami.Theme.inherit: false
     Kirigami.Theme.colorSet: Kirigami.Theme.View
 
+    SystemPalette {
+        id: activePalette
+        colorGroup: SystemPalette.Active
+    }
+
     Rectangle {
         anchors.fill: parent
         radius: width / 2
+        antialiasing: true
         color: root.backgroundColor
     }
 
-    Image {
+    KirigamiAddons.Avatar {
         id: avatarImage
 
         anchors.fill: parent
         visible: root.avatarLocalPath.length > 0
         source: root.avatarLocalPath.length > 0 ? "file://" + root.avatarLocalPath : ""
-        fillMode: Image.PreserveAspectCrop
+        imageMode: KirigamiAddons.Avatar.ImageMode.AlwaysShowImage
         asynchronous: true
         cache: true
-        sourceSize.width: width
-        sourceSize.height: height
-
-        layer.enabled: visible
-        layer.effect: MultiEffect {
-            maskEnabled: true
-            maskSource: avatarMask
-        }
-    }
-
-    Rectangle {
-        id: avatarMask
-
-        width: root.width
-        height: root.height
-        radius: width / 2
-        visible: false
-        layer.enabled: true
+        sourceSize.width: Math.ceil(width * Screen.devicePixelRatio)
+        sourceSize.height: Math.ceil(height * Screen.devicePixelRatio)
     }
 
     Label {

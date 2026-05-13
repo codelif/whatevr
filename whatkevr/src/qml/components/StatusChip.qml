@@ -9,7 +9,7 @@ Rectangle {
     property color foregroundColor: Kirigami.Theme.highlightColor
     property color backgroundColor: Qt.alpha(foregroundColor, 0.14)
 
-    radius: Kirigami.Units.largeSpacing
+    radius: Kirigami.Units.cornerRadius
     implicitWidth: label.implicitWidth + Kirigami.Units.largeSpacing * 2
     implicitHeight: label.implicitHeight + Kirigami.Units.smallSpacing * 1.5
     color: root.backgroundColor

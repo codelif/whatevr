@@ -18,6 +18,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(Qt6 ${QT_MIN_VERSION} REQUIRED COMPONENTS Core Gui Network Protobuf Grpc Qml Quick QuickControls2 Widgets)
 find_package(KF6 ${KF_MIN_VERSION} REQUIRED COMPONENTS CoreAddons I18n Kirigami Prison)
+find_package(KF6KirigamiAddons REQUIRED)
 
 if(QT_KNOWN_POLICY_QTP0004)
     qt_policy(SET QTP0004 NEW)
@@ -74,6 +75,7 @@ qt_add_qml_module(whatkevr
         src/qml/components/ConversationPane.qml
         src/qml/components/HistorySyncStrip.qml
         src/qml/components/KineticWheelScroller.qml
+        src/qml/components/DiscreetScrollBar.qml
         src/qml/components/ChatBubble.qml
         src/qml/components/MessageView.qml
         src/qml/components/MessageComposer.qml
@@ -97,6 +99,7 @@ target_link_libraries(whatkevr PRIVATE
     KF6::I18n
     KF6::Kirigami
     KF6::Prison
+    KirigamiAddonsComponents
 )
 
 install(TARGETS whatkevr RUNTIME DESTINATION ${KDE_INSTALL_BINDIR})

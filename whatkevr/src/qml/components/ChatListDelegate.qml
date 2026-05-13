@@ -19,6 +19,7 @@ ItemDelegate {
     readonly property bool lastMessageIsOutgoing: lastMessageDirection === 2
     readonly property bool showDeliveryStatus: hasLastMessage && lastMessageIsOutgoing
     readonly property real deliveryIconSize: Kirigami.Units.iconSizes.small
+    readonly property real deliveryDoubleTickOffset: deliveryIconSize * 0.4
     readonly property bool deliveryStatusIsDoubleTick: lastMessageStatus === 3 || lastMessageStatus === 4
     readonly property bool deliveryStatusIsRead: lastMessageStatus === 4
     readonly property string deliveryStatusSingleIcon: {
@@ -40,13 +41,18 @@ ItemDelegate {
     highlighted: current
     onClicked: selected(chatId)
 
+    SystemPalette {
+        id: activePalette
+        colorGroup: SystemPalette.Active
+    }
+
     background: Rectangle {
         anchors.fill: parent
         anchors.leftMargin: Kirigami.Units.smallSpacing
         anchors.rightMargin: Kirigami.Units.smallSpacing
         anchors.topMargin: Kirigami.Units.smallSpacing / 2
         anchors.bottomMargin: Kirigami.Units.smallSpacing / 2
-        radius: Kirigami.Units.largeSpacing
+        radius: Kirigami.Units.cornerRadius
         color: root.highlighted
                ? Qt.alpha(Kirigami.Theme.highlightColor, 0.14)
                : (root.hovered ? Qt.alpha(Kirigami.Theme.textColor, 0.05) : "transparent")
@@ -86,12 +92,14 @@ ItemDelegate {
                 Item {
                     visible: root.showDeliveryStatus
                     Layout.preferredWidth: root.deliveryStatusIsDoubleTick
-                                           ? root.deliveryIconSize * 1.5
+                                           ? root.deliveryIconSize * 1.4
                                            : root.deliveryIconSize
                     Layout.preferredHeight: root.deliveryIconSize
                     Layout.alignment: Qt.AlignVCenter
 
                     Kirigami.Icon {
+                        id: singleDeliveryIcon
+
                         anchors.centerIn: parent
                         visible: !root.deliveryStatusIsDoubleTick && root.deliveryStatusSingleIcon.length > 0
                         source: root.deliveryStatusSingleIcon
@@ -101,33 +109,62 @@ ItemDelegate {
                                ? Kirigami.Theme.negativeTextColor
                                : Kirigami.Theme.disabledTextColor
                     }
+                    Kirigami.Icon {
+                        anchors.centerIn: parent
+                        anchors.horizontalCenterOffset: 0.75
+                        visible: singleDeliveryIcon.visible && root.deliveryStatusSingleIcon === "checkmark"
+                        source: singleDeliveryIcon.source
+                        implicitWidth: singleDeliveryIcon.implicitWidth
+                        implicitHeight: singleDeliveryIcon.implicitHeight
+                        color: singleDeliveryIcon.color
+                    }
 
                     Item {
                         anchors.centerIn: parent
                         visible: root.deliveryStatusIsDoubleTick
-                        width: root.deliveryIconSize * 1.5
+                        width: root.deliveryIconSize * 1.4
                         height: root.deliveryIconSize
 
                         Kirigami.Icon {
+                            id: firstDeliveryTick
+
                             x: 0
                             anchors.verticalCenter: parent.verticalCenter
                             source: "checkmark"
                             implicitWidth: root.deliveryIconSize
                             implicitHeight: root.deliveryIconSize
                             color: root.deliveryStatusIsRead
-                                   ? Kirigami.Theme.highlightColor
+                                   ? activePalette.highlight
                                    : Kirigami.Theme.disabledTextColor
+                        }
+                        Kirigami.Icon {
+                            x: firstDeliveryTick.x + 0.75
+                            anchors.verticalCenter: parent.verticalCenter
+                            source: firstDeliveryTick.source
+                            implicitWidth: firstDeliveryTick.implicitWidth
+                            implicitHeight: firstDeliveryTick.implicitHeight
+                            color: firstDeliveryTick.color
                         }
 
                         Kirigami.Icon {
-                            x: root.deliveryIconSize * 0.5
+                            id: secondDeliveryTick
+
+                            x: root.deliveryDoubleTickOffset
                             anchors.verticalCenter: parent.verticalCenter
                             source: "checkmark"
                             implicitWidth: root.deliveryIconSize
                             implicitHeight: root.deliveryIconSize
                             color: root.deliveryStatusIsRead
-                                   ? Kirigami.Theme.highlightColor
+                                   ? activePalette.highlight
                                    : Kirigami.Theme.disabledTextColor
+                        }
+                        Kirigami.Icon {
+                            x: secondDeliveryTick.x + 0.75
+                            anchors.verticalCenter: parent.verticalCenter
+                            source: secondDeliveryTick.source
+                            implicitWidth: secondDeliveryTick.implicitWidth
+                            implicitHeight: secondDeliveryTick.implicitHeight
+                            color: secondDeliveryTick.color
                         }
                     }
                 }

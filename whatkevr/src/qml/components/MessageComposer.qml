@@ -18,7 +18,14 @@ Frame {
 
     background: Rectangle {
         color: Kirigami.Theme.backgroundColor
-        border.color: Qt.alpha(Kirigami.Theme.textColor, 0.10)
+
+        Rectangle {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            height: 1
+            color: Qt.alpha(Kirigami.Theme.textColor, 0.10)
+        }
     }
 
     function submitText() {

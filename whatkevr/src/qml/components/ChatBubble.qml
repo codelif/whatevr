@@ -96,9 +96,10 @@ Item {
     readonly property bool showStatusIcon: outgoing && (statusIsDoubleTick || statusSingleIcon.length > 0)
 
     readonly property real statusIconSize: Kirigami.Units.iconSizes.small
+    readonly property real statusDoubleTickOffset: statusIconSize * 0.4
     // Double-tick is wider: two icons overlapping
     readonly property real statusAreaWidth: statusIsDoubleTick
-        ? statusIconSize * 1.5
+        ? statusIconSize * 1.4
         : statusIconSize
 
     readonly property real contentBlockWidth: {
@@ -121,6 +122,11 @@ Item {
     width: listWidth
     height: bubble.height + Kirigami.Units.smallSpacing / 2
 
+    SystemPalette {
+        id: activePalette
+        colorGroup: SystemPalette.Active
+    }
+
     TextMetrics {
         id: bodyMetrics
         text: root.body
@@ -136,8 +142,7 @@ Item {
     Kirigami.ShadowedRectangle {
         id: bubble
 
-        readonly property real bigRadius: Kirigami.Units.largeSpacing * 1.5
-        readonly property real smallRadius: Kirigami.Units.smallSpacing / 2
+        readonly property real bubbleRadius: Kirigami.Units.cornerRadius
 
         x: root.outgoing
            ? root.width - width - root.outerMargin
@@ -146,15 +151,15 @@ Item {
         width: root.contentBlockWidth + root.innerPadding * 2
         height: contentColumn.height + root.innerPadding * 2
 
-        corners.topLeftRadius: bigRadius
-        corners.topRightRadius: bigRadius
-        corners.bottomLeftRadius: root.outgoing ? bigRadius : smallRadius
-        corners.bottomRightRadius: root.outgoing ? smallRadius : bigRadius
+        corners.topLeftRadius: bubbleRadius
+        corners.topRightRadius: bubbleRadius
+        corners.bottomLeftRadius: bubbleRadius
+        corners.bottomRightRadius: bubbleRadius
 
         color: root.outgoing
-               ? Qt.alpha(Kirigami.Theme.highlightColor, 0.30)
-               : Kirigami.Theme.backgroundColor
-        border.color: Qt.alpha(Kirigami.Theme.textColor, root.outgoing ? 0.05 : 0.12)
+               ? Qt.alpha(activePalette.highlight, 0.30)
+               : activePalette.window
+        border.color: Qt.alpha(activePalette.windowText, root.outgoing ? 0.05 : 0.12)
         border.width: 1
 
         Item {
@@ -191,9 +196,9 @@ Item {
                     id: mediaBackground
 
                     anchors.fill: parent
-                    radius: Kirigami.Units.smallSpacing
-                    color: Qt.alpha(Kirigami.Theme.textColor, 0.06)
-                    border.color: Qt.alpha(Kirigami.Theme.textColor, 0.12)
+                    radius: Kirigami.Units.cornerRadius
+                    color: Qt.alpha(activePalette.windowText, 0.06)
+                    border.color: Qt.alpha(activePalette.windowText, 0.12)
                 }
 
                 Image {
@@ -228,7 +233,7 @@ Item {
                     id: imageMask
 
                     anchors.fill: parent
-                    radius: Kirigami.Units.smallSpacing
+                    radius: Kirigami.Units.cornerRadius
                     visible: false
                     layer.enabled: true
                 }
@@ -246,7 +251,7 @@ Item {
                     Rectangle {
                         anchors.fill: parent
                         radius: mediaBackground.radius
-                        color: Qt.alpha(Kirigami.Theme.backgroundColor, root.hasLocalImage ? 0.34 : 0.0)
+                        color: Qt.alpha(activePalette.window, root.hasLocalImage ? 0.34 : 0.0)
                     }
 
                     Column {
@@ -306,7 +311,7 @@ Item {
                 text: root.body
                 wrapMode: Text.Wrap
                 textFormat: Text.PlainText
-                color: Kirigami.Theme.textColor
+                color: activePalette.windowText
             }
 
             Item {
@@ -347,6 +352,16 @@ Item {
                                : Kirigami.Theme.disabledTextColor
                         isMask: true
                     }
+                    Kirigami.Icon {
+                        anchors.centerIn: parent
+                        anchors.horizontalCenterOffset: 0.75
+                        visible: singleIcon.visible && root.statusSingleIcon === "checkmark"
+                        source: singleIcon.source
+                        implicitWidth: singleIcon.implicitWidth
+                        implicitHeight: singleIcon.implicitHeight
+                        color: singleIcon.color
+                        isMask: true
+                    }
 
                     // Double tick (delivered / read)
                     Item {
@@ -355,25 +370,47 @@ Item {
                         visible: root.statusIsDoubleTick
 
                         Kirigami.Icon {
+                            id: firstStatusTick
+
                             x: 0
                             anchors.verticalCenter: parent.verticalCenter
                             source: "checkmark"
                             implicitWidth: root.statusIconSize
                             implicitHeight: root.statusIconSize
                             color: root.statusIsRead
-                                   ? Kirigami.Theme.highlightColor
+                                   ? activePalette.highlight
                                    : Kirigami.Theme.disabledTextColor
                             isMask: true
                         }
                         Kirigami.Icon {
-                            x: root.statusIconSize * 0.5
+                            x: firstStatusTick.x + 0.75
+                            anchors.verticalCenter: parent.verticalCenter
+                            source: firstStatusTick.source
+                            implicitWidth: firstStatusTick.implicitWidth
+                            implicitHeight: firstStatusTick.implicitHeight
+                            color: firstStatusTick.color
+                            isMask: true
+                        }
+                        Kirigami.Icon {
+                            id: secondStatusTick
+
+                            x: root.statusDoubleTickOffset
                             anchors.verticalCenter: parent.verticalCenter
                             source: "checkmark"
                             implicitWidth: root.statusIconSize
                             implicitHeight: root.statusIconSize
                             color: root.statusIsRead
-                                   ? Kirigami.Theme.highlightColor
+                                   ? activePalette.highlight
                                    : Kirigami.Theme.disabledTextColor
+                            isMask: true
+                        }
+                        Kirigami.Icon {
+                            x: secondStatusTick.x + 0.75
+                            anchors.verticalCenter: parent.verticalCenter
+                            source: secondStatusTick.source
+                            implicitWidth: secondStatusTick.implicitWidth
+                            implicitHeight: secondStatusTick.implicitHeight
+                            color: secondStatusTick.color
                             isMask: true
                         }
                     }

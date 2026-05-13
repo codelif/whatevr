@@ -93,9 +93,7 @@ Frame {
                 reuseItems: true
                 spacing: 0
                 cacheBuffer: Math.max(0, height)
-                ScrollBar.vertical: ScrollBar {
-                    policy: ScrollBar.AlwaysOn
-                }
+                ScrollBar.vertical: DiscreetScrollBar {}
 
                 delegate: ChatListDelegate {
                     chatId: String(model.chatId || "")

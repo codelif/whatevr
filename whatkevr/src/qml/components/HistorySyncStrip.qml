@@ -11,7 +11,7 @@ Frame {
     padding: Kirigami.Units.largeSpacing
 
     background: Rectangle {
-        radius: Kirigami.Units.largeSpacing
+        radius: Kirigami.Units.cornerRadius
         color: Qt.alpha(Kirigami.Theme.highlightColor, 0.08)
         border.color: Qt.alpha(Kirigami.Theme.highlightColor, 0.18)
     }

@@ -104,9 +104,7 @@ Item {
         flickDeceleration: 4000
         maximumFlickVelocity: 8000
 
-        ScrollBar.vertical: ScrollBar {
-            policy: ScrollBar.AlwaysOn
-        }
+        ScrollBar.vertical: DiscreetScrollBar {}
 
         delegate: ChatBubble {
             listWidth: list.width
