@@ -489,11 +489,12 @@ var FrontendService_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	ChatService_ListChats_FullMethodName            = "/whatevr.v1.ChatService/ListChats"
-	ChatService_GetMessages_FullMethodName          = "/whatevr.v1.ChatService/GetMessages"
-	ChatService_MarkChatRead_FullMethodName         = "/whatevr.v1.ChatService/MarkChatRead"
-	ChatService_SetChatPresence_FullMethodName      = "/whatevr.v1.ChatService/SetChatPresence"
-	ChatService_DownloadMessageMedia_FullMethodName = "/whatevr.v1.ChatService/DownloadMessageMedia"
+	ChatService_ListChats_FullMethodName             = "/whatevr.v1.ChatService/ListChats"
+	ChatService_GetMessages_FullMethodName           = "/whatevr.v1.ChatService/GetMessages"
+	ChatService_MarkChatRead_FullMethodName          = "/whatevr.v1.ChatService/MarkChatRead"
+	ChatService_SetChatPresence_FullMethodName       = "/whatevr.v1.ChatService/SetChatPresence"
+	ChatService_SubscribeChatPresence_FullMethodName = "/whatevr.v1.ChatService/SubscribeChatPresence"
+	ChatService_DownloadMessageMedia_FullMethodName  = "/whatevr.v1.ChatService/DownloadMessageMedia"
 )
 
 // ChatServiceClient is the client API for ChatService service.
@@ -504,6 +505,7 @@ type ChatServiceClient interface {
 	GetMessages(ctx context.Context, in *GetMessagesRequest, opts ...grpc.CallOption) (*GetMessagesResponse, error)
 	MarkChatRead(ctx context.Context, in *MarkChatReadRequest, opts ...grpc.CallOption) (*MarkChatReadResponse, error)
 	SetChatPresence(ctx context.Context, in *SetChatPresenceRequest, opts ...grpc.CallOption) (*SetChatPresenceResponse, error)
+	SubscribeChatPresence(ctx context.Context, in *SubscribeChatPresenceRequest, opts ...grpc.CallOption) (*SubscribeChatPresenceResponse, error)
 	DownloadMessageMedia(ctx context.Context, in *DownloadMessageMediaRequest, opts ...grpc.CallOption) (*DownloadMessageMediaResponse, error)
 }
 
@@ -555,6 +557,16 @@ func (c *chatServiceClient) SetChatPresence(ctx context.Context, in *SetChatPres
 	return out, nil
 }
 
+func (c *chatServiceClient) SubscribeChatPresence(ctx context.Context, in *SubscribeChatPresenceRequest, opts ...grpc.CallOption) (*SubscribeChatPresenceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SubscribeChatPresenceResponse)
+	err := c.cc.Invoke(ctx, ChatService_SubscribeChatPresence_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *chatServiceClient) DownloadMessageMedia(ctx context.Context, in *DownloadMessageMediaRequest, opts ...grpc.CallOption) (*DownloadMessageMediaResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(DownloadMessageMediaResponse)
@@ -573,6 +585,7 @@ type ChatServiceServer interface {
 	GetMessages(context.Context, *GetMessagesRequest) (*GetMessagesResponse, error)
 	MarkChatRead(context.Context, *MarkChatReadRequest) (*MarkChatReadResponse, error)
 	SetChatPresence(context.Context, *SetChatPresenceRequest) (*SetChatPresenceResponse, error)
+	SubscribeChatPresence(context.Context, *SubscribeChatPresenceRequest) (*SubscribeChatPresenceResponse, error)
 	DownloadMessageMedia(context.Context, *DownloadMessageMediaRequest) (*DownloadMessageMediaResponse, error)
 	mustEmbedUnimplementedChatServiceServer()
 }
@@ -595,6 +608,9 @@ func (UnimplementedChatServiceServer) MarkChatRead(context.Context, *MarkChatRea
 }
 func (UnimplementedChatServiceServer) SetChatPresence(context.Context, *SetChatPresenceRequest) (*SetChatPresenceResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetChatPresence not implemented")
+}
+func (UnimplementedChatServiceServer) SubscribeChatPresence(context.Context, *SubscribeChatPresenceRequest) (*SubscribeChatPresenceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SubscribeChatPresence not implemented")
 }
 func (UnimplementedChatServiceServer) DownloadMessageMedia(context.Context, *DownloadMessageMediaRequest) (*DownloadMessageMediaResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DownloadMessageMedia not implemented")
@@ -692,6 +708,24 @@ func _ChatService_SetChatPresence_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ChatService_SubscribeChatPresence_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SubscribeChatPresenceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ChatServiceServer).SubscribeChatPresence(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ChatService_SubscribeChatPresence_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ChatServiceServer).SubscribeChatPresence(ctx, req.(*SubscribeChatPresenceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _ChatService_DownloadMessageMedia_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(DownloadMessageMediaRequest)
 	if err := dec(in); err != nil {
@@ -732,6 +766,10 @@ var ChatService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetChatPresence",
 			Handler:    _ChatService_SetChatPresence_Handler,
+		},
+		{
+			MethodName: "SubscribeChatPresence",
+			Handler:    _ChatService_SubscribeChatPresence_Handler,
 		},
 		{
 			MethodName: "DownloadMessageMedia",
