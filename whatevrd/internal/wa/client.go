@@ -45,6 +45,9 @@ type Client struct {
 	avatarMu             sync.Mutex
 	avatarRefreshRunning bool
 
+	mediaDownloadMu sync.Mutex
+	mediaDownloads  map[string]*mediaDownloadState
+
 	sendQueueMu   sync.Mutex
 	sendQueueWake chan struct{}
 	reconnectCh   chan struct{} // supervisor wakeup: reconnect immediately
@@ -59,6 +62,12 @@ type frontendSession struct {
 
 type MessageNotifier interface {
 	NotifyMessage(context.Context, app.Message, app.Chat)
+}
+
+type mediaDownloadState struct {
+	done    chan struct{}
+	message appstore.Message
+	err     error
 }
 
 func New(ctx context.Context, paths app.Paths, daemon *app.Daemon, store *appstore.DB, notifier MessageNotifier) (*Client, error) {
@@ -80,6 +89,7 @@ func New(ctx context.Context, paths app.Paths, daemon *app.Daemon, store *appsto
 		notifier:         notifier,
 		log:              log,
 		frontendSessions: make(map[string]frontendSession),
+		mediaDownloads:   make(map[string]*mediaDownloadState),
 		sendQueueWake:    make(chan struct{}, 1),
 		reconnectCh:      make(chan struct{}, 1),
 	}

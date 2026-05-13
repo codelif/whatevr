@@ -22,51 +22,93 @@ func (c *Client) DownloadMessageMedia(ctx context.Context, messageID string) (ap
 		return appstore.Message{}, grpcstatus.Error(codes.InvalidArgument, "message_id is required")
 	}
 
+	c.mediaDownloadMu.Lock()
+	if existing := c.mediaDownloads[messageID]; existing != nil {
+		done := existing.done
+		c.mediaDownloadMu.Unlock()
+		select {
+		case <-done:
+			return existing.message, existing.err
+		case <-ctx.Done():
+			return appstore.Message{}, ctx.Err()
+		}
+	}
+	state := &mediaDownloadState{done: make(chan struct{})}
+	c.mediaDownloads[messageID] = state
+	c.mediaDownloadMu.Unlock()
+
+	defer func() {
+		c.mediaDownloadMu.Lock()
+		delete(c.mediaDownloads, messageID)
+		close(state.done)
+		c.mediaDownloadMu.Unlock()
+	}()
+
 	message, err := c.store.GetMessage(ctx, messageID)
 	if err != nil {
+		state.err = err
 		return appstore.Message{}, err
 	}
 	if message.MediaLocalPath != "" {
 		if _, err := os.Stat(message.MediaLocalPath); err == nil {
+			state.message = message
 			return message, nil
 		}
 	}
 	if len(message.MediaPayload) == 0 {
-		return appstore.Message{}, grpcstatus.Error(codes.FailedPrecondition, "media is not available for download")
+		state.err = grpcstatus.Error(codes.FailedPrecondition, "media is not available for download")
+		return appstore.Message{}, state.err
 	}
+
+	c.daemon.PublishMediaDownloadChanged(message.ID, message.ChatID, true, "")
+	defer func() {
+		errorText := ""
+		if state.err != nil {
+			errorText = state.err.Error()
+		}
+		c.daemon.PublishMediaDownloadChanged(message.ID, message.ChatID, false, errorText)
+	}()
 
 	var img waE2E.ImageMessage
 	if err := proto.Unmarshal(message.MediaPayload, &img); err != nil {
-		return appstore.Message{}, grpcstatus.Errorf(codes.Internal, "decode media metadata: %v", err)
+		state.err = grpcstatus.Errorf(codes.Internal, "decode media metadata: %v", err)
+		return appstore.Message{}, state.err
 	}
 
 	client := c.currentClient()
 	if client == nil || !client.IsLoggedIn() || !client.IsConnected() {
-		return appstore.Message{}, grpcstatus.Error(codes.Unavailable, "WhatsApp is not connected")
+		state.err = grpcstatus.Error(codes.Unavailable, "WhatsApp is not connected")
+		return appstore.Message{}, state.err
 	}
 
 	data, err := client.Download(ctx, &img)
 	if err != nil {
-		return appstore.Message{}, grpcstatus.Errorf(codes.Unavailable, "download media: %v", err)
+		state.err = grpcstatus.Errorf(codes.Unavailable, "download media: %v", err)
+		return appstore.Message{}, state.err
 	}
 	if len(data) == 0 || len(data) > maxOutboundMediaBytes {
-		return appstore.Message{}, grpcstatus.Errorf(codes.ResourceExhausted, "media size must be between 1 byte and %d MiB", maxOutboundMediaBytes/(1024*1024))
+		state.err = grpcstatus.Errorf(codes.ResourceExhausted, "media size must be between 1 byte and %d MiB", maxOutboundMediaBytes/(1024*1024))
+		return appstore.Message{}, state.err
 	}
 
 	mediaDir := filepath.Join(c.paths.MediaCacheDir, "messages", message.ChatID)
 	if err := os.MkdirAll(mediaDir, 0o700); err != nil {
-		return appstore.Message{}, grpcstatus.Errorf(codes.Internal, "create media cache directory: %v", err)
+		state.err = grpcstatus.Errorf(codes.Internal, "create media cache directory: %v", err)
+		return appstore.Message{}, state.err
 	}
 
 	localPath := filepath.Join(mediaDir, safeMediaFileName(message.ID, mediaExtension(message.MediaMimeType)))
 	if err := writeFileAtomic(localPath, data, 0o600); err != nil {
-		return appstore.Message{}, grpcstatus.Errorf(codes.Internal, "write media cache file: %v", err)
+		state.err = grpcstatus.Errorf(codes.Internal, "write media cache file: %v", err)
+		return appstore.Message{}, state.err
 	}
 
 	updated, err := c.store.UpdateMessageMediaLocalPath(ctx, message.ID, localPath)
 	if err != nil {
+		state.err = err
 		return appstore.Message{}, err
 	}
+	state.message = updated
 	c.daemon.PublishMessageUpdated(toDaemonMessage(updated))
 	return updated, nil
 }
