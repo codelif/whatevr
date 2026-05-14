@@ -68,7 +68,6 @@ qt_add_qml_module(whatkevr
     VERSION 1.0
     QML_FILES
         src/qml/Main.qml
-        src/qml/ChatShell.qml
         src/qml/components/AvatarImage.qml
         src/qml/components/StatusChip.qml
         src/qml/components/ChatListDelegate.qml
