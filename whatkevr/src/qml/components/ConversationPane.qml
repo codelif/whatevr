@@ -6,6 +6,10 @@ import org.kde.kirigami as Kirigami
 Kirigami.Page {
     id: root
 
+    property bool closeChatActionVisible: false
+
+    signal closeChatRequested()
+
     Layout.fillWidth: true
     Layout.fillHeight: true
     title: AppController.hasSelectedChat
@@ -90,10 +94,10 @@ Kirigami.Page {
 
     actions: [
         Kirigami.Action {
-            icon.name: "documentinfo-symbolic"
-            text: i18nc("@action:button", "Information")
-            enabled: false
-            visible: AppController.hasSelectedChat
+            icon.name: "dialog-close-symbolic"
+            text: i18nc("@action:button", "Close Chat")
+            visible: AppController.hasSelectedChat && root.closeChatActionVisible
+            onTriggered: root.closeChatRequested()
         }
     ]
 

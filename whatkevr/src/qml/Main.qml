@@ -8,6 +8,7 @@ Kirigami.ApplicationWindow {
     readonly property bool chatSingleColumnLayout: !chatWideLayout
     property string currentMode: ""
     property bool conversationOnStack: false
+    property bool closeChatAfterTransition: false
     property var chatListPageItem: null
     property var conversationPageItem: null
 
@@ -88,6 +89,7 @@ Kirigami.ApplicationWindow {
     function resetToPage(mode, pageComponent) {
         currentMode = mode
         conversationOnStack = false
+        closeChatAfterTransition = false
         chatListPageItem = null
         conversationPageItem = null
         pageStack.clear()
@@ -102,12 +104,81 @@ Kirigami.ApplicationWindow {
     }
 
     function openConversation() {
+        closeChatAfterTransition = false
         if (!conversationOnStack) {
             conversationPageItem = pushPage(conversationPaneComponent)
             conversationOnStack = conversationPageItem !== null
+            if (conversationPageItem) {
+                conversationPageItem.closeChatRequested.connect(closeConversation)
+            }
         } else {
             pageStack.goForward()
         }
+        updateCloseChatActionVisibility()
+    }
+
+    function closeConversation() {
+        if (!AppController.hasSelectedChat) {
+            return
+        }
+
+        if (conversationPageItem) {
+            conversationPageItem.closeChatActionVisible = false
+        }
+
+        if (chatSingleColumnLayout && pageStack.currentIndex > 0) {
+            closeChatAfterTransition = true
+            pageStack.goBack()
+            Qt.callLater(finishCloseChatIfSettled)
+            return
+        }
+
+        AppController.selectChat("")
+        updateCloseChatActionVisibility()
+    }
+
+    function updateCloseChatActionVisibility() {
+        if (!conversationPageItem) {
+            return
+        }
+
+        conversationPageItem.closeChatActionVisible = currentMode === "chat"
+                && AppController.hasSelectedChat
+                && !closeChatAfterTransition
+                && (!chatSingleColumnLayout || pageStack.currentIndex > 0)
+    }
+
+    function scheduleCloseChatAfterBack() {
+        if (!chatSingleColumnLayout || pageStack.currentIndex !== 0 || !AppController.hasSelectedChat) {
+            return
+        }
+
+        closeChatAfterTransition = true
+        updateCloseChatActionVisibility()
+        Qt.callLater(finishCloseChatIfSettled)
+    }
+
+    function finishCloseChatIfSettled() {
+        if (!closeChatAfterTransition || pageStack.columnView.moving) {
+            return
+        }
+
+        closeChatAfterTransition = false
+        if (AppController.hasSelectedChat) {
+            AppController.selectChat("")
+        }
+        cleanupMobileConversationPage()
+        updateCloseChatActionVisibility()
+    }
+
+    function cleanupMobileConversationPage() {
+        if (!chatSingleColumnLayout || pageStack.currentIndex !== 0 || !conversationOnStack) {
+            return
+        }
+
+        pageStack.pop()
+        conversationOnStack = false
+        conversationPageItem = null
     }
 
     function ensureChatLayout() {
@@ -149,6 +220,7 @@ Kirigami.ApplicationWindow {
         case "chat":
             currentMode = nextMode
             conversationOnStack = false
+            closeChatAfterTransition = false
             chatListPageItem = null
             conversationPageItem = null
             pageStack.clear()
@@ -160,6 +232,26 @@ Kirigami.ApplicationWindow {
 
     onChatWideLayoutChanged: syncChatLayout()
 
+    Connections {
+        target: pageStack
+
+        function onCurrentIndexChanged() {
+            root.updateCloseChatActionVisibility()
+            root.scheduleCloseChatAfterBack()
+        }
+    }
+
+    Connections {
+        target: pageStack.columnView
+
+        function onMovingChanged() {
+            root.updateCloseChatActionVisibility()
+            if (!pageStack.columnView.moving) {
+                root.finishCloseChatIfSettled()
+            }
+        }
+    }
+
     Component.onCompleted: scheduleRebuildPageStack()
 
     Connections {
@@ -167,6 +259,10 @@ Kirigami.ApplicationWindow {
 
         function onStateChanged() {
             root.scheduleRebuildPageStack()
+        }
+
+        function onSelectionChanged() {
+            root.updateCloseChatActionVisibility()
         }
     }
 }
