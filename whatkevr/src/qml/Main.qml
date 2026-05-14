@@ -4,24 +4,22 @@ import org.kde.kirigami as Kirigami
 Kirigami.ApplicationWindow {
     id: root
 
-    readonly property bool chatWideLayout: pageStack.width >= pageStack.defaultColumnWidth * 2
-    readonly property bool chatSingleColumnLayout: !chatWideLayout
+    readonly property bool wideLayout: width >= Kirigami.Units.gridUnit * 30
     property string currentMode: ""
-    property bool conversationOnStack: false
     property var chatListPageItem: null
     property var conversationPageItem: null
 
-    width: 1180
-    height: 760
-    minimumWidth: 420
-    minimumHeight: 680
+    // width: 1180
+    // height: 760
+    minimumWidth: Kirigami.Units.gridUnit * 20
+    minimumHeight: Kirigami.Units.gridUnit * 15
     title: i18nc("@title:window", "Whatevr")
     visible: true
 
-    pageStack.columnView.columnResizeMode: pageStack.wideMode ? Kirigami.ColumnView.FixedColumns : Kirigami.ColumnView.SingleColumn
+    pageStack.columnView.columnResizeMode: wideLayout ? Kirigami.ColumnView.FixedColumns : Kirigami.ColumnView.SingleColumn
     pageStack.globalToolBar.style: Kirigami.ApplicationHeaderStyle.ToolBar
     pageStack.globalToolBar.showNavigationButtons: currentMode === "chat"
-                                                  ? (chatSingleColumnLayout && pageStack.currentIndex > 0
+                                                  ? (!wideLayout && pageStack.currentIndex > 0
                                                      ? Kirigami.ApplicationHeaderStyle.ShowBackButton
                                                      : Kirigami.ApplicationHeaderStyle.NoNavigationButtons)
                                                   : Kirigami.ApplicationHeaderStyle.ShowBackButton | Kirigami.ApplicationHeaderStyle.ShowForwardButton
@@ -32,6 +30,14 @@ Kirigami.ApplicationWindow {
         interval: 50
         repeat: false
         onTriggered: root.rebuildPageStack()
+    }
+
+    Timer {
+        id: chatLayoutSyncTimer
+
+        interval: 0
+        repeat: false
+        onTriggered: root.syncChatLayout()
     }
 
     function appMode() {
@@ -85,9 +91,12 @@ Kirigami.ApplicationWindow {
         pageStackRebuildTimer.restart()
     }
 
+    function scheduleSyncChatLayout() {
+        chatLayoutSyncTimer.restart()
+    }
+
     function resetToPage(mode, pageComponent) {
         currentMode = mode
-        conversationOnStack = false
         chatListPageItem = null
         conversationPageItem = null
         pageStack.clear()
@@ -101,46 +110,47 @@ Kirigami.ApplicationWindow {
         }
     }
 
-    function resetToChatList() {
-        conversationOnStack = false
-        conversationPageItem = null
-        pageStack.clear()
-        openChatList()
-    }
-
-    function openConversation() {
-        if (!conversationOnStack) {
+    function ensureConversationPage() {
+        if (!conversationPageItem) {
             conversationPageItem = pushPage(conversationPaneComponent)
-            conversationOnStack = conversationPageItem !== null
             if (conversationPageItem) {
                 conversationPageItem.backRequested.connect(event => {
-                    if (root.currentMode === "chat" && root.chatSingleColumnLayout && AppController.hasSelectedChat) {
+                    if (root.currentMode === "chat" && !root.wideLayout && AppController.hasSelectedChat) {
                         AppController.selectChat("")
                     }
                 })
             }
-        } else {
+        }
+    }
+
+    function openConversation() {
+        if (!conversationPageItem) {
+            ensureConversationPage()
+        } else if (pageStack.currentIndex === 0) {
             pageStack.goForward()
         }
     }
 
-    function ensureChatLayout() {
+    function syncChatLayout() {
         if (currentMode !== "chat") {
             return
         }
-        if (chatSingleColumnLayout && !AppController.hasSelectedChat && conversationOnStack) {
-            resetToChatList()
+        if (wideLayout) {
+            ensureConversationPage()
+            if (!AppController.hasSelectedChat && pageStack.currentIndex > 0) {
+                pageStack.goBack()
+            }
             return
         }
-        if (chatWideLayout && !conversationOnStack) {
-            openConversation()
+        if (!AppController.hasSelectedChat && pageStack.currentIndex > 0) {
+            pageStack.goBack()
         }
     }
 
     function rebuildPageStack() {
         const nextMode = appMode()
         if (nextMode === currentMode) {
-            ensureChatLayout()
+            scheduleSyncChatLayout()
             return
         }
 
@@ -153,17 +163,16 @@ Kirigami.ApplicationWindow {
             break
         case "chat":
             currentMode = nextMode
-            conversationOnStack = false
             chatListPageItem = null
             conversationPageItem = null
             pageStack.clear()
             openChatList()
-            ensureChatLayout()
+            scheduleSyncChatLayout()
             break
         }
     }
 
-    onChatWideLayoutChanged: ensureChatLayout()
+    onWideLayoutChanged: scheduleSyncChatLayout()
 
     Component.onCompleted: scheduleRebuildPageStack()
 
@@ -175,7 +184,7 @@ Kirigami.ApplicationWindow {
         }
 
         function onSelectionChanged() {
-            root.ensureChatLayout()
+            root.syncChatLayout()
         }
     }
 }
