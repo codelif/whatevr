@@ -18,7 +18,7 @@ Kirigami.ApplicationWindow {
     title: i18nc("@title:window", "Whatevr")
     visible: true
 
-    pageStack.columnView.columnResizeMode: pageStack.wideMode ? Kirigami.ColumnView.FixedColumns : Kirigami.ColumnView.SingleColumn
+    pageStack.columnView.columnResizeMode: chatWideLayout ? Kirigami.ColumnView.FixedColumns : Kirigami.ColumnView.SingleColumn
     pageStack.globalToolBar.style: Kirigami.ApplicationHeaderStyle.ToolBar
     pageStack.globalToolBar.showNavigationButtons: currentMode === "chat"
                                                   ? (chatSingleColumnLayout && pageStack.currentIndex > 0
@@ -105,21 +105,30 @@ Kirigami.ApplicationWindow {
         if (!conversationOnStack) {
             conversationPageItem = pushPage(conversationPaneComponent)
             conversationOnStack = conversationPageItem !== null
-            if (conversationPageItem) {
-                conversationPageItem.backRequested.connect(event => {
-                    if (root.currentMode === "chat" && root.chatSingleColumnLayout && AppController.hasSelectedChat) {
-                        AppController.selectChat("")
-                    }
-                })
-            }
         } else {
             pageStack.goForward()
         }
     }
 
     function ensureChatLayout() {
-        if (currentMode === "chat" && chatWideLayout && !conversationOnStack) {
+        if (currentMode !== "chat") {
+            return
+        }
+
+        if (chatWideLayout && !conversationOnStack) {
             openConversation()
+        }
+    }
+
+    function syncChatLayout() {
+        if (currentMode !== "chat") {
+            return
+        }
+
+        ensureChatLayout()
+
+        if (chatSingleColumnLayout) {
+            pageStack.currentIndex = AppController.hasSelectedChat && conversationOnStack ? 1 : 0
         }
     }
 
@@ -149,7 +158,7 @@ Kirigami.ApplicationWindow {
         }
     }
 
-    onChatWideLayoutChanged: ensureChatLayout()
+    onChatWideLayoutChanged: syncChatLayout()
 
     Component.onCompleted: scheduleRebuildPageStack()
 
