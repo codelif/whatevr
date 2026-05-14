@@ -101,6 +101,13 @@ Kirigami.ApplicationWindow {
         }
     }
 
+    function resetToChatList() {
+        conversationOnStack = false
+        conversationPageItem = null
+        pageStack.clear()
+        openChatList()
+    }
+
     function openConversation() {
         if (!conversationOnStack) {
             conversationPageItem = pushPage(conversationPaneComponent)
@@ -118,7 +125,14 @@ Kirigami.ApplicationWindow {
     }
 
     function ensureChatLayout() {
-        if (currentMode === "chat" && chatWideLayout && !conversationOnStack) {
+        if (currentMode !== "chat") {
+            return
+        }
+        if (chatSingleColumnLayout && !AppController.hasSelectedChat && conversationOnStack) {
+            resetToChatList()
+            return
+        }
+        if (chatWideLayout && !conversationOnStack) {
             openConversation()
         }
     }
@@ -158,6 +172,10 @@ Kirigami.ApplicationWindow {
 
         function onStateChanged() {
             root.scheduleRebuildPageStack()
+        }
+
+        function onSelectionChanged() {
+            root.ensureChatLayout()
         }
     }
 }

@@ -53,6 +53,7 @@ Kirigami.Page {
         Item {
             Layout.fillWidth: true
             Layout.minimumWidth: 0
+            Layout.preferredWidth: Math.max(titleLabel.implicitWidth, subtextLabel.implicitWidth)
             Layout.alignment: Qt.AlignVCenter
             Layout.preferredHeight: headerTitle.avatarSize
 
