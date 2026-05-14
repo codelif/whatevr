@@ -9,9 +9,12 @@ Kirigami.Page {
     signal chatSelected(string chatId)
 
     Layout.fillHeight: true
-    Layout.minimumWidth: Kirigami.Units.gridUnit * 17
+    Layout.minimumWidth: 0
     Layout.preferredWidth: Kirigami.Units.gridUnit * 20
-    Layout.maximumWidth: Kirigami.Units.gridUnit * 24
+    Layout.maximumWidth: Kirigami.Units.gridUnit * 22
+    Kirigami.ColumnView.minimumWidth: 0
+    Kirigami.ColumnView.preferredWidth: Kirigami.Units.gridUnit * 20
+    Kirigami.ColumnView.maximumWidth: Kirigami.Units.gridUnit * 22
     title: i18nc("@title", "Chats")
     padding: 0
     Kirigami.Theme.colorSet: Kirigami.Theme.View
@@ -94,7 +97,7 @@ Kirigami.Page {
 
                 Kirigami.PlaceholderMessage {
                     anchors.centerIn: parent
-                    width: Math.min(parent.width - Kirigami.Units.largeSpacing * 4,
+                    width: Math.min(Math.max(0, parent.width - Kirigami.Units.largeSpacing * 4),
                                     Kirigami.Units.gridUnit * 16)
                     visible: !AppController.chatsLoading && AppController.chatsEmpty
                     text: i18nc("@info", "No chats yet")

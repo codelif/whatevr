@@ -6,8 +6,13 @@ import org.kde.kirigami as Kirigami
 Kirigami.Page {
     id: root
 
+    property bool heavyContentEnabled: true
+
     Layout.fillWidth: true
     Layout.fillHeight: true
+    Layout.minimumWidth: 0
+    Kirigami.ColumnView.fillWidth: true
+    Kirigami.ColumnView.minimumWidth: 0
     title: AppController.hasSelectedChat
            ? AppController.selectedChatName
            : i18nc("@title", "Select a chat")
@@ -108,18 +113,22 @@ Kirigami.Page {
             Layout.fillWidth: true
             Layout.fillHeight: true
 
-            MessageView {
-                id: messageView
+            Loader {
+                id: messageViewLoader
 
                 anchors.fill: parent
                 anchors.margins: Kirigami.Units.smallSpacing
-                visible: AppController.hasSelectedChat
-                         && AppController.messageErrorText.length === 0
-                         && !AppController.messagesEmpty
-                model: AppController.messageListModel
-                loadingOlderMessages: AppController.olderMessagesLoading
-                canLoadOlderMessages: AppController.canLoadOlderMessages
-                onLoadOlderMessagesRequested: AppController.loadOlderMessages()
+                active: root.heavyContentEnabled
+                        && AppController.hasSelectedChat
+                        && AppController.messageErrorText.length === 0
+                        && !AppController.messagesEmpty
+
+                sourceComponent: MessageView {
+                    model: AppController.messageListModel
+                    loadingOlderMessages: AppController.olderMessagesLoading
+                    canLoadOlderMessages: AppController.canLoadOlderMessages
+                    onLoadOlderMessagesRequested: AppController.loadOlderMessages()
+                }
             }
 
             BusyIndicator {
@@ -138,9 +147,9 @@ Kirigami.Page {
 
             Kirigami.PlaceholderMessage {
                 anchors.centerIn: parent
-                width: Math.min(parent.width - Kirigami.Units.largeSpacing * 4,
+                width: Math.min(Math.max(0, parent.width - Kirigami.Units.largeSpacing * 4),
                                 Kirigami.Units.gridUnit * 22)
-                visible: !messageView.visible && !(AppController.messagesLoading && AppController.messagesEmpty)
+                visible: !messageViewLoader.active && !(AppController.messagesLoading && AppController.messagesEmpty)
                 text: !AppController.hasSelectedChat
                       ? i18nc("@info", "Select a chat")
                       : (AppController.messageErrorText.length > 0
@@ -158,15 +167,18 @@ Kirigami.Page {
             }
         }
 
-        MessageComposer {
+        Loader {
+            active: root.heavyContentEnabled && AppController.hasSelectedChat
             Layout.fillWidth: true
-            visible: AppController.hasSelectedChat
-            enabledForChat: AppController.composerEnabled
-            sending: AppController.sendInFlight
-            errorText: AppController.composerErrorText
-            onSendTextRequested: text => AppController.sendText(text)
-            onSendImageRequested: (fileUrl, caption) => AppController.sendImage(fileUrl, caption)
-            onComposingChanged: composing => AppController.setSelectedChatComposing(composing)
+
+            sourceComponent: MessageComposer {
+                enabledForChat: AppController.composerEnabled
+                sending: AppController.sendInFlight
+                errorText: AppController.composerErrorText
+                onSendTextRequested: text => AppController.sendText(text)
+                onSendImageRequested: (fileUrl, caption) => AppController.sendImage(fileUrl, caption)
+                onComposingChanged: composing => AppController.setSelectedChatComposing(composing)
+            }
         }
     }
 }

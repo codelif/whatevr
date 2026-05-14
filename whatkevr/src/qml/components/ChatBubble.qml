@@ -24,8 +24,10 @@ Item {
     property real listWidth: 0
     readonly property real outerMargin: Kirigami.Units.largeSpacing
     readonly property real innerPadding: Kirigami.Units.largeSpacing
-    readonly property real maxBubbleWidth: Math.min(listWidth * 0.7, Kirigami.Units.gridUnit * 26)
-    readonly property real maxContentWidth: Math.max(Kirigami.Units.gridUnit * 4, maxBubbleWidth - innerPadding * 2)
+    readonly property real availableBubbleWidth: Math.max(0, listWidth - outerMargin * 2)
+    readonly property real maxBubbleWidth: Math.min(availableBubbleWidth, listWidth * 0.7, Kirigami.Units.gridUnit * 26)
+    readonly property real effectiveInnerPadding: Math.min(innerPadding, maxBubbleWidth / 4)
+    readonly property real maxContentWidth: Math.max(0, maxBubbleWidth - effectiveInnerPadding * 2)
 
     readonly property bool isImage: mediaMimeType.startsWith("image/")
     readonly property bool hasLocalImage: isImage && mediaLocalPath.length > 0
@@ -72,11 +74,14 @@ Item {
         if (width / reservedImageAspectRatio > maxImageHeight) {
             width = maxImageHeight * reservedImageAspectRatio
         }
-        return Math.min(maxContentWidth, Math.max(minImageWidth, width))
+        return Math.min(maxContentWidth, Math.max(0, width))
     }
 
     readonly property real imageDisplayHeight: {
         if (!isImage) {
+            return 0
+        }
+        if (imageDisplayWidth <= 0) {
             return 0
         }
 
@@ -119,7 +124,7 @@ Item {
             footerW += root.statusAreaWidth + Kirigami.Units.smallSpacing
         }
         w = Math.max(w, Math.min(maxContentWidth, footerW))
-        return Math.max(w, Kirigami.Units.gridUnit * 4)
+        return Math.min(maxContentWidth, Math.max(0, w))
     }
 
     width: listWidth
@@ -148,11 +153,11 @@ Item {
         readonly property real bubbleRadius: Kirigami.Units.cornerRadius
 
         x: root.outgoing
-           ? root.width - width - root.outerMargin
-           : root.outerMargin
+           ? Math.max(0, root.width - width - root.outerMargin)
+           : Math.min(root.outerMargin, Math.max(0, root.width - width))
         y: 0
-        width: root.contentBlockWidth + root.innerPadding * 2
-        height: contentColumn.height + root.innerPadding * 2
+        width: root.contentBlockWidth + root.effectiveInnerPadding * 2
+        height: contentColumn.height + root.effectiveInnerPadding * 2
 
         corners.topLeftRadius: bubbleRadius
         corners.topRightRadius: bubbleRadius
@@ -168,8 +173,8 @@ Item {
         Item {
             id: contentColumn
 
-            x: root.innerPadding
-            y: root.innerPadding
+            x: root.effectiveInnerPadding
+            y: root.effectiveInnerPadding
             width: root.contentBlockWidth
             height: {
                 let h = 0

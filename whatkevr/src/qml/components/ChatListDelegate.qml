@@ -74,6 +74,7 @@ ItemDelegate {
 
         ColumnLayout {
             Layout.fillWidth: true
+            Layout.minimumWidth: 0
             spacing: Kirigami.Units.smallSpacing / 2
 
             Label {
