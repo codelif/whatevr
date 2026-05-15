@@ -8,6 +8,12 @@ Kirigami.Page {
 
     property bool closeChatActionVisible: false
 
+    readonly property bool messagesCurrent: AppController.hasSelectedChat
+                                            && AppController.displayedMessagesChatId === AppController.selectedChatId
+    readonly property bool waitingForMessages: AppController.hasSelectedChat
+                                               && AppController.messagesLoading
+                                               && (!root.messagesCurrent || AppController.messagesEmpty)
+
     signal closeChatRequested()
 
     Layout.fillWidth: true
@@ -117,6 +123,7 @@ Kirigami.Page {
                 anchors.fill: parent
                 anchors.margins: Kirigami.Units.smallSpacing
                 visible: AppController.hasSelectedChat
+                         && root.messagesCurrent
                          && AppController.messageErrorText.length === 0
                          && !AppController.messagesEmpty
                 model: AppController.messageListModel
@@ -127,7 +134,7 @@ Kirigami.Page {
 
             BusyIndicator {
                 anchors.centerIn: parent
-                running: AppController.messagesLoading && AppController.messagesEmpty
+                running: root.waitingForMessages
                 visible: running
             }
 
@@ -143,7 +150,8 @@ Kirigami.Page {
                 anchors.centerIn: parent
                 width: Math.min(parent.width - Kirigami.Units.largeSpacing * 4,
                                 Kirigami.Units.gridUnit * 22)
-                visible: !messageView.visible && !(AppController.messagesLoading && AppController.messagesEmpty)
+                visible: !root.waitingForMessages
+                         && !messageView.visible
                 text: !AppController.hasSelectedChat
                       ? i18nc("@info", "Select a chat")
                       : (AppController.messageErrorText.length > 0

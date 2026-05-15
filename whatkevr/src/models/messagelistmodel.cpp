@@ -96,6 +96,10 @@ void MessageListModel::replaceMessages(const QList<whatevr::v1::Message> &messag
         return left.id < right.id;
     });
 
+    if (sameMessages(m_messages, next)) {
+        return;
+    }
+
     beginResetModel();
     m_messages = std::move(next);
     endResetModel();
@@ -220,8 +224,29 @@ QString MessageListModel::statusText(int status)
         return i18nc("@label message delivery status", "Failed");
     case MessageStatus::MESSAGE_STATUS_UNSPECIFIED:
     default:
-        return QString();
+        break;
     }
+
+    return QString();
+}
+
+bool MessageListModel::sameMessages(const QList<MessageItem> &left, const QList<MessageItem> &right)
+{
+    if (left.size() != right.size()) {
+        return false;
+    }
+
+    for (int i = 0; i < left.size(); ++i) {
+        const auto &a = left.at(i);
+        const auto &b = right.at(i);
+        if (a.id != b.id || a.chatId != b.chatId || a.senderId != b.senderId || a.text != b.text || a.timestampUnix != b.timestampUnix
+            || a.direction != b.direction || a.status != b.status || a.mediaMimeType != b.mediaMimeType || a.mediaLocalPath != b.mediaLocalPath
+            || a.mediaWidth != b.mediaWidth || a.mediaHeight != b.mediaHeight) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 int MessageListModel::indexOf(const QString &messageId) const

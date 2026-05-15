@@ -2,12 +2,15 @@
 
 #include <QAbstractItemModel>
 #include <QHash>
+#include <QList>
 #include <QObject>
 #include <QSet>
 #include <QString>
 
 #include <cstdint>
 #include <memory>
+
+#include "whatevr/v1/whatevr.qpb.h"
 
 QT_BEGIN_NAMESPACE
 class QGrpcCallReply;
@@ -77,6 +80,7 @@ class AppController final : public QObject
     Q_PROPERTY(bool olderMessagesLoading READ olderMessagesLoading NOTIFY messagesChanged FINAL)
     Q_PROPERTY(bool canLoadOlderMessages READ canLoadOlderMessages NOTIFY messagesChanged FINAL)
     Q_PROPERTY(bool messagesEmpty READ messagesEmpty NOTIFY messagesChanged FINAL)
+    Q_PROPERTY(QString displayedMessagesChatId READ displayedMessagesChatId NOTIFY messagesChanged FINAL)
     Q_PROPERTY(QString messageErrorText READ messageErrorText NOTIFY messagesChanged FINAL)
     Q_PROPERTY(bool composerEnabled READ composerEnabled NOTIFY composerChanged FINAL)
     Q_PROPERTY(bool sendInFlight READ sendInFlight NOTIFY composerChanged FINAL)
@@ -120,6 +124,7 @@ public:
     [[nodiscard]] bool olderMessagesLoading() const;
     [[nodiscard]] bool canLoadOlderMessages() const;
     [[nodiscard]] bool messagesEmpty() const;
+    [[nodiscard]] QString displayedMessagesChatId() const;
     [[nodiscard]] QString messageErrorText() const;
     [[nodiscard]] bool composerEnabled() const;
     [[nodiscard]] bool sendInFlight() const;
@@ -187,6 +192,8 @@ private:
     void clearBanner();
     void emitStateChanged();
     void updateSelectedChatData();
+    void cacheMessages(const QString &chatId, const QList<whatevr::v1::Message> &messages, bool canLoadOlderMessages);
+    bool restoreCachedMessages(const QString &chatId);
 
     bool m_loading = true;
     bool m_loginRequired = false;
@@ -205,6 +212,7 @@ private:
     bool m_canLoadOlderMessages = false;
     QString m_messagesLoadingChatId;
     QString m_olderMessagesLoadingChatId;
+    QString m_displayedMessagesChatId;
     QString m_messageErrorText;
     bool m_sendInFlight = false;
     QString m_composerErrorText;
@@ -219,6 +227,12 @@ private:
     int m_historySyncPercent = 0;
     QString m_historySyncTitle;
     QString m_historySyncDetail;
+
+    struct CachedMessages {
+        QList<whatevr::v1::Message> messages;
+        bool canLoadOlderMessages = false;
+    };
+    QHash<QString, CachedMessages> m_messageCache;
 
     ChatListModel *m_chatListModel = nullptr;
     MessageListModel *m_messageListModel = nullptr;

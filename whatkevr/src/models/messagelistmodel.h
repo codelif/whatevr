@@ -65,6 +65,7 @@ private:
     static MessageItem fromProto(const whatevr::v1::Message &message);
     static QString formatTime(qint64 timestampUnix);
     static QString statusText(int status);
+    static bool sameMessages(const QList<MessageItem> &left, const QList<MessageItem> &right);
     [[nodiscard]] int indexOf(const QString &messageId) const;
 
     QList<MessageItem> m_messages;

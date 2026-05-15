@@ -87,13 +87,28 @@ Kirigami.ApplicationWindow {
     }
 
     function resetToPage(mode, pageComponent) {
+        destroyChatPages()
         currentMode = mode
         conversationOnStack = false
         closeChatAfterTransition = false
         chatListPageItem = null
         conversationPageItem = null
-        pageStack.clear()
         pushPage(pageComponent)
+    }
+
+    function destroyChatPages() {
+        const oldConversationPage = conversationPageItem
+        const oldChatListPage = chatListPageItem
+        pageStack.clear()
+        conversationPageItem = null
+        chatListPageItem = null
+        conversationOnStack = false
+        if (oldConversationPage) {
+            oldConversationPage.destroy()
+        }
+        if (oldChatListPage) {
+            oldChatListPage.destroy()
+        }
     }
 
     function openChatList() {
@@ -176,9 +191,13 @@ Kirigami.ApplicationWindow {
             return
         }
 
+        const page = conversationPageItem
         pageStack.pop()
         conversationOnStack = false
         conversationPageItem = null
+        if (page) {
+            page.destroy()
+        }
     }
 
     function ensureChatLayout() {
@@ -218,12 +237,12 @@ Kirigami.ApplicationWindow {
             resetToPage(nextMode, statusPageComponent)
             break
         case "chat":
+            destroyChatPages()
             currentMode = nextMode
             conversationOnStack = false
             closeChatAfterTransition = false
             chatListPageItem = null
             conversationPageItem = null
-            pageStack.clear()
             openChatList()
             ensureChatLayout()
             break

@@ -40,6 +40,14 @@ Item {
         pinToBottomNow()
     }
 
+    function schedulePinToBottom() {
+        pinToBottomTimer.restart()
+    }
+
+    function scheduleFinishPrependPositionPreservation() {
+        finishPrependPositionTimer.restart()
+    }
+
     function beginPrependPositionPreservation() {
         pinToBottom = false
         preservingPrependPosition = true
@@ -76,18 +84,51 @@ Item {
         if (list.contentY <= list.originY + topLoadThreshold) {
             beginPrependPositionPreservation()
             loadOlderMessagesRequested()
-            Qt.callLater(() => {
-                if (!loadingOlderMessages && preservingPrependPosition) {
-                    finishPrependPositionPreservation()
-                }
-            })
+            scheduleFinishPrependPositionPreservation()
         }
     }
 
     onLoadingOlderMessagesChanged: {
         if (!loadingOlderMessages && preservingPrependPosition) {
-            Qt.callLater(() => { finishPrependPositionPreservation() })
+            scheduleFinishPrependPositionPreservation()
         }
+    }
+
+    onVisibleChanged: {
+        if (visible) {
+            pinToBottom = true
+            atBottom = true
+            schedulePinToBottom()
+        }
+    }
+
+    Timer {
+        id: pinToBottomTimer
+
+        interval: 0
+        repeat: false
+        onTriggered: {
+            if (root.pinToBottom) {
+                root.pinToBottomNow()
+            }
+        }
+    }
+
+    Timer {
+        id: finishPrependPositionTimer
+
+        interval: 0
+        repeat: false
+        onTriggered: {
+            if (!root.loadingOlderMessages && root.preservingPrependPosition) {
+                root.finishPrependPositionPreservation()
+            }
+        }
+    }
+
+    Component.onDestruction: {
+        pinToBottomTimer.stop()
+        finishPrependPositionTimer.stop()
     }
 
     ListView {
@@ -97,8 +138,8 @@ Item {
         clip: true
 
         spacing: Kirigami.Units.smallSpacing / 2
-        cacheBuffer: Math.max(0, height * 2)
-        reuseItems: false
+        cacheBuffer: Math.max(0, height)
+        reuseItems: true
 
         flickableDirection: Flickable.VerticalFlick
         boundsBehavior: Flickable.StopAtBounds
@@ -168,9 +209,7 @@ Item {
                 root.restorePrependPosition()
             } else if (root.atBottom) {
                 root.pinToBottom = true
-                Qt.callLater(() => {
-                    if (root.pinToBottom) root.pinToBottomNow()
-                })
+                root.schedulePinToBottom()
             }
         }
 
@@ -180,15 +219,13 @@ Item {
             function onModelReset() {
                 root.pinToBottom = true
                 root.atBottom = true
-                Qt.callLater(() => {
-                    if (root.pinToBottom) root.pinToBottomNow()
-                })
+                root.schedulePinToBottom()
             }
         }
 
         Component.onCompleted: {
             root.pinToBottom = true
-            Qt.callLater(() => { root.pinToBottomNow() })
+            root.schedulePinToBottom()
         }
     }
 

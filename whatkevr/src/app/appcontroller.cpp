@@ -17,6 +17,8 @@
 #include <QtGrpc/qtgrpcnamespace.h>
 #include <QtGrpc/qgrpcstream.h>
 
+#include <algorithm>
+
 #include "../models/chatlistmodel.h"
 #include "../models/messagelistmodel.h"
 #include "whatevr/v1/whatevr.qpb.h"
@@ -51,6 +53,45 @@ using whatevr::v1::SubscribeLoginEventsRequest;
 using whatevr::v1::UpdateSessionStateRequest;
 
 namespace {
+
+constexpr int kMessageLimit = MessageListModel::MaximumMessageCount;
+
+QList<whatevr::v1::Message> mergeMessages(const QList<whatevr::v1::Message> &base,
+                                           const QList<whatevr::v1::Message> &updates)
+{
+    QList<whatevr::v1::Message> merged;
+    merged.reserve(base.size() + updates.size());
+
+    QHash<QString, int> indexesById;
+    auto appendOrReplace = [&merged, &indexesById](const whatevr::v1::Message &message) {
+        const QString id = message.id_proto();
+        if (!id.isEmpty()) {
+            const auto existing = indexesById.constFind(id);
+            if (existing != indexesById.constEnd()) {
+                merged[*existing] = message;
+                return;
+            }
+            indexesById.insert(id, merged.size());
+        }
+        merged.append(message);
+    };
+
+    for (const auto &message : base) {
+        appendOrReplace(message);
+    }
+    for (const auto &message : updates) {
+        appendOrReplace(message);
+    }
+
+    std::sort(merged.begin(), merged.end(), [](const whatevr::v1::Message &left, const whatevr::v1::Message &right) {
+        if (left.timestampUnix() != right.timestampUnix()) {
+            return left.timestampUnix() < right.timestampUnix();
+        }
+        return left.id_proto() < right.id_proto();
+    });
+
+    return merged;
+}
 
 QString fallbackStateLabel(DaemonState state)
 {
@@ -362,6 +403,11 @@ bool AppController::messagesEmpty() const
     return m_messageListModel->isEmpty();
 }
 
+QString AppController::displayedMessagesChatId() const
+{
+    return m_displayedMessagesChatId;
+}
+
 QString AppController::messageErrorText() const
 {
     return m_messageErrorText;
@@ -484,8 +530,12 @@ void AppController::selectChat(const QString &chatId)
     m_canLoadOlderMessages = false;
     m_olderMessagesLoadingChatId.clear();
     m_olderMessagesReply.reset();
-    m_messageListModel->clear();
     updateSelectedChatData();
+    const bool restoredMessages = restoreCachedMessages(chatId);
+    if (restoredMessages) {
+        m_messagesLoading = false;
+        m_messagesLoadingChatId.clear();
+    }
     Q_EMIT selectionChanged();
     Q_EMIT messagesChanged();
     Q_EMIT composerChanged();
@@ -493,7 +543,9 @@ void AppController::selectChat(const QString &chatId)
 
     if (!m_selectedChatId.isEmpty()) {
         requestSelectedChatPresence();
-        requestMessages(m_selectedChatId);
+        if (!restoredMessages) {
+            requestMessages(m_selectedChatId);
+        }
         requestSelectedChatReadIfActive();
     }
 }
@@ -699,6 +751,8 @@ void AppController::logout()
         m_canLoadOlderMessages = false;
         m_chatListModel->replaceChats({});
         m_messageListModel->clear();
+        m_displayedMessagesChatId.clear();
+        m_messageCache.clear();
         const auto downloadingIds = m_mediaDownloadingMessageIds.values();
         m_mediaDownloadingMessageIds.clear();
         m_mediaDownloadReplies.clear();
@@ -878,6 +932,7 @@ void AppController::requestChats()
         if (!m_selectedChatId.isEmpty() && m_chatListModel->indexOf(m_selectedChatId) < 0) {
             m_selectedChatId.clear();
             m_messageListModel->clear();
+            m_displayedMessagesChatId.clear();
             m_canLoadOlderMessages = false;
             m_messageErrorText.clear();
             Q_EMIT messagesChanged();
@@ -902,15 +957,15 @@ void AppController::requestMessages(const QString &chatId)
         m_olderMessagesReply.reset();
     }
 
-    static constexpr int kMessageLimit = MessageListModel::MaximumMessageCount;
-
     GetMessagesRequest request;
     request.setChatId(chatId);
     request.setLimit(kMessageLimit);
 
     m_messagesLoading = true;
     m_olderMessagesLoading = false;
-    m_canLoadOlderMessages = false;
+    if (m_displayedMessagesChatId != chatId) {
+        m_canLoadOlderMessages = false;
+    }
     m_messagesLoadingChatId = chatId;
     m_olderMessagesLoadingChatId.clear();
     m_messageErrorText.clear();
@@ -948,8 +1003,16 @@ void AppController::requestMessages(const QString &chatId)
             return;
         }
 
+        QList<whatevr::v1::Message> visibleMessages = response->messages();
+        const auto cached = m_messageCache.constFind(chatId);
+        if (cached != m_messageCache.constEnd()) {
+            visibleMessages = mergeMessages(cached->messages, response->messages());
+        }
+
+        cacheMessages(chatId, visibleMessages, response->messages().size() >= kMessageLimit);
         if (m_selectedChatId == chatId) {
-            m_messageListModel->replaceMessages(response->messages());
+            m_displayedMessagesChatId = chatId;
+            m_messageListModel->replaceMessages(visibleMessages);
             m_canLoadOlderMessages = response->messages().size() >= kMessageLimit;
         }
         Q_EMIT messagesChanged();
@@ -968,8 +1031,6 @@ void AppController::requestOlderMessages()
         Q_EMIT messagesChanged();
         return;
     }
-
-    static constexpr int kMessageLimit = MessageListModel::MaximumMessageCount;
 
     GetMessagesRequest request;
     request.setChatId(m_selectedChatId);
@@ -1012,6 +1073,12 @@ void AppController::requestOlderMessages()
         }
 
         if (m_selectedChatId == chatId) {
+            const auto cached = m_messageCache.constFind(chatId);
+            if (cached != m_messageCache.constEnd()) {
+                cacheMessages(chatId,
+                              mergeMessages(cached->messages, response->messages()),
+                              response->messages().size() >= kMessageLimit);
+            }
             m_messageListModel->prependMessages(response->messages());
             m_canLoadOlderMessages = response->messages().size() >= kMessageLimit;
         }
@@ -1038,11 +1105,8 @@ void AppController::requestSelectedChatReadIfActive()
         }
 
         m_markChatReadReply.reset();
-        if (!status.isOk() || m_selectedChatId != chatId) {
-            return;
-        }
-
-        requestChats();
+        Q_UNUSED(status)
+        Q_UNUSED(chatId)
     });
 }
 
@@ -1428,13 +1492,70 @@ void AppController::applyMediaDownloadChanged(const MediaDownloadChanged &downlo
 
 void AppController::applyMessageEvent(const whatevr::v1::Message &message)
 {
+    auto cached = m_messageCache.find(message.chatId());
+    if (cached != m_messageCache.end()) {
+        int existingIndex = -1;
+        for (int i = 0; i < cached->messages.size(); ++i) {
+            if (cached->messages.at(i).id_proto() == message.id_proto()) {
+                existingIndex = i;
+                break;
+            }
+        }
+        if (existingIndex >= 0) {
+            cached->messages[existingIndex] = message;
+        } else {
+            cached->messages.append(message);
+            if (cached->messages.size() > kMessageLimit) {
+                cached->messages.removeFirst();
+            }
+        }
+    }
+
     if (message.chatId() != m_selectedChatId) {
         return;
     }
+    if (m_displayedMessagesChatId != message.chatId()) {
+        return;
+    }
 
+    const bool wasEmpty = m_messageListModel->isEmpty();
     m_messageListModel->upsertMessage(message);
-    Q_EMIT messagesChanged();
+    if (wasEmpty) {
+        Q_EMIT messagesChanged();
+    }
     requestSelectedChatReadIfActive();
+}
+
+void AppController::cacheMessages(const QString &chatId, const QList<whatevr::v1::Message> &messages, bool canLoadOlderMessages)
+{
+    if (chatId.isEmpty()) {
+        return;
+    }
+
+    m_messageCache.insert(chatId, CachedMessages {
+        .messages = messages,
+        .canLoadOlderMessages = canLoadOlderMessages,
+    });
+}
+
+bool AppController::restoreCachedMessages(const QString &chatId)
+{
+    if (chatId.isEmpty()) {
+        m_messageListModel->clear();
+        m_displayedMessagesChatId.clear();
+        m_canLoadOlderMessages = false;
+        return false;
+    }
+
+    const auto cached = m_messageCache.constFind(chatId);
+    if (cached == m_messageCache.constEnd()) {
+        return false;
+    }
+
+    m_displayedMessagesChatId = chatId;
+    m_messageListModel->replaceMessages(cached->messages);
+    m_canLoadOlderMessages = cached->canLoadOlderMessages;
+    return true;
 }
 
 void AppController::applyHistorySyncProgress(const HistorySyncProgress &progress)
