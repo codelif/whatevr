@@ -66,6 +66,7 @@ set_target_properties(whatkevr PROPERTIES
 qt_add_qml_module(whatkevr
     URI Whatevr
     VERSION 1.0
+    NO_IMPORT_SCAN
     QML_FILES
         src/qml/Main.qml
         src/qml/components/AvatarImage.qml
