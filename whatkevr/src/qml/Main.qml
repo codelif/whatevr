@@ -96,19 +96,32 @@ Kirigami.ApplicationWindow {
         pushPage(pageComponent)
     }
 
+    function destroyPageAfterToolbarCleanup(page) {
+        if (!page) {
+            return
+        }
+
+        page.actions = []
+        page.visible = false
+        page.enabled = false
+        Qt.callLater(() => page.destroy())
+    }
+
     function destroyChatPages() {
         const oldConversationPage = conversationPageItem
         const oldChatListPage = chatListPageItem
+        if (oldConversationPage) {
+            oldConversationPage.actions = []
+        }
+        if (oldChatListPage) {
+            oldChatListPage.actions = []
+        }
         pageStack.clear()
         conversationPageItem = null
         chatListPageItem = null
         conversationOnStack = false
-        if (oldConversationPage) {
-            oldConversationPage.destroy()
-        }
-        if (oldChatListPage) {
-            oldChatListPage.destroy()
-        }
+        destroyPageAfterToolbarCleanup(oldConversationPage)
+        destroyPageAfterToolbarCleanup(oldChatListPage)
     }
 
     function openChatList() {
@@ -149,6 +162,9 @@ Kirigami.ApplicationWindow {
         }
 
         AppController.selectChat("")
+        if (chatWideLayout && pageStack.currentIndex > 0) {
+            pageStack.currentIndex = 0
+        }
         updateCloseChatActionVisibility()
     }
 
@@ -187,17 +203,18 @@ Kirigami.ApplicationWindow {
     }
 
     function cleanupMobileConversationPage() {
-        if (!chatSingleColumnLayout || pageStack.currentIndex !== 0 || !conversationOnStack) {
+        if (!chatSingleColumnLayout || pageStack.currentIndex !== 0 || !conversationOnStack || AppController.hasSelectedChat) {
             return
         }
 
         const page = conversationPageItem
+        if (page) {
+            page.actions = []
+        }
         pageStack.pop()
         conversationOnStack = false
         conversationPageItem = null
-        if (page) {
-            page.destroy()
-        }
+        destroyPageAfterToolbarCleanup(page)
     }
 
     function ensureChatLayout() {
@@ -218,7 +235,13 @@ Kirigami.ApplicationWindow {
         ensureChatLayout()
 
         if (chatSingleColumnLayout) {
-            pageStack.currentIndex = AppController.hasSelectedChat && conversationOnStack ? 1 : 0
+            if (AppController.hasSelectedChat && conversationOnStack) {
+                pageStack.currentIndex = 1
+            } else {
+                pageStack.currentIndex = 0
+                closeChatAfterTransition = false
+                Qt.callLater(cleanupMobileConversationPage)
+            }
         }
     }
 

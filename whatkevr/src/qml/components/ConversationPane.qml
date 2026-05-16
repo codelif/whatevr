@@ -20,7 +20,7 @@ Kirigami.Page {
     Layout.fillHeight: true
     title: AppController.hasSelectedChat
            ? AppController.selectedChatName
-           : i18nc("@title", "Select a chat")
+           : ""
     padding: 0
     Kirigami.Theme.colorSet: Kirigami.Theme.Window
 

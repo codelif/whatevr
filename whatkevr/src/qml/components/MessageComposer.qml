@@ -17,7 +17,11 @@ Frame {
 
     padding: Kirigami.Units.smallSpacing
 
+    Kirigami.Theme.colorSet: Kirigami.Theme.View
+
     background: Rectangle {
+        Kirigami.Theme.inherit: false
+        Kirigami.Theme.colorSet: Kirigami.Theme.View
         color: Kirigami.Theme.backgroundColor
 
         Rectangle {
@@ -98,6 +102,11 @@ Frame {
                 clip: true
                 ScrollBar.vertical.interactive: false
                 ScrollBar.vertical.policy: ScrollBar.AsNeeded
+                background: Rectangle {
+                    Kirigami.Theme.inherit: false
+                    Kirigami.Theme.colorSet: Kirigami.Theme.View
+                    color: Kirigami.Theme.backgroundColor
+                }
 
                 TextArea {
                     id: input
