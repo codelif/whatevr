@@ -10,6 +10,8 @@ Item {
     property string initials: "?"
     property color backgroundColor: Qt.alpha(activePalette.highlight, 0.14)
     property color foregroundColor: activePalette.highlight
+    readonly property bool initialsAreAlphabetic: /^[A-Za-z]+$/.test(initials)
+    readonly property bool showInitials: avatarLocalPath.length === 0 && initialsAreAlphabetic
 
     implicitWidth: Kirigami.Units.gridUnit * 2.45
     implicitHeight: implicitWidth
@@ -44,9 +46,18 @@ Item {
 
     Label {
         anchors.centerIn: parent
-        visible: root.avatarLocalPath.length === 0
+        visible: root.showInitials
         text: root.initials
         color: root.foregroundColor
         font.weight: Font.DemiBold
+    }
+
+    Kirigami.Icon {
+        anchors.centerIn: parent
+        visible: root.avatarLocalPath.length === 0 && !root.initialsAreAlphabetic
+        source: "user-identity-symbolic"
+        implicitWidth: Math.round(Math.min(root.width, root.height) * 0.58)
+        implicitHeight: implicitWidth
+        color: root.foregroundColor
     }
 }
