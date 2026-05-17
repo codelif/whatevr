@@ -741,6 +741,8 @@ void AppController::logout()
         m_selectedChatId.clear();
         m_selectedChatName.clear();
         m_selectedChatAvatarLocalPath.clear();
+        m_selectedChatIsGroup = false;
+        m_messageListModel->setGroupChat(false);
         m_selectedChatComposing = false;
         m_selectedChatAvailability = 0;
         m_selectedChatLastSeenUnix = 0;
@@ -1615,6 +1617,8 @@ void AppController::updateSelectedChatData()
     if (m_selectedChatId.isEmpty()) {
         m_selectedChatName.clear();
         m_selectedChatAvatarLocalPath.clear();
+        m_selectedChatIsGroup = false;
+        m_messageListModel->setGroupChat(false);
         m_selectedChatComposing = false;
         m_selectedChatAvailability = 0;
         m_selectedChatLastSeenUnix = 0;
@@ -1623,4 +1627,6 @@ void AppController::updateSelectedChatData()
 
     m_selectedChatName = m_chatListModel->chatName(m_selectedChatId);
     m_selectedChatAvatarLocalPath = m_chatListModel->chatAvatarLocalPath(m_selectedChatId);
+    m_selectedChatIsGroup = m_chatListModel->chatIsGroup(m_selectedChatId);
+    m_messageListModel->setGroupChat(m_selectedChatIsGroup);
 }

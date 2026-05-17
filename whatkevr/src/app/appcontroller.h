@@ -219,6 +219,7 @@ private:
     QString m_selectedChatId;
     QString m_selectedChatName;
     QString m_selectedChatAvatarLocalPath;
+    bool m_selectedChatIsGroup = false;
     QString m_frontendSessionId;
     bool m_selectedChatComposing = false;
     int m_selectedChatAvailability = 0;

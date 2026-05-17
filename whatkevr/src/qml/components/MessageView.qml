@@ -151,13 +151,22 @@ Item {
 
         delegate: ChatBubble {
             listWidth: list.width
-            messageId: String(model.id || "")
+            messageId: String(model.messageId || "")
             body: String(model.text || "")
             timeText: String(model.timeText || "")
             status: Number(model.status || 0)
             outgoing: Boolean(model.isOutgoing)
+            senderName: String(model.senderName || "")
+            senderAvatarLocalPath: String(model.senderAvatarLocalPath || "")
+            senderInitials: String(model.senderInitials || "?")
+            showSenderHeader: Boolean(model.showSenderHeader)
+            showSenderAvatar: Boolean(model.showSenderAvatar)
+            showSenderGutter: Boolean(model.showSenderGutter)
+            groupStart: Boolean(model.groupStart)
+            groupEnd: Boolean(model.groupEnd)
             mediaMimeType: String(model.mediaMimeType || "")
             mediaLocalPath: String(model.mediaLocalPath || "")
+            mediaThumbnailLocalPath: String(model.mediaThumbnailLocalPath || "")
             mediaIntrinsicWidth: Number(model.mediaWidth || 0)
             mediaIntrinsicHeight: Number(model.mediaHeight || 0)
             mediaDownloading: AppController.isMessageMediaDownloading(messageId)

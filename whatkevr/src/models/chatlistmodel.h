@@ -37,6 +37,7 @@ public:
     void upsertChat(const whatevr::v1::Chat &chat, const QString &previousChatId = QString());
     [[nodiscard]] QString chatName(const QString &chatId) const;
     [[nodiscard]] QString chatAvatarLocalPath(const QString &chatId) const;
+    [[nodiscard]] bool chatIsGroup(const QString &chatId) const;
     [[nodiscard]] int indexOf(const QString &chatId) const;
     [[nodiscard]] bool isEmpty() const;
 

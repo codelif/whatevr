@@ -157,6 +157,15 @@ QString ChatListModel::chatAvatarLocalPath(const QString &chatId) const
     return m_chats.at(index).avatarLocalPath;
 }
 
+bool ChatListModel::chatIsGroup(const QString &chatId) const
+{
+    const int index = indexOf(chatId);
+    if (index < 0) {
+        return false;
+    }
+    return m_chats.at(index).isGroup;
+}
+
 int ChatListModel::indexOf(const QString &chatId) const
 {
     for (int i = 0; i < m_chats.size(); ++i) {
