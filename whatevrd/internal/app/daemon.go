@@ -192,17 +192,20 @@ type Chat struct {
 }
 
 type Message struct {
-	ID             string
-	ChatID         string
-	SenderID       string
-	Text           string
-	TimestampUnix  int64
-	Direction      string
-	Status         string
-	MediaMimeType  string
-	MediaLocalPath string
-	MediaWidth     int32
-	MediaHeight    int32
+	ID                      string
+	ChatID                  string
+	SenderID                string
+	SenderName              string
+	SenderAvatarLocalPath   string
+	Text                    string
+	TimestampUnix           int64
+	Direction               string
+	Status                  string
+	MediaMimeType           string
+	MediaLocalPath          string
+	MediaThumbnailLocalPath string
+	MediaWidth              int32
+	MediaHeight             int32
 }
 
 type LoginEventKind int

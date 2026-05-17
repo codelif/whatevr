@@ -295,4 +295,7 @@ message Message {
   string media_local_path = 9;
   int32 media_width = 10;
   int32 media_height = 11;
+  string media_thumbnail_local_path = 12;
+  string sender_name = 13;
+  string sender_avatar_local_path = 14;
 }

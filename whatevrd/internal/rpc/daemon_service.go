@@ -215,17 +215,20 @@ func toProtoChat(chat app.Chat) *pb.Chat {
 
 func toProtoMessage(message app.Message) *pb.Message {
 	return &pb.Message{
-		Id:             message.ID,
-		ChatId:         message.ChatID,
-		SenderId:       message.SenderID,
-		Text:           message.Text,
-		TimestampUnix:  message.TimestampUnix,
-		Direction:      toProtoMessageDirection(message.Direction),
-		Status:         toProtoMessageStatus(message.Status),
-		MediaMimeType:  message.MediaMimeType,
-		MediaLocalPath: message.MediaLocalPath,
-		MediaWidth:     message.MediaWidth,
-		MediaHeight:    message.MediaHeight,
+		Id:                      message.ID,
+		ChatId:                  message.ChatID,
+		SenderId:                message.SenderID,
+		SenderName:              message.SenderName,
+		SenderAvatarLocalPath:   message.SenderAvatarLocalPath,
+		Text:                    message.Text,
+		TimestampUnix:           message.TimestampUnix,
+		Direction:               toProtoMessageDirection(message.Direction),
+		Status:                  toProtoMessageStatus(message.Status),
+		MediaMimeType:           message.MediaMimeType,
+		MediaLocalPath:          message.MediaLocalPath,
+		MediaThumbnailLocalPath: message.MediaThumbnailLocalPath,
+		MediaWidth:              message.MediaWidth,
+		MediaHeight:             message.MediaHeight,
 	}
 }
 

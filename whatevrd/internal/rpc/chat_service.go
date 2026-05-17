@@ -205,16 +205,19 @@ func toAppChat(chat appstore.Chat) app.Chat {
 
 func toAppMessage(message appstore.Message) app.Message {
 	return app.Message{
-		ID:             message.ID,
-		ChatID:         message.ChatID,
-		SenderID:       message.SenderID,
-		Text:           message.Text,
-		TimestampUnix:  message.TimestampUnix,
-		Direction:      message.Direction,
-		Status:         message.Status,
-		MediaMimeType:  message.MediaMimeType,
-		MediaLocalPath: message.MediaLocalPath,
-		MediaWidth:     message.MediaWidth,
-		MediaHeight:    message.MediaHeight,
+		ID:                      message.ID,
+		ChatID:                  message.ChatID,
+		SenderID:                message.SenderID,
+		SenderName:              message.SenderName,
+		SenderAvatarLocalPath:   message.SenderAvatarLocalPath,
+		Text:                    message.Text,
+		TimestampUnix:           message.TimestampUnix,
+		Direction:               message.Direction,
+		Status:                  message.Status,
+		MediaMimeType:           message.MediaMimeType,
+		MediaLocalPath:          message.MediaLocalPath,
+		MediaThumbnailLocalPath: message.MediaThumbnailLocalPath,
+		MediaWidth:              message.MediaWidth,
+		MediaHeight:             message.MediaHeight,
 	}
 }

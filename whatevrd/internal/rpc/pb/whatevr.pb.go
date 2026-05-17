@@ -2610,20 +2610,23 @@ func (x *Chat) GetLastMessageStatus() MessageStatus {
 }
 
 type Message struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	Id             string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	ChatId         string                 `protobuf:"bytes,2,opt,name=chat_id,json=chatId,proto3" json:"chat_id,omitempty"`
-	SenderId       string                 `protobuf:"bytes,3,opt,name=sender_id,json=senderId,proto3" json:"sender_id,omitempty"`
-	Text           string                 `protobuf:"bytes,4,opt,name=text,proto3" json:"text,omitempty"`
-	TimestampUnix  int64                  `protobuf:"varint,5,opt,name=timestamp_unix,json=timestampUnix,proto3" json:"timestamp_unix,omitempty"`
-	Direction      MessageDirection       `protobuf:"varint,6,opt,name=direction,proto3,enum=whatevr.v1.MessageDirection" json:"direction,omitempty"`
-	Status         MessageStatus          `protobuf:"varint,7,opt,name=status,proto3,enum=whatevr.v1.MessageStatus" json:"status,omitempty"`
-	MediaMimeType  string                 `protobuf:"bytes,8,opt,name=media_mime_type,json=mediaMimeType,proto3" json:"media_mime_type,omitempty"`
-	MediaLocalPath string                 `protobuf:"bytes,9,opt,name=media_local_path,json=mediaLocalPath,proto3" json:"media_local_path,omitempty"`
-	MediaWidth     int32                  `protobuf:"varint,10,opt,name=media_width,json=mediaWidth,proto3" json:"media_width,omitempty"`
-	MediaHeight    int32                  `protobuf:"varint,11,opt,name=media_height,json=mediaHeight,proto3" json:"media_height,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	state                   protoimpl.MessageState `protogen:"open.v1"`
+	Id                      string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	ChatId                  string                 `protobuf:"bytes,2,opt,name=chat_id,json=chatId,proto3" json:"chat_id,omitempty"`
+	SenderId                string                 `protobuf:"bytes,3,opt,name=sender_id,json=senderId,proto3" json:"sender_id,omitempty"`
+	Text                    string                 `protobuf:"bytes,4,opt,name=text,proto3" json:"text,omitempty"`
+	TimestampUnix           int64                  `protobuf:"varint,5,opt,name=timestamp_unix,json=timestampUnix,proto3" json:"timestamp_unix,omitempty"`
+	Direction               MessageDirection       `protobuf:"varint,6,opt,name=direction,proto3,enum=whatevr.v1.MessageDirection" json:"direction,omitempty"`
+	Status                  MessageStatus          `protobuf:"varint,7,opt,name=status,proto3,enum=whatevr.v1.MessageStatus" json:"status,omitempty"`
+	MediaMimeType           string                 `protobuf:"bytes,8,opt,name=media_mime_type,json=mediaMimeType,proto3" json:"media_mime_type,omitempty"`
+	MediaLocalPath          string                 `protobuf:"bytes,9,opt,name=media_local_path,json=mediaLocalPath,proto3" json:"media_local_path,omitempty"`
+	MediaWidth              int32                  `protobuf:"varint,10,opt,name=media_width,json=mediaWidth,proto3" json:"media_width,omitempty"`
+	MediaHeight             int32                  `protobuf:"varint,11,opt,name=media_height,json=mediaHeight,proto3" json:"media_height,omitempty"`
+	MediaThumbnailLocalPath string                 `protobuf:"bytes,12,opt,name=media_thumbnail_local_path,json=mediaThumbnailLocalPath,proto3" json:"media_thumbnail_local_path,omitempty"`
+	SenderName              string                 `protobuf:"bytes,13,opt,name=sender_name,json=senderName,proto3" json:"sender_name,omitempty"`
+	SenderAvatarLocalPath   string                 `protobuf:"bytes,14,opt,name=sender_avatar_local_path,json=senderAvatarLocalPath,proto3" json:"sender_avatar_local_path,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
 }
 
 func (x *Message) Reset() {
@@ -2731,6 +2734,27 @@ func (x *Message) GetMediaHeight() int32 {
 		return x.MediaHeight
 	}
 	return 0
+}
+
+func (x *Message) GetMediaThumbnailLocalPath() string {
+	if x != nil {
+		return x.MediaThumbnailLocalPath
+	}
+	return ""
+}
+
+func (x *Message) GetSenderName() string {
+	if x != nil {
+		return x.SenderName
+	}
+	return ""
+}
+
+func (x *Message) GetSenderAvatarLocalPath() string {
+	if x != nil {
+		return x.SenderAvatarLocalPath
+	}
+	return ""
 }
 
 var File_whatevr_proto protoreflect.FileDescriptor
@@ -2884,7 +2908,7 @@ const file_whatevr_proto_rawDesc = "" +
 	"\bis_group\x18\x06 \x01(\bR\aisGroup\x12*\n" +
 	"\x11avatar_local_path\x18\a \x01(\tR\x0favatarLocalPath\x12R\n" +
 	"\x16last_message_direction\x18\b \x01(\x0e2\x1c.whatevr.v1.MessageDirectionR\x14lastMessageDirection\x12I\n" +
-	"\x13last_message_status\x18\t \x01(\x0e2\x19.whatevr.v1.MessageStatusR\x11lastMessageStatus\"\x8f\x03\n" +
+	"\x13last_message_status\x18\t \x01(\x0e2\x19.whatevr.v1.MessageStatusR\x11lastMessageStatus\"\xa6\x04\n" +
 	"\aMessage\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x17\n" +
 	"\achat_id\x18\x02 \x01(\tR\x06chatId\x12\x1b\n" +
@@ -2898,7 +2922,11 @@ const file_whatevr_proto_rawDesc = "" +
 	"\vmedia_width\x18\n" +
 	" \x01(\x05R\n" +
 	"mediaWidth\x12!\n" +
-	"\fmedia_height\x18\v \x01(\x05R\vmediaHeight*\xd2\x01\n" +
+	"\fmedia_height\x18\v \x01(\x05R\vmediaHeight\x12;\n" +
+	"\x1amedia_thumbnail_local_path\x18\f \x01(\tR\x17mediaThumbnailLocalPath\x12\x1f\n" +
+	"\vsender_name\x18\r \x01(\tR\n" +
+	"senderName\x127\n" +
+	"\x18sender_avatar_local_path\x18\x0e \x01(\tR\x15senderAvatarLocalPath*\xd2\x01\n" +
 	"\vDaemonState\x12\x1c\n" +
 	"\x18DAEMON_STATE_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15DAEMON_STATE_STARTING\x10\x01\x12\x1b\n" +
