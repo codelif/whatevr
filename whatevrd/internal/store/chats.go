@@ -9,6 +9,7 @@ import (
 type Chat struct {
 	ID                   string
 	Name                 string
+	NameSource           string
 	LastMessage          string
 	LastMessageTime      int64
 	LastMessageDirection string
@@ -17,6 +18,40 @@ type Chat struct {
 	IsGroup              bool
 	AvatarLocalPath      string
 	AvatarPictureID      string
+}
+
+const (
+	ChatNameSourceRaw      = "raw"
+	ChatNameSourceWhatsApp = "whatsapp"
+	ChatNameSourcePhone    = "phone"
+	ChatNameSourceGroup    = "group"
+	ChatNameSourceContact  = "contact"
+)
+
+func normalizeChatNameSource(source string) string {
+	switch strings.TrimSpace(source) {
+	case ChatNameSourceRaw, ChatNameSourceWhatsApp, ChatNameSourcePhone, ChatNameSourceGroup, ChatNameSourceContact:
+		return strings.TrimSpace(source)
+	default:
+		return ChatNameSourceContact
+	}
+}
+
+func chatNameSourcePriority(source string) int {
+	switch normalizeChatNameSource(source) {
+	case ChatNameSourceRaw:
+		return 0
+	case ChatNameSourceWhatsApp:
+		return 1
+	case ChatNameSourcePhone:
+		return 2
+	case ChatNameSourceGroup:
+		return 3
+	case ChatNameSourceContact:
+		return 4
+	default:
+		return 4
+	}
 }
 
 func (db *DB) ListChats(ctx context.Context, limit, offset int) ([]Chat, error) {
@@ -28,7 +63,7 @@ func (db *DB) ListChats(ctx context.Context, limit, offset int) ([]Chat, error) 
 	}
 
 	rows, err := db.conn.QueryContext(ctx, `
-		SELECT id, name, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group, avatar_local_path, avatar_picture_id
+		SELECT id, name, name_source, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group, avatar_local_path, avatar_picture_id
 		FROM chats
 		ORDER BY last_message_time DESC, id ASC
 		LIMIT ? OFFSET ?
@@ -63,22 +98,29 @@ func (db *DB) GetChat(ctx context.Context, chatID string) (Chat, error) {
 }
 
 func (db *DB) EnsureChat(ctx context.Context, chatID, name string, isGroup bool) (Chat, error) {
+	return db.EnsureChatWithNameSource(ctx, chatID, name, ChatNameSourceContact, isGroup)
+}
+
+func (db *DB) EnsureChatWithNameSource(ctx context.Context, chatID, name, nameSource string, isGroup bool) (Chat, error) {
 	if chatID == "" {
 		return Chat{}, nil
 	}
 	name = strings.TrimSpace(name)
+	nameSource = normalizeChatNameSource(nameSource)
 	insertName := name
 	if insertName == "" {
 		insertName = chatID
+		nameSource = ChatNameSourceRaw
 	}
 
 	if _, err := db.conn.ExecContext(ctx, `
-		INSERT INTO chats (id, name, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group)
-		VALUES (?, ?, '', 0, '', '', 0, ?)
+		INSERT INTO chats (id, name, name_source, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group)
+		VALUES (?, ?, ?, '', 0, '', '', 0, ?)
 		ON CONFLICT(id) DO UPDATE SET
-			name = CASE WHEN ? != '' THEN ? ELSE chats.name END,
+			name = CASE WHEN ? != '' AND chat_name_source_priority(?) >= chat_name_source_priority(chats.name_source) THEN ? ELSE chats.name END,
+			name_source = CASE WHEN ? != '' AND chat_name_source_priority(?) >= chat_name_source_priority(chats.name_source) THEN ? ELSE chats.name_source END,
 			is_group = ?
-	`, chatID, insertName, boolToInt(isGroup), name, name, boolToInt(isGroup)); err != nil {
+	`, chatID, insertName, nameSource, boolToInt(isGroup), name, nameSource, name, name, nameSource, nameSource, boolToInt(isGroup)); err != nil {
 		return Chat{}, err
 	}
 
@@ -165,16 +207,23 @@ func (db *DB) OverwriteChatUnreadCount(ctx context.Context, chatID string, unrea
 }
 
 func (db *DB) UpdateChatName(ctx context.Context, chatID, name string) (Chat, bool, error) {
+	return db.UpdateChatNameWithSource(ctx, chatID, name, ChatNameSourceContact)
+}
+
+func (db *DB) UpdateChatNameWithSource(ctx context.Context, chatID, name, nameSource string) (Chat, bool, error) {
 	name = strings.TrimSpace(name)
 	if chatID == "" || name == "" {
 		return Chat{}, false, nil
 	}
+	nameSource = normalizeChatNameSource(nameSource)
 
 	result, err := db.conn.ExecContext(ctx, `
 		UPDATE chats
-		SET name = ?
-		WHERE id = ? AND name != ?
-	`, name, chatID, name)
+		SET name = ?, name_source = ?
+		WHERE id = ?
+			AND (name != ? OR name_source != ?)
+			AND chat_name_source_priority(?) >= chat_name_source_priority(name_source)
+	`, name, nameSource, chatID, name, nameSource, nameSource)
 	if err != nil {
 		return Chat{}, false, err
 	}
@@ -226,6 +275,60 @@ func (db *DB) UpdateChatAvatar(ctx context.Context, chatID, picID, localPath str
 	return err
 }
 
+type SenderProfile struct {
+	ID              string
+	Name            string
+	AvatarLocalPath string
+	AvatarPictureID string
+}
+
+func (db *DB) ListSendersNeedingAvatar(ctx context.Context, limit int) ([]SenderProfile, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	rows, err := db.conn.QueryContext(ctx, `
+		SELECT id, name, avatar_local_path, avatar_picture_id
+		FROM senders
+		WHERE id != 'me' AND (avatar_picture_id = '' OR avatar_local_path = '')
+		ORDER BY id ASC
+		LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	senders := make([]SenderProfile, 0, limit)
+	for rows.Next() {
+		var sender SenderProfile
+		if err := rows.Scan(&sender.ID, &sender.Name, &sender.AvatarLocalPath, &sender.AvatarPictureID); err != nil {
+			return nil, err
+		}
+		senders = append(senders, sender)
+	}
+	return senders, rows.Err()
+}
+
+func (db *DB) UpdateSenderAvatar(ctx context.Context, senderID, picID, localPath string) error {
+	_, err := db.conn.ExecContext(ctx, `
+		UPDATE senders SET avatar_picture_id = ?, avatar_local_path = ? WHERE id = ?
+	`, picID, localPath, senderID)
+	return err
+}
+
+func (db *DB) UpdateSenderName(ctx context.Context, senderID, name string) error {
+	name = strings.TrimSpace(name)
+	if senderID == "" || name == "" || senderID == "me" {
+		return nil
+	}
+	_, err := db.conn.ExecContext(ctx, `
+		INSERT INTO senders (id, name)
+		VALUES (?, ?)
+		ON CONFLICT(id) DO UPDATE SET name = excluded.name
+	`, senderID, name)
+	return err
+}
+
 func (db *DB) GetChatAvatarPictureID(ctx context.Context, chatID string) (string, error) {
 	var picID string
 	err := db.conn.QueryRowContext(ctx, `SELECT avatar_picture_id FROM chats WHERE id = ?`, chatID).Scan(&picID)
@@ -253,15 +356,20 @@ func (db *DB) MigrateChatID(ctx context.Context, fromChatID, toChatID string) (C
 	}
 
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO chats (id, name, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group, avatar_local_path, avatar_picture_id)
-		SELECT ?, name, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group, avatar_local_path, avatar_picture_id
+		INSERT INTO chats (id, name, name_source, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group, avatar_local_path, avatar_picture_id)
+		SELECT ?, name, name_source, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group, avatar_local_path, avatar_picture_id
 		FROM chats
 		WHERE id = ?
 		ON CONFLICT(id) DO UPDATE SET
 			name = CASE
-				WHEN chats.name = ? OR chats.name = ''
+				WHEN chats.name_source = ? OR chats.name = ? OR chats.name = ''
 				THEN excluded.name
 				ELSE chats.name
+			END,
+			name_source = CASE
+				WHEN chats.name_source = ? OR chats.name = ? OR chats.name = ''
+				THEN excluded.name_source
+				ELSE chats.name_source
 			END,
 			last_message = CASE
 				WHEN excluded.last_message_time >= chats.last_message_time
@@ -281,7 +389,7 @@ func (db *DB) MigrateChatID(ctx context.Context, fromChatID, toChatID string) (C
 			last_message_time = MAX(chats.last_message_time, excluded.last_message_time),
 			unread_count = chats.unread_count + excluded.unread_count,
 			is_group = excluded.is_group
-	`, toChatID, fromChatID, toChatID); err != nil {
+	`, toChatID, fromChatID, ChatNameSourceRaw, toChatID, ChatNameSourceRaw, toChatID); err != nil {
 		return Chat{}, false, err
 	}
 

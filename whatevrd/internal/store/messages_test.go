@@ -123,6 +123,53 @@ func TestSaveTextMessageDoesNotRegressChatSummary(t *testing.T) {
 	}
 }
 
+func TestListMessagesIncludesSenderProfile(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	chatID := "1234567890@g.us"
+	senderID := "917060029183@s.whatsapp.net"
+	if _, err := db.SaveTextMessage(ctx, TextMessageInput{
+		ID:         chatID + ":msg-1",
+		ChatID:     chatID,
+		SenderID:   senderID,
+		SenderName: "Alice",
+		Text:       "hello",
+		Timestamp:  time.Unix(100, 0),
+		Direction:  DirectionIncoming,
+		Status:     StatusDelivered,
+		IsGroup:    true,
+	}); err != nil {
+		t.Fatalf("save message: %v", err)
+	}
+
+	messages, err := db.ListMessages(ctx, chatID, 10, "")
+	if err != nil {
+		t.Fatalf("list messages: %v", err)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(messages))
+	}
+	if messages[0].SenderName != "Alice" {
+		t.Fatalf("sender name = %q, want Alice", messages[0].SenderName)
+	}
+
+	if err := db.UpdateSenderAvatar(ctx, senderID, "pic-1", "/tmp/alice.jpg"); err != nil {
+		t.Fatalf("update sender avatar: %v", err)
+	}
+	messages, err = db.ListMessages(ctx, chatID, 10, "")
+	if err != nil {
+		t.Fatalf("list messages after avatar update: %v", err)
+	}
+	if messages[0].SenderAvatarLocalPath != "/tmp/alice.jpg" {
+		t.Fatalf("sender avatar = %q, want /tmp/alice.jpg", messages[0].SenderAvatarLocalPath)
+	}
+}
+
 func TestSaveTextMessageUpdatesChatNameAfterNumericFallback(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
@@ -207,6 +254,125 @@ func TestUpdateChatNameUpdatesExistingChat(t *testing.T) {
 	}
 	if changed {
 		t.Fatal("expected same chat name update to be ignored")
+	}
+}
+
+func TestLowerPriorityChatNameDoesNotOverwriteContactName(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	chatID := "917060029183@s.whatsapp.net"
+	if _, err := db.SaveTextMessage(ctx, TextMessageInput{
+		ID:             chatID + ":msg-1",
+		ChatID:         chatID,
+		ChatName:       "Saved Alice",
+		ChatNameSource: ChatNameSourceContact,
+		SenderID:       chatID,
+		Text:           "hello",
+		Timestamp:      time.Unix(100, 0),
+		Direction:      DirectionIncoming,
+		Status:         StatusDelivered,
+	}); err != nil {
+		t.Fatalf("save contact message: %v", err)
+	}
+
+	saved, err := db.SaveTextMessage(ctx, TextMessageInput{
+		ID:             chatID + ":msg-2",
+		ChatID:         chatID,
+		ChatName:       "+91 70600 29183",
+		ChatNameSource: ChatNameSourcePhone,
+		SenderID:       chatID,
+		Text:           "newer",
+		Timestamp:      time.Unix(200, 0),
+		Direction:      DirectionIncoming,
+		Status:         StatusDelivered,
+	})
+	if err != nil {
+		t.Fatalf("save phone fallback message: %v", err)
+	}
+	if saved.Chat.Name != "Saved Alice" || saved.Chat.NameSource != ChatNameSourceContact {
+		t.Fatalf("lower priority name overwrote contact: %+v", saved.Chat)
+	}
+}
+
+func TestPhoneFallbackReplacesRawChatName(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	chatID := "917060029183@s.whatsapp.net"
+	first, err := db.SaveTextMessage(ctx, TextMessageInput{
+		ID:        chatID + ":msg-1",
+		ChatID:    chatID,
+		SenderID:  chatID,
+		Text:      "hello",
+		Timestamp: time.Unix(100, 0),
+		Direction: DirectionIncoming,
+		Status:    StatusDelivered,
+	})
+	if err != nil {
+		t.Fatalf("save raw fallback message: %v", err)
+	}
+	if first.Chat.NameSource != ChatNameSourceRaw {
+		t.Fatalf("expected raw initial source, got %+v", first.Chat)
+	}
+
+	second, err := db.SaveTextMessage(ctx, TextMessageInput{
+		ID:             chatID + ":msg-2",
+		ChatID:         chatID,
+		ChatName:       "+91 70600 29183",
+		ChatNameSource: ChatNameSourcePhone,
+		SenderID:       chatID,
+		Text:           "newer",
+		Timestamp:      time.Unix(200, 0),
+		Direction:      DirectionIncoming,
+		Status:         StatusDelivered,
+	})
+	if err != nil {
+		t.Fatalf("save phone fallback message: %v", err)
+	}
+	if second.Chat.Name != "+91 70600 29183" || second.Chat.NameSource != ChatNameSourcePhone {
+		t.Fatalf("phone fallback did not replace raw name: %+v", second.Chat)
+	}
+}
+
+func TestGroupNameDoesNotRegressToRawLiveName(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	chatID := "1234567890@g.us"
+	if _, err := db.EnsureChatWithNameSource(ctx, chatID, "Family", ChatNameSourceGroup, true); err != nil {
+		t.Fatalf("ensure group chat: %v", err)
+	}
+
+	saved, err := db.SaveTextMessage(ctx, TextMessageInput{
+		ID:             chatID + ":msg-1",
+		ChatID:         chatID,
+		ChatName:       "1234567890",
+		ChatNameSource: ChatNameSourceRaw,
+		SenderID:       "917060029183@s.whatsapp.net",
+		Text:           "hello",
+		Timestamp:      time.Unix(100, 0),
+		Direction:      DirectionIncoming,
+		Status:         StatusDelivered,
+		IsGroup:        true,
+	})
+	if err != nil {
+		t.Fatalf("save group message: %v", err)
+	}
+	if saved.Chat.Name != "Family" || saved.Chat.NameSource != ChatNameSourceGroup {
+		t.Fatalf("group name regressed: %+v", saved.Chat)
 	}
 }
 

@@ -106,6 +106,38 @@ func (c *Client) refreshAvatarsBackground(ctx context.Context) {
 		}
 		c.daemon.PublishChatUpdated(toDaemonChat(updatedChat))
 	}
+
+	senders, err := c.store.ListSendersNeedingAvatar(ctx, 200)
+	if err != nil {
+		c.log.Warnf("Avatar refresh: failed to list senders: %v", err)
+		return
+	}
+	for _, sender := range senders {
+		if ctx.Err() != nil {
+			return
+		}
+		jid, err := types.ParseJID(sender.ID)
+		if err != nil || shouldSkipAvatarJID(jid) {
+			continue
+		}
+		picID, localPath, err := c.fetchAndCacheAvatar(ctx, jid, sender.AvatarPictureID)
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			if isTransientAvatarError(err) {
+				continue
+			}
+			c.log.Warnf("Avatar refresh: failed for sender %s: %v", sender.ID, err)
+			continue
+		}
+		if picID == "" {
+			continue
+		}
+		if err := c.store.UpdateSenderAvatar(ctx, sender.ID, picID, localPath); err != nil {
+			c.log.Warnf("Avatar refresh: failed to update sender DB for %s: %v", sender.ID, err)
+		}
+	}
 }
 
 func (c *Client) scheduleAvatarRefreshForChat(ctx context.Context, chat appstore.Chat, delay time.Duration) {

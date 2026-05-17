@@ -2,9 +2,12 @@ package wa
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/nyaruka/phonenumbers"
 	"google.golang.org/protobuf/proto"
 
 	waE2E "go.mau.fi/whatsmeow/proto/waE2E"
@@ -30,6 +33,7 @@ const (
 type ingestOptions struct {
 	source           ingestSource
 	chatNameOverride string
+	chatNameSource   string
 	// historyStatus is set only for sourceHistorySync; mapped from
 	// WebMessageInfo.Status. Empty string means "no override".
 	historyStatus string
@@ -77,14 +81,22 @@ func (c *Client) handleHistorySync(eventGen uint64, evt *events.HistorySync) {
 		if ctx.Err() != nil || !c.isCurrentEventGeneration(eventGen) {
 			return
 		}
-		chatJID, err := types.ParseJID(conv.GetID())
+		rawChatJID, err := types.ParseJID(conv.GetID())
 		if err != nil {
 			c.log.Warnf("Failed to parse chat JID in history sync: %v", err)
 			continue
 		}
-		chatNameOverride := historySyncChatName(conv)
+		chatJID := c.normalizeJIDForChat(ctx, rawChatJID)
+		chatNameOverride := ""
+		chatNameSource := ""
+		if chatJID.Server == types.GroupServer {
+			chatNameOverride = historySyncChatName(conv)
+			chatNameSource = appstore.ChatNameSourceGroup
+		} else {
+			chatNameOverride, chatNameSource = c.displayNameForChat(ctx, chatJID, false, "", "")
+		}
 		chatID := chatJID.String()
-		if _, err := c.store.EnsureChat(ctx, chatID, chatNameOverride, chatJID.Server == types.GroupServer); err != nil {
+		if _, err := c.store.EnsureChatWithNameSource(ctx, chatID, chatNameOverride, chatNameSource, chatJID.Server == types.GroupServer); err != nil {
 			if ctx.Err() != nil {
 				return
 			}
@@ -113,6 +125,7 @@ func (c *Client) handleHistorySync(eventGen uint64, evt *events.HistorySync) {
 			opts := ingestOptions{
 				source:           sourceHistorySync,
 				chatNameOverride: chatNameOverride,
+				chatNameSource:   chatNameSource,
 				historyStatus:    mapWebMessageStatus(webMsg),
 				forceRead:        forceRead,
 			}
@@ -165,6 +178,7 @@ func (c *Client) handleHistorySync(eventGen uint64, evt *events.HistorySync) {
 func (c *Client) handleMessage(ctx context.Context, evt *events.Message) {
 	if saved, inserted := c.ingestMessage(ctx, evt, ingestOptions{source: sourceLive}); inserted {
 		c.scheduleAvatarRefreshForChat(ctx, saved.Chat, 2*time.Second)
+		c.scheduleAvatarRefresh(ctx, 2*time.Second)
 	}
 }
 
@@ -261,26 +275,47 @@ func (c *Client) imageMessageInput(ctx context.Context, evt *events.Message, opt
 	if mimeType == "" {
 		mimeType = "image/jpeg"
 	}
+	thumbnailLocalPath := c.saveMessageThumbnail(chatID, internalMessageIDForChat(chatID, info.ID), imgMsg.GetJPEGThumbnail())
 
 	caption := imgMsg.GetCaption()
 	return appstore.MediaMessageInput{
 		TextMessageInput: appstore.TextMessageInput{
-			ID:          internalMessageIDForChat(chatID, info.ID),
-			ChatID:      chatID,
-			ChatName:    c.chatName(ctx, info, opts.chatNameOverride),
-			SenderID:    senderID(info),
-			Text:        caption,
-			Timestamp:   info.Timestamp,
-			Direction:   direction,
-			Status:      status,
-			IsGroup:     info.IsGroup,
-			CountUnread: shouldCountUnread(evt, opts),
+			ID:             internalMessageIDForChat(chatID, info.ID),
+			ChatID:         chatID,
+			ChatName:       c.chatName(ctx, chatJID, info.IsGroup, opts.chatNameOverride, opts.chatNameSource),
+			ChatNameSource: c.chatNameSource(ctx, chatJID, info.IsGroup, opts.chatNameOverride, opts.chatNameSource),
+			SenderID:       senderID(info),
+			SenderName:     c.senderName(ctx, senderJID(info)),
+			Text:           caption,
+			Timestamp:      info.Timestamp,
+			Direction:      direction,
+			Status:         status,
+			IsGroup:        info.IsGroup,
+			CountUnread:    shouldCountUnread(evt, opts),
 		},
-		MediaMimeType: mimeType,
-		MediaWidth:    int32(imgMsg.GetWidth()),
-		MediaHeight:   int32(imgMsg.GetHeight()),
-		MediaPayload:  payload,
+		MediaMimeType:           mimeType,
+		MediaThumbnailLocalPath: thumbnailLocalPath,
+		MediaWidth:              int32(imgMsg.GetWidth()),
+		MediaHeight:             int32(imgMsg.GetHeight()),
+		MediaPayload:            payload,
 	}, true
+}
+
+func (c *Client) saveMessageThumbnail(chatID, messageID string, thumbnail []byte) string {
+	if len(thumbnail) == 0 {
+		return ""
+	}
+	mediaDir := filepath.Join(c.paths.MediaCacheDir, "messages", chatID)
+	if err := os.MkdirAll(mediaDir, 0o700); err != nil {
+		c.log.Warnf("Failed to create thumbnail cache directory for message %s: %v", messageID, err)
+		return ""
+	}
+	localPath := filepath.Join(mediaDir, safeMediaFileName(messageID, ".thumb.jpg"))
+	if err := writeFileAtomic(localPath, thumbnail, 0o600); err != nil {
+		c.log.Warnf("Failed to cache thumbnail for message %s: %v", messageID, err)
+		return ""
+	}
+	return localPath
 }
 
 func (c *Client) normalizeJIDForChat(ctx context.Context, jid types.JID) types.JID {
@@ -324,16 +359,18 @@ func (c *Client) textMessageInput(ctx context.Context, evt *events.Message, opts
 	direction, status := messageDirectionAndStatus(info, opts)
 
 	return appstore.TextMessageInput{
-		ID:          internalMessageIDForChat(chatID, info.ID),
-		ChatID:      chatID,
-		ChatName:    c.chatName(ctx, info, opts.chatNameOverride),
-		SenderID:    senderID(info),
-		Text:        text,
-		Timestamp:   info.Timestamp,
-		Direction:   direction,
-		Status:      status,
-		IsGroup:     info.IsGroup,
-		CountUnread: shouldCountUnread(evt, opts),
+		ID:             internalMessageIDForChat(chatID, info.ID),
+		ChatID:         chatID,
+		ChatName:       c.chatName(ctx, chatJID, info.IsGroup, opts.chatNameOverride, opts.chatNameSource),
+		ChatNameSource: c.chatNameSource(ctx, chatJID, info.IsGroup, opts.chatNameOverride, opts.chatNameSource),
+		SenderID:       senderID(info),
+		SenderName:     c.senderName(ctx, senderJID(info)),
+		Text:           text,
+		Timestamp:      info.Timestamp,
+		Direction:      direction,
+		Status:         status,
+		IsGroup:        info.IsGroup,
+		CountUnread:    shouldCountUnread(evt, opts),
 	}, true
 }
 
@@ -402,6 +439,16 @@ func senderID(info types.MessageInfo) string {
 	return info.Chat.String()
 }
 
+func senderJID(info types.MessageInfo) types.JID {
+	if info.IsFromMe {
+		return types.JID{}
+	}
+	if !info.Sender.IsEmpty() {
+		return info.Sender
+	}
+	return info.Chat
+}
+
 func historySyncChatName(conv *waHistorySync.Conversation) string {
 	for _, name := range []string{conv.GetDisplayName(), conv.GetName()} {
 		if trimmed := strings.TrimSpace(name); trimmed != "" {
@@ -467,23 +514,30 @@ func historySyncIsComplete(syncType app.HistorySyncType, progress uint32) bool {
 	return progress >= 100
 }
 
-func (c *Client) chatName(ctx context.Context, info types.MessageInfo, override string) string {
-	if override != "" {
-		return override
+func (c *Client) chatName(ctx context.Context, chatJID types.JID, isGroup bool, override, overrideSource string) string {
+	name, _ := c.displayNameForChat(ctx, chatJID, isGroup, override, overrideSource)
+	return name
+}
+
+func (c *Client) chatNameSource(ctx context.Context, chatJID types.JID, isGroup bool, override, overrideSource string) string {
+	_, source := c.displayNameForChat(ctx, chatJID, isGroup, override, overrideSource)
+	return source
+}
+
+func (c *Client) displayNameForChat(ctx context.Context, chatJID types.JID, isGroup bool, override, overrideSource string) (string, string) {
+	if override = strings.TrimSpace(override); override != "" {
+		return override, overrideSource
 	}
-	if info.IsFromMe {
-		return ""
+	if isGroup {
+		return "", ""
 	}
-	if name := c.contactNameForJID(ctx, info.Chat); name != "" && !info.IsGroup {
-		return name
+	if name := c.contactNameForJID(ctx, chatJID); name != "" {
+		return name, appstore.ChatNameSourceContact
 	}
-	if !info.IsGroup && info.PushName != "" {
-		return info.PushName
+	if phone := formatPhoneDisplayName(chatJID); phone != "" {
+		return phone, appstore.ChatNameSourcePhone
 	}
-	if info.Chat.User != "" {
-		return info.Chat.User
-	}
-	return info.Chat.String()
+	return "", ""
 }
 
 func (c *Client) updateChatNamesFromHistorySync(ctx context.Context, evt *events.HistorySync) {
@@ -510,7 +564,10 @@ func (c *Client) updateChatNamesFromHistorySync(ctx context.Context, evt *events
 					c.log.Warnf("Failed to store contact name for %s: %v", jid, err)
 				}
 			}
-			c.updateChatName(ctx, jid.String(), name)
+			if err := c.store.UpdateSenderName(ctx, jid.String(), name); err != nil {
+				c.log.Warnf("Failed to store sender name for %s: %v", jid, err)
+			}
+			c.updateChatName(ctx, jid.String(), name, appstore.ChatNameSourceContact)
 		}
 	}
 
@@ -528,7 +585,9 @@ func (c *Client) updateChatNamesFromHistorySync(ctx context.Context, evt *events
 				c.log.Warnf("Failed to store push name for %s: %v", jid, err)
 			}
 		}
-		c.updateChatName(ctx, jid.String(), name)
+		if err := c.store.UpdateSenderName(ctx, jid.String(), name); err != nil {
+			c.log.Warnf("Failed to store sender push name for %s: %v", jid, err)
+		}
 	}
 }
 
@@ -542,11 +601,24 @@ func (c *Client) contactNameForJID(ctx context.Context, jid types.JID) string {
 	if err != nil {
 		return ""
 	}
-	return firstNonEmpty(contact.FullName, contact.FirstName, contact.BusinessName, contact.PushName)
+	return firstNonEmpty(contact.FullName, contact.FirstName)
 }
 
-func (c *Client) updateChatName(ctx context.Context, chatID, name string) {
-	chat, changed, err := c.store.UpdateChatName(ctx, chatID, name)
+func (c *Client) senderName(ctx context.Context, jid types.JID) string {
+	if jid.IsEmpty() {
+		return ""
+	}
+	if name := c.contactNameForJID(ctx, jid); name != "" {
+		return name
+	}
+	if phone := formatPhoneDisplayName(jid); phone != "" {
+		return phone
+	}
+	return jid.User
+}
+
+func (c *Client) updateChatName(ctx context.Context, chatID, name, source string) {
+	chat, changed, err := c.store.UpdateChatNameWithSource(ctx, chatID, name, source)
 	if err != nil {
 		c.log.Warnf("Failed to update chat name for %s: %v", chatID, err)
 		return
@@ -554,6 +626,26 @@ func (c *Client) updateChatName(ctx context.Context, chatID, name string) {
 	if changed {
 		c.daemon.PublishChatUpdated(toDaemonChat(chat))
 	}
+}
+
+func formatPhoneDisplayName(jid types.JID) string {
+	if jid.Server != types.DefaultUserServer || jid.User == "" {
+		return ""
+	}
+	digits := strings.Map(func(r rune) rune {
+		if r >= '0' && r <= '9' {
+			return r
+		}
+		return -1
+	}, jid.User)
+	if digits == "" {
+		return ""
+	}
+	number, err := phonenumbers.Parse("+"+digits, "ZZ")
+	if err != nil || !phonenumbers.IsValidNumber(number) {
+		return "+" + digits
+	}
+	return phonenumbers.Format(number, phonenumbers.INTERNATIONAL)
 }
 
 func firstNonEmpty(values ...string) string {
@@ -567,17 +659,20 @@ func firstNonEmpty(values ...string) string {
 
 func toDaemonMessage(message appstore.Message) app.Message {
 	return app.Message{
-		ID:             message.ID,
-		ChatID:         message.ChatID,
-		SenderID:       message.SenderID,
-		Text:           message.Text,
-		TimestampUnix:  message.TimestampUnix,
-		Direction:      message.Direction,
-		Status:         message.Status,
-		MediaMimeType:  message.MediaMimeType,
-		MediaLocalPath: message.MediaLocalPath,
-		MediaWidth:     message.MediaWidth,
-		MediaHeight:    message.MediaHeight,
+		ID:                      message.ID,
+		ChatID:                  message.ChatID,
+		SenderID:                message.SenderID,
+		SenderName:              message.SenderName,
+		SenderAvatarLocalPath:   message.SenderAvatarLocalPath,
+		Text:                    message.Text,
+		TimestampUnix:           message.TimestampUnix,
+		Direction:               message.Direction,
+		Status:                  message.Status,
+		MediaMimeType:           message.MediaMimeType,
+		MediaLocalPath:          message.MediaLocalPath,
+		MediaThumbnailLocalPath: message.MediaThumbnailLocalPath,
+		MediaWidth:              message.MediaWidth,
+		MediaHeight:             message.MediaHeight,
 	}
 }
 

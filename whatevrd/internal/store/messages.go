@@ -20,31 +20,35 @@ const (
 )
 
 type Message struct {
-	ID              string
-	ChatID          string
-	SenderID        string
-	Text            string
-	TimestampUnix   int64
-	Direction       string
-	IsRead          bool
-	Status          string
-	MediaMimeType   string
-	MediaLocalPath  string
-	MediaWidth      int32
-	MediaHeight     int32
-	MediaPayload    []byte
-	SendAttempts    int32
-	LastSendError   string
-	NextSendAttempt int64
+	ID                      string
+	ChatID                  string
+	SenderID                string
+	SenderName              string
+	SenderAvatarLocalPath   string
+	Text                    string
+	TimestampUnix           int64
+	Direction               string
+	IsRead                  bool
+	Status                  string
+	MediaMimeType           string
+	MediaLocalPath          string
+	MediaThumbnailLocalPath string
+	MediaWidth              int32
+	MediaHeight             int32
+	MediaPayload            []byte
+	SendAttempts            int32
+	LastSendError           string
+	NextSendAttempt         int64
 }
 
 type MediaMessageInput struct {
 	TextMessageInput
-	MediaMimeType  string
-	MediaLocalPath string
-	MediaWidth     int32
-	MediaHeight    int32
-	MediaPayload   []byte
+	MediaMimeType           string
+	MediaLocalPath          string
+	MediaThumbnailLocalPath string
+	MediaWidth              int32
+	MediaHeight             int32
+	MediaPayload            []byte
 }
 
 type ReadCandidate struct {
@@ -56,16 +60,18 @@ type ReadCandidate struct {
 }
 
 type TextMessageInput struct {
-	ID          string
-	ChatID      string
-	ChatName    string
-	SenderID    string
-	Text        string
-	Timestamp   time.Time
-	Direction   string
-	Status      string
-	IsGroup     bool
-	CountUnread bool
+	ID             string
+	ChatID         string
+	ChatName       string
+	ChatNameSource string
+	SenderID       string
+	SenderName     string
+	Text           string
+	Timestamp      time.Time
+	Direction      string
+	Status         string
+	IsGroup        bool
+	CountUnread    bool
 }
 
 type SavedTextMessage struct {
@@ -84,6 +90,7 @@ func (db *DB) SaveTextMessage(ctx context.Context, input TextMessageInput) (Save
 	if input.SenderID == "" {
 		input.SenderID = input.ChatID
 	}
+	input.SenderName = strings.TrimSpace(input.SenderName)
 	if input.Timestamp.IsZero() {
 		input.Timestamp = time.Now()
 	}
@@ -101,6 +108,9 @@ func (db *DB) SaveTextMessage(ctx context.Context, input TextMessageInput) (Save
 	defer tx.Rollback()
 
 	if err := upsertChat(ctx, tx, input); err != nil {
+		return SavedTextMessage{}, err
+	}
+	if err := upsertSender(ctx, tx, input.SenderID, input.SenderName); err != nil {
 		return SavedTextMessage{}, err
 	}
 
@@ -124,10 +134,12 @@ func (db *DB) SaveTextMessage(ctx context.Context, input TextMessageInput) (Save
 		if input.CountUnread {
 			unreadIncrement = 1
 		}
+		nameSource := normalizeChatNameSource(input.ChatNameSource)
 
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE chats
-			SET name = CASE WHEN ? != '' THEN ? ELSE name END,
+			SET name = CASE WHEN ? != '' AND chat_name_source_priority(?) >= chat_name_source_priority(name_source) THEN ? ELSE name END,
+				name_source = CASE WHEN ? != '' AND chat_name_source_priority(?) >= chat_name_source_priority(name_source) THEN ? ELSE name_source END,
 				last_message = CASE WHEN ? >= last_message_time THEN ? ELSE last_message END,
 				last_message_direction = CASE WHEN ? >= last_message_time THEN ? ELSE last_message_direction END,
 				last_message_status = CASE WHEN ? >= last_message_time THEN ? ELSE last_message_status END,
@@ -135,7 +147,7 @@ func (db *DB) SaveTextMessage(ctx context.Context, input TextMessageInput) (Save
 				unread_count = unread_count + ?,
 				is_group = ?
 			WHERE id = ?
-		`, input.ChatName, input.ChatName, input.Timestamp.Unix(), input.Text, input.Timestamp.Unix(), input.Direction, input.Timestamp.Unix(), input.Status, input.Timestamp.Unix(), input.Timestamp.Unix(), unreadIncrement, boolToInt(input.IsGroup), input.ChatID); err != nil {
+		`, input.ChatName, nameSource, input.ChatName, input.ChatName, nameSource, nameSource, input.Timestamp.Unix(), input.Text, input.Timestamp.Unix(), input.Direction, input.Timestamp.Unix(), input.Status, input.Timestamp.Unix(), input.Timestamp.Unix(), unreadIncrement, boolToInt(input.IsGroup), input.ChatID); err != nil {
 			return SavedTextMessage{}, err
 		}
 	}
@@ -159,17 +171,34 @@ func (db *DB) SaveTextMessage(ctx context.Context, input TextMessageInput) (Save
 
 func upsertChat(ctx context.Context, tx *sql.Tx, input TextMessageInput) error {
 	insertName := input.ChatName
+	nameSource := normalizeChatNameSource(input.ChatNameSource)
 	if insertName == "" {
 		insertName = input.ChatID
+		nameSource = ChatNameSourceRaw
 	}
 
 	_, err := tx.ExecContext(ctx, `
-		INSERT INTO chats (id, name, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group)
-		VALUES (?, ?, '', 0, '', '', 0, ?)
+		INSERT INTO chats (id, name, name_source, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group)
+		VALUES (?, ?, ?, '', 0, '', '', 0, ?)
 		ON CONFLICT(id) DO UPDATE SET
-			name = CASE WHEN ? != '' THEN ? ELSE chats.name END,
+			name = CASE WHEN ? != '' AND chat_name_source_priority(?) >= chat_name_source_priority(chats.name_source) THEN ? ELSE chats.name END,
+			name_source = CASE WHEN ? != '' AND chat_name_source_priority(?) >= chat_name_source_priority(chats.name_source) THEN ? ELSE chats.name_source END,
 			is_group = excluded.is_group
-	`, input.ChatID, insertName, boolToInt(input.IsGroup), input.ChatName, input.ChatName)
+	`, input.ChatID, insertName, nameSource, boolToInt(input.IsGroup), input.ChatName, nameSource, input.ChatName, input.ChatName, nameSource, nameSource)
+	return err
+}
+
+func upsertSender(ctx context.Context, tx *sql.Tx, senderID, senderName string) error {
+	if senderID == "" || senderID == "me" {
+		return nil
+	}
+	senderName = strings.TrimSpace(senderName)
+	_, err := tx.ExecContext(ctx, `
+		INSERT INTO senders (id, name)
+		VALUES (?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			name = CASE WHEN excluded.name != '' THEN excluded.name ELSE senders.name END
+	`, senderID, senderName)
 	return err
 }
 
@@ -193,6 +222,7 @@ func (db *DB) SaveMediaMessage(ctx context.Context, input MediaMessageInput) (Sa
 	if input.SenderID == "" {
 		input.SenderID = input.ChatID
 	}
+	input.SenderName = strings.TrimSpace(input.SenderName)
 	if input.Timestamp.IsZero() {
 		input.Timestamp = time.Now()
 	}
@@ -229,13 +259,16 @@ func (db *DB) SaveMediaMessage(ctx context.Context, input MediaMessageInput) (Sa
 	if err := upsertChat(ctx, tx, input.TextMessageInput); err != nil {
 		return SavedTextMessage{}, err
 	}
+	if err := upsertSender(ctx, tx, input.SenderID, input.SenderName); err != nil {
+		return SavedTextMessage{}, err
+	}
 
 	result, err := tx.ExecContext(ctx, `
-		INSERT INTO messages (id, chat_id, sender_id, text, timestamp, direction, is_read, status, media_mime_type, media_local_path, media_width, media_height, media_payload)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO messages (id, chat_id, sender_id, text, timestamp, direction, is_read, status, media_mime_type, media_local_path, media_thumbnail_local_path, media_width, media_height, media_payload)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO NOTHING
 	`, input.ID, input.ChatID, input.SenderID, input.Text, input.Timestamp.Unix(), input.Direction,
-		boolToInt(!input.CountUnread), input.Status, input.MediaMimeType, input.MediaLocalPath, input.MediaWidth, input.MediaHeight, input.MediaPayload)
+		boolToInt(!input.CountUnread), input.Status, input.MediaMimeType, input.MediaLocalPath, input.MediaThumbnailLocalPath, input.MediaWidth, input.MediaHeight, input.MediaPayload)
 	if err != nil {
 		return SavedTextMessage{}, err
 	}
@@ -251,10 +284,12 @@ func (db *DB) SaveMediaMessage(ctx context.Context, input MediaMessageInput) (Sa
 		if input.CountUnread {
 			unreadIncrement = 1
 		}
+		nameSource := normalizeChatNameSource(input.ChatNameSource)
 
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE chats
-			SET name = CASE WHEN ? != '' THEN ? ELSE name END,
+			SET name = CASE WHEN ? != '' AND chat_name_source_priority(?) >= chat_name_source_priority(name_source) THEN ? ELSE name END,
+				name_source = CASE WHEN ? != '' AND chat_name_source_priority(?) >= chat_name_source_priority(name_source) THEN ? ELSE name_source END,
 				last_message = CASE WHEN ? >= last_message_time THEN ? ELSE last_message END,
 				last_message_direction = CASE WHEN ? >= last_message_time THEN ? ELSE last_message_direction END,
 				last_message_status = CASE WHEN ? >= last_message_time THEN ? ELSE last_message_status END,
@@ -262,7 +297,7 @@ func (db *DB) SaveMediaMessage(ctx context.Context, input MediaMessageInput) (Sa
 				unread_count = unread_count + ?,
 				is_group = ?
 			WHERE id = ?
-		`, input.ChatName, input.ChatName, input.Timestamp.Unix(), lastMessage, input.Timestamp.Unix(), input.Direction, input.Timestamp.Unix(), input.Status, input.Timestamp.Unix(), input.Timestamp.Unix(), unreadIncrement, boolToInt(input.IsGroup), input.ChatID); err != nil {
+		`, input.ChatName, nameSource, input.ChatName, input.ChatName, nameSource, nameSource, input.Timestamp.Unix(), lastMessage, input.Timestamp.Unix(), input.Direction, input.Timestamp.Unix(), input.Status, input.Timestamp.Unix(), input.Timestamp.Unix(), unreadIncrement, boolToInt(input.IsGroup), input.ChatID); err != nil {
 			return SavedTextMessage{}, err
 		}
 	}
@@ -290,10 +325,15 @@ func (db *DB) ListMessages(ctx context.Context, chatID string, limit int, before
 	}
 
 	query := `
-		SELECT id, chat_id, sender_id, text, timestamp, direction, is_read, status, media_mime_type, media_local_path, media_width, media_height, media_payload,
-		       send_attempts, last_send_error, next_send_attempt
-		FROM messages
-		WHERE chat_id = ?
+		SELECT m.id, m.chat_id, m.sender_id,
+		       COALESCE(NULLIF(s.name, ''), NULLIF(c.name, ''), ''),
+		       COALESCE(NULLIF(s.avatar_local_path, ''), NULLIF(c.avatar_local_path, ''), ''),
+		       m.text, m.timestamp, m.direction, m.is_read, m.status, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_payload,
+		       m.send_attempts, m.last_send_error, m.next_send_attempt
+		FROM messages m
+		LEFT JOIN senders s ON s.id = m.sender_id
+		LEFT JOIN chats c ON c.id = m.sender_id
+		WHERE m.chat_id = ?
 	`
 	args := []any{chatID}
 
@@ -304,13 +344,13 @@ func (db *DB) ListMessages(ctx context.Context, chatID string, limit int, before
 		}
 
 		query += `
-			AND (timestamp < ? OR (timestamp = ? AND id < ?))
+			AND (m.timestamp < ? OR (m.timestamp = ? AND m.id < ?))
 		`
 		args = append(args, beforeMessage.TimestampUnix, beforeMessage.TimestampUnix, beforeMessage.ID)
 	}
 
 	query += `
-		ORDER BY timestamp DESC, id DESC
+		ORDER BY m.timestamp DESC, m.id DESC
 		LIMIT ?
 	`
 	args = append(args, limit)
@@ -328,6 +368,8 @@ func (db *DB) ListMessages(ctx context.Context, chatID string, limit int, before
 			&message.ID,
 			&message.ChatID,
 			&message.SenderID,
+			&message.SenderName,
+			&message.SenderAvatarLocalPath,
 			&message.Text,
 			&message.TimestampUnix,
 			&message.Direction,
@@ -335,6 +377,7 @@ func (db *DB) ListMessages(ctx context.Context, chatID string, limit int, before
 			&message.Status,
 			&message.MediaMimeType,
 			&message.MediaLocalPath,
+			&message.MediaThumbnailLocalPath,
 			&message.MediaWidth,
 			&message.MediaHeight,
 			&message.MediaPayload,
@@ -367,7 +410,7 @@ func (db *DB) ListPendingOutgoingMessages(ctx context.Context, limit int, now ti
 	}
 
 	rows, err := db.conn.QueryContext(ctx, `
-		SELECT id, chat_id, sender_id, text, timestamp, direction, is_read, status, media_mime_type, media_local_path, media_width, media_height, media_payload,
+		SELECT id, chat_id, sender_id, text, timestamp, direction, is_read, status, media_mime_type, media_local_path, media_thumbnail_local_path, media_width, media_height, media_payload,
 		       send_attempts, last_send_error, next_send_attempt
 		FROM messages
 		WHERE direction = ? AND status = ? AND next_send_attempt <= ?
@@ -393,6 +436,7 @@ func (db *DB) ListPendingOutgoingMessages(ctx context.Context, limit int, now ti
 			&message.Status,
 			&message.MediaMimeType,
 			&message.MediaLocalPath,
+			&message.MediaThumbnailLocalPath,
 			&message.MediaWidth,
 			&message.MediaHeight,
 			&message.MediaPayload,
@@ -569,12 +613,13 @@ func getChatRow(ctx context.Context, queryer interface {
 	var chat Chat
 	var isGroup int
 	err := queryer.QueryRowContext(ctx, `
-		SELECT id, name, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group, avatar_local_path, avatar_picture_id
+		SELECT id, name, name_source, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group, avatar_local_path, avatar_picture_id
 		FROM chats
 		WHERE id = ?
 	`, id).Scan(
 		&chat.ID,
 		&chat.Name,
+		&chat.NameSource,
 		&chat.LastMessage,
 		&chat.LastMessageTime,
 		&chat.LastMessageDirection,
@@ -592,14 +637,21 @@ func getMessageRow(ctx context.Context, queryer interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }, id string, message *Message) error {
 	return queryer.QueryRowContext(ctx, `
-		SELECT id, chat_id, sender_id, text, timestamp, direction, is_read, status, media_mime_type, media_local_path, media_width, media_height, media_payload,
-		       send_attempts, last_send_error, next_send_attempt
-		FROM messages
-		WHERE id = ?
+		SELECT m.id, m.chat_id, m.sender_id,
+		       COALESCE(NULLIF(s.name, ''), NULLIF(c.name, ''), ''),
+		       COALESCE(NULLIF(s.avatar_local_path, ''), NULLIF(c.avatar_local_path, ''), ''),
+		       m.text, m.timestamp, m.direction, m.is_read, m.status, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_payload,
+		       m.send_attempts, m.last_send_error, m.next_send_attempt
+		FROM messages m
+		LEFT JOIN senders s ON s.id = m.sender_id
+		LEFT JOIN chats c ON c.id = m.sender_id
+		WHERE m.id = ?
 	`, id).Scan(
 		&message.ID,
 		&message.ChatID,
 		&message.SenderID,
+		&message.SenderName,
+		&message.SenderAvatarLocalPath,
 		&message.Text,
 		&message.TimestampUnix,
 		&message.Direction,
@@ -607,6 +659,7 @@ func getMessageRow(ctx context.Context, queryer interface {
 		&message.Status,
 		&message.MediaMimeType,
 		&message.MediaLocalPath,
+		&message.MediaThumbnailLocalPath,
 		&message.MediaWidth,
 		&message.MediaHeight,
 		&message.MediaPayload,
@@ -630,6 +683,7 @@ func scanChat(scanner interface{ Scan(...any) error }) (Chat, error) {
 	err := scanner.Scan(
 		&chat.ID,
 		&chat.Name,
+		&chat.NameSource,
 		&chat.LastMessage,
 		&chat.LastMessageTime,
 		&chat.LastMessageDirection,

@@ -3,16 +3,27 @@ package store
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"fmt"
 	"path/filepath"
 
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
 )
 
 const schemaVersion = 2
 
 type DB struct {
 	conn *sql.DB
+}
+
+func init() {
+	sqlite.MustRegisterScalarFunction("chat_name_source_priority", 1, func(ctx *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+		if len(args) == 0 {
+			return int64(chatNameSourcePriority("")), nil
+		}
+		value, _ := args[0].(string)
+		return int64(chatNameSourcePriority(value)), nil
+	})
 }
 
 func Open(ctx context.Context, path string) (*DB, error) {
@@ -73,6 +84,7 @@ func (db *DB) migrate(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS chats (
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL,
+			name_source TEXT NOT NULL DEFAULT '',
 			last_message TEXT NOT NULL DEFAULT '',
 			last_message_time INTEGER NOT NULL DEFAULT 0,
 			last_message_direction TEXT NOT NULL DEFAULT '',
@@ -93,6 +105,12 @@ func (db *DB) migrate(ctx context.Context) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_chat_timestamp ON messages(chat_id, timestamp DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_chats_last_message_time ON chats(last_message_time DESC)`,
+		`CREATE TABLE IF NOT EXISTS senders (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL DEFAULT '',
+			avatar_local_path TEXT NOT NULL DEFAULT '',
+			avatar_picture_id TEXT NOT NULL DEFAULT ''
+		)`,
 	}
 
 	for _, statement := range statements {
@@ -119,6 +137,10 @@ func (db *DB) migrate(ctx context.Context) error {
 		return err
 	}
 
+	if err := db.ensureChatNameSourceColumn(ctx); err != nil {
+		return err
+	}
+
 	if err := db.ensureMediaColumns(ctx); err != nil {
 		return err
 	}
@@ -128,6 +150,47 @@ func (db *DB) migrate(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (db *DB) ensureChatNameSourceColumn(ctx context.Context) error {
+	rows, err := db.conn.QueryContext(ctx, `PRAGMA table_info(chats)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	hasNameSource := false
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull, pk int
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			return err
+		}
+		if name == "name_source" {
+			hasNameSource = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if hasNameSource {
+		return nil
+	}
+
+	if _, err := db.conn.ExecContext(ctx, `ALTER TABLE chats ADD COLUMN name_source TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("add chats.name_source: %w", err)
+	}
+	_, err = db.conn.ExecContext(ctx, `
+		UPDATE chats
+		SET name_source = CASE
+			WHEN name = id OR name LIKE '%@s.whatsapp.net' OR name LIKE '%@lid' THEN ?
+			WHEN is_group = 1 THEN ?
+			ELSE ''
+		END
+	`, ChatNameSourceRaw, ChatNameSourceGroup)
+	return err
 }
 
 func (db *DB) userVersion(ctx context.Context) (int, error) {
@@ -287,6 +350,7 @@ func (db *DB) ensureMediaColumns(ctx context.Context) error {
 	}{
 		{"media_mime_type", `ALTER TABLE messages ADD COLUMN media_mime_type TEXT NOT NULL DEFAULT ''`},
 		{"media_local_path", `ALTER TABLE messages ADD COLUMN media_local_path TEXT NOT NULL DEFAULT ''`},
+		{"media_thumbnail_local_path", `ALTER TABLE messages ADD COLUMN media_thumbnail_local_path TEXT NOT NULL DEFAULT ''`},
 		{"media_width", `ALTER TABLE messages ADD COLUMN media_width INTEGER NOT NULL DEFAULT 0`},
 		{"media_height", `ALTER TABLE messages ADD COLUMN media_height INTEGER NOT NULL DEFAULT 0`},
 		{"media_payload", `ALTER TABLE messages ADD COLUMN media_payload BLOB NOT NULL DEFAULT x''`},
