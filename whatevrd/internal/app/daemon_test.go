@@ -48,6 +48,23 @@ func TestPublishChatPresencePausedClearsImmediately(t *testing.T) {
 	assertChatPresenceEvent(t, nextDaemonEvent(t, events), "chat-1", "sender-1", false)
 }
 
+func TestHasActiveHistorySyncTracksIncompleteProgress(t *testing.T) {
+	d := NewDaemon(Paths{})
+	if d.HasActiveHistorySync() {
+		t.Fatal("new daemon has active history sync")
+	}
+
+	d.PublishHistorySyncProgress(HistorySyncEvent{SyncType: HistorySyncTypeRecent, ProgressPercent: 43})
+	if !d.HasActiveHistorySync() {
+		t.Fatal("incomplete history sync was not marked active")
+	}
+
+	d.PublishHistorySyncProgress(HistorySyncEvent{SyncType: HistorySyncTypeRecent, ProgressPercent: 100, IsComplete: true})
+	if d.HasActiveHistorySync() {
+		t.Fatal("complete history sync was still marked active")
+	}
+}
+
 func withComposingPresenceTTL(t *testing.T, ttl time.Duration) {
 	t.Helper()
 	previous := composingPresenceTTL

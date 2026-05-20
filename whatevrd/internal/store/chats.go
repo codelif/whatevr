@@ -18,7 +18,15 @@ type Chat struct {
 	IsGroup              bool
 	AvatarLocalPath      string
 	AvatarPictureID      string
+	AvatarStatus         string
+	AvatarCheckedAt      int64
 }
+
+const (
+	AvatarStatusAvailable    = ""
+	AvatarStatusNotSet       = "not_set"
+	AvatarStatusUnauthorized = "unauthorized"
+)
 
 const (
 	ChatNameSourceRaw      = "raw"
@@ -63,7 +71,7 @@ func (db *DB) ListChats(ctx context.Context, limit, offset int) ([]Chat, error) 
 	}
 
 	rows, err := db.conn.QueryContext(ctx, `
-		SELECT id, name, name_source, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group, avatar_local_path, avatar_picture_id
+		SELECT id, name, name_source, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group, avatar_local_path, avatar_picture_id, avatar_status, avatar_checked_at
 		FROM chats
 		ORDER BY last_message_time DESC, id ASC
 		LIMIT ? OFFSET ?
@@ -135,6 +143,7 @@ func (db *DB) ClearSessionData(ctx context.Context) error {
 	defer tx.Rollback()
 
 	for _, statement := range []string{
+		`DELETE FROM history_sync_chunks`,
 		`DELETE FROM messages`,
 		`DELETE FROM chats`,
 		`DELETE FROM app_state`,
@@ -270,8 +279,22 @@ func (db *DB) ListLIDChats(ctx context.Context) ([]string, error) {
 
 func (db *DB) UpdateChatAvatar(ctx context.Context, chatID, picID, localPath string) error {
 	_, err := db.conn.ExecContext(ctx, `
-		UPDATE chats SET avatar_picture_id = ?, avatar_local_path = ? WHERE id = ?
+		UPDATE chats SET avatar_picture_id = ?, avatar_local_path = ?, avatar_status = '', avatar_checked_at = unixepoch() WHERE id = ?
 	`, picID, localPath, chatID)
+	return err
+}
+
+func (db *DB) UpdateChatAvatarStatus(ctx context.Context, chatID, status string) error {
+	_, err := db.conn.ExecContext(ctx, `
+		UPDATE chats SET avatar_status = ?, avatar_checked_at = unixepoch() WHERE id = ?
+	`, status, chatID)
+	return err
+}
+
+func (db *DB) ClearChatAvatar(ctx context.Context, chatID, status string) error {
+	_, err := db.conn.ExecContext(ctx, `
+		UPDATE chats SET avatar_picture_id = '', avatar_local_path = '', avatar_status = ?, avatar_checked_at = unixepoch() WHERE id = ?
+	`, status, chatID)
 	return err
 }
 
@@ -280,6 +303,8 @@ type SenderProfile struct {
 	Name            string
 	AvatarLocalPath string
 	AvatarPictureID string
+	AvatarStatus    string
+	AvatarCheckedAt int64
 }
 
 func (db *DB) ListSendersNeedingAvatar(ctx context.Context, limit int) ([]SenderProfile, error) {
@@ -287,9 +312,10 @@ func (db *DB) ListSendersNeedingAvatar(ctx context.Context, limit int) ([]Sender
 		limit = 200
 	}
 	rows, err := db.conn.QueryContext(ctx, `
-		SELECT id, name, avatar_local_path, avatar_picture_id
+		SELECT id, name, avatar_local_path, avatar_picture_id, avatar_status, avatar_checked_at
 		FROM senders
 		WHERE id != 'me' AND (avatar_picture_id = '' OR avatar_local_path = '')
+		  AND (avatar_status = '' OR avatar_checked_at <= unixepoch() - 604800)
 		ORDER BY id ASC
 		LIMIT ?
 	`, limit)
@@ -301,7 +327,78 @@ func (db *DB) ListSendersNeedingAvatar(ctx context.Context, limit int) ([]Sender
 	senders := make([]SenderProfile, 0, limit)
 	for rows.Next() {
 		var sender SenderProfile
-		if err := rows.Scan(&sender.ID, &sender.Name, &sender.AvatarLocalPath, &sender.AvatarPictureID); err != nil {
+		if err := rows.Scan(&sender.ID, &sender.Name, &sender.AvatarLocalPath, &sender.AvatarPictureID, &sender.AvatarStatus, &sender.AvatarCheckedAt); err != nil {
+			return nil, err
+		}
+		senders = append(senders, sender)
+	}
+	return senders, rows.Err()
+}
+
+func (db *DB) ListSendersForAvatarRefresh(ctx context.Context, limit int) ([]SenderProfile, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	rows, err := db.conn.QueryContext(ctx, `
+		SELECT id, name, avatar_local_path, avatar_picture_id, avatar_status, avatar_checked_at
+		FROM senders
+		WHERE id != 'me'
+		  AND (avatar_status = '' OR avatar_checked_at <= unixepoch() - 604800)
+		ORDER BY avatar_checked_at ASC, id ASC
+		LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	senders := make([]SenderProfile, 0, limit)
+	for rows.Next() {
+		var sender SenderProfile
+		if err := rows.Scan(&sender.ID, &sender.Name, &sender.AvatarLocalPath, &sender.AvatarPictureID, &sender.AvatarStatus, &sender.AvatarCheckedAt); err != nil {
+			return nil, err
+		}
+		senders = append(senders, sender)
+	}
+	return senders, rows.Err()
+}
+
+func (db *DB) GetSenderProfile(ctx context.Context, senderID string) (SenderProfile, error) {
+	var sender SenderProfile
+	err := db.conn.QueryRowContext(ctx, `
+		SELECT id, name, avatar_local_path, avatar_picture_id, avatar_status, avatar_checked_at
+		FROM senders
+		WHERE id = ?
+	`, senderID).Scan(&sender.ID, &sender.Name, &sender.AvatarLocalPath, &sender.AvatarPictureID, &sender.AvatarStatus, &sender.AvatarCheckedAt)
+	return sender, err
+}
+
+func (db *DB) ListSenderProfilesByChatID(ctx context.Context, chatID string, limit int) ([]SenderProfile, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := db.conn.QueryContext(ctx, `
+		SELECT s.id, s.name, s.avatar_local_path, s.avatar_picture_id, s.avatar_status, s.avatar_checked_at
+		FROM senders s
+		JOIN (
+			SELECT sender_id, MAX(timestamp) AS last_message_time
+			FROM messages
+			WHERE chat_id = ? AND sender_id != 'me'
+			GROUP BY sender_id
+			ORDER BY last_message_time DESC
+			LIMIT ?
+		) recent ON recent.sender_id = s.id
+		ORDER BY recent.last_message_time DESC, s.id ASC
+	`, chatID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	senders := make([]SenderProfile, 0, limit)
+	for rows.Next() {
+		var sender SenderProfile
+		if err := rows.Scan(&sender.ID, &sender.Name, &sender.AvatarLocalPath, &sender.AvatarPictureID, &sender.AvatarStatus, &sender.AvatarCheckedAt); err != nil {
 			return nil, err
 		}
 		senders = append(senders, sender)
@@ -311,8 +408,22 @@ func (db *DB) ListSendersNeedingAvatar(ctx context.Context, limit int) ([]Sender
 
 func (db *DB) UpdateSenderAvatar(ctx context.Context, senderID, picID, localPath string) error {
 	_, err := db.conn.ExecContext(ctx, `
-		UPDATE senders SET avatar_picture_id = ?, avatar_local_path = ? WHERE id = ?
+		UPDATE senders SET avatar_picture_id = ?, avatar_local_path = ?, avatar_status = '', avatar_checked_at = unixepoch() WHERE id = ?
 	`, picID, localPath, senderID)
+	return err
+}
+
+func (db *DB) UpdateSenderAvatarStatus(ctx context.Context, senderID, status string) error {
+	_, err := db.conn.ExecContext(ctx, `
+		UPDATE senders SET avatar_status = ?, avatar_checked_at = unixepoch() WHERE id = ?
+	`, status, senderID)
+	return err
+}
+
+func (db *DB) ClearSenderAvatar(ctx context.Context, senderID, status string) error {
+	_, err := db.conn.ExecContext(ctx, `
+		UPDATE senders SET avatar_picture_id = '', avatar_local_path = '', avatar_status = ?, avatar_checked_at = unixepoch() WHERE id = ?
+	`, status, senderID)
 	return err
 }
 

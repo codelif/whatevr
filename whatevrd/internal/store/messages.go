@@ -543,6 +543,26 @@ func (db *DB) UpdateMessageMediaLocalPath(ctx context.Context, id, localPath str
 	return message, nil
 }
 
+func (db *DB) ListChatIDsBySenderID(ctx context.Context, senderID string) ([]string, error) {
+	rows, err := db.conn.QueryContext(ctx, `
+		SELECT DISTINCT chat_id FROM messages WHERE sender_id = ?
+	`, senderID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var chatIDs []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		chatIDs = append(chatIDs, id)
+	}
+	return chatIDs, rows.Err()
+}
+
 func (db *DB) ReadCandidatesForChat(ctx context.Context, chatID string) ([]ReadCandidate, error) {
 	rows, err := db.conn.QueryContext(ctx, `
 		SELECT id, chat_id, sender_id, timestamp
@@ -613,7 +633,7 @@ func getChatRow(ctx context.Context, queryer interface {
 	var chat Chat
 	var isGroup int
 	err := queryer.QueryRowContext(ctx, `
-		SELECT id, name, name_source, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group, avatar_local_path, avatar_picture_id
+		SELECT id, name, name_source, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group, avatar_local_path, avatar_picture_id, avatar_status, avatar_checked_at
 		FROM chats
 		WHERE id = ?
 	`, id).Scan(
@@ -628,6 +648,8 @@ func getChatRow(ctx context.Context, queryer interface {
 		&isGroup,
 		&chat.AvatarLocalPath,
 		&chat.AvatarPictureID,
+		&chat.AvatarStatus,
+		&chat.AvatarCheckedAt,
 	)
 	chat.IsGroup = isGroup != 0
 	return chat, err
@@ -692,6 +714,8 @@ func scanChat(scanner interface{ Scan(...any) error }) (Chat, error) {
 		&isGroup,
 		&chat.AvatarLocalPath,
 		&chat.AvatarPictureID,
+		&chat.AvatarStatus,
+		&chat.AvatarCheckedAt,
 	)
 	chat.IsGroup = isGroup != 0
 	return chat, err

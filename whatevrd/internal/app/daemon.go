@@ -352,6 +352,12 @@ func (d *Daemon) PublishHistorySyncProgress(evt HistorySyncEvent) {
 	})
 }
 
+func (d *Daemon) HasActiveHistorySync() bool {
+	d.subMu.Lock()
+	defer d.subMu.Unlock()
+	return d.latestHistorySync != nil
+}
+
 func (d *Daemon) PublishHistoryBackfilled(chatID string, messagesAdded uint32) {
 	d.broadcastDaemonEvent(DaemonEvent{
 		Kind: DaemonEventHistoryBackfilled,
