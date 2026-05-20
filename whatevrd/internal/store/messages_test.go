@@ -170,6 +170,56 @@ func TestListMessagesIncludesSenderProfile(t *testing.T) {
 	}
 }
 
+func TestListSenderProfilesByChatIDOrdersRecentGroupSenders(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	chatID := "1234567890@g.us"
+	oldSenderID := "111@s.whatsapp.net"
+	recentSenderID := "222@s.whatsapp.net"
+	for _, input := range []TextMessageInput{
+		{
+			ID:        chatID + ":old",
+			ChatID:    chatID,
+			SenderID:  oldSenderID,
+			Text:      "old",
+			Timestamp: time.Unix(100, 0),
+			Direction: DirectionIncoming,
+			Status:    StatusDelivered,
+			IsGroup:   true,
+		},
+		{
+			ID:        chatID + ":recent",
+			ChatID:    chatID,
+			SenderID:  recentSenderID,
+			Text:      "recent",
+			Timestamp: time.Unix(200, 0),
+			Direction: DirectionIncoming,
+			Status:    StatusDelivered,
+			IsGroup:   true,
+		},
+	} {
+		if _, err := db.SaveTextMessage(ctx, input); err != nil {
+			t.Fatalf("save message: %v", err)
+		}
+	}
+
+	senders, err := db.ListSenderProfilesByChatID(ctx, chatID, 10)
+	if err != nil {
+		t.Fatalf("list sender profiles: %v", err)
+	}
+	if len(senders) != 2 {
+		t.Fatalf("expected 2 senders, got %d", len(senders))
+	}
+	if senders[0].ID != recentSenderID || senders[1].ID != oldSenderID {
+		t.Fatalf("sender order = [%s %s], want [%s %s]", senders[0].ID, senders[1].ID, recentSenderID, oldSenderID)
+	}
+}
+
 func TestSaveTextMessageUpdatesChatNameAfterNumericFallback(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
@@ -531,6 +581,9 @@ func TestClearSessionDataDeletesChatsMessagesAndAppState(t *testing.T) {
 	if _, err := db.conn.ExecContext(ctx, `INSERT INTO app_state (key, value) VALUES ('k', 'v')`); err != nil {
 		t.Fatalf("insert app state: %v", err)
 	}
+	if _, err := db.SaveHistorySyncChunk(ctx, HistorySyncChunk{ID: "hist-1", SyncType: 3}); err != nil {
+		t.Fatalf("insert history sync chunk: %v", err)
+	}
 
 	if err := db.ClearSessionData(ctx); err != nil {
 		t.Fatalf("clear session data: %v", err)
@@ -553,6 +606,82 @@ func TestClearSessionDataDeletesChatsMessagesAndAppState(t *testing.T) {
 	}
 	if stateCount != 0 {
 		t.Fatalf("expected app_state to be empty, got %d rows", stateCount)
+	}
+	var historySyncCount int
+	if err := db.conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM history_sync_chunks`).Scan(&historySyncCount); err != nil {
+		t.Fatalf("count history sync chunks: %v", err)
+	}
+	if historySyncCount != 0 {
+		t.Fatalf("expected history_sync_chunks to be empty, got %d rows", historySyncCount)
+	}
+}
+
+func TestHistorySyncChunksAreRecoverableUntilAcked(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	inserted, err := db.SaveHistorySyncChunk(ctx, HistorySyncChunk{
+		ID:            "hist-1",
+		SyncType:      3,
+		ChunkOrder:    2,
+		Progress:      50,
+		FileLength:    253336,
+		DirectPath:    "/history",
+		MediaKey:      []byte{1, 2},
+		FileSHA256:    []byte{3, 4},
+		FileEncSHA256: []byte{5, 6},
+		EncHandle:     "enc",
+	})
+	if err != nil {
+		t.Fatalf("save chunk: %v", err)
+	}
+	if !inserted {
+		t.Fatal("expected first chunk save to insert")
+	}
+
+	inserted, err = db.SaveHistorySyncChunk(ctx, HistorySyncChunk{ID: "hist-1", SyncType: 3})
+	if err != nil {
+		t.Fatalf("save duplicate chunk: %v", err)
+	}
+	if inserted {
+		t.Fatal("expected duplicate chunk save to be ignored")
+	}
+
+	if err := db.MarkHistorySyncChunkProcessing(ctx, "hist-1"); err != nil {
+		t.Fatalf("mark processing: %v", err)
+	}
+	chunks, err := db.ListRecoverableHistorySyncChunks(ctx, 10)
+	if err != nil {
+		t.Fatalf("list recoverable chunks: %v", err)
+	}
+	if len(chunks) != 1 || chunks[0].ID != "hist-1" || chunks[0].Status != HistorySyncStatusProcessing || chunks[0].Attempts != 1 || chunks[0].FileLength != 253336 {
+		t.Fatalf("unexpected recoverable chunks: %+v", chunks)
+	}
+
+	if err := db.MarkHistorySyncChunkProcessed(ctx, "hist-1"); err != nil {
+		t.Fatalf("mark processed: %v", err)
+	}
+	chunks, err = db.ListRecoverableHistorySyncChunks(ctx, 10)
+	if err != nil {
+		t.Fatalf("list processed recoverable chunks: %v", err)
+	}
+	if len(chunks) != 1 || chunks[0].Status != HistorySyncStatusProcessed {
+		t.Fatalf("processed chunk should remain recoverable for ack retry: %+v", chunks)
+	}
+
+	if err := db.MarkHistorySyncChunkAcked(ctx, "hist-1"); err != nil {
+		t.Fatalf("mark acked: %v", err)
+	}
+	chunks, err = db.ListRecoverableHistorySyncChunks(ctx, 10)
+	if err != nil {
+		t.Fatalf("list acked recoverable chunks: %v", err)
+	}
+	if len(chunks) != 0 {
+		t.Fatalf("acked chunk should not be recoverable: %+v", chunks)
 	}
 }
 

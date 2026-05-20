@@ -111,6 +111,24 @@ func (db *DB) migrate(ctx context.Context) error {
 			avatar_local_path TEXT NOT NULL DEFAULT '',
 			avatar_picture_id TEXT NOT NULL DEFAULT ''
 		)`,
+		`CREATE TABLE IF NOT EXISTS history_sync_chunks (
+			id TEXT PRIMARY KEY,
+			sync_type INTEGER NOT NULL,
+			chunk_order INTEGER NOT NULL DEFAULT 0,
+			progress INTEGER NOT NULL DEFAULT 0,
+			file_length INTEGER NOT NULL DEFAULT 0,
+			direct_path TEXT NOT NULL DEFAULT '',
+			media_key BLOB NOT NULL DEFAULT x'',
+			file_sha256 BLOB NOT NULL DEFAULT x'',
+			file_enc_sha256 BLOB NOT NULL DEFAULT x'',
+			enc_handle TEXT NOT NULL DEFAULT '',
+			inline_payload BLOB NOT NULL DEFAULT x'',
+			status TEXT NOT NULL DEFAULT 'pending',
+			attempts INTEGER NOT NULL DEFAULT 0,
+			last_error TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+			updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+		)`,
 	}
 
 	for _, statement := range statements {
@@ -132,6 +150,9 @@ func (db *DB) migrate(ctx context.Context) error {
 	if err := db.ensureChatsAvatarColumns(ctx); err != nil {
 		return err
 	}
+	if err := db.ensureSendersAvatarColumns(ctx); err != nil {
+		return err
+	}
 
 	if err := db.ensureChatSummaryColumns(ctx); err != nil {
 		return err
@@ -149,7 +170,42 @@ func (db *DB) migrate(ctx context.Context) error {
 		return err
 	}
 
+	if err := db.ensureHistorySyncColumns(ctx); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+func (db *DB) ensureHistorySyncColumns(ctx context.Context) error {
+	rows, err := db.conn.QueryContext(ctx, `PRAGMA table_info(history_sync_chunks)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	hasFileLength := false
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull, pk int
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			return err
+		}
+		if name == "file_length" {
+			hasFileLength = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if hasFileLength {
+		return nil
+	}
+
+	_, err = db.conn.ExecContext(ctx, `ALTER TABLE history_sync_chunks ADD COLUMN file_length INTEGER NOT NULL DEFAULT 0`)
+	return err
 }
 
 func (db *DB) ensureChatNameSourceColumn(ctx context.Context) error {
@@ -228,8 +284,7 @@ func (db *DB) ensureChatsAvatarColumns(ctx context.Context) error {
 	}
 	defer rows.Close()
 
-	hasAvatarPath := false
-	hasAvatarPicID := false
+	existing := make(map[string]bool)
 	for rows.Next() {
 		var cid int
 		var name, columnType string
@@ -238,25 +293,67 @@ func (db *DB) ensureChatsAvatarColumns(ctx context.Context) error {
 		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
 			return err
 		}
-		if name == "avatar_local_path" {
-			hasAvatarPath = true
-		}
-		if name == "avatar_picture_id" {
-			hasAvatarPicID = true
-		}
+		existing[name] = true
 	}
 	if err := rows.Err(); err != nil {
 		return err
 	}
 
-	if !hasAvatarPath {
-		if _, err := db.conn.ExecContext(ctx, `ALTER TABLE chats ADD COLUMN avatar_local_path TEXT NOT NULL DEFAULT ''`); err != nil {
-			return fmt.Errorf("add chats.avatar_local_path: %w", err)
+	alterations := []struct {
+		col string
+		def string
+	}{
+		{"avatar_local_path", `ALTER TABLE chats ADD COLUMN avatar_local_path TEXT NOT NULL DEFAULT ''`},
+		{"avatar_picture_id", `ALTER TABLE chats ADD COLUMN avatar_picture_id TEXT NOT NULL DEFAULT ''`},
+		{"avatar_status", `ALTER TABLE chats ADD COLUMN avatar_status TEXT NOT NULL DEFAULT ''`},
+		{"avatar_checked_at", `ALTER TABLE chats ADD COLUMN avatar_checked_at INTEGER NOT NULL DEFAULT 0`},
+	}
+	for _, a := range alterations {
+		if existing[a.col] {
+			continue
+		}
+		if _, err := db.conn.ExecContext(ctx, a.def); err != nil {
+			return fmt.Errorf("add chats.%s: %w", a.col, err)
 		}
 	}
-	if !hasAvatarPicID {
-		if _, err := db.conn.ExecContext(ctx, `ALTER TABLE chats ADD COLUMN avatar_picture_id TEXT NOT NULL DEFAULT ''`); err != nil {
-			return fmt.Errorf("add chats.avatar_picture_id: %w", err)
+	return nil
+}
+
+func (db *DB) ensureSendersAvatarColumns(ctx context.Context) error {
+	rows, err := db.conn.QueryContext(ctx, `PRAGMA table_info(senders)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	existing := make(map[string]bool)
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull, pk int
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			return err
+		}
+		existing[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	alterations := []struct {
+		col string
+		def string
+	}{
+		{"avatar_status", `ALTER TABLE senders ADD COLUMN avatar_status TEXT NOT NULL DEFAULT ''`},
+		{"avatar_checked_at", `ALTER TABLE senders ADD COLUMN avatar_checked_at INTEGER NOT NULL DEFAULT 0`},
+	}
+	for _, a := range alterations {
+		if existing[a.col] {
+			continue
+		}
+		if _, err := db.conn.ExecContext(ctx, a.def); err != nil {
+			return fmt.Errorf("add senders.%s: %w", a.col, err)
 		}
 	}
 	return nil
