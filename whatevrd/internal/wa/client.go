@@ -48,6 +48,10 @@ type Client struct {
 	mediaDownloadMu sync.Mutex
 	mediaDownloads  map[string]*mediaDownloadState
 
+	historySyncMu      sync.Mutex
+	historySyncRunning bool
+	historySyncWake    bool
+
 	sendQueueMu   sync.Mutex
 	sendQueueWake chan struct{}
 	reconnectCh   chan struct{} // supervisor wakeup: reconnect immediately
@@ -200,6 +204,8 @@ func (c *Client) resetClient(ctx context.Context) error {
 	client := whatsmeow.NewClient(device, c.log.Sub("Client"))
 	client.BackgroundEventCtx = ctx
 	client.EnableAutoReconnect = false
+	client.ManualHistorySyncDownload = true
+	client.DisableManualHistorySyncReceipt = true
 	client.AutoTrustIdentity = autoTrustIdentityEnabled()
 	if client.AutoTrustIdentity {
 		c.log.Warnf("WHATEVRD_AUTO_TRUST_IDENTITY is enabled; changed WhatsApp identities will be trusted automatically")
@@ -268,8 +274,13 @@ func (c *Client) FrontendSessionStateChanged(sessionID string, focused bool, act
 		return
 	}
 	c.presenceMu.Lock()
+	previous := c.frontendSessions[sessionID]
 	c.frontendSessions[sessionID] = frontendSession{focused: focused, activeChatID: activeChatID}
 	c.presenceMu.Unlock()
+
+	if activeChatID != "" && activeChatID != previous.activeChatID {
+		go c.refreshSenderAvatarsForChat(c.backgroundContext(), activeChatID, 80)
+	}
 }
 
 func (c *Client) ShouldNotifyChat(chatID string) bool {

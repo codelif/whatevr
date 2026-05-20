@@ -22,6 +22,7 @@ func (c *Client) handleEvent(eventGen uint64, raw any) {
 		ctx := c.backgroundContext()
 		c.syncPresence(ctx, true)
 		c.signalSendQueue()
+		c.signalHistorySyncWorker()
 		go c.migrateLIDChats(ctx)
 		c.scheduleAvatarRefresh(ctx, 5*time.Second)
 	case *events.AppStateSyncComplete:
@@ -65,6 +66,8 @@ func (c *Client) handleEvent(eventGen uint64, raw any) {
 		c.handleReceipt(evt)
 	case *events.HistorySync:
 		c.handleHistorySync(eventGen, evt)
+	case *events.Picture:
+		c.handlePictureEvent(c.backgroundContext(), evt)
 	case *events.ChatPresence:
 		chatJID := c.normalizeJIDForChat(c.backgroundContext(), evt.Chat)
 		isComposing := evt.State == types.ChatPresenceComposing

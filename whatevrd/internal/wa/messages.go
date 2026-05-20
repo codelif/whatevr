@@ -30,6 +30,8 @@ const (
 	sourceHistorySync
 )
 
+const liveNotificationMaxAge = 2 * time.Minute
+
 type ingestOptions struct {
 	source           ingestSource
 	chatNameOverride string
@@ -48,20 +50,30 @@ func (c *Client) handleHistorySync(eventGen uint64, evt *events.HistorySync) {
 	if !c.isCurrentEventGeneration(eventGen) {
 		return
 	}
-	client := c.currentClient()
-	if client == nil {
-		return
-	}
 	ctx := c.backgroundContext()
 	if ctx.Err() != nil {
 		return
 	}
-	c.updateChatNamesFromHistorySync(ctx, evt)
+	c.processHistorySyncData(ctx, evt.Data)
+	if evt != nil && evt.Data != nil && historySyncIsComplete(historySyncType(evt.Data.GetSyncType()), evt.Data.GetProgress()) {
+		c.scheduleAvatarRefresh(ctx, 2*time.Second)
+	}
+}
 
-	syncType := historySyncType(evt.Data.GetSyncType())
-	progressPercent := evt.Data.GetProgress()
-	chunkOrder := evt.Data.GetChunkOrder()
-	conversations := evt.Data.GetConversations()
+func (c *Client) processHistorySyncData(ctx context.Context, data *waHistorySync.HistorySync) {
+	client := c.currentClient()
+	if client == nil || data == nil {
+		return
+	}
+	if ctx.Err() != nil {
+		return
+	}
+	c.updateChatNamesFromHistorySync(ctx, &events.HistorySync{Data: data})
+
+	syncType := historySyncType(data.GetSyncType())
+	progressPercent := data.GetProgress()
+	chunkOrder := data.GetChunkOrder()
+	conversations := data.GetConversations()
 	totalMessages := uint32(0)
 	for _, conv := range conversations {
 		totalMessages += uint32(len(conv.GetMessages()))
@@ -76,9 +88,8 @@ func (c *Client) handleHistorySync(eventGen uint64, evt *events.HistorySync) {
 		IsComplete:           false,
 	})
 
-	storedAny := false
 	for _, conv := range conversations {
-		if ctx.Err() != nil || !c.isCurrentEventGeneration(eventGen) {
+		if ctx.Err() != nil {
 			return
 		}
 		rawChatJID, err := types.ParseJID(conv.GetID())
@@ -110,7 +121,7 @@ func (c *Client) handleHistorySync(eventGen uint64, evt *events.HistorySync) {
 		messagesAdded := uint32(0)
 		var lastSavedChat appstore.Chat
 		for _, msg := range conv.GetMessages() {
-			if ctx.Err() != nil || !c.isCurrentEventGeneration(eventGen) {
+			if ctx.Err() != nil {
 				return
 			}
 			webMsg := msg.GetMessage()
@@ -133,14 +144,13 @@ func (c *Client) handleHistorySync(eventGen uint64, evt *events.HistorySync) {
 			if inserted {
 				messagesAdded++
 				lastSavedChat = saved.Chat
-				storedAny = true
 			}
 		}
 
 		// Mirror the phone's read state on the chat row even if the
 		// per-message rows we just inserted didn't bump it (CountUnread
 		// is intentionally false during history-sync ingestion).
-		if ctx.Err() != nil || !c.isCurrentEventGeneration(eventGen) {
+		if ctx.Err() != nil {
 			return
 		}
 		updatedChat, _, err := c.store.OverwriteChatUnreadCount(ctx, chatID, convUnread)
@@ -150,7 +160,7 @@ func (c *Client) handleHistorySync(eventGen uint64, evt *events.HistorySync) {
 			lastSavedChat = updatedChat
 		}
 
-		if messagesAdded > 0 && c.isCurrentEventGeneration(eventGen) {
+		if messagesAdded > 0 {
 			if lastSavedChat.ID != "" {
 				c.daemon.PublishChatUpdated(toDaemonChat(lastSavedChat))
 			}
@@ -158,10 +168,7 @@ func (c *Client) handleHistorySync(eventGen uint64, evt *events.HistorySync) {
 		}
 	}
 
-	if storedAny && c.isCurrentEventGeneration(eventGen) {
-		c.scheduleAvatarRefresh(ctx, 2*time.Second)
-	}
-	if ctx.Err() != nil || !c.isCurrentEventGeneration(eventGen) {
+	if ctx.Err() != nil {
 		return
 	}
 
@@ -176,9 +183,14 @@ func (c *Client) handleHistorySync(eventGen uint64, evt *events.HistorySync) {
 }
 
 func (c *Client) handleMessage(ctx context.Context, evt *events.Message) {
+	if c.handleManualHistorySyncNotification(ctx, evt) {
+		return
+	}
 	if saved, inserted := c.ingestMessage(ctx, evt, ingestOptions{source: sourceLive}); inserted {
 		c.scheduleAvatarRefreshForChat(ctx, saved.Chat, 2*time.Second)
-		c.scheduleAvatarRefresh(ctx, 2*time.Second)
+		if saved.Chat.IsGroup && saved.Message.SenderID != "me" {
+			c.scheduleAvatarRefreshForSender(ctx, saved.Message.SenderID, 2*time.Second)
+		}
 	}
 }
 
@@ -205,12 +217,16 @@ func (c *Client) ingestMessage(ctx context.Context, evt *events.Message, opts in
 			}
 			return saved, false
 		}
-		c.log.Infof("Stored text message %s from %s", saved.Message.ID, saved.Message.SenderID)
+		if opts.source == sourceLive {
+			c.log.Infof("Stored text message %s from %s", saved.Message.ID, saved.Message.SenderID)
+		} else {
+			c.log.Debugf("Stored history text message %s from %s", saved.Message.ID, saved.Message.SenderID)
+		}
 		if opts.source == sourceLive {
 			message := toDaemonMessage(saved.Message)
 			chat := toDaemonChat(saved.Chat)
 			c.daemon.PublishNewMessage(message, chat)
-			if c.notifier != nil && textInput.CountUnread && c.ShouldNotifyChat(chat.ID) {
+			if c.notifier != nil && c.shouldNotifyLiveMessage(message, chat.ID, textInput.CountUnread) {
 				c.notifier.NotifyMessage(ctx, message, chat)
 			}
 		}
@@ -232,12 +248,16 @@ func (c *Client) ingestMessage(ctx context.Context, evt *events.Message, opts in
 			}
 			return saved, false
 		}
-		c.log.Infof("Stored media message %s from %s", saved.Message.ID, saved.Message.SenderID)
+		if opts.source == sourceLive {
+			c.log.Infof("Stored media message %s from %s", saved.Message.ID, saved.Message.SenderID)
+		} else {
+			c.log.Debugf("Stored history media message %s from %s", saved.Message.ID, saved.Message.SenderID)
+		}
 		if opts.source == sourceLive {
 			message := toDaemonMessage(saved.Message)
 			chat := toDaemonChat(saved.Chat)
 			c.daemon.PublishNewMessage(message, chat)
-			if c.notifier != nil && mediaInput.CountUnread && c.ShouldNotifyChat(chat.ID) {
+			if c.notifier != nil && c.shouldNotifyLiveMessage(message, chat.ID, mediaInput.CountUnread) {
 				c.notifier.NotifyMessage(ctx, message, chat)
 			}
 		}
@@ -245,6 +265,17 @@ func (c *Client) ingestMessage(ctx context.Context, evt *events.Message, opts in
 	}
 
 	return appstore.SavedTextMessage{}, false
+}
+
+func (c *Client) shouldNotifyLiveMessage(message app.Message, chatID string, countUnread bool) bool {
+	return countUnread && notificationTimestampFresh(message.TimestampUnix, time.Now()) && c.ShouldNotifyChat(chatID)
+}
+
+func notificationTimestampFresh(timestampUnix int64, now time.Time) bool {
+	if timestampUnix <= 0 {
+		return true
+	}
+	return now.Sub(time.Unix(timestampUnix, 0)) <= liveNotificationMaxAge
 }
 
 func (c *Client) imageMessageInput(ctx context.Context, evt *events.Message, opts ingestOptions) (appstore.MediaMessageInput, bool) {
@@ -610,6 +641,20 @@ func (c *Client) senderName(ctx context.Context, jid types.JID) string {
 	}
 	if name := c.contactNameForJID(ctx, jid); name != "" {
 		return name
+	}
+	// LID JIDs can't be looked up by phone display or contact store directly;
+	// resolve to PN first, then retry.
+	if jid.Server == types.HiddenUserServer {
+		pn := c.normalizeJIDForChat(ctx, jid)
+		if !pn.IsEmpty() && pn.String() != jid.String() {
+			if name := c.contactNameForJID(ctx, pn); name != "" {
+				return name
+			}
+			if phone := formatPhoneDisplayName(pn); phone != "" {
+				return phone
+			}
+		}
+		return ""
 	}
 	if phone := formatPhoneDisplayName(jid); phone != "" {
 		return phone
