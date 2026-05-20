@@ -126,6 +126,7 @@ Kirigami.Page {
                          && root.messagesCurrent
                          && AppController.messageErrorText.length === 0
                          && !AppController.messagesEmpty
+                chatId: AppController.selectedChatId
                 model: AppController.messageListModel
                 loadingOlderMessages: AppController.olderMessagesLoading
                 canLoadOlderMessages: AppController.canLoadOlderMessages

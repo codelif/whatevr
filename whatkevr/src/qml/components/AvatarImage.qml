@@ -10,8 +10,11 @@ Item {
     property string initials: "?"
     property color backgroundColor: Qt.alpha(activePalette.highlight, 0.14)
     property color foregroundColor: activePalette.highlight
+    readonly property string avatarSource: avatarLocalPath.length > 0 ? "file://" + avatarLocalPath : ""
+    readonly property bool avatarLoadFailed: avatarLocalPath.length > 0 && avatarProbe.status === Image.Error
+    readonly property bool hasUsableAvatar: avatarLocalPath.length > 0 && !avatarLoadFailed
     readonly property bool initialsAreAlphabetic: /^[A-Za-z]+$/.test(initials)
-    readonly property bool showInitials: avatarLocalPath.length === 0 && initialsAreAlphabetic
+    readonly property bool showInitials: !hasUsableAvatar && initialsAreAlphabetic
 
     implicitWidth: Kirigami.Units.gridUnit * 2.45
     implicitHeight: implicitWidth
@@ -31,12 +34,21 @@ Item {
         color: root.backgroundColor
     }
 
+    Image {
+        id: avatarProbe
+
+        visible: false
+        source: root.avatarSource
+        asynchronous: true
+        cache: true
+    }
+
     KirigamiAddons.Avatar {
         id: avatarImage
 
         anchors.fill: parent
-        visible: root.avatarLocalPath.length > 0
-        source: root.avatarLocalPath.length > 0 ? "file://" + root.avatarLocalPath : ""
+        visible: root.hasUsableAvatar
+        source: root.avatarSource
         imageMode: KirigamiAddons.Avatar.ImageMode.AlwaysShowImage
         asynchronous: true
         cache: true
@@ -54,7 +66,7 @@ Item {
 
     Kirigami.Icon {
         anchors.centerIn: parent
-        visible: root.avatarLocalPath.length === 0 && !root.initialsAreAlphabetic
+        visible: !root.hasUsableAvatar && !root.initialsAreAlphabetic
         source: "user-identity-symbolic"
         implicitWidth: Math.round(Math.min(root.width, root.height) * 0.58)
         implicitHeight: implicitWidth

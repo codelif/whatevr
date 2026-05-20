@@ -81,6 +81,8 @@ private:
     static QString displaySenderName(const MessageItem &message);
     static QString initialsForName(const QString &name);
     static bool sameMessages(const QList<MessageItem> &left, const QList<MessageItem> &right);
+    static bool sameMessageOrder(const QList<MessageItem> &left, const QList<MessageItem> &right);
+    static bool sameMessageData(const MessageItem &left, const MessageItem &right);
     [[nodiscard]] bool isOutgoing(const MessageItem &message) const;
     [[nodiscard]] bool startsSenderGroup(int row) const;
     [[nodiscard]] bool endsSenderGroup(int row) const;

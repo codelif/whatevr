@@ -7,12 +7,18 @@ Item {
 
     Kirigami.Theme.colorSet: Kirigami.Theme.View
 
+    property string chatId: ""
     property alias model: list.model
     property bool atBottom: true
+    property bool nearBottom: true
     property bool pinToBottom: true
+    property bool bottomPinInProgress: false
+    property bool openingChat: false
     property bool loadingOlderMessages: false
     property bool canLoadOlderMessages: false
     property real topLoadThreshold: Kirigami.Units.gridUnit * 6
+    property real bottomFollowThreshold: Kirigami.Units.gridUnit * 2
+    property bool pendingEndInsertShouldPin: false
 
     property bool preservingPrependPosition: false
     property real contentHeightBeforePrepend: 0
@@ -30,10 +36,12 @@ Item {
     }
 
     function pinToBottomNow() {
+        bottomPinInProgress = true
         if (list.count > 0) {
             list.positionViewAtEnd()
         }
         list.contentY = maximumY()
+        bottomPinFinishTimer.restart()
     }
 
     function scrollToBottom() {
@@ -41,6 +49,7 @@ Item {
     }
 
     function schedulePinToBottom() {
+        bottomPinInProgress = true
         pinToBottomTimer.restart()
     }
 
@@ -76,8 +85,65 @@ Item {
         maybeLoadOlderMessages()
     }
 
+    function prepareViewportForModelReset() {
+        if (openingChat) {
+            bottomPinInProgress = true
+            return
+        }
+
+        if (!pinToBottom && !atBottom && list.count > 0) {
+            beginPrependPositionPreservation()
+        } else {
+            bottomPinInProgress = true
+        }
+    }
+
+    function finishViewportForModelReset() {
+        if (preservingPrependPosition) {
+            scheduleFinishPrependPositionPreservation()
+        } else if (openingChat || pinToBottom || atBottom) {
+            pinToBottom = true
+            atBottom = true
+            nearBottom = true
+            schedulePinToBottom()
+        }
+    }
+
+    function forceBottomPin() {
+        pinToBottom = true
+        atBottom = true
+        nearBottom = true
+        schedulePinToBottom()
+    }
+
+    function updateBottomState() {
+        const distanceFromBottom = maximumY() - list.contentY
+        atBottom = distanceFromBottom <= 4
+        nearBottom = distanceFromBottom <= bottomFollowThreshold
+    }
+
+    onChatIdChanged: {
+        pendingEndInsertShouldPin = false
+        preservingPrependPosition = false
+        if (chatId.length > 0) {
+            openingChat = true
+            forceBottomPin()
+        } else {
+            openingChat = false
+            pinToBottom = true
+            atBottom = true
+            nearBottom = true
+        }
+    }
+
     function maybeLoadOlderMessages() {
-        if (!canLoadOlderMessages || loadingOlderMessages || preservingPrependPosition || list.count === 0) {
+        if (!canLoadOlderMessages
+                || loadingOlderMessages
+                || preservingPrependPosition
+                || openingChat
+                || bottomPinInProgress
+                || pinToBottom
+                || list.count === 0) {
             return
         }
 
@@ -96,9 +162,7 @@ Item {
 
     onVisibleChanged: {
         if (visible) {
-            pinToBottom = true
-            atBottom = true
-            schedulePinToBottom()
+            forceBottomPin()
         }
     }
 
@@ -126,9 +190,25 @@ Item {
         }
     }
 
+    Timer {
+        id: bottomPinFinishTimer
+
+        interval: 0
+        repeat: false
+        onTriggered: {
+            if (root.pinToBottom) {
+                list.contentY = root.maximumY()
+            }
+            root.updateBottomState()
+            root.openingChat = false
+            root.bottomPinInProgress = false
+        }
+    }
+
     Component.onDestruction: {
         pinToBottomTimer.stop()
         finishPrependPositionTimer.stop()
+        bottomPinFinishTimer.stop()
     }
 
     ListView {
@@ -197,8 +277,10 @@ Item {
             }
         }
         onContentYChanged: {
-            const distanceFromBottom = root.maximumY() - contentY
-            root.atBottom = distanceFromBottom <= 4
+            root.updateBottomState()
+            if (!root.nearBottom && !root.preservingPrependPosition && !root.bottomPinInProgress) {
+                root.pinToBottom = false
+            }
             root.maybeLoadOlderMessages()
         }
         onContentHeightChanged: {
@@ -216,25 +298,42 @@ Item {
         onCountChanged: {
             if (root.preservingPrependPosition) {
                 root.restorePrependPosition()
-            } else if (root.atBottom) {
-                root.pinToBottom = true
-                root.schedulePinToBottom()
+            } else if (root.pendingEndInsertShouldPin || root.pinToBottom || root.nearBottom) {
+                root.pendingEndInsertShouldPin = false
+                root.forceBottomPin()
             }
         }
 
         Connections {
             target: list.model
             ignoreUnknownSignals: true
+            function onModelAboutToBeReset() {
+                root.prepareViewportForModelReset()
+            }
             function onModelReset() {
-                root.pinToBottom = true
-                root.atBottom = true
-                root.schedulePinToBottom()
+                root.finishViewportForModelReset()
+            }
+            function onRowsAboutToBeInserted(parent, first, last) {
+                root.pendingEndInsertShouldPin = first >= list.count && (root.pinToBottom || root.nearBottom)
+            }
+            function onRowsInserted(parent, first, last) {
+                if (root.pendingEndInsertShouldPin) {
+                    root.forceBottomPin()
+                }
+                root.pendingEndInsertShouldPin = false
             }
         }
 
         Component.onCompleted: {
-            root.pinToBottom = true
-            root.schedulePinToBottom()
+            root.forceBottomPin()
+        }
+    }
+
+    Connections {
+        target: AppController
+
+        function onOutgoingMessageAddedToSelectedChat() {
+            root.forceBottomPin()
         }
     }
 

@@ -213,6 +213,19 @@ AppController::AppController(QObject *parent)
     m_qrTimer->setInterval(1000);
     connect(m_qrTimer, &QTimer::timeout, this, &AppController::updateQrExpiryText);
 
+    m_selectedChatReloadTimer = new QTimer(this);
+    m_selectedChatReloadTimer->setSingleShot(true);
+    m_selectedChatReloadTimer->setInterval(250);
+    connect(m_selectedChatReloadTimer, &QTimer::timeout, this, [this]() {
+        const QString chatId = m_pendingSelectedChatReloadId;
+        m_pendingSelectedChatReloadId.clear();
+        if (chatId.isEmpty() || chatId != m_selectedChatId || m_messagesLoading || m_olderMessagesLoading) {
+            return;
+        }
+        m_messageCache.remove(chatId);
+        requestMessages(chatId);
+    });
+
     connect(qGuiApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
         updateFrontendSessionState();
         if (state != Qt::ApplicationActive && !m_localComposingChatId.isEmpty()) {
@@ -1241,6 +1254,9 @@ void AppController::ensureDaemonStream()
         case whatevr::v1::DaemonEvent::PayloadFields::HistorySyncProgress:
             applyHistorySyncProgress(event->historySyncProgress());
             break;
+        case whatevr::v1::DaemonEvent::PayloadFields::HistoryBackfilled:
+            applyHistoryBackfilled(event->historyBackfilled());
+            break;
         case whatevr::v1::DaemonEvent::PayloadFields::MediaDownloadChanged:
             applyMediaDownloadChanged(event->mediaDownloadChanged());
             break;
@@ -1440,6 +1456,12 @@ void AppController::applyChatUpdated(const ChatUpdated &update)
 
     m_chatListModel->upsertChat(update.chat(), update.previousChatId());
     updateSelectedChatData();
+
+    const QString updatedChatId = update.chat().id_proto();
+    if (updatedChatId == m_selectedChatId && !m_messagesLoading && !m_olderMessagesLoading) {
+        scheduleSelectedChatMessageReload(updatedChatId);
+    }
+
     Q_EMIT chatsChanged();
     Q_EMIT selectionChanged();
 }
@@ -1521,7 +1543,12 @@ void AppController::applyMessageEvent(const whatevr::v1::Message &message)
     }
 
     const bool wasEmpty = m_messageListModel->isEmpty();
+    const int previousMessageCount = m_messageListModel->messageCount();
     m_messageListModel->upsertMessage(message);
+    if (m_messageListModel->messageCount() > previousMessageCount
+        && message.direction() == whatevr::v1::MessageDirectionGadget::MessageDirection::MESSAGE_DIRECTION_OUTGOING) {
+        Q_EMIT outgoingMessageAddedToSelectedChat();
+    }
     if (wasEmpty) {
         Q_EMIT messagesChanged();
     }
@@ -1560,6 +1587,15 @@ bool AppController::restoreCachedMessages(const QString &chatId)
     return true;
 }
 
+void AppController::scheduleSelectedChatMessageReload(const QString &chatId)
+{
+    if (chatId.isEmpty() || !m_selectedChatReloadTimer) {
+        return;
+    }
+    m_pendingSelectedChatReloadId = chatId;
+    m_selectedChatReloadTimer->start();
+}
+
 void AppController::applyHistorySyncProgress(const HistorySyncProgress &progress)
 {
     if (progress.isComplete()) {
@@ -1584,6 +1620,19 @@ void AppController::applyHistorySyncProgress(const HistorySyncProgress &progress
     m_historySyncDetail = i18nc("@info", "%1 · %2 · %3", chunkText, messagesText, conversationsText);
 
     Q_EMIT historySyncChanged();
+}
+
+void AppController::applyHistoryBackfilled(const whatevr::v1::HistoryBackfilled &backfilled)
+{
+    const QString chatId = backfilled.chatId().trimmed();
+    if (chatId.isEmpty()) {
+        return;
+    }
+
+    m_messageCache.remove(chatId);
+    if (m_selectedChatId == chatId && !m_messagesLoading) {
+        requestMessages(chatId);
+    }
 }
 
 void AppController::updateQrExpiryText()

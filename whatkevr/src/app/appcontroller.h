@@ -28,6 +28,7 @@ class ChatUpdated;
 class ChatPresenceChanged;
 class MediaDownloadChanged;
 class HistorySyncProgress;
+class HistoryBackfilled;
 class Message;
 namespace DaemonService {
 class Client;
@@ -158,6 +159,7 @@ Q_SIGNALS:
     void composerChanged();
     void selectionChanged();
     void historySyncChanged();
+    void outgoingMessageAddedToSelectedChat();
     void mediaDownloadChanged(const QString &messageId);
     void mediaDownloadFailed(const QString &messageId, const QString &errorText);
 
@@ -188,12 +190,14 @@ private:
     void applyMediaDownloadChanged(const whatevr::v1::MediaDownloadChanged &download);
     void applyMessageEvent(const whatevr::v1::Message &message);
     void applyHistorySyncProgress(const whatevr::v1::HistorySyncProgress &progress);
+    void applyHistoryBackfilled(const whatevr::v1::HistoryBackfilled &backfilled);
     void updateQrExpiryText();
     void clearBanner();
     void emitStateChanged();
     void updateSelectedChatData();
     void cacheMessages(const QString &chatId, const QList<whatevr::v1::Message> &messages, bool canLoadOlderMessages);
     bool restoreCachedMessages(const QString &chatId);
+    void scheduleSelectedChatMessageReload(const QString &chatId);
 
     bool m_loading = true;
     bool m_loginRequired = false;
@@ -263,5 +267,7 @@ private:
     std::unique_ptr<QGrpcServerStream> m_loginStream;
     QTimer *m_retryTimer = nullptr;
     QTimer *m_qrTimer = nullptr;
+    QTimer *m_selectedChatReloadTimer = nullptr;
+    QString m_pendingSelectedChatReloadId;
     QString m_localComposingChatId;
 };

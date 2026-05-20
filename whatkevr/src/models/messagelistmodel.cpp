@@ -131,6 +131,18 @@ void MessageListModel::replaceMessages(const QList<whatevr::v1::Message> &messag
         return;
     }
 
+    if (sameMessageOrder(m_messages, next)) {
+        for (int i = 0; i < next.size(); ++i) {
+            if (sameMessageData(m_messages.at(i), next.at(i))) {
+                continue;
+            }
+            m_messages[i] = next.at(i);
+            const QModelIndex changedIndex = index(i, 0);
+            Q_EMIT dataChanged(changedIndex, changedIndex);
+        }
+        return;
+    }
+
     beginResetModel();
     m_messages = std::move(next);
     endResetModel();
@@ -307,17 +319,45 @@ bool MessageListModel::sameMessages(const QList<MessageItem> &left, const QList<
     }
 
     for (int i = 0; i < left.size(); ++i) {
-        const auto &a = left.at(i);
-        const auto &b = right.at(i);
-        if (a.id != b.id || a.chatId != b.chatId || a.senderId != b.senderId || a.senderName != b.senderName
-            || a.senderAvatarLocalPath != b.senderAvatarLocalPath || a.text != b.text || a.timestampUnix != b.timestampUnix
-            || a.direction != b.direction || a.status != b.status || a.mediaMimeType != b.mediaMimeType || a.mediaLocalPath != b.mediaLocalPath
-            || a.mediaThumbnailLocalPath != b.mediaThumbnailLocalPath || a.mediaWidth != b.mediaWidth || a.mediaHeight != b.mediaHeight) {
+        if (!sameMessageData(left.at(i), right.at(i))) {
             return false;
         }
     }
 
     return true;
+}
+
+bool MessageListModel::sameMessageOrder(const QList<MessageItem> &left, const QList<MessageItem> &right)
+{
+    if (left.size() != right.size()) {
+        return false;
+    }
+
+    for (int i = 0; i < left.size(); ++i) {
+        if (left.at(i).id != right.at(i).id) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool MessageListModel::sameMessageData(const MessageItem &left, const MessageItem &right)
+{
+    return left.id == right.id
+        && left.chatId == right.chatId
+        && left.senderId == right.senderId
+        && left.senderName == right.senderName
+        && left.senderAvatarLocalPath == right.senderAvatarLocalPath
+        && left.text == right.text
+        && left.timestampUnix == right.timestampUnix
+        && left.direction == right.direction
+        && left.status == right.status
+        && left.mediaMimeType == right.mediaMimeType
+        && left.mediaLocalPath == right.mediaLocalPath
+        && left.mediaThumbnailLocalPath == right.mediaThumbnailLocalPath
+        && left.mediaWidth == right.mediaWidth
+        && left.mediaHeight == right.mediaHeight;
 }
 
 bool MessageListModel::isOutgoing(const MessageItem &message) const
