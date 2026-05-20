@@ -2,6 +2,7 @@ package wa
 
 import (
 	"testing"
+	"time"
 
 	waHistorySync "go.mau.fi/whatsmeow/proto/waHistorySync"
 	waWeb "go.mau.fi/whatsmeow/proto/waWeb"
@@ -133,6 +134,29 @@ func TestHistorySyncIsCompleteRespectsTerminalTypes(t *testing.T) {
 	}
 	if !historySyncIsComplete(app.HistorySyncTypeRecent, 100) {
 		t.Error("RECENT at 100% should be complete")
+	}
+}
+
+func TestNotificationTimestampFreshAllowsRecentAndUnknownTimestamps(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+
+	if !notificationTimestampFresh(0, now) {
+		t.Fatal("zero timestamp should be treated as fresh")
+	}
+	if !notificationTimestampFresh(now.Add(-liveNotificationMaxAge).Unix(), now) {
+		t.Fatal("timestamp at max age should be treated as fresh")
+	}
+	if !notificationTimestampFresh(now.Add(30*time.Second).Unix(), now) {
+		t.Fatal("future timestamp should be treated as fresh")
+	}
+}
+
+func TestNotificationTimestampFreshSuppressesStaleReconnectBacklog(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	stale := now.Add(-liveNotificationMaxAge - time.Second).Unix()
+
+	if notificationTimestampFresh(stale, now) {
+		t.Fatal("stale reconnect backlog timestamp should not be fresh")
 	}
 }
 
