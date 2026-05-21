@@ -1,5 +1,6 @@
 import QtQuick
 import org.kde.kirigami as Kirigami
+import Whatevr as Whatevr
 
 Kirigami.ApplicationWindow {
     id: root
@@ -16,7 +17,7 @@ Kirigami.ApplicationWindow {
     height: 760
     minimumWidth: 420
     minimumHeight: 680
-    title: i18nc("@title:window", "Whatevr")
+    title: Whatevr.I18n.i18nc("@title:window", "Whatevr")
     visible: true
 
     pageStack.columnView.columnResizeMode: chatWideLayout ? Kirigami.ColumnView.FixedColumns : Kirigami.ColumnView.SingleColumn
@@ -36,10 +37,10 @@ Kirigami.ApplicationWindow {
     }
 
     function appMode() {
-        if (AppController.loginRequired) {
+        if (Whatevr.AppController.loginRequired) {
             return "login"
         }
-        if (!AppController.shellVisible) {
+        if (!Whatevr.AppController.shellVisible) {
             return "status"
         }
         return "chat"
@@ -125,7 +126,7 @@ Kirigami.ApplicationWindow {
     }
 
     function closeConversation() {
-        if (!AppController.hasSelectedChat) {
+        if (!Whatevr.AppController.hasSelectedChat) {
             return
         }
 
@@ -140,7 +141,7 @@ Kirigami.ApplicationWindow {
             return
         }
 
-        AppController.selectChat("")
+        Whatevr.AppController.selectChat("")
         if (chatWideLayout && pageStack.currentIndex > 0) {
             pageStack.currentIndex = 0
         }
@@ -153,13 +154,13 @@ Kirigami.ApplicationWindow {
         }
 
         conversationPageItem.closeChatActionVisible = currentMode === "chat"
-                && AppController.hasSelectedChat
+                && Whatevr.AppController.hasSelectedChat
                 && !closeChatAfterTransition
                 && (!chatSingleColumnLayout || pageStack.currentIndex > 0)
     }
 
     function scheduleCloseChatAfterBack() {
-        if (!chatSingleColumnLayout || pageStack.currentIndex !== 0 || !AppController.hasSelectedChat) {
+        if (!chatSingleColumnLayout || pageStack.currentIndex !== 0 || !Whatevr.AppController.hasSelectedChat) {
             return
         }
 
@@ -174,15 +175,15 @@ Kirigami.ApplicationWindow {
         }
 
         closeChatAfterTransition = false
-        if (AppController.hasSelectedChat) {
-            AppController.selectChat("")
+        if (Whatevr.AppController.hasSelectedChat) {
+            Whatevr.AppController.selectChat("")
         }
         cleanupMobileConversationPage()
         updateCloseChatActionVisibility()
     }
 
     function cleanupMobileConversationPage() {
-        if (!chatSingleColumnLayout || pageStack.currentIndex !== 0 || !conversationOnStack || AppController.hasSelectedChat) {
+        if (!chatSingleColumnLayout || pageStack.currentIndex !== 0 || !conversationOnStack || Whatevr.AppController.hasSelectedChat) {
             return
         }
 
@@ -209,7 +210,7 @@ Kirigami.ApplicationWindow {
         ensureChatLayout()
 
         if (chatSingleColumnLayout) {
-            if (AppController.hasSelectedChat && conversationOnStack) {
+            if (Whatevr.AppController.hasSelectedChat && conversationOnStack) {
                 pageStack.currentIndex = 1
             } else {
                 pageStack.currentIndex = 0
@@ -249,7 +250,7 @@ Kirigami.ApplicationWindow {
     onChatWideLayoutChanged: syncChatLayout()
 
     Connections {
-        target: pageStack
+        target: root.pageStack
 
         function onCurrentIndexChanged() {
             root.updateCloseChatActionVisibility()
@@ -258,11 +259,11 @@ Kirigami.ApplicationWindow {
     }
 
     Connections {
-        target: pageStack.columnView
+        target: root.pageStack.columnView
 
         function onMovingChanged() {
             root.updateCloseChatActionVisibility()
-            if (!pageStack.columnView.moving) {
+            if (!root.pageStack.columnView.moving) {
                 root.finishCloseChatIfSettled()
             }
         }
@@ -271,7 +272,7 @@ Kirigami.ApplicationWindow {
     Component.onCompleted: scheduleRebuildPageStack()
 
     Connections {
-        target: AppController
+        target: Whatevr.AppController
 
         function onStateChanged() {
             root.scheduleRebuildPageStack()

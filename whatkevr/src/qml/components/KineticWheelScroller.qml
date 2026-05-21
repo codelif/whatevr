@@ -1,6 +1,5 @@
 import QtQuick
 import QtQml
-import QtQuick.Window
 
 Item {
     id: root
@@ -113,15 +112,6 @@ Item {
         return true
     }
 
-    function containsGlobalPoint(globalX, globalY) {
-        if (!visible || !enabled || !root.Window.window) {
-            return false
-        }
-
-        const local = mapFromGlobal(Qt.point(globalX, globalY))
-        return local.x >= 0 && local.y >= 0 && local.x <= width && local.y <= height
-    }
-
     function wheelDelta(pixelY, angleY) {
         if (Math.abs(pixelY) > 0) {
             return -pixelY * pixelDeltaScale
@@ -191,23 +181,23 @@ Item {
         lastImpulseTimestamp = 0
     }
 
-    Connections {
-        target: WheelInputRouter
+    WheelHandler {
+        target: null
+        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
 
-        function onWheel(globalX, globalY, pixelY, angleY, modifiers, phase) {
-            if (WheelInputRouter.accepted || !root.containsGlobalPoint(globalX, globalY)) {
+        onWheel: event => {
+            if (event.modifiers & Qt.ControlModifier) {
                 return
             }
 
-            if (modifiers & Qt.ControlModifier) {
-                return
-            }
-
+            const pixelY = event.pixelDelta.y
+            const angleY = event.angleDelta.y
+            const phase = event.phase
             const delta = root.wheelDelta(pixelY, angleY)
             const now = Date.now()
             if (Math.abs(delta) < 0.01) {
                 if (phase === root.scrollBeginPhase || phase === root.scrollEndPhase) {
-                    WheelInputRouter.acceptWheel()
+                    event.accepted = true
                     if (phase === root.scrollBeginPhase) {
                         root.velocity = 0
                         root.lastWheelTimestamp = 0
@@ -232,7 +222,7 @@ Item {
 
             if (!root.canMove(delta)) {
                 if (root.blocksAtBound(delta)) {
-                    WheelInputRouter.acceptWheel()
+                    event.accepted = true
                     root.velocity = 0
                     root.lastRealDeltaTimestamp = 0
                     root.gestureTotalDistance = 0
@@ -242,7 +232,7 @@ Item {
                 return
             }
 
-            WheelInputRouter.acceptWheel()
+            event.accepted = true
             root.beginInteraction()
 
             if (!root.gestureActive) {

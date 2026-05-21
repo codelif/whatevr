@@ -1,25 +1,28 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import Whatevr as Whatevr
 
 Kirigami.Page {
     id: root
 
     property bool closeChatActionVisible: false
 
-    readonly property bool messagesCurrent: AppController.hasSelectedChat
-                                            && AppController.displayedMessagesChatId === AppController.selectedChatId
-    readonly property bool waitingForMessages: AppController.hasSelectedChat
-                                               && AppController.messagesLoading
-                                               && (!root.messagesCurrent || AppController.messagesEmpty)
+    readonly property bool messagesCurrent: Whatevr.AppController.hasSelectedChat
+                                            && Whatevr.AppController.displayedMessagesChatId === Whatevr.AppController.selectedChatId
+    readonly property bool waitingForMessages: Whatevr.AppController.hasSelectedChat
+                                               && Whatevr.AppController.messagesLoading
+                                               && (!root.messagesCurrent || Whatevr.AppController.messagesEmpty)
 
     signal closeChatRequested()
 
     Layout.fillWidth: true
     Layout.fillHeight: true
-    title: AppController.hasSelectedChat
-           ? AppController.selectedChatName
+    title: Whatevr.AppController.hasSelectedChat
+           ? Whatevr.AppController.selectedChatName
            : ""
     padding: 0
     Kirigami.Theme.colorSet: Kirigami.Theme.Window
@@ -41,8 +44,8 @@ Kirigami.Page {
     titleDelegate: RowLayout {
         id: headerTitle
 
-        readonly property bool hasPresenceText: AppController.hasSelectedChat
-                                                && AppController.selectedChatPresenceText.length > 0
+        readonly property bool hasPresenceText: Whatevr.AppController.hasSelectedChat
+                                                && Whatevr.AppController.selectedChatPresenceText.length > 0
         readonly property real avatarSize: Kirigami.Units.gridUnit * 1.8
         readonly property real subtextPixelSize: Math.max(8, Math.round(Kirigami.Theme.smallFont.pixelSize * 0.82))
 
@@ -52,12 +55,12 @@ Kirigami.Page {
         spacing: Kirigami.Units.smallSpacing
 
         AvatarImage {
-            visible: AppController.hasSelectedChat
+            visible: Whatevr.AppController.hasSelectedChat
             Layout.alignment: Qt.AlignVCenter
             Layout.preferredWidth: headerTitle.avatarSize
             Layout.preferredHeight: headerTitle.avatarSize
-            avatarLocalPath: AppController.selectedChatAvatarLocalPath
-            initials: root.initialsForName(AppController.selectedChatName)
+            avatarLocalPath: Whatevr.AppController.selectedChatAvatarLocalPath
+            initials: root.initialsForName(Whatevr.AppController.selectedChatName)
         }
 
         Item {
@@ -87,8 +90,8 @@ Kirigami.Page {
                 anchors.right: parent.right
                 anchors.top: titleLabel.bottom
                 anchors.topMargin: Kirigami.Units.smallSpacing / 3
-                visible: AppController.hasSelectedChat
-                text: headerTitle.hasPresenceText ? AppController.selectedChatPresenceText : " "
+                visible: Whatevr.AppController.hasSelectedChat
+                text: headerTitle.hasPresenceText ? Whatevr.AppController.selectedChatPresenceText : " "
                 elide: Text.ElideRight
                 opacity: headerTitle.hasPresenceText ? 1 : 0
                 color: Kirigami.Theme.disabledTextColor
@@ -101,8 +104,8 @@ Kirigami.Page {
     actions: [
         Kirigami.Action {
             icon.name: "dialog-close-symbolic"
-            text: i18nc("@action:button", "Close Chat")
-            visible: AppController.hasSelectedChat && root.closeChatActionVisible
+            text: Whatevr.I18n.i18nc("@action:button", "Close Chat")
+            visible: Whatevr.AppController.hasSelectedChat && root.closeChatActionVisible
             onTriggered: root.closeChatRequested()
         }
     ]
@@ -122,15 +125,15 @@ Kirigami.Page {
 
                 anchors.fill: parent
                 anchors.margins: Kirigami.Units.smallSpacing
-                visible: AppController.hasSelectedChat
+                visible: Whatevr.AppController.hasSelectedChat
                          && root.messagesCurrent
-                         && AppController.messageErrorText.length === 0
-                         && !AppController.messagesEmpty
-                chatId: AppController.selectedChatId
-                model: AppController.messageListModel
-                loadingOlderMessages: AppController.olderMessagesLoading
-                canLoadOlderMessages: AppController.canLoadOlderMessages
-                onLoadOlderMessagesRequested: AppController.loadOlderMessages()
+                         && Whatevr.AppController.messageErrorText.length === 0
+                         && !Whatevr.AppController.messagesEmpty
+                chatId: Whatevr.AppController.selectedChatId
+                model: Whatevr.AppController.messageListModel
+                loadingOlderMessages: Whatevr.AppController.olderMessagesLoading
+                canLoadOlderMessages: Whatevr.AppController.canLoadOlderMessages
+                onLoadOlderMessagesRequested: Whatevr.AppController.loadOlderMessages()
             }
 
             BusyIndicator {
@@ -142,9 +145,9 @@ Kirigami.Page {
             Kirigami.Action {
                 id: retryMessagesAction
 
-                text: i18nc("@action:button", "Retry")
+                text: Whatevr.I18n.i18nc("@action:button", "Retry")
                 icon.name: "view-refresh-symbolic"
-                onTriggered: AppController.retryMessages()
+                onTriggered: Whatevr.AppController.retryMessages()
             }
 
             Kirigami.PlaceholderMessage {
@@ -153,18 +156,18 @@ Kirigami.Page {
                                 Kirigami.Units.gridUnit * 22)
                 visible: !root.waitingForMessages
                          && !messageView.visible
-                text: !AppController.hasSelectedChat
-                      ? i18nc("@info", "Select a chat")
-                      : (AppController.messageErrorText.length > 0
-                         ? i18nc("@info", "Messages could not be loaded")
-                         : i18nc("@info", "No messages yet"))
-                explanation: !AppController.hasSelectedChat
-                             ? i18nc("@info", "Choose a conversation from the chat list to open it here.")
-                             : (AppController.messageErrorText.length > 0
-                                ? AppController.messageErrorText
-                                : i18nc("@info", "Messages you send and receive will appear here."))
+                text: !Whatevr.AppController.hasSelectedChat
+                      ? Whatevr.I18n.i18nc("@info", "Select a chat")
+                      : (Whatevr.AppController.messageErrorText.length > 0
+                         ? Whatevr.I18n.i18nc("@info", "Messages could not be loaded")
+                         : Whatevr.I18n.i18nc("@info", "No messages yet"))
+                explanation: !Whatevr.AppController.hasSelectedChat
+                             ? Whatevr.I18n.i18nc("@info", "Choose a conversation from the chat list to open it here.")
+                             : (Whatevr.AppController.messageErrorText.length > 0
+                                ? Whatevr.AppController.messageErrorText
+                                : Whatevr.I18n.i18nc("@info", "Messages you send and receive will appear here."))
 
-                helpfulAction: AppController.hasSelectedChat && AppController.messageErrorText.length > 0
+                helpfulAction: Whatevr.AppController.hasSelectedChat && Whatevr.AppController.messageErrorText.length > 0
                                ? retryMessagesAction
                                : null
             }
@@ -172,13 +175,13 @@ Kirigami.Page {
 
         MessageComposer {
             Layout.fillWidth: true
-            visible: AppController.hasSelectedChat
-            enabledForChat: AppController.composerEnabled
-            sending: AppController.sendInFlight
-            errorText: AppController.composerErrorText
-            onSendTextRequested: text => AppController.sendText(text)
-            onSendImageRequested: (fileUrl, caption) => AppController.sendImage(fileUrl, caption)
-            onComposingChanged: composing => AppController.setSelectedChatComposing(composing)
+            visible: Whatevr.AppController.hasSelectedChat
+            enabledForChat: Whatevr.AppController.composerEnabled
+            sending: Whatevr.AppController.sendInFlight
+            errorText: Whatevr.AppController.composerErrorText
+            onSendTextRequested: text => Whatevr.AppController.sendText(text)
+            onSendImageRequested: (fileUrl, caption) => Whatevr.AppController.sendImage(fileUrl, caption)
+            onComposingChanged: composing => Whatevr.AppController.setSelectedChatComposing(composing)
         }
     }
 }

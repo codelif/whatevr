@@ -1,6 +1,9 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Controls
 import org.kde.kirigami as Kirigami
+import Whatevr as Whatevr
 
 Item {
     id: root
@@ -230,6 +233,10 @@ Item {
         ScrollBar.vertical: DiscreetScrollBar {}
 
         delegate: ChatBubble {
+            id: messageDelegate
+
+            required property var model
+
             listWidth: list.width
             messageId: String(model.messageId || "")
             body: String(model.text || "")
@@ -249,23 +256,23 @@ Item {
             mediaThumbnailLocalPath: String(model.mediaThumbnailLocalPath || "")
             mediaIntrinsicWidth: Number(model.mediaWidth || 0)
             mediaIntrinsicHeight: Number(model.mediaHeight || 0)
-            mediaDownloading: AppController.isMessageMediaDownloading(messageId)
+            mediaDownloading: Whatevr.AppController.isMessageMediaDownloading(messageId)
 
             Connections {
-                target: AppController
+                target: Whatevr.AppController
 
                 function onMediaDownloadChanged(messageId) {
-                    if (messageId === parent.messageId) {
-                        parent.mediaDownloading = AppController.isMessageMediaDownloading(messageId)
-                        if (parent.mediaDownloading) {
-                            parent.mediaDownloadError = ""
+                    if (messageId === messageDelegate.messageId) {
+                        messageDelegate.mediaDownloading = Whatevr.AppController.isMessageMediaDownloading(messageId)
+                        if (messageDelegate.mediaDownloading) {
+                            messageDelegate.mediaDownloadError = ""
                         }
                     }
                 }
 
                 function onMediaDownloadFailed(messageId, errorText) {
-                    if (messageId === parent.messageId) {
-                        parent.mediaDownloadError = errorText
+                    if (messageId === messageDelegate.messageId) {
+                        messageDelegate.mediaDownloadError = errorText
                     }
                 }
             }
@@ -330,7 +337,7 @@ Item {
     }
 
     Connections {
-        target: AppController
+        target: Whatevr.AppController
 
         function onOutgoingMessageAddedToSelectedChat() {
             root.forceBottomPin()
@@ -369,7 +376,7 @@ Item {
             }
 
             Label {
-                text: i18nc("@info", "Loading older messages")
+                text: Whatevr.I18n.i18nc("@info", "Loading older messages")
                 font.pointSize: Kirigami.Theme.smallFont.pointSize
                 color: Kirigami.Theme.disabledTextColor
             }

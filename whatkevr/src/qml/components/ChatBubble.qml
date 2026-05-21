@@ -1,7 +1,10 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Effects
 import org.kde.kirigami as Kirigami
+import Whatevr as Whatevr
 
 Item {
     id: root
@@ -326,16 +329,16 @@ Item {
                             anchors.horizontalCenter: parent.horizontalCenter
                             visible: !root.hasLocalImage && !root.mediaDownloading
                             icon.name: "folder-download-symbolic"
-                            text: i18nc("@action:button", "Load image")
+                            text: Whatevr.I18n.i18nc("@action:button", "Load image")
                             enabled: root.messageId.length > 0
-                            onClicked: AppController.downloadMessageMedia(root.messageId)
+                            onClicked: Whatevr.AppController.downloadMessageMedia(root.messageId)
                         }
 
                         Label {
                             anchors.horizontalCenter: parent.horizontalCenter
                             width: parent.width
                             visible: img.status === Image.Error && root.hasLocalImage
-                            text: i18nc("@info", "Image could not be displayed")
+                            text: Whatevr.I18n.i18nc("@info", "Image could not be displayed")
                             color: Kirigami.Theme.negativeTextColor
                             font.pointSize: Kirigami.Theme.smallFont.pointSize
                             wrapMode: Text.Wrap

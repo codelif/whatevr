@@ -1,13 +1,16 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 import org.kde.prison as Prison
+import Whatevr as Whatevr
 
 Kirigami.ScrollablePage {
     id: root
 
-    title: i18nc("@title", "Sign In")
+    title: Whatevr.I18n.i18nc("@title", "Sign In")
     padding: 0
 
     readonly property bool wideLayout: width >= Kirigami.Units.gridUnit * 52
@@ -33,10 +36,10 @@ Kirigami.ScrollablePage {
 
         Kirigami.InlineMessage {
             Layout.fillWidth: true
-            visible: AppController.bannerText.length > 0
+            visible: Whatevr.AppController.bannerText.length > 0
             type: Kirigami.MessageType.Warning
             showCloseButton: false
-            text: AppController.bannerText
+            text: Whatevr.AppController.bannerText
         }
 
         Item {
@@ -96,19 +99,19 @@ Kirigami.ScrollablePage {
 
                     Kirigami.Heading {
                         level: 1
-                        text: i18nc("@title", "Whatevr")
+                        text: Whatevr.I18n.i18nc("@title", "Whatevr")
                     }
 
                     Label {
                         Layout.fillWidth: true
-                        text: i18nc("@info", "Sign in with WhatsApp to bring your daemon-backed session into the KDE-native interface.")
+                        text: Whatevr.I18n.i18nc("@info", "Sign in with WhatsApp to bring your daemon-backed session into the KDE-native interface.")
                         wrapMode: Text.WordWrap
                         color: Kirigami.Theme.disabledTextColor
                     }
                 }
 
                 StatusChip {
-                    text: AppController.statusTitle
+                    text: Whatevr.AppController.statusTitle
                     foregroundColor: Kirigami.Theme.positiveTextColor
                     backgroundColor: Qt.alpha(Kirigami.Theme.positiveTextColor, 0.14)
                 }
@@ -116,7 +119,7 @@ Kirigami.ScrollablePage {
 
             Label {
                 Layout.fillWidth: true
-                text: AppController.statusText
+                text: Whatevr.AppController.statusText
                 wrapMode: Text.WordWrap
             }
 
@@ -135,12 +138,14 @@ Kirigami.ScrollablePage {
 
                     Repeater {
                         model: [
-                            i18nc("@info", "Open WhatsApp on your phone"),
-                            i18nc("@info", "Choose Linked Devices"),
-                            i18nc("@info", "Scan this QR code to pair the daemon session")
+                            Whatevr.I18n.i18nc("@info", "Open WhatsApp on your phone"),
+                            Whatevr.I18n.i18nc("@info", "Choose Linked Devices"),
+                            Whatevr.I18n.i18nc("@info", "Scan this QR code to pair the daemon session")
                         ]
 
                         delegate: RowLayout {
+                            id: stepDelegate
+
                             required property int index
                             required property string modelData
 
@@ -155,7 +160,7 @@ Kirigami.ScrollablePage {
 
                                 Label {
                                     anchors.centerIn: parent
-                                    text: String(index + 1)
+                                    text: String(stepDelegate.index + 1)
                                     color: Kirigami.Theme.highlightColor
                                     font.weight: Font.DemiBold
                                 }
@@ -163,7 +168,7 @@ Kirigami.ScrollablePage {
 
                             Label {
                                 Layout.fillWidth: true
-                                text: modelData
+                                text: stepDelegate.modelData
                                 wrapMode: Text.WordWrap
                             }
                         }
@@ -173,8 +178,8 @@ Kirigami.ScrollablePage {
 
             Label {
                 Layout.fillWidth: true
-                visible: AppController.detailText.length > 0
-                text: AppController.detailText
+                visible: Whatevr.AppController.detailText.length > 0
+                text: Whatevr.AppController.detailText
                 wrapMode: Text.WordWrap
                 textFormat: Text.PlainText
                 color: Kirigami.Theme.disabledTextColor
@@ -188,12 +193,12 @@ Kirigami.ScrollablePage {
                 Layout.fillWidth: true
 
                 Button {
-                    text: AppController.primaryActionText
-                    enabled: AppController.primaryActionEnabled
-                    icon.name: AppController.primaryActionText === i18n("Reconnect")
+                    text: Whatevr.AppController.primaryActionText
+                    enabled: Whatevr.AppController.primaryActionEnabled
+                    icon.name: Whatevr.AppController.primaryActionText === Whatevr.I18n.i18n("Reconnect")
                                ? "network-connect-symbolic"
                                : "view-refresh-symbolic"
-                    onClicked: AppController.triggerPrimaryAction()
+                    onClicked: Whatevr.AppController.triggerPrimaryAction()
                 }
 
                 Item {
@@ -201,8 +206,8 @@ Kirigami.ScrollablePage {
                 }
 
                 Label {
-                    visible: AppController.qrAvailable && AppController.qrExpiryText.length > 0
-                    text: AppController.qrExpiryText
+                    visible: Whatevr.AppController.qrAvailable && Whatevr.AppController.qrExpiryText.length > 0
+                    text: Whatevr.AppController.qrExpiryText
                     color: Kirigami.Theme.disabledTextColor
                 }
             }
@@ -230,7 +235,7 @@ Kirigami.ScrollablePage {
             Kirigami.Heading {
                 Layout.alignment: Qt.AlignHCenter
                 level: 3
-                text: i18nc("@title", "Pair your device")
+                text: Whatevr.I18n.i18nc("@title", "Pair your device")
             }
 
             Item {
@@ -247,33 +252,33 @@ Kirigami.ScrollablePage {
 
                 Prison.Barcode {
                     anchors.centerIn: parent
-                    visible: AppController.qrAvailable
+                    visible: Whatevr.AppController.qrAvailable
                     width: root.qrSide
                     height: root.qrSide
                     barcodeType: Prison.Barcode.QRCode
-                    content: AppController.qrCode
+                    content: Whatevr.AppController.qrCode
                     foregroundColor: "black"
                     backgroundColor: "white"
                 }
 
                 BusyIndicator {
                     anchors.centerIn: parent
-                    running: !AppController.qrAvailable
+                    running: !Whatevr.AppController.qrAvailable
                     visible: running
                 }
             }
 
             Label {
                 Layout.alignment: Qt.AlignHCenter
-                visible: !AppController.qrAvailable
-                text: i18nc("@info", "Waiting for a fresh QR code")
+                visible: !Whatevr.AppController.qrAvailable
+                text: Whatevr.I18n.i18nc("@info", "Waiting for a fresh QR code")
                 color: Kirigami.Theme.disabledTextColor
             }
 
             Label {
                 Layout.alignment: Qt.AlignHCenter
-                visible: AppController.qrAvailable && AppController.qrExpiryText.length > 0
-                text: AppController.qrExpiryText
+                visible: Whatevr.AppController.qrAvailable && Whatevr.AppController.qrExpiryText.length > 0
+                text: Whatevr.AppController.qrExpiryText
                 color: Kirigami.Theme.disabledTextColor
             }
         }

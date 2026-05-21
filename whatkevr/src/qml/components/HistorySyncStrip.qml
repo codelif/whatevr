@@ -2,11 +2,12 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import Whatevr as Whatevr
 
 Frame {
     id: root
 
-    visible: AppController.historySyncVisible
+    visible: Whatevr.AppController.historySyncVisible
     Layout.fillWidth: true
     padding: Kirigami.Units.largeSpacing
 
@@ -25,13 +26,13 @@ Frame {
 
             Label {
                 Layout.fillWidth: true
-                text: AppController.historySyncTitle
+                text: Whatevr.AppController.historySyncTitle
                 font.weight: Font.DemiBold
                 elide: Text.ElideRight
             }
 
             Label {
-                text: i18nc("@info", "%1%", AppController.historySyncPercent)
+                text: Whatevr.I18n.i18nc("@info", "%1%", Whatevr.AppController.historySyncPercent)
                 color: Kirigami.Theme.highlightColor
                 font.weight: Font.DemiBold
             }
@@ -41,12 +42,12 @@ Frame {
             Layout.fillWidth: true
             from: 0
             to: 100
-            value: AppController.historySyncPercent
+            value: Whatevr.AppController.historySyncPercent
         }
 
         Label {
             Layout.fillWidth: true
-            text: AppController.historySyncDetail
+            text: Whatevr.AppController.historySyncDetail
             color: Kirigami.Theme.disabledTextColor
             elide: Text.ElideRight
         }

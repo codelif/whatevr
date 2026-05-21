@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import Whatevr as Whatevr
 
 ItemDelegate {
     id: root
@@ -78,10 +79,10 @@ ItemDelegate {
 
             Label {
                 Layout.fillWidth: true
-                text: name
+                text: root.name
                 elide: Text.ElideRight
                 maximumLineCount: 1
-                font.weight: unreadCount > 0 ? Font.DemiBold : Font.Medium
+                font.weight: root.unreadCount > 0 ? Font.DemiBold : Font.Medium
             }
 
             RowLayout {
@@ -174,17 +175,17 @@ ItemDelegate {
                     Layout.minimumWidth: 0
                     text: root.hasLastMessage
                           ? root.lastMessage.replace(/[\r\n]+/g, " ")
-                          : i18nc("@info", "No messages yet")
+                          : Whatevr.I18n.i18nc("@info", "No messages yet")
                     elide: Text.ElideRight
                     maximumLineCount: 1
-                    color: unreadCount > 0 ? Kirigami.Theme.textColor : Kirigami.Theme.disabledTextColor
-                    opacity: unreadCount > 0 ? 0.84 : 1.0
+                    color: root.unreadCount > 0 ? Kirigami.Theme.textColor : Kirigami.Theme.disabledTextColor
+                    opacity: root.unreadCount > 0 ? 0.84 : 1.0
                 }
             }
         }
 
         Rectangle {
-            visible: unreadCount > 0
+            visible: root.unreadCount > 0
             Layout.preferredWidth: Math.max(unreadLabel.implicitWidth + Kirigami.Units.largeSpacing,
                                             Kirigami.Units.gridUnit * 1.5)
             Layout.preferredHeight: Kirigami.Units.gridUnit * 1.35
@@ -194,7 +195,7 @@ ItemDelegate {
             Label {
                 id: unreadLabel
                 anchors.centerIn: parent
-                text: unreadCount > 99 ? "99+" : String(unreadCount)
+                text: root.unreadCount > 99 ? "99+" : String(root.unreadCount)
                 color: Kirigami.Theme.highlightedTextColor
                 font.weight: Font.Bold
                 font.pointSize: Kirigami.Theme.smallFont.pointSize

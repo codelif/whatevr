@@ -7,6 +7,7 @@
 #include <QSet>
 #include <QString>
 #include <QStringList>
+#include <qqmlintegration.h>
 
 #include <cstdint>
 #include <memory>
@@ -18,6 +19,8 @@ class QGrpcCallReply;
 class QGrpcServerStream;
 class QTimer;
 class QAbstractGrpcChannel;
+class QQmlEngine;
+class QJSEngine;
 QT_END_NAMESPACE
 
 namespace whatevr::v1 {
@@ -59,6 +62,8 @@ class MessageListModel;
 class AppController final : public QObject
 {
     Q_OBJECT
+    QML_NAMED_ELEMENT(AppController)
+    QML_SINGLETON
     Q_PROPERTY(QString applicationId READ applicationId CONSTANT FINAL)
     Q_PROPERTY(QString applicationDisplayName READ applicationDisplayName CONSTANT FINAL)
     Q_PROPERTY(QString executableName READ executableName CONSTANT FINAL)
@@ -100,6 +105,9 @@ class AppController final : public QObject
     Q_PROPERTY(QString historySyncDetail READ historySyncDetail NOTIFY historySyncChanged FINAL)
 
 public:
+    static void setInstance(AppController *instance);
+    static AppController *create(QQmlEngine *qmlEngine, QJSEngine *jsEngine);
+
     explicit AppController(QObject *parent = nullptr);
     ~AppController() override;
 

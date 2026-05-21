@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Qt.labs.platform as Platform
 import org.kde.kirigami as Kirigami
+import Whatevr as Whatevr
 
 Frame {
     id: root
@@ -87,7 +88,7 @@ Frame {
 
             ToolButton {
                 icon.name: "image-x-generic-symbolic"
-                text: i18nc("@action:button", "Attach image")
+                text: Whatevr.I18n.i18nc("@action:button", "Attach image")
                 display: AbstractButton.IconOnly
                 enabled: root.enabledForChat && !root.sending
                 onClicked: imageDialog.open()
@@ -113,8 +114,8 @@ Frame {
 
                     enabled: root.enabledForChat && !root.sending
                     placeholderText: root.enabledForChat
-                                     ? i18nc("@info:placeholder", "Message")
-                                     : i18nc("@info:placeholder", "Select a chat to message")
+                                     ? Whatevr.I18n.i18nc("@info:placeholder", "Message")
+                                     : Whatevr.I18n.i18nc("@info:placeholder", "Select a chat to message")
                     wrapMode: TextArea.Wrap
                     background: null
                     selectByMouse: true
@@ -135,7 +136,7 @@ Frame {
 
             ToolButton {
                 icon.name: "document-send-symbolic"
-                text: i18nc("@action:button", "Send")
+                text: Whatevr.I18n.i18nc("@action:button", "Send")
                 display: AbstractButton.IconOnly
                 enabled: root.enabledForChat && !root.sending && input.text.trim().length > 0
                 onClicked: root.submitText()
@@ -163,8 +164,8 @@ Frame {
     Platform.FileDialog {
         id: imageDialog
 
-        title: i18nc("@title:window", "Attach image")
-        nameFilters: [i18nc("@item:inlistbox", "Images (*.png *.jpg *.jpeg *.webp *.gif)")]
+        title: Whatevr.I18n.i18nc("@title:window", "Attach image")
+        nameFilters: [Whatevr.I18n.i18nc("@item:inlistbox", "Images (*.png *.jpg *.jpeg *.webp *.gif)")]
         fileMode: Platform.FileDialog.OpenFile
         onAccepted: {
             root.setComposing(false)

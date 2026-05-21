@@ -4,6 +4,7 @@
 #include <QDateTime>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QQmlEngine>
 #include <QLocale>
 #include <QStandardPaths>
 #include <QTimer>
@@ -58,6 +59,8 @@ using whatevr::v1::SubscribeLoginEventsRequest;
 using whatevr::v1::UpdateSessionStateRequest;
 
 namespace {
+
+AppController *s_appControllerInstance = nullptr;
 
 constexpr int kMessageLimit = MessageListModel::MaximumMessageCount;
 
@@ -206,6 +209,21 @@ QString avatarRequestKey(const AvatarSubject &subject)
     return QStringLiteral("%1:%2").arg(static_cast<int>(subject.kind())).arg(subject.id_proto());
 }
 
+}
+
+void AppController::setInstance(AppController *instance)
+{
+    s_appControllerInstance = instance;
+}
+
+AppController *AppController::create(QQmlEngine *qmlEngine, QJSEngine *jsEngine)
+{
+    Q_UNUSED(qmlEngine)
+    Q_UNUSED(jsEngine)
+
+    Q_ASSERT(s_appControllerInstance);
+    QQmlEngine::setObjectOwnership(s_appControllerInstance, QQmlEngine::CppOwnership);
+    return s_appControllerInstance;
 }
 
 AppController::AppController(QObject *parent)

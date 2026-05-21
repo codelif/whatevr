@@ -2,11 +2,12 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import Whatevr as Whatevr
 
 Kirigami.ScrollablePage {
     id: root
 
-    title: AppController.statusTitle
+    title: Whatevr.AppController.statusTitle
     padding: 0
 
     readonly property real pageContentWidth: Math.min(width - Kirigami.Units.largeSpacing * 4,
@@ -23,10 +24,10 @@ Kirigami.ScrollablePage {
 
         Kirigami.InlineMessage {
             Layout.fillWidth: true
-            visible: AppController.bannerText.length > 0
+            visible: Whatevr.AppController.bannerText.length > 0
             type: Kirigami.MessageType.Warning
             showCloseButton: false
-            text: AppController.bannerText
+            text: Whatevr.AppController.bannerText
         }
 
         Frame {
@@ -48,25 +49,25 @@ Kirigami.ScrollablePage {
                         Kirigami.Heading {
                             Layout.fillWidth: true
                             level: 1
-                            text: AppController.statusTitle
+                            text: Whatevr.AppController.statusTitle
                         }
 
                         StatusChip {
-                            text: AppController.loading ? i18n("Connecting") : i18n("Daemon")
+                            text: Whatevr.AppController.loading ? Whatevr.I18n.i18n("Connecting") : Whatevr.I18n.i18n("Daemon")
                         }
                     }
 
                     Label {
                         Layout.fillWidth: true
-                        text: AppController.statusText
+                        text: Whatevr.AppController.statusText
                         wrapMode: Text.WordWrap
                         color: Kirigami.Theme.disabledTextColor
                     }
 
                     Label {
                         Layout.fillWidth: true
-                        visible: AppController.detailText.length > 0
-                        text: AppController.detailText
+                        visible: Whatevr.AppController.detailText.length > 0
+                        text: Whatevr.AppController.detailText
                         textFormat: Text.PlainText
                         wrapMode: Text.WrapAnywhere
                         color: Kirigami.Theme.disabledTextColor
@@ -76,9 +77,9 @@ Kirigami.ScrollablePage {
                         Layout.fillWidth: true
 
                         Button {
-                            text: AppController.primaryActionText
-                            enabled: AppController.primaryActionEnabled
-                            onClicked: AppController.triggerPrimaryAction()
+                            text: Whatevr.AppController.primaryActionText
+                            enabled: Whatevr.AppController.primaryActionEnabled
+                            onClicked: Whatevr.AppController.triggerPrimaryAction()
                         }
 
                         Item {
@@ -86,7 +87,7 @@ Kirigami.ScrollablePage {
                         }
 
                         BusyIndicator {
-                            running: AppController.loading
+                            running: Whatevr.AppController.loading
                             visible: running
                         }
                     }

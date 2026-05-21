@@ -26,13 +26,15 @@ endif()
 
 qt_standard_project_setup(REQUIRES ${QT_MIN_VERSION})
 
+set_source_files_properties(src/qml/I18n.qml PROPERTIES
+    QT_QML_SINGLETON_TYPE TRUE
+)
+
 qt_add_executable(whatkevr
     MANUAL_FINALIZATION
     src/main.cpp
     src/app/appcontroller.cpp
     src/app/appcontroller.h
-    src/app/wheelinputrouter.cpp
-    src/app/wheelinputrouter.h
     src/models/chatlistmodel.cpp
     src/models/chatlistmodel.h
     src/models/messagelistmodel.cpp
@@ -63,12 +65,17 @@ set_target_properties(whatkevr PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+target_include_directories(whatkevr PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app
+)
+
 qt_add_qml_module(whatkevr
     URI Whatevr
     VERSION 1.0
     NO_IMPORT_SCAN
     QML_FILES
         src/qml/Main.qml
+        src/qml/I18n.qml
         src/qml/components/AvatarImage.qml
         src/qml/components/StatusChip.qml
         src/qml/components/ChatListDelegate.qml
