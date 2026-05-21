@@ -25,7 +25,7 @@ Kirigami.ApplicationWindow {
                                                   ? (chatSingleColumnLayout && pageStack.currentIndex > 0
                                                      ? Kirigami.ApplicationHeaderStyle.ShowBackButton
                                                      : Kirigami.ApplicationHeaderStyle.NoNavigationButtons)
-                                                  : Kirigami.ApplicationHeaderStyle.ShowBackButton | Kirigami.ApplicationHeaderStyle.ShowForwardButton
+                                                  : Kirigami.ApplicationHeaderStyle.NoNavigationButtons
 
     Timer {
         id: pageStackRebuildTimer
@@ -96,32 +96,11 @@ Kirigami.ApplicationWindow {
         pushPage(pageComponent)
     }
 
-    function destroyPageAfterToolbarCleanup(page) {
-        if (!page) {
-            return
-        }
-
-        page.actions = []
-        page.visible = false
-        page.enabled = false
-        Qt.callLater(() => page.destroy())
-    }
-
     function destroyChatPages() {
-        const oldConversationPage = conversationPageItem
-        const oldChatListPage = chatListPageItem
-        if (oldConversationPage) {
-            oldConversationPage.actions = []
-        }
-        if (oldChatListPage) {
-            oldChatListPage.actions = []
-        }
         pageStack.clear()
         conversationPageItem = null
         chatListPageItem = null
         conversationOnStack = false
-        destroyPageAfterToolbarCleanup(oldConversationPage)
-        destroyPageAfterToolbarCleanup(oldChatListPage)
     }
 
     function openChatList() {
@@ -207,14 +186,9 @@ Kirigami.ApplicationWindow {
             return
         }
 
-        const page = conversationPageItem
-        if (page) {
-            page.actions = []
-        }
         pageStack.pop()
         conversationOnStack = false
         conversationPageItem = null
-        destroyPageAfterToolbarCleanup(page)
     }
 
     function ensureChatLayout() {

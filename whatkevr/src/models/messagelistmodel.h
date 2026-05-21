@@ -3,6 +3,7 @@
 #include <QAbstractListModel>
 #include <QList>
 #include <QString>
+#include <QStringList>
 
 namespace whatevr::v1 {
 class Message;
@@ -52,6 +53,8 @@ public:
     void prependMessages(const QList<whatevr::v1::Message> &messages);
     void clear();
     void upsertMessage(const whatevr::v1::Message &message);
+    bool updateSenderAvatar(const QString &senderId, const QString &avatarLocalPath);
+    [[nodiscard]] QStringList uniqueIncomingSenderIds() const;
     void setGroupChat(bool groupChat);
     [[nodiscard]] bool isEmpty() const;
     [[nodiscard]] int messageCount() const;

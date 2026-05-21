@@ -80,6 +80,8 @@ Kirigami.Page {
                     initials: String(model.initials || "?")
                     unreadCount: Number(model.unreadCount || 0)
                     current: AppController.selectedChatId === chatId
+                    Component.onCompleted: AppController.requestChatAvatar(chatId)
+                    onChatIdChanged: AppController.requestChatAvatar(chatId)
                     onSelected: id => {
                         AppController.selectChat(id)
                         root.chatSelected(id)

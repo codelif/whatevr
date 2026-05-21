@@ -116,6 +116,7 @@ type DaemonEvent struct {
 
 	HistorySync   HistorySyncEvent
 	MediaDownload MediaDownloadEvent
+	Avatar        Avatar
 }
 
 type presenceState struct {
@@ -145,7 +146,25 @@ const (
 	DaemonEventHistorySyncProgress
 	DaemonEventHistoryBackfilled
 	DaemonEventMediaDownloadChanged
+	DaemonEventAvatarUpdated
 )
+
+type AvatarSubjectKind int32
+
+const (
+	AvatarSubjectKindUnspecified AvatarSubjectKind = iota
+	AvatarSubjectKindChat
+	AvatarSubjectKindSender
+)
+
+type Avatar struct {
+	Kind          AvatarSubjectKind
+	ID            string
+	LocalPath     string
+	Status        string
+	UpdatedAtUnix int64
+	Fetching      bool
+}
 
 type HistorySyncType int32
 
@@ -478,6 +497,10 @@ func (d *Daemon) PublishMediaDownloadChanged(messageID, chatID string, downloadi
 	d.subMu.Unlock()
 
 	d.broadcastDaemonEvent(DaemonEvent{Kind: DaemonEventMediaDownloadChanged, MediaDownload: evt})
+}
+
+func (d *Daemon) PublishAvatarUpdated(avatar Avatar) {
+	d.broadcastDaemonEvent(DaemonEvent{Kind: DaemonEventAvatarUpdated, Avatar: avatar})
 }
 
 func (d *Daemon) broadcastLoginEvent(event LoginEvent) {

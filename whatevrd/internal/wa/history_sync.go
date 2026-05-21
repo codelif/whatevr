@@ -2,7 +2,6 @@ package wa
 
 import (
 	"context"
-	"time"
 
 	"google.golang.org/protobuf/proto"
 
@@ -157,9 +156,6 @@ func (c *Client) processHistorySyncChunk(ctx context.Context, chunk appstore.His
 		return false
 	}
 	c.log.Debugf("Acknowledged history sync chunk %s (type %d, chunk %d, progress %d)", chunk.ID, chunk.SyncType, chunk.ChunkOrder, chunk.Progress)
-	if c.daemon == nil || !c.daemon.HasActiveHistorySync() {
-		c.scheduleAvatarRefresh(ctx, 2*time.Second)
-	}
 	if chunk.DirectPath != "" {
 		if err := client.DeleteMedia(context.WithoutCancel(ctx), whatsmeow.MediaHistory, chunk.DirectPath, chunk.FileEncSHA256, chunk.EncHandle); err != nil {
 			c.log.Warnf("Failed to delete history sync media for chunk %s: %v", chunk.ID, err)

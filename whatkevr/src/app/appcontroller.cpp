@@ -25,6 +25,9 @@
 #include "whatevr/v1/whatevr_client.grpc.qpb.h"
 
 using whatevr::v1::ChatUpdated;
+using whatevr::v1::AvatarSubject;
+using whatevr::v1::AvatarSubjectKindGadget::AvatarSubjectKind;
+using whatevr::v1::AvatarUpdated;
 using whatevr::v1::ChatPresenceChanged;
 using whatevr::v1::ConnectionChanged;
 using whatevr::v1::DaemonStateGadget::DaemonState;
@@ -39,6 +42,8 @@ using whatevr::v1::LoginEvent;
 using whatevr::v1::LoginStateChanged;
 using whatevr::v1::MarkChatReadRequest;
 using whatevr::v1::MediaDownloadChanged;
+using whatevr::v1::RequestAvatarsRequest;
+using whatevr::v1::RequestAvatarsResponse;
 using whatevr::v1::SetChatPresenceRequest;
 using whatevr::v1::SubscribeChatPresenceRequest;
 using whatevr::v1::DownloadMessageMediaRequest;
@@ -194,6 +199,11 @@ QString syncTypeLabel(whatevr::v1::HistorySyncTypeGadget::HistorySyncType type)
     default:
         return i18nc("@label", "Syncing history");
     }
+}
+
+QString avatarRequestKey(const AvatarSubject &subject)
+{
+    return QStringLiteral("%1:%2").arg(static_cast<int>(subject.kind())).arg(subject.id_proto());
 }
 
 }
@@ -555,12 +565,26 @@ void AppController::selectChat(const QString &chatId)
     updateFrontendSessionState();
 
     if (!m_selectedChatId.isEmpty()) {
+        requestChatAvatar(m_selectedChatId);
         requestSelectedChatPresence();
         if (!restoredMessages) {
             requestMessages(m_selectedChatId);
+        } else if (m_selectedChatIsGroup) {
+            requestSenderAvatars(m_messageListModel->uniqueIncomingSenderIds());
         }
         requestSelectedChatReadIfActive();
     }
+}
+
+void AppController::requestChatAvatar(const QString &chatId)
+{
+    if (chatId.trimmed().isEmpty()) {
+        return;
+    }
+    AvatarSubject subject;
+    subject.setKind(AvatarSubjectKind::AVATAR_SUBJECT_KIND_CHAT);
+    subject.setId_proto(chatId.trimmed());
+    requestAvatarSubjects({subject});
 }
 
 void AppController::retryMessages()
@@ -1029,6 +1053,9 @@ void AppController::requestMessages(const QString &chatId)
             m_displayedMessagesChatId = chatId;
             m_messageListModel->replaceMessages(visibleMessages);
             m_canLoadOlderMessages = response->messages().size() >= kMessageLimit;
+            if (m_selectedChatIsGroup) {
+                requestSenderAvatars(m_messageListModel->uniqueIncomingSenderIds());
+            }
         }
         Q_EMIT messagesChanged();
     });
@@ -1096,8 +1123,82 @@ void AppController::requestOlderMessages()
             }
             m_messageListModel->prependMessages(response->messages());
             m_canLoadOlderMessages = response->messages().size() >= kMessageLimit;
+            if (m_selectedChatIsGroup) {
+                requestSenderAvatars(m_messageListModel->uniqueIncomingSenderIds());
+            }
         }
         Q_EMIT messagesChanged();
+    });
+}
+
+void AppController::requestSenderAvatars(const QStringList &senderIds)
+{
+    QList<AvatarSubject> subjects;
+    subjects.reserve(senderIds.size());
+    QSet<QString> seen;
+    for (const QString &senderId : senderIds) {
+        const QString id = senderId.trimmed();
+        if (id.isEmpty() || id == QStringLiteral("me") || seen.contains(id)) {
+            continue;
+        }
+        seen.insert(id);
+        AvatarSubject subject;
+        subject.setKind(AvatarSubjectKind::AVATAR_SUBJECT_KIND_SENDER);
+        subject.setId_proto(id);
+        subjects.append(subject);
+    }
+    requestAvatarSubjects(subjects);
+}
+
+void AppController::requestAvatarSubjects(const QList<AvatarSubject> &subjects)
+{
+    if (!m_chatClient || subjects.isEmpty()) {
+        return;
+    }
+
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    QList<AvatarSubject> filtered;
+    for (const auto &subject : subjects) {
+        const QString key = avatarRequestKey(subject);
+        if (key.endsWith(QLatin1Char(':')) || m_avatarReplies.contains(key)) {
+            continue;
+        }
+        const qint64 lastRequestedAt = m_avatarRequestedAt.value(key, 0);
+        if (lastRequestedAt > 0 && now - lastRequestedAt < 60) {
+            continue;
+        }
+        m_avatarRequestedAt.insert(key, now);
+        filtered.append(subject);
+    }
+    if (filtered.isEmpty()) {
+        return;
+    }
+
+    RequestAvatarsRequest request;
+    request.setSubjects(filtered);
+
+    auto reply = std::shared_ptr<QGrpcCallReply>(m_chatClient->RequestAvatars(request).release());
+    const QString batchKey = filtered.size() == 1 ? avatarRequestKey(filtered.first()) : QUuid::createUuid().toString(QUuid::WithoutBraces);
+    m_avatarReplies.insert(batchKey, reply);
+
+    connect(reply.get(), &QGrpcCallReply::finished, this, [this, reply, batchKey](const QGrpcStatus &status) {
+        const auto existing = m_avatarReplies.constFind(batchKey);
+        if (existing == m_avatarReplies.constEnd() || existing.value() != reply) {
+            return;
+        }
+        m_avatarReplies.remove(batchKey);
+        if (!status.isOk()) {
+            return;
+        }
+        const auto response = reply->read<RequestAvatarsResponse>();
+        if (!response) {
+            return;
+        }
+        for (const auto &avatar : response->avatars()) {
+            AvatarUpdated update;
+            update.setAvatar(avatar);
+            applyAvatarUpdated(update);
+        }
     });
 }
 
@@ -1259,6 +1360,9 @@ void AppController::ensureDaemonStream()
             break;
         case whatevr::v1::DaemonEvent::PayloadFields::MediaDownloadChanged:
             applyMediaDownloadChanged(event->mediaDownloadChanged());
+            break;
+        case whatevr::v1::DaemonEvent::PayloadFields::AvatarUpdated:
+            applyAvatarUpdated(event->avatarUpdated());
             break;
         default:
             break;
@@ -1466,6 +1570,51 @@ void AppController::applyChatUpdated(const ChatUpdated &update)
     Q_EMIT selectionChanged();
 }
 
+void AppController::applyAvatarUpdated(const AvatarUpdated &update)
+{
+    if (!update.hasAvatar()) {
+        return;
+    }
+
+    const auto &avatar = update.avatar();
+    const QString id = avatar.id_proto();
+    const QString localPath = avatar.localPath();
+    if (id.isEmpty()) {
+        return;
+    }
+
+    bool chatAvatarChanged = false;
+    bool messageAvatarChanged = false;
+    switch (avatar.kind()) {
+    case AvatarSubjectKind::AVATAR_SUBJECT_KIND_CHAT:
+        chatAvatarChanged = m_chatListModel->updateAvatar(id, localPath);
+        if (id == m_selectedChatId && m_selectedChatAvatarLocalPath != localPath) {
+            m_selectedChatAvatarLocalPath = localPath;
+            Q_EMIT selectionChanged();
+        }
+        break;
+    case AvatarSubjectKind::AVATAR_SUBJECT_KIND_SENDER:
+        messageAvatarChanged = m_messageListModel->updateSenderAvatar(id, localPath);
+        for (auto cacheIt = m_messageCache.begin(); cacheIt != m_messageCache.end(); ++cacheIt) {
+            for (auto &message : cacheIt->messages) {
+                if (message.senderId() == id && message.senderAvatarLocalPath() != localPath) {
+                    message.setSenderAvatarLocalPath(localPath);
+                }
+            }
+        }
+        break;
+    default:
+        break;
+    }
+
+    if (chatAvatarChanged) {
+        Q_EMIT chatsChanged();
+    }
+    if (messageAvatarChanged) {
+        Q_EMIT messagesChanged();
+    }
+}
+
 void AppController::applyChatPresenceChanged(const ChatPresenceChanged &presence)
 {
     const int availability = static_cast<int>(presence.availability());
@@ -1551,6 +1700,11 @@ void AppController::applyMessageEvent(const whatevr::v1::Message &message)
     }
     if (wasEmpty) {
         Q_EMIT messagesChanged();
+    }
+    if (m_selectedChatIsGroup
+        && message.direction() == whatevr::v1::MessageDirectionGadget::MessageDirection::MESSAGE_DIRECTION_INCOMING
+        && !message.senderId().isEmpty()) {
+        requestSenderAvatars({message.senderId()});
     }
     requestSelectedChatReadIfActive();
 }

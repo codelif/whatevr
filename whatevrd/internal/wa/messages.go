@@ -55,9 +55,6 @@ func (c *Client) handleHistorySync(eventGen uint64, evt *events.HistorySync) {
 		return
 	}
 	c.processHistorySyncData(ctx, evt.Data)
-	if evt != nil && evt.Data != nil && historySyncIsComplete(historySyncType(evt.Data.GetSyncType()), evt.Data.GetProgress()) {
-		c.scheduleAvatarRefresh(ctx, 2*time.Second)
-	}
 }
 
 func (c *Client) processHistorySyncData(ctx context.Context, data *waHistorySync.HistorySync) {
@@ -186,12 +183,7 @@ func (c *Client) handleMessage(ctx context.Context, evt *events.Message) {
 	if c.handleManualHistorySyncNotification(ctx, evt) {
 		return
 	}
-	if saved, inserted := c.ingestMessage(ctx, evt, ingestOptions{source: sourceLive}); inserted {
-		c.scheduleAvatarRefreshForChat(ctx, saved.Chat, 2*time.Second)
-		if saved.Chat.IsGroup && saved.Message.SenderID != "me" {
-			c.scheduleAvatarRefreshForSender(ctx, saved.Message.SenderID, 2*time.Second)
-		}
-	}
+	c.ingestMessage(ctx, evt, ingestOptions{source: sourceLive})
 }
 
 // ingestMessage stores a parsed whatsmeow message in the local store and,
@@ -465,9 +457,9 @@ func senderID(info types.MessageInfo) string {
 		return "me"
 	}
 	if !info.Sender.IsEmpty() {
-		return info.Sender.String()
+		return bareAvatarJID(info.Sender).String()
 	}
-	return info.Chat.String()
+	return bareAvatarJID(info.Chat).String()
 }
 
 func senderJID(info types.MessageInfo) types.JID {
@@ -475,9 +467,9 @@ func senderJID(info types.MessageInfo) types.JID {
 		return types.JID{}
 	}
 	if !info.Sender.IsEmpty() {
-		return info.Sender
+		return bareAvatarJID(info.Sender)
 	}
-	return info.Chat
+	return bareAvatarJID(info.Chat)
 }
 
 func historySyncChatName(conv *waHistorySync.Conversation) string {

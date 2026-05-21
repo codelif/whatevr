@@ -42,8 +42,9 @@ type Client struct {
 	frontendSessions map[string]frontendSession
 	lastPresence     types.Presence
 
-	avatarMu             sync.Mutex
-	avatarRefreshRunning bool
+	avatarMu     sync.Mutex
+	avatarQueue  chan avatarJob
+	avatarQueued map[appstore.AvatarSubject]bool
 
 	mediaDownloadMu sync.Mutex
 	mediaDownloads  map[string]*mediaDownloadState
@@ -113,6 +114,7 @@ func (c *Client) Start(ctx context.Context) {
 	runCtx := c.replaceRunContextLocked(ctx)
 	c.startRunGoroutine(func() { c.runConnectionSupervisor(runCtx) })
 	c.startRunGoroutine(func() { c.runSendQueue(runCtx) })
+	c.startAvatarWorker(runCtx)
 }
 
 func (c *Client) Reconnect(ctx context.Context) error {
@@ -278,9 +280,7 @@ func (c *Client) FrontendSessionStateChanged(sessionID string, focused bool, act
 	c.frontendSessions[sessionID] = frontendSession{focused: focused, activeChatID: activeChatID}
 	c.presenceMu.Unlock()
 
-	if activeChatID != "" && activeChatID != previous.activeChatID {
-		go c.refreshSenderAvatarsForChat(c.backgroundContext(), activeChatID, 80)
-	}
+	_ = previous
 }
 
 func (c *Client) ShouldNotifyChat(chatID string) bool {

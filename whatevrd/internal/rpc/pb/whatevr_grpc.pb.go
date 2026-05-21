@@ -491,6 +491,7 @@ var FrontendService_ServiceDesc = grpc.ServiceDesc{
 const (
 	ChatService_ListChats_FullMethodName             = "/whatevr.v1.ChatService/ListChats"
 	ChatService_GetMessages_FullMethodName           = "/whatevr.v1.ChatService/GetMessages"
+	ChatService_RequestAvatars_FullMethodName        = "/whatevr.v1.ChatService/RequestAvatars"
 	ChatService_MarkChatRead_FullMethodName          = "/whatevr.v1.ChatService/MarkChatRead"
 	ChatService_SetChatPresence_FullMethodName       = "/whatevr.v1.ChatService/SetChatPresence"
 	ChatService_SubscribeChatPresence_FullMethodName = "/whatevr.v1.ChatService/SubscribeChatPresence"
@@ -503,6 +504,7 @@ const (
 type ChatServiceClient interface {
 	ListChats(ctx context.Context, in *ListChatsRequest, opts ...grpc.CallOption) (*ListChatsResponse, error)
 	GetMessages(ctx context.Context, in *GetMessagesRequest, opts ...grpc.CallOption) (*GetMessagesResponse, error)
+	RequestAvatars(ctx context.Context, in *RequestAvatarsRequest, opts ...grpc.CallOption) (*RequestAvatarsResponse, error)
 	MarkChatRead(ctx context.Context, in *MarkChatReadRequest, opts ...grpc.CallOption) (*MarkChatReadResponse, error)
 	SetChatPresence(ctx context.Context, in *SetChatPresenceRequest, opts ...grpc.CallOption) (*SetChatPresenceResponse, error)
 	SubscribeChatPresence(ctx context.Context, in *SubscribeChatPresenceRequest, opts ...grpc.CallOption) (*SubscribeChatPresenceResponse, error)
@@ -531,6 +533,16 @@ func (c *chatServiceClient) GetMessages(ctx context.Context, in *GetMessagesRequ
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetMessagesResponse)
 	err := c.cc.Invoke(ctx, ChatService_GetMessages_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *chatServiceClient) RequestAvatars(ctx context.Context, in *RequestAvatarsRequest, opts ...grpc.CallOption) (*RequestAvatarsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RequestAvatarsResponse)
+	err := c.cc.Invoke(ctx, ChatService_RequestAvatars_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -583,6 +595,7 @@ func (c *chatServiceClient) DownloadMessageMedia(ctx context.Context, in *Downlo
 type ChatServiceServer interface {
 	ListChats(context.Context, *ListChatsRequest) (*ListChatsResponse, error)
 	GetMessages(context.Context, *GetMessagesRequest) (*GetMessagesResponse, error)
+	RequestAvatars(context.Context, *RequestAvatarsRequest) (*RequestAvatarsResponse, error)
 	MarkChatRead(context.Context, *MarkChatReadRequest) (*MarkChatReadResponse, error)
 	SetChatPresence(context.Context, *SetChatPresenceRequest) (*SetChatPresenceResponse, error)
 	SubscribeChatPresence(context.Context, *SubscribeChatPresenceRequest) (*SubscribeChatPresenceResponse, error)
@@ -602,6 +615,9 @@ func (UnimplementedChatServiceServer) ListChats(context.Context, *ListChatsReque
 }
 func (UnimplementedChatServiceServer) GetMessages(context.Context, *GetMessagesRequest) (*GetMessagesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetMessages not implemented")
+}
+func (UnimplementedChatServiceServer) RequestAvatars(context.Context, *RequestAvatarsRequest) (*RequestAvatarsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RequestAvatars not implemented")
 }
 func (UnimplementedChatServiceServer) MarkChatRead(context.Context, *MarkChatReadRequest) (*MarkChatReadResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method MarkChatRead not implemented")
@@ -668,6 +684,24 @@ func _ChatService_GetMessages_Handler(srv interface{}, ctx context.Context, dec 
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(ChatServiceServer).GetMessages(ctx, req.(*GetMessagesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ChatService_RequestAvatars_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RequestAvatarsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ChatServiceServer).RequestAvatars(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ChatService_RequestAvatars_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ChatServiceServer).RequestAvatars(ctx, req.(*RequestAvatarsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -758,6 +792,10 @@ var ChatService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetMessages",
 			Handler:    _ChatService_GetMessages_Handler,
+		},
+		{
+			MethodName: "RequestAvatars",
+			Handler:    _ChatService_RequestAvatars_Handler,
 		},
 		{
 			MethodName: "MarkChatRead",

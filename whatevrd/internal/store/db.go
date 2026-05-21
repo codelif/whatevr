@@ -153,6 +153,9 @@ func (db *DB) migrate(ctx context.Context) error {
 	if err := db.ensureSendersAvatarColumns(ctx); err != nil {
 		return err
 	}
+	if err := db.ensureAvatarTable(ctx); err != nil {
+		return err
+	}
 
 	if err := db.ensureChatSummaryColumns(ctx); err != nil {
 		return err
@@ -175,6 +178,50 @@ func (db *DB) migrate(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (db *DB) ensureAvatarTable(ctx context.Context) error {
+	if _, err := db.conn.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS avatars (
+			subject_kind TEXT NOT NULL,
+			subject_id TEXT NOT NULL,
+			fetch_jid TEXT NOT NULL DEFAULT '',
+			picture_id TEXT NOT NULL DEFAULT '',
+			local_path TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT '',
+			checked_at INTEGER NOT NULL DEFAULT 0,
+			updated_at INTEGER NOT NULL DEFAULT 0,
+			next_check_at INTEGER NOT NULL DEFAULT 0,
+			retry_count INTEGER NOT NULL DEFAULT 0,
+			last_error TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY (subject_kind, subject_id)
+		)
+	`); err != nil {
+		return err
+	}
+	if _, err := db.conn.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_avatars_next_check ON avatars(next_check_at)`); err != nil {
+		return err
+	}
+	if _, err := db.conn.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_avatars_fetch_jid ON avatars(fetch_jid)`); err != nil {
+		return err
+	}
+
+	// Backfill once from legacy avatar columns. Future writes use avatars.
+	if _, err := db.conn.ExecContext(ctx, `
+		INSERT OR IGNORE INTO avatars (subject_kind, subject_id, fetch_jid, picture_id, local_path, status, checked_at, updated_at, next_check_at)
+		SELECT CASE WHEN is_group = 1 THEN 'chat' ELSE 'chat' END, id, id, avatar_picture_id, avatar_local_path, avatar_status, avatar_checked_at, avatar_checked_at, 0
+		FROM chats
+		WHERE avatar_picture_id != '' OR avatar_local_path != '' OR avatar_status != ''
+	`); err != nil {
+		return err
+	}
+	_, err := db.conn.ExecContext(ctx, `
+		INSERT OR IGNORE INTO avatars (subject_kind, subject_id, fetch_jid, picture_id, local_path, status, checked_at, updated_at, next_check_at)
+		SELECT 'sender', id, id, avatar_picture_id, avatar_local_path, avatar_status, avatar_checked_at, avatar_checked_at, 0
+		FROM senders
+		WHERE avatar_picture_id != '' OR avatar_local_path != '' OR avatar_status != ''
+	`)
+	return err
 }
 
 func (db *DB) ensureHistorySyncColumns(ctx context.Context) error {

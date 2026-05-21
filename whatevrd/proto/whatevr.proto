@@ -46,6 +46,12 @@ enum ContactAvailability {
   CONTACT_AVAILABILITY_OFFLINE = 2;
 }
 
+enum AvatarSubjectKind {
+  AVATAR_SUBJECT_KIND_UNSPECIFIED = 0;
+  AVATAR_SUBJECT_KIND_CHAT = 1;
+  AVATAR_SUBJECT_KIND_SENDER = 2;
+}
+
 service DaemonService {
   rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
   rpc SubscribeEvents(SubscribeEventsRequest) returns (stream DaemonEvent);
@@ -65,6 +71,7 @@ service FrontendService {
 service ChatService {
   rpc ListChats(ListChatsRequest) returns (ListChatsResponse);
   rpc GetMessages(GetMessagesRequest) returns (GetMessagesResponse);
+  rpc RequestAvatars(RequestAvatarsRequest) returns (RequestAvatarsResponse);
   rpc MarkChatRead(MarkChatReadRequest) returns (MarkChatReadResponse);
   rpc SetChatPresence(SetChatPresenceRequest) returns (SetChatPresenceResponse);
   rpc SubscribeChatPresence(SubscribeChatPresenceRequest) returns (SubscribeChatPresenceResponse);
@@ -105,7 +112,26 @@ message DaemonEvent {
     HistorySyncProgress history_sync_progress = 7;
     HistoryBackfilled history_backfilled = 8;
     MediaDownloadChanged media_download_changed = 9;
+    AvatarUpdated avatar_updated = 10;
   }
+}
+
+message AvatarSubject {
+  AvatarSubjectKind kind = 1;
+  string id = 2;
+}
+
+message Avatar {
+  AvatarSubjectKind kind = 1;
+  string id = 2;
+  string local_path = 3;
+  string status = 4;
+  int64 updated_at_unix = 5;
+  bool fetching = 6;
+}
+
+message AvatarUpdated {
+  Avatar avatar = 1;
 }
 
 message HistorySyncProgress {
@@ -223,6 +249,14 @@ message GetMessagesRequest {
 
 message GetMessagesResponse {
   repeated Message messages = 1;
+}
+
+message RequestAvatarsRequest {
+  repeated AvatarSubject subjects = 1;
+}
+
+message RequestAvatarsResponse {
+  repeated Avatar avatars = 1;
 }
 
 message MarkChatReadRequest {

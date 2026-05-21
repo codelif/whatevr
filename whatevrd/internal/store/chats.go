@@ -23,12 +23,6 @@ type Chat struct {
 }
 
 const (
-	AvatarStatusAvailable    = ""
-	AvatarStatusNotSet       = "not_set"
-	AvatarStatusUnauthorized = "unauthorized"
-)
-
-const (
 	ChatNameSourceRaw      = "raw"
 	ChatNameSourceWhatsApp = "whatsapp"
 	ChatNameSourcePhone    = "phone"
@@ -71,8 +65,10 @@ func (db *DB) ListChats(ctx context.Context, limit, offset int) ([]Chat, error) 
 	}
 
 	rows, err := db.conn.QueryContext(ctx, `
-		SELECT id, name, name_source, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group, avatar_local_path, avatar_picture_id, avatar_status, avatar_checked_at
-		FROM chats
+		SELECT c.id, c.name, c.name_source, c.last_message, c.last_message_time, c.last_message_direction, c.last_message_status, c.unread_count, c.is_group,
+		       COALESCE(NULLIF(a.local_path, ''), c.avatar_local_path), COALESCE(NULLIF(a.picture_id, ''), c.avatar_picture_id), COALESCE(NULLIF(a.status, ''), c.avatar_status), COALESCE(NULLIF(a.checked_at, 0), c.avatar_checked_at)
+		FROM chats c
+		LEFT JOIN avatars a ON a.subject_kind = 'chat' AND a.subject_id = c.id
 		ORDER BY last_message_time DESC, id ASC
 		LIMIT ? OFFSET ?
 	`, limit, offset)

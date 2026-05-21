@@ -29,6 +29,7 @@ type ChatStore interface {
 
 type ChatActionController interface {
 	MarkChatRead(context.Context, string) (appstore.Chat, error)
+	RequestAvatars(context.Context, []appstore.AvatarSubject) ([]appstore.Avatar, error)
 	SetChatPresence(context.Context, string, bool) error
 	SubscribeChatPresence(context.Context, string) error
 	DownloadMessageMedia(context.Context, string) (appstore.Message, error)
@@ -123,6 +124,38 @@ func (s *ChatService) MarkChatRead(ctx context.Context, req *pb.MarkChatReadRequ
 		s.daemon.PublishChatUpdated(toAppChat(chat))
 	}
 	return &pb.MarkChatReadResponse{}, nil
+}
+
+func (s *ChatService) RequestAvatars(ctx context.Context, req *pb.RequestAvatarsRequest) (*pb.RequestAvatarsResponse, error) {
+	if s.actions == nil {
+		return nil, status.Error(codes.Unimplemented, "avatar controller is not available")
+	}
+	subjects := make([]appstore.AvatarSubject, 0, len(req.GetSubjects()))
+	for _, subject := range req.GetSubjects() {
+		id := strings.TrimSpace(subject.GetId())
+		if id == "" {
+			continue
+		}
+		kind := ""
+		switch subject.GetKind() {
+		case pb.AvatarSubjectKind_AVATAR_SUBJECT_KIND_CHAT:
+			kind = appstore.AvatarSubjectChat
+		case pb.AvatarSubjectKind_AVATAR_SUBJECT_KIND_SENDER:
+			kind = appstore.AvatarSubjectSender
+		default:
+			continue
+		}
+		subjects = append(subjects, appstore.AvatarSubject{Kind: kind, ID: id})
+	}
+	avatars, err := s.actions.RequestAvatars(ctx, subjects)
+	if err != nil {
+		return nil, err
+	}
+	resp := &pb.RequestAvatarsResponse{Avatars: make([]*pb.Avatar, 0, len(avatars))}
+	for _, avatar := range avatars {
+		resp.Avatars = append(resp.Avatars, toProtoAvatar(toAppAvatar(avatar)))
+	}
+	return resp, nil
 }
 
 func (s *ChatService) SetChatPresence(ctx context.Context, req *pb.SetChatPresenceRequest) (*pb.SetChatPresenceResponse, error) {
@@ -220,4 +253,15 @@ func toAppMessage(message appstore.Message) app.Message {
 		MediaWidth:              message.MediaWidth,
 		MediaHeight:             message.MediaHeight,
 	}
+}
+
+func toAppAvatar(avatar appstore.Avatar) app.Avatar {
+	kind := app.AvatarSubjectKindUnspecified
+	switch avatar.SubjectKind {
+	case appstore.AvatarSubjectChat:
+		kind = app.AvatarSubjectKindChat
+	case appstore.AvatarSubjectSender:
+		kind = app.AvatarSubjectKindSender
+	}
+	return app.Avatar{Kind: kind, ID: avatar.SubjectID, LocalPath: avatar.LocalPath, Status: avatar.Status, UpdatedAtUnix: avatar.UpdatedAt, Fetching: avatar.Fetching}
 }

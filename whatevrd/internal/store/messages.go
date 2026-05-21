@@ -327,12 +327,14 @@ func (db *DB) ListMessages(ctx context.Context, chatID string, limit int, before
 	query := `
 		SELECT m.id, m.chat_id, m.sender_id,
 		       COALESCE(NULLIF(s.name, ''), NULLIF(c.name, ''), ''),
-		       COALESCE(NULLIF(s.avatar_local_path, ''), NULLIF(c.avatar_local_path, ''), ''),
+		       COALESCE(NULLIF(sa.local_path, ''), NULLIF(ca.local_path, ''), NULLIF(s.avatar_local_path, ''), NULLIF(c.avatar_local_path, ''), ''),
 		       m.text, m.timestamp, m.direction, m.is_read, m.status, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_payload,
 		       m.send_attempts, m.last_send_error, m.next_send_attempt
 		FROM messages m
 		LEFT JOIN senders s ON s.id = m.sender_id
 		LEFT JOIN chats c ON c.id = m.sender_id
+		LEFT JOIN avatars sa ON sa.subject_kind = 'sender' AND sa.subject_id = m.sender_id
+		LEFT JOIN avatars ca ON ca.subject_kind = 'chat' AND ca.subject_id = m.sender_id
 		WHERE m.chat_id = ?
 	`
 	args := []any{chatID}
@@ -633,9 +635,11 @@ func getChatRow(ctx context.Context, queryer interface {
 	var chat Chat
 	var isGroup int
 	err := queryer.QueryRowContext(ctx, `
-		SELECT id, name, name_source, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group, avatar_local_path, avatar_picture_id, avatar_status, avatar_checked_at
-		FROM chats
-		WHERE id = ?
+		SELECT c.id, c.name, c.name_source, c.last_message, c.last_message_time, c.last_message_direction, c.last_message_status, c.unread_count, c.is_group,
+		       COALESCE(NULLIF(a.local_path, ''), c.avatar_local_path), COALESCE(NULLIF(a.picture_id, ''), c.avatar_picture_id), COALESCE(NULLIF(a.status, ''), c.avatar_status), COALESCE(NULLIF(a.checked_at, 0), c.avatar_checked_at)
+		FROM chats c
+		LEFT JOIN avatars a ON a.subject_kind = 'chat' AND a.subject_id = c.id
+		WHERE c.id = ?
 	`, id).Scan(
 		&chat.ID,
 		&chat.Name,
@@ -661,12 +665,14 @@ func getMessageRow(ctx context.Context, queryer interface {
 	return queryer.QueryRowContext(ctx, `
 		SELECT m.id, m.chat_id, m.sender_id,
 		       COALESCE(NULLIF(s.name, ''), NULLIF(c.name, ''), ''),
-		       COALESCE(NULLIF(s.avatar_local_path, ''), NULLIF(c.avatar_local_path, ''), ''),
+		       COALESCE(NULLIF(sa.local_path, ''), NULLIF(ca.local_path, ''), NULLIF(s.avatar_local_path, ''), NULLIF(c.avatar_local_path, ''), ''),
 		       m.text, m.timestamp, m.direction, m.is_read, m.status, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_payload,
 		       m.send_attempts, m.last_send_error, m.next_send_attempt
 		FROM messages m
 		LEFT JOIN senders s ON s.id = m.sender_id
 		LEFT JOIN chats c ON c.id = m.sender_id
+		LEFT JOIN avatars sa ON sa.subject_kind = 'sender' AND sa.subject_id = m.sender_id
+		LEFT JOIN avatars ca ON ca.subject_kind = 'chat' AND ca.subject_id = m.sender_id
 		WHERE m.id = ?
 	`, id).Scan(
 		&message.ID,

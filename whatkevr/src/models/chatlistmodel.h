@@ -35,6 +35,7 @@ public:
 
     void replaceChats(const QList<whatevr::v1::Chat> &chats);
     void upsertChat(const whatevr::v1::Chat &chat, const QString &previousChatId = QString());
+    bool updateAvatar(const QString &chatId, const QString &avatarLocalPath);
     [[nodiscard]] QString chatName(const QString &chatId) const;
     [[nodiscard]] QString chatAvatarLocalPath(const QString &chatId) const;
     [[nodiscard]] bool chatIsGroup(const QString &chatId) const;

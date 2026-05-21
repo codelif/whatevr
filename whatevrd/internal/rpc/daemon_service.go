@@ -162,8 +162,36 @@ func toProtoDaemonEvent(event app.DaemonEvent) *pb.DaemonEvent {
 				},
 			},
 		}
+	case app.DaemonEventAvatarUpdated:
+		return &pb.DaemonEvent{
+			Payload: &pb.DaemonEvent_AvatarUpdated{
+				AvatarUpdated: &pb.AvatarUpdated{Avatar: toProtoAvatar(event.Avatar)},
+			},
+		}
 	default:
 		return nil
+	}
+}
+
+func toProtoAvatar(avatar app.Avatar) *pb.Avatar {
+	return &pb.Avatar{
+		Kind:          toProtoAvatarSubjectKind(avatar.Kind),
+		Id:            avatar.ID,
+		LocalPath:     avatar.LocalPath,
+		Status:        avatar.Status,
+		UpdatedAtUnix: avatar.UpdatedAtUnix,
+		Fetching:      avatar.Fetching,
+	}
+}
+
+func toProtoAvatarSubjectKind(kind app.AvatarSubjectKind) pb.AvatarSubjectKind {
+	switch kind {
+	case app.AvatarSubjectKindChat:
+		return pb.AvatarSubjectKind_AVATAR_SUBJECT_KIND_CHAT
+	case app.AvatarSubjectKindSender:
+		return pb.AvatarSubjectKind_AVATAR_SUBJECT_KIND_SENDER
+	default:
+		return pb.AvatarSubjectKind_AVATAR_SUBJECT_KIND_UNSPECIFIED
 	}
 }
 

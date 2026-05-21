@@ -6,6 +6,7 @@
 #include <QObject>
 #include <QSet>
 #include <QString>
+#include <QStringList>
 
 #include <cstdint>
 #include <memory>
@@ -25,6 +26,8 @@ class ConnectionChanged;
 class LoginStateChanged;
 class LoginEvent;
 class ChatUpdated;
+class AvatarSubject;
+class AvatarUpdated;
 class ChatPresenceChanged;
 class MediaDownloadChanged;
 class HistorySyncProgress;
@@ -143,6 +146,7 @@ public:
     Q_INVOKABLE void refresh();
     Q_INVOKABLE void triggerPrimaryAction();
     Q_INVOKABLE void selectChat(const QString &chatId);
+    Q_INVOKABLE void requestChatAvatar(const QString &chatId);
     Q_INVOKABLE void retryMessages();
     Q_INVOKABLE void loadOlderMessages();
     Q_INVOKABLE void sendText(const QString &text);
@@ -172,6 +176,8 @@ private:
     void requestChats();
     void requestMessages(const QString &chatId);
     void requestOlderMessages();
+    void requestSenderAvatars(const QStringList &senderIds);
+    void requestAvatarSubjects(const QList<whatevr::v1::AvatarSubject> &subjects);
     void requestSelectedChatReadIfActive();
     void requestSelectedChatPresence();
     void setChatComposing(const QString &chatId, bool composing);
@@ -186,6 +192,7 @@ private:
     void applyLoginStateChanged(const whatevr::v1::LoginStateChanged &change);
     void applyLoginEvent(const whatevr::v1::LoginEvent &event);
     void applyChatUpdated(const whatevr::v1::ChatUpdated &update);
+    void applyAvatarUpdated(const whatevr::v1::AvatarUpdated &update);
     void applyChatPresenceChanged(const whatevr::v1::ChatPresenceChanged &presence);
     void applyMediaDownloadChanged(const whatevr::v1::MediaDownloadChanged &download);
     void applyMessageEvent(const whatevr::v1::Message &message);
@@ -260,6 +267,8 @@ private:
     std::unique_ptr<QGrpcCallReply> m_sendTextReply;
     std::unique_ptr<QGrpcCallReply> m_sendMediaReply;
     QHash<QString, std::shared_ptr<QGrpcCallReply>> m_mediaDownloadReplies;
+    QHash<QString, std::shared_ptr<QGrpcCallReply>> m_avatarReplies;
+    QHash<QString, qint64> m_avatarRequestedAt;
     QSet<QString> m_mediaDownloadingMessageIds;
     std::unique_ptr<QGrpcCallReply> m_logoutReply;
     std::unique_ptr<QGrpcServerStream> m_frontendSessionStream;

@@ -2,7 +2,6 @@ package wa
 
 import (
 	"fmt"
-	"time"
 
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
@@ -24,7 +23,6 @@ func (c *Client) handleEvent(eventGen uint64, raw any) {
 		c.signalSendQueue()
 		c.signalHistorySyncWorker()
 		go c.migrateLIDChats(ctx)
-		c.scheduleAvatarRefresh(ctx, 5*time.Second)
 	case *events.AppStateSyncComplete:
 		c.syncPresence(c.backgroundContext(), true)
 	case *events.Disconnected:

@@ -1,6 +1,7 @@
 #include "messagelistmodel.h"
 
 #include <QDateTime>
+#include <QSet>
 #include <QTimeZone>
 
 #include <KLocalizedString>
@@ -208,6 +209,47 @@ void MessageListModel::upsertMessage(const whatevr::v1::Message &message)
     beginInsertRows(QModelIndex(), insertAt, insertAt);
     m_messages.insert(insertAt, item);
     endInsertRows();
+}
+
+bool MessageListModel::updateSenderAvatar(const QString &senderId, const QString &avatarLocalPath)
+{
+    if (senderId.isEmpty() || senderId == QStringLiteral("me")) {
+        return false;
+    }
+
+    bool changed = false;
+    int firstChanged = -1;
+    int lastChanged = -1;
+    for (int i = 0; i < m_messages.size(); ++i) {
+        auto &message = m_messages[i];
+        if (message.senderId != senderId || message.senderAvatarLocalPath == avatarLocalPath) {
+            continue;
+        }
+        message.senderAvatarLocalPath = avatarLocalPath;
+        changed = true;
+        if (firstChanged < 0) {
+            firstChanged = i;
+        }
+        lastChanged = i;
+    }
+    if (changed) {
+        Q_EMIT dataChanged(index(firstChanged, 0), index(lastChanged, 0), {SenderAvatarLocalPathRole});
+    }
+    return changed;
+}
+
+QStringList MessageListModel::uniqueIncomingSenderIds() const
+{
+    QSet<QString> seen;
+    QStringList ids;
+    for (const auto &message : m_messages) {
+        if (isOutgoing(message) || message.senderId.isEmpty() || message.senderId == QStringLiteral("me") || seen.contains(message.senderId)) {
+            continue;
+        }
+        seen.insert(message.senderId);
+        ids.append(message.senderId);
+    }
+    return ids;
 }
 
 void MessageListModel::setGroupChat(bool groupChat)

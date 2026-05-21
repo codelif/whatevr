@@ -139,6 +139,18 @@ void ChatListModel::upsertChat(const whatevr::v1::Chat &chat, const QString &pre
     }
 }
 
+bool ChatListModel::updateAvatar(const QString &chatId, const QString &avatarLocalPath)
+{
+    const int chatIndex = indexOf(chatId);
+    if (chatIndex < 0 || m_chats.at(chatIndex).avatarLocalPath == avatarLocalPath) {
+        return false;
+    }
+    m_chats[chatIndex].avatarLocalPath = avatarLocalPath;
+    const QModelIndex changedIndex = index(chatIndex, 0);
+    Q_EMIT dataChanged(changedIndex, changedIndex, {AvatarLocalPathRole});
+    return true;
+}
+
 QString ChatListModel::chatName(const QString &chatId) const
 {
     const int index = indexOf(chatId);
