@@ -70,9 +70,9 @@ QList<whatevr::v1::Message> mergeMessages(const QList<whatevr::v1::Message> &bas
     QList<whatevr::v1::Message> merged;
     merged.reserve(base.size() + updates.size());
 
-    QHash<QString, int> indexesById;
+    QHash<QString, qsizetype> indexesById;
     auto appendOrReplace = [&merged, &indexesById](const whatevr::v1::Message &message) {
-        const QString id = message.id_proto();
+        const QString &id = message.id_proto();
         if (!id.isEmpty()) {
             const auto existing = indexesById.constFind(id);
             if (existing != indexesById.constEnd()) {
@@ -125,7 +125,7 @@ QString fallbackStateLabel(DaemonState state)
 QString formatRetryDetail(qint64 nextRetryUnix)
 {
     if (nextRetryUnix <= 0) {
-        return QString();
+        return {};
     }
 
     const qint64 now = QDateTime::currentSecsSinceEpoch();
@@ -140,7 +140,7 @@ QString formatRetryDetail(qint64 nextRetryUnix)
 QString formatQrExpiry(qint64 expiresAtUnix)
 {
     if (expiresAtUnix <= 0) {
-        return QString();
+        return {};
     }
 
     const qint64 now = QDateTime::currentSecsSinceEpoch();
@@ -161,12 +161,12 @@ QString formatQrExpiry(qint64 expiresAtUnix)
 QString formatLastSeen(qint64 lastSeenUnix)
 {
     if (lastSeenUnix <= 0) {
-        return QString();
+        return {};
     }
 
     const QDateTime lastSeen = QDateTime::fromSecsSinceEpoch(lastSeenUnix).toLocalTime();
     if (!lastSeen.isValid()) {
-        return QString();
+        return {};
     }
 
     const QDate today = QDate::currentDate();
@@ -288,7 +288,7 @@ QString AppController::daemonSocketPath() const
 {
     const QString runtimePath = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
     if (runtimePath.isEmpty()) {
-        return QString();
+        return {};
     }
 
     return QDir(runtimePath).filePath(QStringLiteral("whatevrd/whatevrd.sock"));
@@ -298,7 +298,7 @@ QString AppController::daemonSocketUrl() const
 {
     const QString socketPath = daemonSocketPath();
     if (socketPath.isEmpty()) {
-        return QString();
+        return {};
     }
 
     return QStringLiteral("unix://%1").arg(socketPath);
@@ -487,7 +487,7 @@ QString AppController::selectedChatAvatarLocalPath() const
 QString AppController::selectedChatPresenceText() const
 {
     if (!hasSelectedChat()) {
-        return QString();
+        return {};
     }
     if (m_selectedChatComposing) {
         return i18nc("@info chat presence", "typing...");
@@ -1595,8 +1595,8 @@ void AppController::applyAvatarUpdated(const AvatarUpdated &update)
     }
 
     const auto &avatar = update.avatar();
-    const QString id = avatar.id_proto();
-    const QString localPath = avatar.localPath();
+    const QString &id = avatar.id_proto();
+    const QString &localPath = avatar.localPath();
     if (id.isEmpty()) {
         return;
     }
@@ -1613,8 +1613,8 @@ void AppController::applyAvatarUpdated(const AvatarUpdated &update)
         break;
     case AvatarSubjectKind::AVATAR_SUBJECT_KIND_SENDER:
         messageAvatarChanged = m_messageListModel->updateSenderAvatar(id, localPath);
-        for (auto cacheIt = m_messageCache.begin(); cacheIt != m_messageCache.end(); ++cacheIt) {
-            for (auto &message : cacheIt->messages) {
+        for (auto &cachedMessages : m_messageCache) {
+            for (auto &message : cachedMessages.messages) {
                 if (message.senderId() == id && message.senderAvatarLocalPath() != localPath) {
                     message.setSenderAvatarLocalPath(localPath);
                 }
@@ -1761,7 +1761,7 @@ bool AppController::restoreCachedMessages(const QString &chatId)
 
 void AppController::scheduleSelectedChatMessageReload(const QString &chatId)
 {
-    if (chatId.isEmpty() || !m_selectedChatReloadTimer) {
+    if (chatId.isEmpty() || m_selectedChatReloadTimer == nullptr) {
         return;
     }
     m_pendingSelectedChatReloadId = chatId;

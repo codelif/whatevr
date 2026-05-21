@@ -15,13 +15,13 @@ int ChatListModel::rowCount(const QModelIndex &parent) const
     if (parent.isValid()) {
         return 0;
     }
-    return m_chats.size();
+    return static_cast<int>(m_chats.size());
 }
 
 QVariant ChatListModel::data(const QModelIndex &index, int role) const
 {
     if (!index.isValid() || index.row() < 0 || index.row() >= m_chats.size()) {
-        return QVariant();
+        return {};
     }
 
     const auto &chat = m_chats.at(index.row());
@@ -47,7 +47,7 @@ QVariant ChatListModel::data(const QModelIndex &index, int role) const
     case InitialsRole:
         return initialsForName(displayName(chat));
     default:
-        return QVariant();
+        return {};
     }
 }
 
@@ -155,7 +155,7 @@ QString ChatListModel::chatName(const QString &chatId) const
 {
     const int index = indexOf(chatId);
     if (index < 0) {
-        return QString();
+        return {};
     }
     return displayName(m_chats.at(index));
 }
@@ -164,7 +164,7 @@ QString ChatListModel::chatAvatarLocalPath(const QString &chatId) const
 {
     const int index = indexOf(chatId);
     if (index < 0) {
-        return QString();
+        return {};
     }
     return m_chats.at(index).avatarLocalPath;
 }

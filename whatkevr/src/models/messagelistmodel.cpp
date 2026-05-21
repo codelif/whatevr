@@ -9,7 +9,7 @@
 #include "whatevr/v1/whatevr.qpb.h"
 
 namespace {
-constexpr qint64 kSenderGroupGapSeconds = 5 * 60;
+constexpr qint64 kSenderGroupGapSeconds = 5LL * 60;
 }
 
 MessageListModel::MessageListModel(QObject *parent)
@@ -22,13 +22,13 @@ int MessageListModel::rowCount(const QModelIndex &parent) const
     if (parent.isValid()) {
         return 0;
     }
-    return m_messages.size();
+    return static_cast<int>(m_messages.size());
 }
 
 QVariant MessageListModel::data(const QModelIndex &index, int role) const
 {
     if (!index.isValid() || index.row() < 0 || index.row() >= m_messages.size()) {
-        return QVariant();
+        return {};
     }
 
     const auto &message = m_messages.at(index.row());
@@ -80,7 +80,7 @@ QVariant MessageListModel::data(const QModelIndex &index, int role) const
     case GroupEndRole:
         return endsSenderGroup(index.row());
     default:
-        return QVariant();
+        return {};
     }
 }
 
@@ -171,8 +171,8 @@ void MessageListModel::prependMessages(const QList<whatevr::v1::Message> &messag
         return left.id < right.id;
     });
 
-    beginInsertRows(QModelIndex(), 0, older.size() - 1);
-    for (int i = older.size() - 1; i >= 0; --i) {
+    beginInsertRows(QModelIndex(), 0, static_cast<int>(older.size()) - 1);
+    for (int i = static_cast<int>(older.size()) - 1; i >= 0; --i) {
         m_messages.prepend(older.at(i));
     }
     endInsertRows();
@@ -201,7 +201,7 @@ void MessageListModel::upsertMessage(const whatevr::v1::Message &message)
         return;
     }
 
-    int insertAt = m_messages.size();
+    int insertAt = static_cast<int>(m_messages.size());
     while (insertAt > 0 && m_messages.at(insertAt - 1).timestampUnix > item.timestampUnix) {
         --insertAt;
     }
@@ -259,7 +259,7 @@ void MessageListModel::setGroupChat(bool groupChat)
     }
     m_groupChat = groupChat;
     if (!m_messages.isEmpty()) {
-        Q_EMIT dataChanged(index(0, 0), index(m_messages.size() - 1, 0));
+        Q_EMIT dataChanged(index(0, 0), index(static_cast<int>(m_messages.size()) - 1, 0));
     }
 }
 
@@ -270,7 +270,7 @@ bool MessageListModel::isEmpty() const
 
 int MessageListModel::messageCount() const
 {
-    return m_messages.size();
+    return static_cast<int>(m_messages.size());
 }
 
 QString MessageListModel::oldestMessageId() const
@@ -300,7 +300,7 @@ MessageListModel::MessageItem MessageListModel::fromProto(const whatevr::v1::Mes
 
 QString MessageListModel::displaySenderName(const MessageItem &message)
 {
-    const QString name = message.senderName.trimmed();
+    QString name = message.senderName.trimmed();
     if (!name.isEmpty()) {
         return name;
     }
@@ -326,7 +326,7 @@ QString MessageListModel::initialsForName(const QString &name)
 QString MessageListModel::formatTime(qint64 timestampUnix)
 {
     if (timestampUnix <= 0) {
-        return QString();
+        return {};
     }
 
     return QDateTime::fromSecsSinceEpoch(timestampUnix, QTimeZone::LocalTime).time().toString(QStringLiteral("HH:mm"));
@@ -351,7 +351,7 @@ QString MessageListModel::statusText(int status)
         break;
     }
 
-    return QString();
+    return {};
 }
 
 bool MessageListModel::sameMessages(const QList<MessageItem> &left, const QList<MessageItem> &right)

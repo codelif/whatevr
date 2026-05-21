@@ -5,6 +5,8 @@
 #include <QString>
 #include <QStringList>
 
+#include <cstdint>
+
 namespace whatevr::v1 {
 class Message;
 }
@@ -14,7 +16,7 @@ class MessageListModel final : public QAbstractListModel
     Q_OBJECT
 
 public:
-    enum Role {
+    enum Role : std::uint16_t {
         IdRole = Qt::UserRole + 1,
         ChatIdRole,
         SenderIdRole,

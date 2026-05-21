@@ -161,7 +161,7 @@ public:
     Q_INVOKABLE void sendImage(const QString &fileUrl, const QString &caption = QString());
     Q_INVOKABLE void setSelectedChatComposing(bool composing);
     Q_INVOKABLE void downloadMessageMedia(const QString &messageId);
-    Q_INVOKABLE bool isMessageMediaDownloading(const QString &messageId) const;
+    Q_INVOKABLE [[nodiscard]] bool isMessageMediaDownloading(const QString &messageId) const;
     Q_INVOKABLE void logout();
 
 Q_SIGNALS:
