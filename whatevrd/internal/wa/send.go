@@ -77,6 +77,7 @@ func (c *Client) SendText(ctx context.Context, chatID, text string) (appstore.Sa
 		c.log.Infof("Queued text message %s to %s", saved.Message.ID, chatID)
 		c.daemon.PublishNewMessage(toDaemonMessage(saved.Message), toDaemonChat(saved.Chat))
 	}
+	c.refreshAvatarIfDue(ctx, appstore.AvatarSubject{Kind: appstore.AvatarSubjectChat, ID: chatID})
 	c.signalSendQueue()
 	return saved, nil
 }
@@ -182,6 +183,7 @@ func (c *Client) SendMedia(ctx context.Context, chatID, filePath, caption string
 		c.log.Infof("Queued media message %s to %s", saved.Message.ID, chatID)
 		c.daemon.PublishNewMessage(toDaemonMessage(saved.Message), toDaemonChat(saved.Chat))
 	}
+	c.refreshAvatarIfDue(ctx, appstore.AvatarSubject{Kind: appstore.AvatarSubjectChat, ID: chatID})
 	c.signalSendQueue()
 	return saved, nil
 }

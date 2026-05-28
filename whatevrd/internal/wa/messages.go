@@ -70,6 +70,7 @@ func (c *Client) processHistorySyncData(ctx context.Context, data *waHistorySync
 	syncType := historySyncType(data.GetSyncType())
 	progressPercent := data.GetProgress()
 	chunkOrder := data.GetChunkOrder()
+	c.markHistorySyncAvatarDeferralActive(syncType)
 	conversations := data.GetConversations()
 	totalMessages := uint32(0)
 	for _, conv := range conversations {
@@ -169,14 +170,18 @@ func (c *Client) processHistorySyncData(ctx context.Context, data *waHistorySync
 		return
 	}
 
+	complete := historySyncIsComplete(syncType, progressPercent)
 	c.daemon.PublishHistorySyncProgress(app.HistorySyncEvent{
 		SyncType:             syncType,
 		ProgressPercent:      progressPercent,
 		ChunkOrder:           chunkOrder,
 		ConversationsInChunk: uint32(len(conversations)),
 		MessagesInChunk:      totalMessages,
-		IsComplete:           historySyncIsComplete(syncType, progressPercent),
+		IsComplete:           complete,
 	})
+	if complete {
+		c.finishHistorySyncAvatarDeferral(syncType, progressPercent)
+	}
 }
 
 func (c *Client) handleMessage(ctx context.Context, evt *events.Message) {
@@ -184,6 +189,18 @@ func (c *Client) handleMessage(ctx context.Context, evt *events.Message) {
 		return
 	}
 	c.ingestMessage(ctx, evt, ingestOptions{source: sourceLive})
+	c.refreshLiveMessageAvatars(ctx, evt)
+}
+
+func (c *Client) refreshLiveMessageAvatars(ctx context.Context, evt *events.Message) {
+	if evt == nil || c.historySyncBlocksAvatarFetch() {
+		return
+	}
+	chatJID := c.normalizeJIDForChat(ctx, evt.Info.Chat)
+	c.refreshAvatarIfDue(ctx, appstore.AvatarSubject{Kind: appstore.AvatarSubjectChat, ID: bareAvatarJID(chatJID).String()})
+	if evt.Info.IsGroup && !evt.Info.Sender.IsEmpty() {
+		c.refreshAvatarIfDue(ctx, appstore.AvatarSubject{Kind: appstore.AvatarSubjectSender, ID: bareAvatarJID(evt.Info.Sender).String()})
+	}
 }
 
 // ingestMessage stores a parsed whatsmeow message in the local store and,
@@ -557,6 +574,9 @@ func (c *Client) displayNameForChat(ctx context.Context, chatJID types.JID, isGr
 	if name := c.contactNameForJID(ctx, chatJID); name != "" {
 		return name, appstore.ChatNameSourceContact
 	}
+	if name := c.whatsAppNameForJID(ctx, chatJID); name != "" {
+		return name, appstore.ChatNameSourceWhatsApp
+	}
 	if phone := formatPhoneDisplayName(chatJID); phone != "" {
 		return phone, appstore.ChatNameSourcePhone
 	}
@@ -594,6 +614,7 @@ func (c *Client) updateChatNamesFromHistorySync(ctx context.Context, evt *events
 		}
 	}
 
+	refreshChatIDs := make(map[string]struct{})
 	for _, push := range evt.Data.GetPushnames() {
 		name := strings.TrimSpace(push.GetPushname())
 		if name == "" || name == "-" {
@@ -608,9 +629,22 @@ func (c *Client) updateChatNamesFromHistorySync(ctx context.Context, evt *events
 				c.log.Warnf("Failed to store push name for %s: %v", jid, err)
 			}
 		}
-		if err := c.store.UpdateSenderName(ctx, jid.String(), name); err != nil {
+		if err := c.store.UpdateSenderName(ctx, jid.String(), whatsAppDisplayName(name)); err != nil {
 			c.log.Warnf("Failed to store sender push name for %s: %v", jid, err)
 		}
+		chatIDs, err := c.store.ListChatIDsBySenderID(ctx, jid.String())
+		if err != nil {
+			c.log.Warnf("Failed to list chats for sender push name refresh %s: %v", jid, err)
+			continue
+		}
+		for _, chatID := range chatIDs {
+			if chatID != "" && chatID != jid.String() {
+				refreshChatIDs[chatID] = struct{}{}
+			}
+		}
+	}
+	for chatID := range refreshChatIDs {
+		c.daemon.PublishHistoryBackfilled(chatID, 0)
 	}
 }
 
@@ -625,6 +659,19 @@ func (c *Client) contactNameForJID(ctx context.Context, jid types.JID) string {
 		return ""
 	}
 	return firstNonEmpty(contact.FullName, contact.FirstName)
+}
+
+func (c *Client) whatsAppNameForJID(ctx context.Context, jid types.JID) string {
+	client := c.currentClient()
+	if client == nil || client.Store.Contacts == nil || jid.IsEmpty() {
+		return ""
+	}
+
+	contact, err := client.Store.Contacts.GetContact(ctx, jid.ToNonAD())
+	if err != nil {
+		return ""
+	}
+	return whatsAppDisplayName(firstNonEmpty(contact.PushName, contact.BusinessName))
 }
 
 func (c *Client) senderName(ctx context.Context, jid types.JID) string {
@@ -642,16 +689,36 @@ func (c *Client) senderName(ctx context.Context, jid types.JID) string {
 			if name := c.contactNameForJID(ctx, pn); name != "" {
 				return name
 			}
+			if name := c.whatsAppNameForJID(ctx, pn); name != "" {
+				return name
+			}
 			if phone := formatPhoneDisplayName(pn); phone != "" {
 				return phone
 			}
 		}
+		if name := c.whatsAppNameForJID(ctx, jid); name != "" {
+			return name
+		}
 		return ""
+	}
+	if name := c.whatsAppNameForJID(ctx, jid); name != "" {
+		return name
 	}
 	if phone := formatPhoneDisplayName(jid); phone != "" {
 		return phone
 	}
 	return jid.User
+}
+
+func whatsAppDisplayName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	if strings.HasPrefix(name, "~") {
+		return name
+	}
+	return "~" + name
 }
 
 func (c *Client) updateChatName(ctx context.Context, chatID, name, source string) {

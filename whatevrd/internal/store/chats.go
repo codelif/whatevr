@@ -311,7 +311,7 @@ func (db *DB) ListSendersNeedingAvatar(ctx context.Context, limit int) ([]Sender
 		SELECT id, name, avatar_local_path, avatar_picture_id, avatar_status, avatar_checked_at
 		FROM senders
 		WHERE id != 'me' AND (avatar_picture_id = '' OR avatar_local_path = '')
-		  AND (avatar_status = '' OR avatar_checked_at <= unixepoch() - 604800)
+		  AND (avatar_status = '' OR avatar_checked_at <= unixepoch() - 86400)
 		ORDER BY id ASC
 		LIMIT ?
 	`, limit)
@@ -339,7 +339,7 @@ func (db *DB) ListSendersForAvatarRefresh(ctx context.Context, limit int) ([]Sen
 		SELECT id, name, avatar_local_path, avatar_picture_id, avatar_status, avatar_checked_at
 		FROM senders
 		WHERE id != 'me'
-		  AND (avatar_status = '' OR avatar_checked_at <= unixepoch() - 604800)
+		  AND (avatar_status = '' OR avatar_checked_at <= unixepoch() - 86400)
 		ORDER BY avatar_checked_at ASC, id ASC
 		LIMIT ?
 	`, limit)

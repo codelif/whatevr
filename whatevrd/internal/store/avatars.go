@@ -88,6 +88,29 @@ func (db *DB) ListAvatars(ctx context.Context, subjects []AvatarSubject) ([]Avat
 	return avatars, nil
 }
 
+func (db *DB) ListKnownAvatarSubjects(ctx context.Context) ([]AvatarSubject, error) {
+	rows, err := db.conn.QueryContext(ctx, `
+		SELECT 'chat', id FROM chats WHERE id != ''
+		UNION
+		SELECT 'sender', id FROM senders WHERE id != '' AND id != 'me'
+		ORDER BY 1, 2
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	subjects := make([]AvatarSubject, 0)
+	for rows.Next() {
+		var subject AvatarSubject
+		if err := rows.Scan(&subject.Kind, &subject.ID); err != nil {
+			return nil, err
+		}
+		subjects = append(subjects, subject)
+	}
+	return subjects, rows.Err()
+}
+
 func (db *DB) UpdateAvatarAvailable(ctx context.Context, subject AvatarSubject, fetchJID, picID, localPath string, nextCheck time.Time) (Avatar, error) {
 	now := time.Now().Unix()
 	_, err := db.conn.ExecContext(ctx, `

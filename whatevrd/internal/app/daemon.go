@@ -177,6 +177,7 @@ const (
 	HistorySyncTypePushName
 	HistorySyncTypeNonBlockingData
 	HistorySyncTypeOnDemand
+	HistorySyncTypeProfilePicture
 )
 
 type HistorySyncEvent struct {

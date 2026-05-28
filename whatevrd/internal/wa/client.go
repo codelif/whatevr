@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	_ "modernc.org/sqlite"
 
@@ -42,16 +43,22 @@ type Client struct {
 	frontendSessions map[string]frontendSession
 	lastPresence     types.Presence
 
-	avatarMu     sync.Mutex
-	avatarQueue  chan avatarJob
-	avatarQueued map[appstore.AvatarSubject]bool
+	avatarMu       sync.Mutex
+	avatarQueue    chan avatarJob
+	avatarQueued   map[appstore.AvatarSubject]bool
+	avatarDeferred map[appstore.AvatarSubject]avatarJob
 
 	mediaDownloadMu sync.Mutex
 	mediaDownloads  map[string]*mediaDownloadState
 
-	historySyncMu      sync.Mutex
-	historySyncRunning bool
-	historySyncWake    bool
+	historySyncMu             sync.Mutex
+	historySyncRunning        bool
+	historySyncWake           bool
+	historySyncActive         bool
+	historySyncLastActivity   time.Time
+	historySyncIdleTimer      *time.Timer
+	profilePictureSyncActive  bool
+	profilePictureSyncRunning bool
 
 	sendQueueMu   sync.Mutex
 	sendQueueWake chan struct{}
@@ -280,7 +287,9 @@ func (c *Client) FrontendSessionStateChanged(sessionID string, focused bool, act
 	c.frontendSessions[sessionID] = frontendSession{focused: focused, activeChatID: activeChatID}
 	c.presenceMu.Unlock()
 
-	_ = previous
+	if activeChatID != "" && activeChatID != previous.activeChatID {
+		go c.refreshOpenedChatAvatars(c.backgroundContext(), activeChatID)
+	}
 }
 
 func (c *Client) ShouldNotifyChat(chatID string) bool {

@@ -21,10 +21,11 @@ import (
 const maxAvatarBytes = 5 * 1024 * 1024
 
 const (
-	availableAvatarTTL = 24 * time.Hour
-	notSetAvatarTTL    = 24 * time.Hour
-	errorAvatarTTL     = 72 * time.Hour
-	avatarQueueSize    = 256
+	availableAvatarTTL            = 24 * time.Hour
+	notSetAvatarTTL               = 24 * time.Hour
+	errorAvatarTTL                = 24 * time.Hour
+	avatarQueueSize               = 256
+	historySyncAvatarDeferralIdle = 45 * time.Second
 )
 
 type avatarJob struct {
@@ -36,6 +37,7 @@ func (c *Client) startAvatarWorker(ctx context.Context) {
 	if c.avatarQueue == nil {
 		c.avatarQueue = make(chan avatarJob, avatarQueueSize)
 		c.avatarQueued = make(map[appstore.AvatarSubject]bool)
+		c.avatarDeferred = make(map[appstore.AvatarSubject]avatarJob)
 	}
 	c.startRunGoroutine(func() { c.runAvatarWorker(ctx) })
 }
@@ -49,38 +51,15 @@ func (c *Client) runAvatarWorker(ctx context.Context) {
 			c.avatarMu.Lock()
 			delete(c.avatarQueued, job.subject)
 			c.avatarMu.Unlock()
+			if c.deferAvatarJobIfHistorySyncActive(job) {
+				continue
+			}
 			c.fetchAvatarJob(ctx, job)
-		}
-	}
-}
-
-func (c *Client) RequestAvatars(ctx context.Context, subjects []appstore.AvatarSubject) ([]appstore.Avatar, error) {
-	seen := make(map[appstore.AvatarSubject]bool)
-	avatars := make([]appstore.Avatar, 0, len(subjects))
-	for _, subject := range subjects {
-		subject = normalizeAvatarSubject(subject)
-		if subject.Kind == "" || subject.ID == "" || seen[subject] {
-			continue
-		}
-		seen[subject] = true
-
-		fetchJID := c.fetchJIDForAvatarSubject(ctx, subject)
-		avatar, err := c.store.EnsureAvatar(ctx, subject, fetchJID)
-		if err != nil {
-			return nil, err
-		}
-		if fetchJID == "" && avatar.Status == "" {
-			avatar, err = c.store.UpdateAvatarStatus(ctx, subject, appstore.AvatarStatusUnresolved, "", time.Now().Add(errorAvatarTTL))
-			if err != nil {
-				return nil, err
+			if !c.historySyncBlocksAvatarFetch() {
+				c.flushDeferredAvatarJobs()
 			}
 		}
-		if c.avatarNeedsFetch(avatar, false) {
-			avatar.Fetching = c.enqueueAvatar(subject, false)
-		}
-		avatars = append(avatars, avatar)
 	}
-	return avatars, nil
 }
 
 func normalizeAvatarSubject(subject appstore.AvatarSubject) appstore.AvatarSubject {
@@ -97,13 +76,201 @@ func normalizeAvatarSubject(subject appstore.AvatarSubject) appstore.AvatarSubje
 	return subject
 }
 
+func (c *Client) refreshAvatarIfDue(ctx context.Context, subject appstore.AvatarSubject) {
+	if c.historySyncBlocksAvatarFetch() {
+		return
+	}
+	c.ensureAvatarQueuedIfDue(ctx, subject)
+}
+
+func (c *Client) ensureAvatarQueuedIfDue(ctx context.Context, subject appstore.AvatarSubject) bool {
+	if c.store == nil {
+		return false
+	}
+	subject = normalizeAvatarSubject(subject)
+	if subject.Kind == "" || subject.ID == "" || ctx.Err() != nil {
+		return false
+	}
+
+	avatar, err := c.ensureAvatar(ctx, subject)
+	if err != nil {
+		c.log.Warnf("Failed to ensure avatar %s/%s: %v", subject.Kind, subject.ID, err)
+		return false
+	}
+	if !c.avatarNeedsFetch(avatar, false) {
+		return false
+	}
+	return c.enqueueAvatar(subject, false)
+}
+
+func (c *Client) ensureAvatar(ctx context.Context, subject appstore.AvatarSubject) (appstore.Avatar, error) {
+	fetchJID := c.fetchJIDForAvatarSubject(ctx, subject)
+	avatar, err := c.store.EnsureAvatar(ctx, subject, fetchJID)
+	if err != nil {
+		return appstore.Avatar{}, err
+	}
+	if fetchJID == "" && avatar.Status == "" {
+		return c.store.UpdateAvatarStatus(ctx, subject, appstore.AvatarStatusUnresolved, "", time.Now().Add(errorAvatarTTL))
+	}
+	return avatar, nil
+}
+
+func (c *Client) RefreshLoadedChatAvatars(ctx context.Context, chatID string, messages []appstore.Message) {
+	if c.store == nil || strings.TrimSpace(chatID) == "" || c.historySyncBlocksAvatarFetch() {
+		return
+	}
+	seen := map[appstore.AvatarSubject]bool{}
+	subjects := []appstore.AvatarSubject{{Kind: appstore.AvatarSubjectChat, ID: chatID}}
+	for _, message := range messages {
+		if message.SenderID == "" || message.SenderID == "me" || message.SenderID == chatID {
+			continue
+		}
+		subjects = append(subjects, appstore.AvatarSubject{Kind: appstore.AvatarSubjectSender, ID: message.SenderID})
+	}
+	for _, subject := range subjects {
+		subject = normalizeAvatarSubject(subject)
+		if subject.Kind == "" || subject.ID == "" || seen[subject] {
+			continue
+		}
+		seen[subject] = true
+		c.ensureAvatarQueuedIfDue(ctx, subject)
+	}
+}
+
+func (c *Client) refreshOpenedChatAvatars(ctx context.Context, chatID string) {
+	if c.store == nil || strings.TrimSpace(chatID) == "" || c.historySyncBlocksAvatarFetch() {
+		return
+	}
+	messages, err := c.store.ListMessages(ctx, chatID, 200, "")
+	if err != nil {
+		c.refreshAvatarIfDue(ctx, appstore.AvatarSubject{Kind: appstore.AvatarSubjectChat, ID: chatID})
+		return
+	}
+	c.RefreshLoadedChatAvatars(ctx, chatID, messages)
+}
+
+func (c *Client) startProfilePictureSync(ctx context.Context) {
+	if c.store == nil {
+		return
+	}
+	c.historySyncMu.Lock()
+	if c.profilePictureSyncRunning {
+		c.historySyncMu.Unlock()
+		return
+	}
+	c.profilePictureSyncRunning = true
+	c.profilePictureSyncActive = true
+	c.historySyncMu.Unlock()
+
+	go c.runProfilePictureSync(ctx)
+}
+
+func (c *Client) runProfilePictureSync(ctx context.Context) {
+	defer func() {
+		c.historySyncMu.Lock()
+		c.profilePictureSyncActive = false
+		c.profilePictureSyncRunning = false
+		c.historySyncMu.Unlock()
+		c.daemon.PublishHistorySyncProgress(app.HistorySyncEvent{
+			SyncType:        app.HistorySyncTypeProfilePicture,
+			ProgressPercent: 100,
+			IsComplete:      true,
+		})
+		c.flushDeferredAvatarJobs()
+	}()
+
+	jobs, err := c.profilePictureSyncJobs(ctx)
+	if err != nil {
+		c.log.Warnf("Failed to list profile picture sync subjects: %v", err)
+		return
+	}
+	total := len(jobs)
+	c.publishProfilePictureSyncProgress(0, total)
+	if total == 0 {
+		return
+	}
+
+	for i, job := range jobs {
+		if ctx.Err() != nil {
+			return
+		}
+		avatar, err := c.ensureAvatar(ctx, job.subject)
+		if err != nil {
+			c.log.Warnf("Failed to ensure profile picture %s/%s: %v", job.subject.Kind, job.subject.ID, err)
+			c.publishProfilePictureSyncProgress(i+1, total)
+			continue
+		}
+		if c.avatarNeedsFetch(avatar, job.force) {
+			c.fetchAvatarJob(ctx, job)
+		}
+		c.publishProfilePictureSyncProgress(i+1, total)
+	}
+}
+
+func (c *Client) profilePictureSyncJobs(ctx context.Context) ([]avatarJob, error) {
+	subjects, err := c.store.ListKnownAvatarSubjects(ctx)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[appstore.AvatarSubject]bool, len(subjects))
+	out := make([]avatarJob, 0, len(subjects))
+	appendJob := func(job avatarJob) {
+		subject := job.subject
+		subject = normalizeAvatarSubject(subject)
+		if subject.Kind == "" || subject.ID == "" || seen[subject] {
+			return
+		}
+		seen[subject] = true
+		job.subject = subject
+		out = append(out, job)
+	}
+	for _, subject := range subjects {
+		appendJob(avatarJob{subject: subject})
+	}
+
+	c.avatarMu.Lock()
+	for subject, job := range c.avatarDeferred {
+		appendJob(job)
+		delete(c.avatarDeferred, subject)
+	}
+	c.avatarMu.Unlock()
+	return out, nil
+}
+
+func (c *Client) publishProfilePictureSyncProgress(done, total int) {
+	progress := uint32(100)
+	if total > 0 {
+		progress = uint32(done * 100 / total)
+	}
+	c.daemon.PublishHistorySyncProgress(app.HistorySyncEvent{
+		SyncType:             app.HistorySyncTypeProfilePicture,
+		ProgressPercent:      progress,
+		ConversationsInChunk: uint32(done),
+		MessagesInChunk:      uint32(total),
+	})
+}
+
 func (c *Client) enqueueAvatar(subject appstore.AvatarSubject, force bool) bool {
 	c.avatarMu.Lock()
 	if c.avatarQueue == nil {
 		c.avatarQueue = make(chan avatarJob, avatarQueueSize)
 		c.avatarQueued = make(map[appstore.AvatarSubject]bool)
+		c.avatarDeferred = make(map[appstore.AvatarSubject]avatarJob)
 	}
 	if c.avatarQueued[subject] {
+		c.avatarMu.Unlock()
+		return true
+	}
+	if existing, ok := c.avatarDeferred[subject]; ok {
+		if force && !existing.force {
+			existing.force = true
+			c.avatarDeferred[subject] = existing
+		}
+		c.avatarMu.Unlock()
+		return true
+	}
+	if c.historySyncBlocksAvatarFetch() {
+		c.avatarDeferred[subject] = avatarJob{subject: subject, force: force}
 		c.avatarMu.Unlock()
 		return true
 	}
@@ -119,6 +286,57 @@ func (c *Client) enqueueAvatar(subject appstore.AvatarSubject, force bool) bool 
 		c.avatarMu.Unlock()
 		return false
 	}
+}
+
+func (c *Client) deferAvatarJobIfHistorySyncActive(job avatarJob) bool {
+	if !c.historySyncBlocksAvatarFetch() {
+		return false
+	}
+	c.avatarMu.Lock()
+	if c.avatarDeferred == nil {
+		c.avatarDeferred = make(map[appstore.AvatarSubject]avatarJob)
+	}
+	if existing, ok := c.avatarDeferred[job.subject]; ok {
+		job.force = job.force || existing.force
+	}
+	c.avatarDeferred[job.subject] = job
+	c.avatarMu.Unlock()
+	return true
+}
+
+func (c *Client) flushDeferredAvatarJobs() {
+	c.avatarMu.Lock()
+	if len(c.avatarDeferred) == 0 {
+		c.avatarMu.Unlock()
+		return
+	}
+	deferred := len(c.avatarDeferred)
+	flushed := 0
+	if c.avatarQueue == nil {
+		c.avatarQueue = make(chan avatarJob, avatarQueueSize)
+	}
+	if c.avatarQueued == nil {
+		c.avatarQueued = make(map[appstore.AvatarSubject]bool)
+	}
+	for subject, job := range c.avatarDeferred {
+		if c.avatarQueued[subject] {
+			delete(c.avatarDeferred, subject)
+			continue
+		}
+		select {
+		case c.avatarQueue <- job:
+			c.avatarQueued[subject] = true
+			delete(c.avatarDeferred, subject)
+			flushed++
+		default:
+			remaining := len(c.avatarDeferred)
+			c.avatarMu.Unlock()
+			c.log.Debugf("Avatar deferral flush queued %d/%d jobs; %d remain deferred", flushed, deferred, remaining)
+			return
+		}
+	}
+	c.avatarMu.Unlock()
+	c.log.Debugf("Avatar deferral flush queued %d/%d jobs", flushed, deferred)
 }
 
 func (c *Client) avatarNeedsFetch(avatar appstore.Avatar, force bool) bool {
@@ -359,6 +577,6 @@ func (c *Client) handlePictureEvent(ctx context.Context, evt *events.Picture) {
 			}
 			continue
 		}
-		c.enqueueAvatar(subject, true)
+		c.ensureAvatarQueuedIfDue(ctx, subject)
 	}
 }

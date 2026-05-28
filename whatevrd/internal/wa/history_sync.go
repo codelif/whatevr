@@ -2,6 +2,7 @@ package wa
 
 import (
 	"context"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 
@@ -10,6 +11,7 @@ import (
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 
+	"whatevrd/internal/app"
 	appstore "whatevrd/internal/store"
 )
 
@@ -25,6 +27,7 @@ func (c *Client) handleManualHistorySyncNotification(ctx context.Context, evt *e
 	if notif == nil {
 		return false
 	}
+	c.markHistorySyncAvatarDeferralActive(historySyncTypeFromNotification(notif.GetSyncType()))
 
 	chunk := historySyncChunkFromNotification(evt.Info.ID, notif)
 	if _, err := c.store.SaveHistorySyncChunk(ctx, chunk); err != nil {
@@ -48,6 +51,27 @@ func historySyncChunkFromNotification(id string, notif *waE2E.HistorySyncNotific
 		FileEncSHA256: notif.GetFileEncSHA256(),
 		EncHandle:     notif.GetEncHandle(),
 		InlinePayload: notif.GetInitialHistBootstrapInlinePayload(),
+	}
+}
+
+func historySyncTypeFromNotification(t waE2E.HistorySyncType) app.HistorySyncType {
+	switch t {
+	case waE2E.HistorySyncType_INITIAL_BOOTSTRAP:
+		return app.HistorySyncTypeInitialBootstrap
+	case waE2E.HistorySyncType_INITIAL_STATUS_V3:
+		return app.HistorySyncTypeInitialStatusV3
+	case waE2E.HistorySyncType_FULL:
+		return app.HistorySyncTypeFull
+	case waE2E.HistorySyncType_RECENT:
+		return app.HistorySyncTypeRecent
+	case waE2E.HistorySyncType_PUSH_NAME:
+		return app.HistorySyncTypePushName
+	case waE2E.HistorySyncType_NON_BLOCKING_DATA:
+		return app.HistorySyncTypeNonBlockingData
+	case waE2E.HistorySyncType_ON_DEMAND:
+		return app.HistorySyncTypeOnDemand
+	default:
+		return app.HistorySyncTypeUnspecified
 	}
 }
 
@@ -104,17 +128,22 @@ func (c *Client) runHistorySyncWorker(ctx context.Context) {
 	if ctx.Err() != nil {
 		return
 	}
-	chunks, err := c.store.ListRecoverableHistorySyncChunks(ctx, 100)
-	if err != nil {
-		c.log.Errorf("Failed to list recoverable history sync chunks: %v", err)
-		return
-	}
-	for _, chunk := range chunks {
-		if ctx.Err() != nil {
+	for {
+		chunks, err := c.store.ListRecoverableHistorySyncChunks(ctx, 100)
+		if err != nil {
+			c.log.Errorf("Failed to list recoverable history sync chunks: %v", err)
 			return
 		}
-		if !c.processHistorySyncChunk(ctx, chunk) {
+		if len(chunks) == 0 {
 			return
+		}
+		for _, chunk := range chunks {
+			if ctx.Err() != nil {
+				return
+			}
+			if !c.processHistorySyncChunk(ctx, chunk) {
+				return
+			}
 		}
 	}
 }
@@ -124,12 +153,14 @@ func (c *Client) processHistorySyncChunk(ctx context.Context, chunk appstore.His
 	if client == nil || !client.IsLoggedIn() {
 		return false
 	}
+	started := time.Now()
 
 	if chunk.Status != appstore.HistorySyncStatusProcessed {
 		if err := c.store.MarkHistorySyncChunkProcessing(ctx, chunk.ID); err != nil {
 			c.log.Errorf("Failed to mark history sync chunk %s processing: %v", chunk.ID, err)
 			return false
 		}
+		downloadStarted := time.Now()
 		blob, err := client.DownloadHistorySync(ctx, historySyncNotificationFromChunk(chunk), true)
 		if err != nil {
 			_ = c.store.MarkHistorySyncChunkFailed(ctx, chunk.ID, err.Error())
@@ -137,31 +168,103 @@ func (c *Client) processHistorySyncChunk(ctx context.Context, chunk appstore.His
 			c.log.Warnf("Failed to download history sync chunk %s: %v", chunk.ID, err)
 			return false
 		}
+		c.log.Debugf("Downloaded history sync chunk %s (type %d, chunk %d, progress %d) in %s", chunk.ID, chunk.SyncType, chunk.ChunkOrder, chunk.Progress, time.Since(downloadStarted).Round(time.Millisecond))
+
+		if err := client.SendProtocolMessageReceipt(ctx, chunk.ID, types.ReceiptTypeHistorySync); err != nil {
+			c.log.Warnf("Failed to acknowledge history sync chunk %s: %v", chunk.ID, err)
+			return false
+		}
+		c.log.Debugf("Acknowledged history sync chunk %s (type %d, chunk %d, progress %d) before ingestion", chunk.ID, chunk.SyncType, chunk.ChunkOrder, chunk.Progress)
+
+		processStarted := time.Now()
 		c.processHistorySyncData(ctx, blob)
 		if ctx.Err() != nil {
 			return false
 		}
+		c.log.Debugf("Processed history sync chunk %s (type %d, chunk %d, progress %d) in %s", chunk.ID, chunk.SyncType, chunk.ChunkOrder, chunk.Progress, time.Since(processStarted).Round(time.Millisecond))
 		if err := c.store.MarkHistorySyncChunkProcessed(ctx, chunk.ID); err != nil {
 			c.log.Errorf("Failed to mark history sync chunk %s processed: %v", chunk.ID, err)
 			return false
 		}
-	}
-
-	if err := client.SendProtocolMessageReceipt(ctx, chunk.ID, types.ReceiptTypeHistorySync); err != nil {
-		c.log.Warnf("Failed to acknowledge history sync chunk %s: %v", chunk.ID, err)
-		return false
+	} else {
+		if err := client.SendProtocolMessageReceipt(ctx, chunk.ID, types.ReceiptTypeHistorySync); err != nil {
+			c.log.Warnf("Failed to acknowledge processed history sync chunk %s: %v", chunk.ID, err)
+			return false
+		}
+		c.log.Debugf("Acknowledged processed history sync chunk %s (type %d, chunk %d, progress %d)", chunk.ID, chunk.SyncType, chunk.ChunkOrder, chunk.Progress)
 	}
 	if err := c.store.MarkHistorySyncChunkAcked(ctx, chunk.ID); err != nil {
 		c.log.Errorf("Failed to mark history sync chunk %s acked: %v", chunk.ID, err)
 		return false
 	}
-	c.log.Debugf("Acknowledged history sync chunk %s (type %d, chunk %d, progress %d)", chunk.ID, chunk.SyncType, chunk.ChunkOrder, chunk.Progress)
+	c.log.Debugf("Finished history sync chunk %s (type %d, chunk %d, progress %d) in %s", chunk.ID, chunk.SyncType, chunk.ChunkOrder, chunk.Progress, time.Since(started).Round(time.Millisecond))
 	if chunk.DirectPath != "" {
-		if err := client.DeleteMedia(context.WithoutCancel(ctx), whatsmeow.MediaHistory, chunk.DirectPath, chunk.FileEncSHA256, chunk.EncHandle); err != nil {
-			c.log.Warnf("Failed to delete history sync media for chunk %s: %v", chunk.ID, err)
-		} else {
-			c.log.Debugf("Deleted history sync media for chunk %s", chunk.ID)
-		}
+		go c.deleteHistorySyncMedia(context.WithoutCancel(ctx), client, chunk)
 	}
 	return true
+}
+
+func (c *Client) deleteHistorySyncMedia(ctx context.Context, client *whatsmeow.Client, chunk appstore.HistorySyncChunk) {
+	if err := client.DeleteMedia(ctx, whatsmeow.MediaHistory, chunk.DirectPath, chunk.FileEncSHA256, chunk.EncHandle); err != nil {
+		c.log.Warnf("Failed to delete history sync media for chunk %s: %v", chunk.ID, err)
+	} else {
+		c.log.Debugf("Deleted history sync media for chunk %s", chunk.ID)
+	}
+}
+
+func (c *Client) markHistorySyncAvatarDeferralActive(syncType app.HistorySyncType) {
+	if !historySyncBlocksAvatarFetch(syncType) {
+		return
+	}
+	c.historySyncMu.Lock()
+	c.historySyncLastActivity = time.Now()
+	c.historySyncActive = true
+	if c.historySyncIdleTimer != nil {
+		c.historySyncIdleTimer.Stop()
+	}
+	c.historySyncIdleTimer = time.AfterFunc(historySyncAvatarDeferralIdle, c.expireHistorySyncAvatarDeferral)
+	c.historySyncMu.Unlock()
+}
+
+func (c *Client) finishHistorySyncAvatarDeferral(syncType app.HistorySyncType, progress uint32) {
+	if !historySyncBlocksAvatarFetch(syncType) {
+		return
+	}
+	c.historySyncMu.Lock()
+	c.historySyncActive = false
+	if c.historySyncIdleTimer != nil {
+		c.historySyncIdleTimer.Stop()
+		c.historySyncIdleTimer = nil
+	}
+	c.historySyncMu.Unlock()
+	c.log.Debugf("History sync complete for avatar deferral (type %d, progress %d); starting profile picture sync", syncType, progress)
+	c.startProfilePictureSync(c.backgroundContext())
+}
+
+func (c *Client) expireHistorySyncAvatarDeferral() {
+	c.historySyncMu.Lock()
+	if !c.historySyncActive || time.Since(c.historySyncLastActivity) < historySyncAvatarDeferralIdle {
+		c.historySyncMu.Unlock()
+		return
+	}
+	c.historySyncActive = false
+	c.historySyncIdleTimer = nil
+	c.historySyncMu.Unlock()
+	c.log.Debugf("History sync idle for %s; starting profile picture sync", historySyncAvatarDeferralIdle)
+	c.startProfilePictureSync(c.backgroundContext())
+}
+
+func (c *Client) historySyncBlocksAvatarFetch() bool {
+	c.historySyncMu.Lock()
+	defer c.historySyncMu.Unlock()
+	return c.historySyncActive || c.profilePictureSyncActive
+}
+
+func historySyncBlocksAvatarFetch(syncType app.HistorySyncType) bool {
+	switch syncType {
+	case app.HistorySyncTypeInitialBootstrap, app.HistorySyncTypeInitialStatusV3, app.HistorySyncTypeFull, app.HistorySyncTypeRecent, app.HistorySyncTypeOnDemand:
+		return true
+	default:
+		return false
+	}
 }

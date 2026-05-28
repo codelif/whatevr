@@ -84,7 +84,7 @@ func (db *DB) ListRecoverableHistorySyncChunks(ctx context.Context, limit int) (
 		SELECT id, sync_type, chunk_order, progress, file_length, direct_path, media_key, file_sha256, file_enc_sha256, enc_handle, inline_payload, status, attempts, last_error
 		FROM history_sync_chunks
 		WHERE status IN (?, ?, ?, ?)
-		ORDER BY created_at ASC, chunk_order ASC
+		ORDER BY sync_type ASC, chunk_order ASC, created_at ASC
 		LIMIT ?
 	`, HistorySyncStatusPending, HistorySyncStatusProcessing, HistorySyncStatusProcessed, HistorySyncStatusFailed, limit)
 	if err != nil {

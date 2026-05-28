@@ -170,6 +170,44 @@ func TestListMessagesIncludesSenderProfile(t *testing.T) {
 	}
 }
 
+func TestListMessagesReflectsUpdatedSenderPushName(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	chatID := "1234567890@g.us"
+	senderID := "917060029183@s.whatsapp.net"
+	if _, err := db.SaveTextMessage(ctx, TextMessageInput{
+		ID:        chatID + ":msg-1",
+		ChatID:    chatID,
+		SenderID:  senderID,
+		Text:      "hello",
+		Timestamp: time.Unix(100, 0),
+		Direction: DirectionIncoming,
+		Status:    StatusDelivered,
+		IsGroup:   true,
+	}); err != nil {
+		t.Fatalf("save message: %v", err)
+	}
+	if err := db.UpdateSenderName(ctx, senderID, "~Alice"); err != nil {
+		t.Fatalf("update sender name: %v", err)
+	}
+
+	messages, err := db.ListMessages(ctx, chatID, 10, "")
+	if err != nil {
+		t.Fatalf("list messages: %v", err)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(messages))
+	}
+	if messages[0].SenderName != "~Alice" {
+		t.Fatalf("sender name = %q, want ~Alice", messages[0].SenderName)
+	}
+}
+
 func TestListSenderProfilesByChatIDOrdersRecentGroupSenders(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
@@ -682,6 +720,43 @@ func TestHistorySyncChunksAreRecoverableUntilAcked(t *testing.T) {
 	}
 	if len(chunks) != 0 {
 		t.Fatalf("acked chunk should not be recoverable: %+v", chunks)
+	}
+}
+
+func TestListRecoverableHistorySyncChunksOrdersByTypeAndChunk(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	for _, chunk := range []HistorySyncChunk{
+		{ID: "recent-12", SyncType: 3, ChunkOrder: 12},
+		{ID: "recent-11", SyncType: 3, ChunkOrder: 11},
+		{ID: "status-0", SyncType: 1, ChunkOrder: 0},
+	} {
+		if _, err := db.SaveHistorySyncChunk(ctx, chunk); err != nil {
+			t.Fatalf("save chunk %s: %v", chunk.ID, err)
+		}
+	}
+
+	chunks, err := db.ListRecoverableHistorySyncChunks(ctx, 10)
+	if err != nil {
+		t.Fatalf("list recoverable chunks: %v", err)
+	}
+	got := make([]string, 0, len(chunks))
+	for _, chunk := range chunks {
+		got = append(got, chunk.ID)
+	}
+	want := []string{"status-0", "recent-11", "recent-12"}
+	if len(got) != len(want) {
+		t.Fatalf("got chunks %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got chunks %v, want %v", got, want)
+		}
 	}
 }
 
