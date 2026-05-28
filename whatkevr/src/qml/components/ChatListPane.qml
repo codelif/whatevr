@@ -85,8 +85,6 @@ Kirigami.Page {
                     initials: String(model.initials || "?")
                     unreadCount: Number(model.unreadCount || 0)
                     current: Whatevr.AppController.selectedChatId === chatId
-                    Component.onCompleted: Whatevr.AppController.requestChatAvatar(chatId)
-                    onChatIdChanged: Whatevr.AppController.requestChatAvatar(chatId)
                     onSelected: id => {
                         Whatevr.AppController.selectChat(id)
                         root.chatSelected(id)

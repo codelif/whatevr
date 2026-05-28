@@ -38,6 +38,7 @@ enum HistorySyncType {
   HISTORY_SYNC_TYPE_PUSH_NAME = 5;
   HISTORY_SYNC_TYPE_NON_BLOCKING_DATA = 6;
   HISTORY_SYNC_TYPE_ON_DEMAND = 7;
+  HISTORY_SYNC_TYPE_PROFILE_PICTURE = 8;
 }
 
 enum ContactAvailability {
@@ -71,7 +72,6 @@ service FrontendService {
 service ChatService {
   rpc ListChats(ListChatsRequest) returns (ListChatsResponse);
   rpc GetMessages(GetMessagesRequest) returns (GetMessagesResponse);
-  rpc RequestAvatars(RequestAvatarsRequest) returns (RequestAvatarsResponse);
   rpc MarkChatRead(MarkChatReadRequest) returns (MarkChatReadResponse);
   rpc SetChatPresence(SetChatPresenceRequest) returns (SetChatPresenceResponse);
   rpc SubscribeChatPresence(SubscribeChatPresenceRequest) returns (SubscribeChatPresenceResponse);
@@ -114,11 +114,6 @@ message DaemonEvent {
     MediaDownloadChanged media_download_changed = 9;
     AvatarUpdated avatar_updated = 10;
   }
-}
-
-message AvatarSubject {
-  AvatarSubjectKind kind = 1;
-  string id = 2;
 }
 
 message Avatar {
@@ -249,14 +244,6 @@ message GetMessagesRequest {
 
 message GetMessagesResponse {
   repeated Message messages = 1;
-}
-
-message RequestAvatarsRequest {
-  repeated AvatarSubject subjects = 1;
-}
-
-message RequestAvatarsResponse {
-  repeated Avatar avatars = 1;
 }
 
 message MarkChatReadRequest {

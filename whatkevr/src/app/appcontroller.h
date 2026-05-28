@@ -29,7 +29,6 @@ class ConnectionChanged;
 class LoginStateChanged;
 class LoginEvent;
 class ChatUpdated;
-class AvatarSubject;
 class AvatarUpdated;
 class ChatPresenceChanged;
 class MediaDownloadChanged;
@@ -154,7 +153,6 @@ public:
     Q_INVOKABLE void refresh();
     Q_INVOKABLE void triggerPrimaryAction();
     Q_INVOKABLE void selectChat(const QString &chatId);
-    Q_INVOKABLE void requestChatAvatar(const QString &chatId);
     Q_INVOKABLE void retryMessages();
     Q_INVOKABLE void loadOlderMessages();
     Q_INVOKABLE void sendText(const QString &text);
@@ -184,8 +182,6 @@ private:
     void requestChats();
     void requestMessages(const QString &chatId);
     void requestOlderMessages();
-    void requestSenderAvatars(const QStringList &senderIds);
-    void requestAvatarSubjects(const QList<whatevr::v1::AvatarSubject> &subjects);
     void requestSelectedChatReadIfActive();
     void requestSelectedChatPresence();
     void setChatComposing(const QString &chatId, bool composing);
@@ -253,6 +249,7 @@ private:
         bool canLoadOlderMessages = false;
     };
     QHash<QString, CachedMessages> m_messageCache;
+    QStringList m_messageCacheOrder;
 
     ChatListModel *m_chatListModel = nullptr;
     MessageListModel *m_messageListModel = nullptr;
@@ -275,8 +272,6 @@ private:
     std::unique_ptr<QGrpcCallReply> m_sendTextReply;
     std::unique_ptr<QGrpcCallReply> m_sendMediaReply;
     QHash<QString, std::shared_ptr<QGrpcCallReply>> m_mediaDownloadReplies;
-    QHash<QString, std::shared_ptr<QGrpcCallReply>> m_avatarReplies;
-    QHash<QString, qint64> m_avatarRequestedAt;
     QSet<QString> m_mediaDownloadingMessageIds;
     std::unique_ptr<QGrpcCallReply> m_logoutReply;
     std::unique_ptr<QGrpcServerStream> m_frontendSessionStream;

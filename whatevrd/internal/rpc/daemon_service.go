@@ -222,6 +222,8 @@ func toProtoHistorySyncType(t app.HistorySyncType) pb.HistorySyncType {
 		return pb.HistorySyncType_HISTORY_SYNC_TYPE_NON_BLOCKING_DATA
 	case app.HistorySyncTypeOnDemand:
 		return pb.HistorySyncType_HISTORY_SYNC_TYPE_ON_DEMAND
+	case app.HistorySyncTypeProfilePicture:
+		return pb.HistorySyncType_HISTORY_SYNC_TYPE_PROFILE_PICTURE
 	default:
 		return pb.HistorySyncType_HISTORY_SYNC_TYPE_UNSPECIFIED
 	}
