@@ -81,6 +81,8 @@ Item {
 
     onMessageIdChanged: resetReservedImageGeometry()
     onMediaMimeTypeChanged: resetReservedImageGeometry()
+    onMediaIntrinsicWidthChanged: resetReservedImageGeometry()
+    onMediaIntrinsicHeightChanged: resetReservedImageGeometry()
     Component.onCompleted: resetReservedImageGeometry()
 
     readonly property real imageDisplayWidth: {
