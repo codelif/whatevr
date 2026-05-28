@@ -173,3 +173,15 @@ func TestFormatPhoneDisplayNameRejectsLID(t *testing.T) {
 		t.Fatalf("formatPhoneDisplayName(lid) = %q, want empty", got)
 	}
 }
+
+func TestWhatsAppDisplayNamePrefixesName(t *testing.T) {
+	if got := whatsAppDisplayName(" Alice "); got != "~Alice" {
+		t.Fatalf("whatsAppDisplayName() = %q, want ~Alice", got)
+	}
+}
+
+func TestWhatsAppDisplayNameDoesNotDoublePrefix(t *testing.T) {
+	if got := whatsAppDisplayName("~Alice"); got != "~Alice" {
+		t.Fatalf("whatsAppDisplayName() = %q, want ~Alice", got)
+	}
+}

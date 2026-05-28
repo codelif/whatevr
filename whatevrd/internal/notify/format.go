@@ -59,7 +59,7 @@ func FormatMessage(caps Capabilities, message app.Message, chat app.Chat) Conten
 
 	preview := previewText(message)
 	if chat.IsGroup && message.SenderID != "" && message.SenderID != "me" {
-		preview = senderDisplay(message.SenderID) + ": " + preview
+		preview = senderDisplay(message) + ": " + preview
 	}
 
 	content := Content{
@@ -119,7 +119,11 @@ func previewText(message app.Message) string {
 	return truncate(text, previewLimit)
 }
 
-func senderDisplay(senderID string) string {
+func senderDisplay(message app.Message) string {
+	if name := strings.TrimSpace(message.SenderName); name != "" {
+		return name
+	}
+	senderID := message.SenderID
 	if at := strings.IndexByte(senderID, '@'); at > 0 {
 		return senderID[:at]
 	}

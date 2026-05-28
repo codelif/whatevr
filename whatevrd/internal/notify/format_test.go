@@ -24,9 +24,23 @@ func TestFormatDirectWithBody(t *testing.T) {
 }
 
 func TestFormatGroupWithoutBody(t *testing.T) {
-	content := FormatMessage(Capabilities{}, app.Message{SenderID: "12345@s.whatsapp.net", Text: "hello"}, app.Chat{Name: "Family", IsGroup: true})
-	if content.Summary != "Family - 12345: hello" || content.Body != "" {
+	content := FormatMessage(Capabilities{}, app.Message{SenderID: "12345@s.whatsapp.net", SenderName: "Alice", Text: "hello"}, app.Chat{Name: "Family", IsGroup: true})
+	if content.Summary != "Family - Alice: hello" || content.Body != "" {
 		t.Fatalf("unexpected content: %+v", content)
+	}
+}
+
+func TestFormatGroupUsesWhatsAppSenderName(t *testing.T) {
+	content := FormatMessage(Capabilities{Body: true}, app.Message{SenderID: "12345@s.whatsapp.net", SenderName: "~Alice", Text: "hello"}, app.Chat{Name: "Family", IsGroup: true})
+	if content.Body != "~Alice: hello" {
+		t.Fatalf("expected WhatsApp sender name in body, got %q", content.Body)
+	}
+}
+
+func TestFormatGroupFallsBackToSenderID(t *testing.T) {
+	content := FormatMessage(Capabilities{Body: true}, app.Message{SenderID: "12345@s.whatsapp.net", Text: "hello"}, app.Chat{Name: "Family", IsGroup: true})
+	if content.Body != "12345: hello" {
+		t.Fatalf("expected sender ID fallback in body, got %q", content.Body)
 	}
 }
 
