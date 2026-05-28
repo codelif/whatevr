@@ -29,7 +29,7 @@ QVariant ChatListModel::data(const QModelIndex &index, int role) const
     case IdRole:
         return chat.id;
     case NameRole:
-        return displayName(chat);
+        return chat.displayName;
     case LastMessageRole:
         return chat.lastMessage;
     case LastMessageTimeUnixRole:
@@ -45,7 +45,7 @@ QVariant ChatListModel::data(const QModelIndex &index, int role) const
     case AvatarLocalPathRole:
         return chat.avatarLocalPath;
     case InitialsRole:
-        return initialsForName(displayName(chat));
+        return chat.initials;
     default:
         return {};
     }
@@ -91,6 +91,7 @@ void ChatListModel::replaceChats(const QList<whatevr::v1::Chat> &chats)
 
     beginResetModel();
     m_chats = std::move(next);
+    rebuildIndex();
     endResetModel();
 }
 
@@ -102,6 +103,7 @@ void ChatListModel::upsertChat(const whatevr::v1::Chat &chat, const QString &pre
             beginRemoveRows(QModelIndex(), previousIndex, previousIndex);
             m_chats.removeAt(previousIndex);
             endRemoveRows();
+            rebuildIndex();
         }
     }
 
@@ -112,6 +114,7 @@ void ChatListModel::upsertChat(const whatevr::v1::Chat &chat, const QString &pre
         const int insertIndex = sortedInsertIndex(item);
         beginInsertRows(QModelIndex(), insertIndex, insertIndex);
         m_chats.insert(insertIndex, item);
+        rebuildIndex();
         endInsertRows();
         return;
     }
@@ -131,6 +134,7 @@ void ChatListModel::upsertChat(const whatevr::v1::Chat &chat, const QString &pre
     beginMoveRows(QModelIndex(), existingIndex, existingIndex, QModelIndex(), destinationRow);
     m_chats.move(existingIndex, insertIndex);
     endMoveRows();
+    rebuildIndex();
 
     if (!sameChatData(m_chats.at(insertIndex), item)) {
         m_chats[insertIndex] = item;
@@ -180,12 +184,7 @@ bool ChatListModel::chatIsGroup(const QString &chatId) const
 
 int ChatListModel::indexOf(const QString &chatId) const
 {
-    for (int i = 0; i < m_chats.size(); ++i) {
-        if (m_chats.at(i).id == chatId) {
-            return i;
-        }
-    }
-    return -1;
+    return m_chatIndexById.value(chatId, -1);
 }
 
 bool ChatListModel::isEmpty() const
@@ -195,9 +194,11 @@ bool ChatListModel::isEmpty() const
 
 ChatListModel::ChatItem ChatListModel::fromProto(const whatevr::v1::Chat &chat)
 {
-    return ChatItem {
+    ChatItem item {
         .id = chat.id_proto(),
         .name = chat.name(),
+        .displayName = {},
+        .initials = {},
         .lastMessage = chat.lastMessage(),
         .lastMessageTimeUnix = chat.lastMessageTimeUnix(),
         .lastMessageDirection = static_cast<int>(chat.lastMessageDirection()),
@@ -206,6 +207,9 @@ ChatListModel::ChatItem ChatListModel::fromProto(const whatevr::v1::Chat &chat)
         .isGroup = chat.isGroup(),
         .avatarLocalPath = chat.avatarLocalPath(),
     };
+    item.displayName = displayName(item);
+    item.initials = initialsForName(item.displayName);
+    return item;
 }
 
 QString ChatListModel::displayName(const ChatItem &chat)
@@ -249,6 +253,8 @@ bool ChatListModel::sameChatData(const ChatItem &left, const ChatItem &right)
 {
     return left.id == right.id
         && left.name == right.name
+        && left.displayName == right.displayName
+        && left.initials == right.initials
         && left.lastMessage == right.lastMessage
         && left.lastMessageTimeUnix == right.lastMessageTimeUnix
         && left.lastMessageDirection == right.lastMessageDirection
@@ -263,7 +269,7 @@ bool ChatListModel::sortBefore(const ChatItem &left, const ChatItem &right)
     if (left.lastMessageTimeUnix != right.lastMessageTimeUnix) {
         return left.lastMessageTimeUnix > right.lastMessageTimeUnix;
     }
-    return displayName(left).localeAwareCompare(displayName(right)) < 0;
+    return left.displayName.localeAwareCompare(right.displayName) < 0;
 }
 
 int ChatListModel::sortedInsertIndex(const ChatItem &item, int excludingIndex) const
@@ -284,4 +290,16 @@ int ChatListModel::sortedInsertIndex(const ChatItem &item, int excludingIndex) c
 void ChatListModel::sortChats()
 {
     std::sort(m_chats.begin(), m_chats.end(), sortBefore);
+    rebuildIndex();
+}
+
+void ChatListModel::rebuildIndex()
+{
+    m_chatIndexById.clear();
+    m_chatIndexById.reserve(m_chats.size());
+    for (int i = 0; i < m_chats.size(); ++i) {
+        if (!m_chats.at(i).id.isEmpty()) {
+            m_chatIndexById.insert(m_chats.at(i).id, i);
+        }
+    }
 }

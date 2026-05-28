@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QAbstractListModel>
+#include <QHash>
 #include <QList>
 #include <QString>
 
@@ -48,6 +49,8 @@ private:
     struct ChatItem {
         QString id;
         QString name;
+        QString displayName;
+        QString initials;
         QString lastMessage;
         qint64 lastMessageTimeUnix = 0;
         int lastMessageDirection = 0;
@@ -65,6 +68,8 @@ private:
     static bool sortBefore(const ChatItem &left, const ChatItem &right);
     [[nodiscard]] int sortedInsertIndex(const ChatItem &item, int excludingIndex = -1) const;
     void sortChats();
+    void rebuildIndex();
 
     QList<ChatItem> m_chats;
+    QHash<QString, int> m_chatIndexById;
 };

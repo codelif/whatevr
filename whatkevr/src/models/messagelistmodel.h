@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QAbstractListModel>
+#include <QHash>
 #include <QList>
 #include <QString>
 #include <QStringList>
@@ -68,11 +69,15 @@ private:
         QString chatId;
         QString senderId;
         QString senderName;
+        QString senderDisplayName;
+        QString senderInitials;
         QString senderAvatarLocalPath;
         QString text;
         qint64 timestampUnix = 0;
+        QString timeText;
         int direction = 0;
         int status = 0;
+        QString statusText;
         QString mediaMimeType;
         QString mediaLocalPath;
         QString mediaThumbnailLocalPath;
@@ -92,7 +97,9 @@ private:
     [[nodiscard]] bool startsSenderGroup(int row) const;
     [[nodiscard]] bool endsSenderGroup(int row) const;
     [[nodiscard]] int indexOf(const QString &messageId) const;
+    void rebuildIndex();
 
     QList<MessageItem> m_messages;
+    QHash<QString, int> m_messageIndexById;
     bool m_groupChat = false;
 };

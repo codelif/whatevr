@@ -40,23 +40,23 @@ QVariant MessageListModel::data(const QModelIndex &index, int role) const
     case SenderIdRole:
         return message.senderId;
     case SenderNameRole:
-        return displaySenderName(message);
+        return message.senderDisplayName;
     case SenderAvatarLocalPathRole:
         return message.senderAvatarLocalPath;
     case SenderInitialsRole:
-        return initialsForName(displaySenderName(message));
+        return message.senderInitials;
     case TextRole:
         return message.text;
     case TimestampUnixRole:
         return message.timestampUnix;
     case TimeTextRole:
-        return formatTime(message.timestampUnix);
+        return message.timeText;
     case DirectionRole:
         return message.direction;
     case StatusRole:
         return message.status;
     case StatusTextRole:
-        return statusText(message.status);
+        return message.statusText;
     case IsOutgoingRole:
         return message.direction == static_cast<int>(whatevr::v1::MessageDirectionGadget::MessageDirection::MESSAGE_DIRECTION_OUTGOING);
     case MediaMimeTypeRole:
@@ -146,6 +146,7 @@ void MessageListModel::replaceMessages(const QList<whatevr::v1::Message> &messag
 
     beginResetModel();
     m_messages = std::move(next);
+    rebuildIndex();
     endResetModel();
 }
 
@@ -172,9 +173,16 @@ void MessageListModel::prependMessages(const QList<whatevr::v1::Message> &messag
     });
 
     beginInsertRows(QModelIndex(), 0, static_cast<int>(older.size()) - 1);
-    for (int i = static_cast<int>(older.size()) - 1; i >= 0; --i) {
-        m_messages.prepend(older.at(i));
+    QList<MessageItem> next;
+    next.reserve(older.size() + m_messages.size());
+    for (const auto &message : older) {
+        next.append(message);
     }
+    for (const auto &message : m_messages) {
+        next.append(message);
+    }
+    m_messages = std::move(next);
+    rebuildIndex();
     endInsertRows();
 }
 
@@ -186,6 +194,7 @@ void MessageListModel::clear()
 
     beginResetModel();
     m_messages.clear();
+    m_messageIndexById.clear();
     endResetModel();
 }
 
@@ -202,12 +211,15 @@ void MessageListModel::upsertMessage(const whatevr::v1::Message &message)
     }
 
     int insertAt = static_cast<int>(m_messages.size());
-    while (insertAt > 0 && m_messages.at(insertAt - 1).timestampUnix > item.timestampUnix) {
+    while (insertAt > 0
+           && (m_messages.at(insertAt - 1).timestampUnix > item.timestampUnix
+               || (m_messages.at(insertAt - 1).timestampUnix == item.timestampUnix && m_messages.at(insertAt - 1).id > item.id))) {
         --insertAt;
     }
 
     beginInsertRows(QModelIndex(), insertAt, insertAt);
     m_messages.insert(insertAt, item);
+    rebuildIndex();
     endInsertRows();
 }
 
@@ -280,22 +292,31 @@ QString MessageListModel::oldestMessageId() const
 
 MessageListModel::MessageItem MessageListModel::fromProto(const whatevr::v1::Message &message)
 {
-    return MessageItem {
+    MessageItem item {
         .id = message.id_proto(),
         .chatId = message.chatId(),
         .senderId = message.senderId(),
         .senderName = message.senderName(),
+        .senderDisplayName = {},
+        .senderInitials = {},
         .senderAvatarLocalPath = message.senderAvatarLocalPath(),
         .text = message.text(),
         .timestampUnix = message.timestampUnix(),
+        .timeText = {},
         .direction = static_cast<int>(message.direction()),
         .status = static_cast<int>(message.status()),
+        .statusText = {},
         .mediaMimeType = message.mediaMimeType(),
         .mediaLocalPath = message.mediaLocalPath(),
         .mediaThumbnailLocalPath = message.mediaThumbnailLocalPath(),
         .mediaWidth = message.mediaWidth(),
         .mediaHeight = message.mediaHeight(),
     };
+    item.senderDisplayName = displaySenderName(item);
+    item.senderInitials = initialsForName(item.senderDisplayName);
+    item.timeText = formatTime(item.timestampUnix);
+    item.statusText = statusText(item.status);
+    return item;
 }
 
 QString MessageListModel::displaySenderName(const MessageItem &message)
@@ -390,11 +411,15 @@ bool MessageListModel::sameMessageData(const MessageItem &left, const MessageIte
         && left.chatId == right.chatId
         && left.senderId == right.senderId
         && left.senderName == right.senderName
+        && left.senderDisplayName == right.senderDisplayName
+        && left.senderInitials == right.senderInitials
         && left.senderAvatarLocalPath == right.senderAvatarLocalPath
         && left.text == right.text
         && left.timestampUnix == right.timestampUnix
+        && left.timeText == right.timeText
         && left.direction == right.direction
         && left.status == right.status
+        && left.statusText == right.statusText
         && left.mediaMimeType == right.mediaMimeType
         && left.mediaLocalPath == right.mediaLocalPath
         && left.mediaThumbnailLocalPath == right.mediaThumbnailLocalPath
@@ -439,10 +464,16 @@ int MessageListModel::indexOf(const QString &messageId) const
         return -1;
     }
 
+    return m_messageIndexById.value(messageId, -1);
+}
+
+void MessageListModel::rebuildIndex()
+{
+    m_messageIndexById.clear();
+    m_messageIndexById.reserve(m_messages.size());
     for (int i = 0; i < m_messages.size(); ++i) {
-        if (m_messages.at(i).id == messageId) {
-            return i;
+        if (!m_messages.at(i).id.isEmpty()) {
+            m_messageIndexById.insert(m_messages.at(i).id, i);
         }
     }
-    return -1;
 }
