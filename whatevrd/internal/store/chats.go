@@ -16,6 +16,8 @@ type Chat struct {
 	LastMessageStatus    string
 	UnreadCount          int32
 	IsGroup              bool
+	IsPinned             bool
+	PinnedOrder          uint32
 	AvatarLocalPath      string
 	AvatarPictureID      string
 	AvatarStatus         string
@@ -65,11 +67,11 @@ func (db *DB) ListChats(ctx context.Context, limit, offset int) ([]Chat, error) 
 	}
 
 	rows, err := db.conn.QueryContext(ctx, `
-		SELECT c.id, c.name, c.name_source, c.last_message, c.last_message_time, c.last_message_direction, c.last_message_status, c.unread_count, c.is_group,
+		SELECT c.id, c.name, c.name_source, c.last_message, c.last_message_time, c.last_message_direction, c.last_message_status, c.unread_count, c.is_group, c.is_pinned, c.pinned_order,
 		       COALESCE(NULLIF(a.local_path, ''), c.avatar_local_path), COALESCE(NULLIF(a.picture_id, ''), c.avatar_picture_id), COALESCE(NULLIF(a.status, ''), c.avatar_status), COALESCE(NULLIF(a.checked_at, 0), c.avatar_checked_at)
 		FROM chats c
 		LEFT JOIN avatars a ON a.subject_kind = 'chat' AND a.subject_id = c.id
-		ORDER BY last_message_time DESC, id ASC
+		ORDER BY CASE WHEN c.is_pinned != 0 THEN 0 ELSE 1 END, c.pinned_order DESC, c.last_message_time DESC, c.id ASC
 		LIMIT ? OFFSET ?
 	`, limit, offset)
 	if err != nil {
@@ -118,8 +120,8 @@ func (db *DB) EnsureChatWithNameSource(ctx context.Context, chatID, name, nameSo
 	}
 
 	if _, err := db.conn.ExecContext(ctx, `
-		INSERT INTO chats (id, name, name_source, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group)
-		VALUES (?, ?, ?, '', 0, '', '', 0, ?)
+		INSERT INTO chats (id, name, name_source, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group, is_pinned, pinned_order)
+		VALUES (?, ?, ?, '', 0, '', '', 0, ?, 0, 0)
 		ON CONFLICT(id) DO UPDATE SET
 			name = CASE WHEN ? != '' AND chat_name_source_priority(?) >= chat_name_source_priority(chats.name_source) THEN ? ELSE chats.name END,
 			name_source = CASE WHEN ? != '' AND chat_name_source_priority(?) >= chat_name_source_priority(chats.name_source) THEN ? ELSE chats.name_source END,
@@ -129,6 +131,128 @@ func (db *DB) EnsureChatWithNameSource(ctx context.Context, chatID, name, nameSo
 	}
 
 	return db.GetChat(ctx, chatID)
+}
+
+func (db *DB) UpdateChatPinState(ctx context.Context, chatID string, pinned bool, order uint32) (Chat, bool, error) {
+	if chatID == "" {
+		return Chat{}, false, nil
+	}
+	if !pinned {
+		order = 0
+	}
+
+	result, err := db.conn.ExecContext(ctx, `
+		UPDATE chats
+		SET is_pinned = ?, pinned_order = ?
+		WHERE id = ? AND (is_pinned != ? OR pinned_order != ?)
+	`, boolToInt(pinned), order, chatID, boolToInt(pinned), order)
+	if err != nil {
+		return Chat{}, false, err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return Chat{}, false, err
+	}
+	if rowsAffected == 0 {
+		return Chat{}, false, nil
+	}
+
+	chat, err := db.GetChat(ctx, chatID)
+	if err != nil {
+		return Chat{}, false, err
+	}
+	return chat, true, nil
+}
+
+func (db *DB) PinnedChatCountExcluding(ctx context.Context, chatID string) (int, error) {
+	var count int
+	err := db.conn.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM chats
+		WHERE is_pinned != 0 AND id != ?
+	`, chatID).Scan(&count)
+	return count, err
+}
+
+func (db *DB) ReconcileChatPins(ctx context.Context, pins map[string]uint32) ([]Chat, error) {
+	tx, err := db.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.QueryContext(ctx, `
+		SELECT id, is_pinned, pinned_order
+		FROM chats
+	`)
+	if err != nil {
+		return nil, err
+	}
+
+	type pinState struct {
+		pinned bool
+		order  uint32
+	}
+	current := make(map[string]pinState)
+	for rows.Next() {
+		var id string
+		var isPinned int
+		var order uint32
+		if err := rows.Scan(&id, &isPinned, &order); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		current[id] = pinState{pinned: isPinned != 0, order: order}
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	changedIDs := make([]string, 0)
+	for id, state := range current {
+		order, shouldPin := pins[id]
+		if !shouldPin {
+			order = 0
+		}
+		if state.pinned == shouldPin && state.order == order {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE chats
+			SET is_pinned = ?, pinned_order = ?
+			WHERE id = ?
+		`, boolToInt(shouldPin), order, id); err != nil {
+			return nil, err
+		}
+		changedIDs = append(changedIDs, id)
+	}
+
+	changed := make([]Chat, 0, len(changedIDs))
+	for _, id := range changedIDs {
+		chat, err := getChatTx(ctx, tx, id)
+		if err != nil {
+			return nil, err
+		}
+		changed = append(changed, chat)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return changed, nil
+}
+
+func (db *DB) ClearChatPins(ctx context.Context) error {
+	_, err := db.conn.ExecContext(ctx, `
+		UPDATE chats
+		SET is_pinned = 0, pinned_order = 0
+		WHERE is_pinned != 0 OR pinned_order != 0
+	`)
+	return err
 }
 
 func (db *DB) ClearSessionData(ctx context.Context) error {
@@ -246,6 +370,40 @@ func (db *DB) UpdateChatNameWithSource(ctx context.Context, chatID, name, nameSo
 		return Chat{}, false, err
 	}
 	return chat, true, nil
+}
+
+func (db *DB) ListRawGroupChatIDs(ctx context.Context, limit int) ([]string, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+
+	rows, err := db.conn.QueryContext(ctx, `
+		SELECT id
+		FROM chats
+		WHERE is_group = 1
+		  AND id LIKE '%@g.us'
+		  AND (name = '' OR name = id OR name_source = ?)
+		ORDER BY last_message_time DESC, id ASC
+		LIMIT ?
+	`, ChatNameSourceRaw, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	chatIDs := make([]string, 0, limit)
+	for rows.Next() {
+		var chatID string
+		if err := rows.Scan(&chatID); err != nil {
+			return nil, err
+		}
+		chatIDs = append(chatIDs, chatID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return chatIDs, nil
 }
 
 func (db *DB) ListLIDChats(ctx context.Context) ([]string, error) {
@@ -463,8 +621,8 @@ func (db *DB) MigrateChatID(ctx context.Context, fromChatID, toChatID string) (C
 	}
 
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO chats (id, name, name_source, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group, avatar_local_path, avatar_picture_id)
-		SELECT ?, name, name_source, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group, avatar_local_path, avatar_picture_id
+		INSERT INTO chats (id, name, name_source, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group, is_pinned, pinned_order, avatar_local_path, avatar_picture_id)
+		SELECT ?, name, name_source, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group, is_pinned, pinned_order, avatar_local_path, avatar_picture_id
 		FROM chats
 		WHERE id = ?
 		ON CONFLICT(id) DO UPDATE SET
@@ -495,6 +653,8 @@ func (db *DB) MigrateChatID(ctx context.Context, fromChatID, toChatID string) (C
 			END,
 			last_message_time = MAX(chats.last_message_time, excluded.last_message_time),
 			unread_count = chats.unread_count + excluded.unread_count,
+			is_pinned = excluded.is_pinned,
+			pinned_order = excluded.pinned_order,
 			is_group = excluded.is_group
 	`, toChatID, fromChatID, ChatNameSourceRaw, toChatID, ChatNameSourceRaw, toChatID); err != nil {
 		return Chat{}, false, err

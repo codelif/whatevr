@@ -90,7 +90,9 @@ func (db *DB) migrate(ctx context.Context) error {
 			last_message_direction TEXT NOT NULL DEFAULT '',
 			last_message_status TEXT NOT NULL DEFAULT '',
 			unread_count INTEGER NOT NULL DEFAULT 0,
-			is_group INTEGER NOT NULL DEFAULT 0
+			is_group INTEGER NOT NULL DEFAULT 0,
+			is_pinned INTEGER NOT NULL DEFAULT 0,
+			pinned_order INTEGER NOT NULL DEFAULT 0
 		)`,
 		`CREATE TABLE IF NOT EXISTS messages (
 			id TEXT PRIMARY KEY,
@@ -162,6 +164,10 @@ func (db *DB) migrate(ctx context.Context) error {
 	}
 
 	if err := db.ensureChatNameSourceColumn(ctx); err != nil {
+		return err
+	}
+
+	if err := db.ensureChatPinColumns(ctx); err != nil {
 		return err
 	}
 
@@ -294,6 +300,46 @@ func (db *DB) ensureChatNameSourceColumn(ctx context.Context) error {
 		END
 	`, ChatNameSourceRaw, ChatNameSourceGroup)
 	return err
+}
+
+func (db *DB) ensureChatPinColumns(ctx context.Context) error {
+	rows, err := db.conn.QueryContext(ctx, `PRAGMA table_info(chats)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	existing := make(map[string]bool)
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull, pk int
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			return err
+		}
+		existing[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	alterations := []struct {
+		col string
+		def string
+	}{
+		{"is_pinned", `ALTER TABLE chats ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0`},
+		{"pinned_order", `ALTER TABLE chats ADD COLUMN pinned_order INTEGER NOT NULL DEFAULT 0`},
+	}
+	for _, a := range alterations {
+		if existing[a.col] {
+			continue
+		}
+		if _, err := db.conn.ExecContext(ctx, a.def); err != nil {
+			return fmt.Errorf("add chats.%s: %w", a.col, err)
+		}
+	}
+	return nil
 }
 
 func (db *DB) userVersion(ctx context.Context) (int, error) {
@@ -492,11 +538,13 @@ func (db *DB) ensureMediaColumns(ctx context.Context) error {
 		col string
 		def string
 	}{
+		{"media_kind", `ALTER TABLE messages ADD COLUMN media_kind TEXT NOT NULL DEFAULT ''`},
 		{"media_mime_type", `ALTER TABLE messages ADD COLUMN media_mime_type TEXT NOT NULL DEFAULT ''`},
 		{"media_local_path", `ALTER TABLE messages ADD COLUMN media_local_path TEXT NOT NULL DEFAULT ''`},
 		{"media_thumbnail_local_path", `ALTER TABLE messages ADD COLUMN media_thumbnail_local_path TEXT NOT NULL DEFAULT ''`},
 		{"media_width", `ALTER TABLE messages ADD COLUMN media_width INTEGER NOT NULL DEFAULT 0`},
 		{"media_height", `ALTER TABLE messages ADD COLUMN media_height INTEGER NOT NULL DEFAULT 0`},
+		{"media_animated", `ALTER TABLE messages ADD COLUMN media_animated INTEGER NOT NULL DEFAULT 0`},
 		{"media_payload", `ALTER TABLE messages ADD COLUMN media_payload BLOB NOT NULL DEFAULT x''`},
 	}
 	for _, a := range alterations {
