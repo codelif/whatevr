@@ -114,6 +114,8 @@ func (c *Client) processHistorySyncData(ctx context.Context, data *waHistorySync
 		}
 		convUnread := conv.GetUnreadCount()
 		convMarkedUnread := conv.GetMarkedAsUnread()
+		convPinnedOrder := conv.GetPinned()
+		convPinned := convPinnedOrder > 0
 		forceRead := convUnread == 0 && !convMarkedUnread
 
 		messagesAdded := uint32(0)
@@ -157,8 +159,14 @@ func (c *Client) processHistorySyncData(ctx context.Context, data *waHistorySync
 		} else if updatedChat.ID != "" {
 			lastSavedChat = updatedChat
 		}
+		updatedChat, pinChanged, err := c.store.UpdateChatPinState(ctx, chatID, convPinned, convPinnedOrder)
+		if err != nil {
+			c.log.Warnf("Failed to update pinned state for %s: %v", chatID, err)
+		} else if updatedChat.ID != "" {
+			lastSavedChat = updatedChat
+		}
 
-		if messagesAdded > 0 {
+		if messagesAdded > 0 || pinChanged {
 			if lastSavedChat.ID != "" {
 				c.daemon.PublishChatUpdated(toDaemonChat(lastSavedChat))
 			}
@@ -188,7 +196,8 @@ func (c *Client) handleMessage(ctx context.Context, evt *events.Message) {
 	if c.handleManualHistorySyncNotification(ctx, evt) {
 		return
 	}
-	c.ingestMessage(ctx, evt, ingestOptions{source: sourceLive})
+	saved, _ := c.ingestMessage(ctx, evt, ingestOptions{source: sourceLive})
+	c.refreshRawGroupNameForChat(ctx, saved.Chat)
 	c.refreshLiveMessageAvatars(ctx, evt)
 }
 
@@ -242,7 +251,7 @@ func (c *Client) ingestMessage(ctx context.Context, evt *events.Message, opts in
 		return saved, true
 	}
 
-	if mediaInput, ok := c.imageMessageInput(ctx, evt, opts); ok {
+	if mediaInput, ok := c.mediaMessageInput(ctx, evt, opts); ok {
 		saved, err := c.store.SaveMediaMessage(ctx, mediaInput)
 		if err != nil {
 			c.log.Errorf("Failed to store media message %s: %v", mediaInput.ID, err)
@@ -256,6 +265,11 @@ func (c *Client) ingestMessage(ctx context.Context, evt *events.Message, opts in
 				c.daemon.PublishChatUpdated(toDaemonChat(saved.Chat))
 			}
 			return saved, false
+		}
+		if updated, ok, err := c.resolveCachedStickerMedia(ctx, saved.Message); err != nil {
+			c.log.Warnf("Failed to resolve cached sticker media for %s: %v", saved.Message.ID, err)
+		} else if ok {
+			saved.Message = updated
 		}
 		if opts.source == sourceLive {
 			c.log.Infof("Stored media message %s from %s", saved.Message.ID, saved.Message.SenderID)
@@ -285,6 +299,13 @@ func notificationTimestampFresh(timestampUnix int64, now time.Time) bool {
 		return true
 	}
 	return now.Sub(time.Unix(timestampUnix, 0)) <= liveNotificationMaxAge
+}
+
+func (c *Client) mediaMessageInput(ctx context.Context, evt *events.Message, opts ingestOptions) (appstore.MediaMessageInput, bool) {
+	if input, ok := c.imageMessageInput(ctx, evt, opts); ok {
+		return input, true
+	}
+	return c.stickerMessageInput(ctx, evt, opts)
 }
 
 func (c *Client) imageMessageInput(ctx context.Context, evt *events.Message, opts ingestOptions) (appstore.MediaMessageInput, bool) {
@@ -333,6 +354,7 @@ func (c *Client) imageMessageInput(ctx context.Context, evt *events.Message, opt
 			IsGroup:        info.IsGroup,
 			CountUnread:    shouldCountUnread(evt, opts),
 		},
+		MediaKind:               appstore.MediaKindImage,
 		MediaMimeType:           mimeType,
 		MediaThumbnailLocalPath: thumbnailLocalPath,
 		MediaWidth:              int32(imgMsg.GetWidth()),
@@ -341,7 +363,64 @@ func (c *Client) imageMessageInput(ctx context.Context, evt *events.Message, opt
 	}, true
 }
 
+func (c *Client) stickerMessageInput(ctx context.Context, evt *events.Message, opts ingestOptions) (appstore.MediaMessageInput, bool) {
+	if evt == nil || evt.Message == nil {
+		return appstore.MediaMessageInput{}, false
+	}
+
+	stickerMsg := evt.Message.GetStickerMessage()
+	if stickerMsg == nil {
+		return appstore.MediaMessageInput{}, false
+	}
+
+	info := evt.Info
+	chatJID := c.normalizeJIDForChat(ctx, info.Chat)
+	chatID := chatJID.String()
+	if chatID == "" || info.ID == "" {
+		return appstore.MediaMessageInput{}, false
+	}
+
+	direction, status := messageDirectionAndStatus(info, opts)
+	payload, err := proto.Marshal(stickerMsg)
+	if err != nil {
+		c.log.Warnf("Failed to serialize sticker metadata for message %s: %v", info.ID, err)
+		return appstore.MediaMessageInput{}, false
+	}
+	mimeType := stickerMsg.GetMimetype()
+	if mimeType == "" {
+		mimeType = "image/webp"
+	}
+	thumbnailLocalPath := c.saveMessageThumbnailWithExtension(chatID, internalMessageIDForChat(chatID, info.ID), stickerMsg.GetPngThumbnail(), ".thumb.png")
+
+	return appstore.MediaMessageInput{
+		TextMessageInput: appstore.TextMessageInput{
+			ID:             internalMessageIDForChat(chatID, info.ID),
+			ChatID:         chatID,
+			ChatName:       c.chatName(ctx, chatJID, info.IsGroup, opts.chatNameOverride, opts.chatNameSource),
+			ChatNameSource: c.chatNameSource(ctx, chatJID, info.IsGroup, opts.chatNameOverride, opts.chatNameSource),
+			SenderID:       senderID(info),
+			SenderName:     c.senderName(ctx, senderJID(info)),
+			Timestamp:      info.Timestamp,
+			Direction:      direction,
+			Status:         status,
+			IsGroup:        info.IsGroup,
+			CountUnread:    shouldCountUnread(evt, opts),
+		},
+		MediaKind:               appstore.MediaKindSticker,
+		MediaMimeType:           mimeType,
+		MediaThumbnailLocalPath: thumbnailLocalPath,
+		MediaWidth:              int32(stickerMsg.GetWidth()),
+		MediaHeight:             int32(stickerMsg.GetHeight()),
+		MediaAnimated:           stickerMsg.GetIsAnimated(),
+		MediaPayload:            payload,
+	}, true
+}
+
 func (c *Client) saveMessageThumbnail(chatID, messageID string, thumbnail []byte) string {
+	return c.saveMessageThumbnailWithExtension(chatID, messageID, thumbnail, ".thumb.jpg")
+}
+
+func (c *Client) saveMessageThumbnailWithExtension(chatID, messageID string, thumbnail []byte, extension string) string {
 	if len(thumbnail) == 0 {
 		return ""
 	}
@@ -350,7 +429,7 @@ func (c *Client) saveMessageThumbnail(chatID, messageID string, thumbnail []byte
 		c.log.Warnf("Failed to create thumbnail cache directory for message %s: %v", messageID, err)
 		return ""
 	}
-	localPath := filepath.Join(mediaDir, safeMediaFileName(messageID, ".thumb.jpg"))
+	localPath := filepath.Join(mediaDir, safeMediaFileName(messageID, extension))
 	if err := writeFileAtomic(localPath, thumbnail, 0o600); err != nil {
 		c.log.Warnf("Failed to cache thumbnail for message %s: %v", messageID, err)
 		return ""
@@ -772,11 +851,13 @@ func toDaemonMessage(message appstore.Message) app.Message {
 		TimestampUnix:           message.TimestampUnix,
 		Direction:               message.Direction,
 		Status:                  message.Status,
+		MediaKind:               message.MediaKind,
 		MediaMimeType:           message.MediaMimeType,
 		MediaLocalPath:          message.MediaLocalPath,
 		MediaThumbnailLocalPath: message.MediaThumbnailLocalPath,
 		MediaWidth:              message.MediaWidth,
 		MediaHeight:             message.MediaHeight,
+		MediaAnimated:           message.MediaAnimated,
 	}
 }
 
@@ -790,6 +871,8 @@ func toDaemonChat(chat appstore.Chat) app.Chat {
 		LastMessageStatus:    chat.LastMessageStatus,
 		UnreadCount:          chat.UnreadCount,
 		IsGroup:              chat.IsGroup,
+		IsPinned:             chat.IsPinned,
+		PinnedOrder:          chat.PinnedOrder,
 		AvatarLocalPath:      chat.AvatarLocalPath,
 	}
 }

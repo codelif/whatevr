@@ -464,6 +464,36 @@ func TestGroupNameDoesNotRegressToRawLiveName(t *testing.T) {
 	}
 }
 
+func TestListRawGroupChatIDsReturnsOnlyUnresolvedGroups(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	for _, input := range []TextMessageInput{
+		{ID: "120363111@g.us:1", ChatID: "120363111@g.us", SenderID: "sender@s.whatsapp.net", Text: "raw group", Timestamp: time.Unix(300, 0), IsGroup: true},
+		{ID: "status@broadcast:1", ChatID: "status@broadcast", SenderID: "sender@s.whatsapp.net", Text: "status", Timestamp: time.Unix(200, 0), IsGroup: true},
+		{ID: "person@s.whatsapp.net:1", ChatID: "person@s.whatsapp.net", SenderID: "person@s.whatsapp.net", Text: "dm", Timestamp: time.Unix(100, 0)},
+	} {
+		if _, err := db.SaveTextMessage(ctx, input); err != nil {
+			t.Fatalf("save message %s: %v", input.ID, err)
+		}
+	}
+	if _, err := db.EnsureChatWithNameSource(ctx, "120363222@g.us", "Named Group", ChatNameSourceGroup, true); err != nil {
+		t.Fatalf("ensure named group: %v", err)
+	}
+
+	chatIDs, err := db.ListRawGroupChatIDs(ctx, 100)
+	if err != nil {
+		t.Fatalf("list raw group chats: %v", err)
+	}
+	if len(chatIDs) != 1 || chatIDs[0] != "120363111@g.us" {
+		t.Fatalf("unexpected raw group chats: %#v", chatIDs)
+	}
+}
+
 func TestListChatsSortsByMostRecentMessage(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))

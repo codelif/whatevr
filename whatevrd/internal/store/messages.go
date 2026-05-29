@@ -12,6 +12,9 @@ const (
 	DirectionIncoming = "incoming"
 	DirectionOutgoing = "outgoing"
 
+	MediaKindImage   = "image"
+	MediaKindSticker = "sticker"
+
 	StatusPending   = "pending"
 	StatusDelivered = "delivered"
 	StatusRead      = "read"
@@ -30,11 +33,13 @@ type Message struct {
 	Direction               string
 	IsRead                  bool
 	Status                  string
+	MediaKind               string
 	MediaMimeType           string
 	MediaLocalPath          string
 	MediaThumbnailLocalPath string
 	MediaWidth              int32
 	MediaHeight             int32
+	MediaAnimated           bool
 	MediaPayload            []byte
 	SendAttempts            int32
 	LastSendError           string
@@ -44,10 +49,12 @@ type Message struct {
 type MediaMessageInput struct {
 	TextMessageInput
 	MediaMimeType           string
+	MediaKind               string
 	MediaLocalPath          string
 	MediaThumbnailLocalPath string
 	MediaWidth              int32
 	MediaHeight             int32
+	MediaAnimated           bool
 	MediaPayload            []byte
 }
 
@@ -239,7 +246,9 @@ func (db *DB) SaveMediaMessage(ctx context.Context, input MediaMessageInput) (Sa
 	lastMessage := input.Text
 	if lastMessage == "" {
 		switch {
-		case input.MediaMimeType == "image/jpeg" || input.MediaMimeType == "image/png" || input.MediaMimeType == "image/webp":
+		case input.MediaKind == MediaKindSticker:
+			lastMessage = "[Sticker]"
+		case input.MediaMimeType == "image/jpeg" || input.MediaMimeType == "image/png" || input.MediaMimeType == "image/webp" || input.MediaMimeType == "image/gif":
 			lastMessage = "[Image]"
 		case input.MediaMimeType == "video/mp4" || input.MediaMimeType == "video/webm":
 			lastMessage = "[Video]"
@@ -264,11 +273,11 @@ func (db *DB) SaveMediaMessage(ctx context.Context, input MediaMessageInput) (Sa
 	}
 
 	result, err := tx.ExecContext(ctx, `
-		INSERT INTO messages (id, chat_id, sender_id, text, timestamp, direction, is_read, status, media_mime_type, media_local_path, media_thumbnail_local_path, media_width, media_height, media_payload)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO messages (id, chat_id, sender_id, text, timestamp, direction, is_read, status, media_kind, media_mime_type, media_local_path, media_thumbnail_local_path, media_width, media_height, media_animated, media_payload)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO NOTHING
 	`, input.ID, input.ChatID, input.SenderID, input.Text, input.Timestamp.Unix(), input.Direction,
-		boolToInt(!input.CountUnread), input.Status, input.MediaMimeType, input.MediaLocalPath, input.MediaThumbnailLocalPath, input.MediaWidth, input.MediaHeight, input.MediaPayload)
+		boolToInt(!input.CountUnread), input.Status, input.MediaKind, input.MediaMimeType, input.MediaLocalPath, input.MediaThumbnailLocalPath, input.MediaWidth, input.MediaHeight, boolToInt(input.MediaAnimated), input.MediaPayload)
 	if err != nil {
 		return SavedTextMessage{}, err
 	}
@@ -328,7 +337,7 @@ func (db *DB) ListMessages(ctx context.Context, chatID string, limit int, before
 		SELECT m.id, m.chat_id, m.sender_id,
 		       COALESCE(NULLIF(s.name, ''), NULLIF(c.name, ''), ''),
 		       COALESCE(NULLIF(sa.local_path, ''), NULLIF(ca.local_path, ''), NULLIF(s.avatar_local_path, ''), NULLIF(c.avatar_local_path, ''), ''),
-		       m.text, m.timestamp, m.direction, m.is_read, m.status, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_payload,
+		       m.text, m.timestamp, m.direction, m.is_read, m.status, m.media_kind, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_animated, m.media_payload,
 		       m.send_attempts, m.last_send_error, m.next_send_attempt
 		FROM messages m
 		LEFT JOIN senders s ON s.id = m.sender_id
@@ -377,11 +386,13 @@ func (db *DB) ListMessages(ctx context.Context, chatID string, limit int, before
 			&message.Direction,
 			&message.IsRead,
 			&message.Status,
+			&message.MediaKind,
 			&message.MediaMimeType,
 			&message.MediaLocalPath,
 			&message.MediaThumbnailLocalPath,
 			&message.MediaWidth,
 			&message.MediaHeight,
+			&message.MediaAnimated,
 			&message.MediaPayload,
 			&message.SendAttempts,
 			&message.LastSendError,
@@ -412,7 +423,7 @@ func (db *DB) ListPendingOutgoingMessages(ctx context.Context, limit int, now ti
 	}
 
 	rows, err := db.conn.QueryContext(ctx, `
-		SELECT id, chat_id, sender_id, text, timestamp, direction, is_read, status, media_mime_type, media_local_path, media_thumbnail_local_path, media_width, media_height, media_payload,
+		SELECT id, chat_id, sender_id, text, timestamp, direction, is_read, status, media_kind, media_mime_type, media_local_path, media_thumbnail_local_path, media_width, media_height, media_animated, media_payload,
 		       send_attempts, last_send_error, next_send_attempt
 		FROM messages
 		WHERE direction = ? AND status = ? AND next_send_attempt <= ?
@@ -436,11 +447,13 @@ func (db *DB) ListPendingOutgoingMessages(ctx context.Context, limit int, now ti
 			&message.Direction,
 			&message.IsRead,
 			&message.Status,
+			&message.MediaKind,
 			&message.MediaMimeType,
 			&message.MediaLocalPath,
 			&message.MediaThumbnailLocalPath,
 			&message.MediaWidth,
 			&message.MediaHeight,
+			&message.MediaAnimated,
 			&message.MediaPayload,
 			&message.SendAttempts,
 			&message.LastSendError,
@@ -545,6 +558,49 @@ func (db *DB) UpdateMessageMediaLocalPath(ctx context.Context, id, localPath str
 	return message, nil
 }
 
+func (db *DB) ListDownloadedStickerMessages(ctx context.Context) ([]Message, error) {
+	rows, err := db.conn.QueryContext(ctx, `
+		SELECT id, chat_id, sender_id, text, timestamp, direction, is_read, status, media_kind, media_mime_type, media_local_path, media_thumbnail_local_path, media_width, media_height, media_animated, media_payload,
+		       send_attempts, last_send_error, next_send_attempt
+		FROM messages
+		WHERE media_kind = ? AND media_local_path != ''
+	`, MediaKindSticker)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var messages []Message
+	for rows.Next() {
+		var message Message
+		if err := rows.Scan(
+			&message.ID,
+			&message.ChatID,
+			&message.SenderID,
+			&message.Text,
+			&message.TimestampUnix,
+			&message.Direction,
+			&message.IsRead,
+			&message.Status,
+			&message.MediaKind,
+			&message.MediaMimeType,
+			&message.MediaLocalPath,
+			&message.MediaThumbnailLocalPath,
+			&message.MediaWidth,
+			&message.MediaHeight,
+			&message.MediaAnimated,
+			&message.MediaPayload,
+			&message.SendAttempts,
+			&message.LastSendError,
+			&message.NextSendAttempt,
+		); err != nil {
+			return nil, err
+		}
+		messages = append(messages, message)
+	}
+	return messages, rows.Err()
+}
+
 func (db *DB) ListChatIDsBySenderID(ctx context.Context, senderID string) ([]string, error) {
 	rows, err := db.conn.QueryContext(ctx, `
 		SELECT DISTINCT chat_id FROM messages WHERE sender_id = ?
@@ -634,8 +690,9 @@ func getChatRow(ctx context.Context, queryer interface {
 }, id string) (Chat, error) {
 	var chat Chat
 	var isGroup int
+	var isPinned int
 	err := queryer.QueryRowContext(ctx, `
-		SELECT c.id, c.name, c.name_source, c.last_message, c.last_message_time, c.last_message_direction, c.last_message_status, c.unread_count, c.is_group,
+		SELECT c.id, c.name, c.name_source, c.last_message, c.last_message_time, c.last_message_direction, c.last_message_status, c.unread_count, c.is_group, c.is_pinned, c.pinned_order,
 		       COALESCE(NULLIF(a.local_path, ''), c.avatar_local_path), COALESCE(NULLIF(a.picture_id, ''), c.avatar_picture_id), COALESCE(NULLIF(a.status, ''), c.avatar_status), COALESCE(NULLIF(a.checked_at, 0), c.avatar_checked_at)
 		FROM chats c
 		LEFT JOIN avatars a ON a.subject_kind = 'chat' AND a.subject_id = c.id
@@ -650,12 +707,15 @@ func getChatRow(ctx context.Context, queryer interface {
 		&chat.LastMessageStatus,
 		&chat.UnreadCount,
 		&isGroup,
+		&isPinned,
+		&chat.PinnedOrder,
 		&chat.AvatarLocalPath,
 		&chat.AvatarPictureID,
 		&chat.AvatarStatus,
 		&chat.AvatarCheckedAt,
 	)
 	chat.IsGroup = isGroup != 0
+	chat.IsPinned = isPinned != 0
 	return chat, err
 }
 
@@ -666,7 +726,7 @@ func getMessageRow(ctx context.Context, queryer interface {
 		SELECT m.id, m.chat_id, m.sender_id,
 		       COALESCE(NULLIF(s.name, ''), NULLIF(c.name, ''), ''),
 		       COALESCE(NULLIF(sa.local_path, ''), NULLIF(ca.local_path, ''), NULLIF(s.avatar_local_path, ''), NULLIF(c.avatar_local_path, ''), ''),
-		       m.text, m.timestamp, m.direction, m.is_read, m.status, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_payload,
+		       m.text, m.timestamp, m.direction, m.is_read, m.status, m.media_kind, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_animated, m.media_payload,
 		       m.send_attempts, m.last_send_error, m.next_send_attempt
 		FROM messages m
 		LEFT JOIN senders s ON s.id = m.sender_id
@@ -685,11 +745,13 @@ func getMessageRow(ctx context.Context, queryer interface {
 		&message.Direction,
 		&message.IsRead,
 		&message.Status,
+		&message.MediaKind,
 		&message.MediaMimeType,
 		&message.MediaLocalPath,
 		&message.MediaThumbnailLocalPath,
 		&message.MediaWidth,
 		&message.MediaHeight,
+		&message.MediaAnimated,
 		&message.MediaPayload,
 		&message.SendAttempts,
 		&message.LastSendError,
@@ -708,6 +770,7 @@ func ExternalMessageID(chatID, internalID string) string {
 func scanChat(scanner interface{ Scan(...any) error }) (Chat, error) {
 	var chat Chat
 	var isGroup int
+	var isPinned int
 	err := scanner.Scan(
 		&chat.ID,
 		&chat.Name,
@@ -718,12 +781,15 @@ func scanChat(scanner interface{ Scan(...any) error }) (Chat, error) {
 		&chat.LastMessageStatus,
 		&chat.UnreadCount,
 		&isGroup,
+		&isPinned,
+		&chat.PinnedOrder,
 		&chat.AvatarLocalPath,
 		&chat.AvatarPictureID,
 		&chat.AvatarStatus,
 		&chat.AvatarCheckedAt,
 	)
 	chat.IsGroup = isGroup != 0
+	chat.IsPinned = isPinned != 0
 	return chat, err
 }
 

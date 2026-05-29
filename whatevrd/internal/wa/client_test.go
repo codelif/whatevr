@@ -1,9 +1,12 @@
 package wa
 
 import (
+	"errors"
 	"fmt"
 	"testing"
 	"time"
+
+	"go.mau.fi/whatsmeow/appstate"
 
 	"whatevrd/internal/app"
 )
@@ -104,5 +107,47 @@ func TestConnectionRetryMarksNonQRFailuresOffline(t *testing.T) {
 	}
 	if !retry.nextRetryUnix {
 		t.Fatal("nextRetryUnix = false, want true")
+	}
+}
+
+func TestIsAppStateConflictError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "nil",
+			err:  nil,
+			want: false,
+		},
+		{
+			name: "lthash sentinel",
+			err:  fmt.Errorf("wrapped: %w", appstate.ErrMismatchingLTHash),
+			want: true,
+		},
+		{
+			name: "server 409",
+			err:  errors.New(`server returned error updating app state (regular_low): <error code="409" text="conflict"/>`),
+			want: true,
+		},
+		{
+			name: "verify patch",
+			err:  errors.New("failed to verify patch v561: mismatching LTHash"),
+			want: true,
+		},
+		{
+			name: "other error",
+			err:  errors.New("network unavailable"),
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isAppStateConflictError(tt.err); got != tt.want {
+				t.Fatalf("isAppStateConflictError() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

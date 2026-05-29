@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"image"
 	_ "image/gif"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/appstate"
 	waE2E "go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
@@ -28,7 +30,10 @@ import (
 	appstore "whatevrd/internal/store"
 )
 
-const maxOutboundMediaBytes = 25 * 1024 * 1024
+const (
+	maxOutboundMediaBytes = 25 * 1024 * 1024
+	maxPinnedChats        = 3
+)
 
 type readBatch struct {
 	sender     types.JID
@@ -170,6 +175,7 @@ func (c *Client) SendMedia(ctx context.Context, chatID, filePath, caption string
 			IsGroup:     targetJID.Server == types.GroupServer || targetJID.Server == types.BroadcastServer,
 			CountUnread: false,
 		},
+		MediaKind:      appstore.MediaKindImage,
 		MediaMimeType:  mimeType,
 		MediaLocalPath: localPath,
 		MediaWidth:     mediaWidth,
@@ -509,6 +515,77 @@ func (c *Client) MarkChatRead(ctx context.Context, chatID string) (appstore.Chat
 
 	c.daemon.PublishChatUpdated(toDaemonChat(updatedChat))
 	return updatedChat, nil
+}
+
+func (c *Client) SetChatPinned(ctx context.Context, chatID string, pinned bool) (appstore.Chat, error) {
+	chat, err := types.ParseJID(chatID)
+	if err != nil {
+		return appstore.Chat{}, grpcstatus.Errorf(codes.InvalidArgument, "invalid chat_id: %v", err)
+	}
+	chat = c.normalizeJIDForChat(ctx, chat)
+	chatID = chat.String()
+
+	client := c.currentClient()
+	if client == nil || !client.IsLoggedIn() {
+		return appstore.Chat{}, grpcstatus.Error(codes.Unavailable, "WhatsApp client is not logged in")
+	}
+	if pinned {
+		pinnedCount, err := c.store.PinnedChatCountExcluding(ctx, chatID)
+		if err != nil {
+			return appstore.Chat{}, err
+		}
+		if pinnedCount >= maxPinnedChats {
+			return appstore.Chat{}, grpcstatus.Errorf(codes.ResourceExhausted, "You can only pin %d chats", maxPinnedChats)
+		}
+	}
+	if err := c.sendRegularLowAppState(ctx, client, appstate.BuildPin(chat, pinned)); err != nil {
+		return appstore.Chat{}, err
+	}
+
+	order := uint32(0)
+	if pinned {
+		order = uint32(time.Now().Unix())
+	}
+	updatedChat, changed, err := c.store.UpdateChatPinState(ctx, chatID, pinned, order)
+	if err != nil {
+		return appstore.Chat{}, err
+	}
+	if changed {
+		c.daemon.PublishChatUpdated(toDaemonChat(updatedChat))
+	}
+	return updatedChat, nil
+}
+
+func (c *Client) sendRegularLowAppState(ctx context.Context, client *whatsmeow.Client, patch appstate.PatchInfo) error {
+	c.appStateMu.Lock()
+	defer c.appStateMu.Unlock()
+
+	if err := client.SendAppState(ctx, patch); err != nil {
+		if !isAppStateConflictError(err) {
+			return err
+		}
+		c.log.Warnf("WhatsApp app state conflict while updating pins; resyncing regular_low and retrying: %v", err)
+		if _, syncErr := fetchFullRegularLowAppState(ctx, client); syncErr != nil {
+			return grpcstatus.Errorf(codes.Aborted, "WhatsApp sync conflict. Try again in a moment.")
+		}
+		if retryErr := client.SendAppState(ctx, patch); retryErr != nil {
+			return grpcstatus.Errorf(codes.Aborted, "WhatsApp sync conflict. Try again in a moment.")
+		}
+	}
+	return nil
+}
+
+func isAppStateConflictError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, appstate.ErrMismatchingLTHash) {
+		return true
+	}
+	message := err.Error()
+	return strings.Contains(message, `code="409"`) ||
+		strings.Contains(message, "mismatching LTHash") ||
+		strings.Contains(message, "failed to verify patch")
 }
 
 func receiptStatus(receiptType types.ReceiptType) (string, bool) {
