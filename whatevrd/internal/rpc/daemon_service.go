@@ -237,6 +237,8 @@ func toProtoChat(chat app.Chat) *pb.Chat {
 		LastMessageTimeUnix:  chat.LastMessageTime,
 		UnreadCount:          chat.UnreadCount,
 		IsGroup:              chat.IsGroup,
+		IsPinned:             chat.IsPinned,
+		PinnedOrder:          chat.PinnedOrder,
 		AvatarLocalPath:      chat.AvatarLocalPath,
 		LastMessageDirection: toProtoMessageDirection(chat.LastMessageDirection),
 		LastMessageStatus:    toProtoMessageStatus(chat.LastMessageStatus),
@@ -254,11 +256,13 @@ func toProtoMessage(message app.Message) *pb.Message {
 		TimestampUnix:           message.TimestampUnix,
 		Direction:               toProtoMessageDirection(message.Direction),
 		Status:                  toProtoMessageStatus(message.Status),
+		MediaKind:               message.MediaKind,
 		MediaMimeType:           message.MediaMimeType,
 		MediaLocalPath:          message.MediaLocalPath,
 		MediaThumbnailLocalPath: message.MediaThumbnailLocalPath,
 		MediaWidth:              message.MediaWidth,
 		MediaHeight:             message.MediaHeight,
+		MediaAnimated:           message.MediaAnimated,
 	}
 }
 

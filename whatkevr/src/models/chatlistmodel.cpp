@@ -42,6 +42,10 @@ QVariant ChatListModel::data(const QModelIndex &index, int role) const
         return chat.unreadCount;
     case IsGroupRole:
         return chat.isGroup;
+    case IsPinnedRole:
+        return chat.isPinned;
+    case PinnedOrderRole:
+        return chat.pinnedOrder;
     case AvatarLocalPathRole:
         return chat.avatarLocalPath;
     case InitialsRole:
@@ -62,6 +66,8 @@ QHash<int, QByteArray> ChatListModel::roleNames() const
         {LastMessageStatusRole, "lastMessageStatus"},
         {UnreadCountRole, "unreadCount"},
         {IsGroupRole, "isGroup"},
+        {IsPinnedRole, "isPinned"},
+        {PinnedOrderRole, "pinnedOrder"},
         {AvatarLocalPathRole, "avatarLocalPath"},
         {InitialsRole, "initials"},
     };
@@ -205,6 +211,8 @@ ChatListModel::ChatItem ChatListModel::fromProto(const whatevr::v1::Chat &chat)
         .lastMessageStatus = static_cast<int>(chat.lastMessageStatus()),
         .unreadCount = chat.unreadCount(),
         .isGroup = chat.isGroup(),
+        .isPinned = chat.isPinned(),
+        .pinnedOrder = chat.pinnedOrder(),
         .avatarLocalPath = chat.avatarLocalPath(),
     };
     item.displayName = displayName(item);
@@ -261,11 +269,19 @@ bool ChatListModel::sameChatData(const ChatItem &left, const ChatItem &right)
         && left.lastMessageStatus == right.lastMessageStatus
         && left.unreadCount == right.unreadCount
         && left.isGroup == right.isGroup
+        && left.isPinned == right.isPinned
+        && left.pinnedOrder == right.pinnedOrder
         && left.avatarLocalPath == right.avatarLocalPath;
 }
 
 bool ChatListModel::sortBefore(const ChatItem &left, const ChatItem &right)
 {
+    if (left.isPinned != right.isPinned) {
+        return left.isPinned;
+    }
+    if (left.isPinned && left.pinnedOrder != right.pinnedOrder) {
+        return left.pinnedOrder > right.pinnedOrder;
+    }
     if (left.lastMessageTimeUnix != right.lastMessageTimeUnix) {
         return left.lastMessageTimeUnix > right.lastMessageTimeUnix;
     }

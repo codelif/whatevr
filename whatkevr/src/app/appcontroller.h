@@ -157,6 +157,7 @@ public:
     Q_INVOKABLE void loadOlderMessages();
     Q_INVOKABLE void sendText(const QString &text);
     Q_INVOKABLE void sendImage(const QString &fileUrl, const QString &caption = QString());
+    Q_INVOKABLE void setChatPinned(const QString &chatId, bool pinned);
     Q_INVOKABLE void setSelectedChatComposing(bool composing);
     Q_INVOKABLE void downloadMessageMedia(const QString &messageId);
     Q_INVOKABLE [[nodiscard]] bool isMessageMediaDownloading(const QString &messageId) const;
@@ -267,6 +268,7 @@ private:
     std::unique_ptr<QGrpcCallReply> m_olderMessagesReply;
     std::unique_ptr<QGrpcCallReply> m_markChatReadReply;
     std::unique_ptr<QGrpcCallReply> m_subscribeChatPresenceReply;
+    QHash<QString, std::shared_ptr<QGrpcCallReply>> m_setChatPinnedReplies;
     QHash<QString, std::shared_ptr<QGrpcCallReply>> m_setChatPresenceReplies;
     std::unique_ptr<QGrpcCallReply> m_updateSessionStateReply;
     std::unique_ptr<QGrpcCallReply> m_sendTextReply;

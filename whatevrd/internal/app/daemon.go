@@ -208,6 +208,8 @@ type Chat struct {
 	LastMessageStatus    string
 	UnreadCount          int32
 	IsGroup              bool
+	IsPinned             bool
+	PinnedOrder          uint32
 	AvatarLocalPath      string
 }
 
@@ -221,11 +223,13 @@ type Message struct {
 	TimestampUnix           int64
 	Direction               string
 	Status                  string
+	MediaKind               string
 	MediaMimeType           string
 	MediaLocalPath          string
 	MediaThumbnailLocalPath string
 	MediaWidth              int32
 	MediaHeight             int32
+	MediaAnimated           bool
 }
 
 type LoginEventKind int

@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.1
 // - protoc             v7.34.1
-// source: whatevr.proto
+// source: proto/whatevr.proto
 
 package pb
 
@@ -197,7 +197,7 @@ var DaemonService_ServiceDesc = grpc.ServiceDesc{
 			ServerStreams: true,
 		},
 	},
-	Metadata: "whatevr.proto",
+	Metadata: "proto/whatevr.proto",
 }
 
 const (
@@ -341,7 +341,7 @@ var LoginService_ServiceDesc = grpc.ServiceDesc{
 			ServerStreams: true,
 		},
 	},
-	Metadata: "whatevr.proto",
+	Metadata: "proto/whatevr.proto",
 }
 
 const (
@@ -485,13 +485,14 @@ var FrontendService_ServiceDesc = grpc.ServiceDesc{
 			ServerStreams: true,
 		},
 	},
-	Metadata: "whatevr.proto",
+	Metadata: "proto/whatevr.proto",
 }
 
 const (
 	ChatService_ListChats_FullMethodName             = "/whatevr.v1.ChatService/ListChats"
 	ChatService_GetMessages_FullMethodName           = "/whatevr.v1.ChatService/GetMessages"
 	ChatService_MarkChatRead_FullMethodName          = "/whatevr.v1.ChatService/MarkChatRead"
+	ChatService_SetChatPinned_FullMethodName         = "/whatevr.v1.ChatService/SetChatPinned"
 	ChatService_SetChatPresence_FullMethodName       = "/whatevr.v1.ChatService/SetChatPresence"
 	ChatService_SubscribeChatPresence_FullMethodName = "/whatevr.v1.ChatService/SubscribeChatPresence"
 	ChatService_DownloadMessageMedia_FullMethodName  = "/whatevr.v1.ChatService/DownloadMessageMedia"
@@ -504,6 +505,7 @@ type ChatServiceClient interface {
 	ListChats(ctx context.Context, in *ListChatsRequest, opts ...grpc.CallOption) (*ListChatsResponse, error)
 	GetMessages(ctx context.Context, in *GetMessagesRequest, opts ...grpc.CallOption) (*GetMessagesResponse, error)
 	MarkChatRead(ctx context.Context, in *MarkChatReadRequest, opts ...grpc.CallOption) (*MarkChatReadResponse, error)
+	SetChatPinned(ctx context.Context, in *SetChatPinnedRequest, opts ...grpc.CallOption) (*SetChatPinnedResponse, error)
 	SetChatPresence(ctx context.Context, in *SetChatPresenceRequest, opts ...grpc.CallOption) (*SetChatPresenceResponse, error)
 	SubscribeChatPresence(ctx context.Context, in *SubscribeChatPresenceRequest, opts ...grpc.CallOption) (*SubscribeChatPresenceResponse, error)
 	DownloadMessageMedia(ctx context.Context, in *DownloadMessageMediaRequest, opts ...grpc.CallOption) (*DownloadMessageMediaResponse, error)
@@ -547,6 +549,16 @@ func (c *chatServiceClient) MarkChatRead(ctx context.Context, in *MarkChatReadRe
 	return out, nil
 }
 
+func (c *chatServiceClient) SetChatPinned(ctx context.Context, in *SetChatPinnedRequest, opts ...grpc.CallOption) (*SetChatPinnedResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetChatPinnedResponse)
+	err := c.cc.Invoke(ctx, ChatService_SetChatPinned_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *chatServiceClient) SetChatPresence(ctx context.Context, in *SetChatPresenceRequest, opts ...grpc.CallOption) (*SetChatPresenceResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SetChatPresenceResponse)
@@ -584,6 +596,7 @@ type ChatServiceServer interface {
 	ListChats(context.Context, *ListChatsRequest) (*ListChatsResponse, error)
 	GetMessages(context.Context, *GetMessagesRequest) (*GetMessagesResponse, error)
 	MarkChatRead(context.Context, *MarkChatReadRequest) (*MarkChatReadResponse, error)
+	SetChatPinned(context.Context, *SetChatPinnedRequest) (*SetChatPinnedResponse, error)
 	SetChatPresence(context.Context, *SetChatPresenceRequest) (*SetChatPresenceResponse, error)
 	SubscribeChatPresence(context.Context, *SubscribeChatPresenceRequest) (*SubscribeChatPresenceResponse, error)
 	DownloadMessageMedia(context.Context, *DownloadMessageMediaRequest) (*DownloadMessageMediaResponse, error)
@@ -605,6 +618,9 @@ func (UnimplementedChatServiceServer) GetMessages(context.Context, *GetMessagesR
 }
 func (UnimplementedChatServiceServer) MarkChatRead(context.Context, *MarkChatReadRequest) (*MarkChatReadResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method MarkChatRead not implemented")
+}
+func (UnimplementedChatServiceServer) SetChatPinned(context.Context, *SetChatPinnedRequest) (*SetChatPinnedResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetChatPinned not implemented")
 }
 func (UnimplementedChatServiceServer) SetChatPresence(context.Context, *SetChatPresenceRequest) (*SetChatPresenceResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetChatPresence not implemented")
@@ -690,6 +706,24 @@ func _ChatService_MarkChatRead_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ChatService_SetChatPinned_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetChatPinnedRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ChatServiceServer).SetChatPinned(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ChatService_SetChatPinned_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ChatServiceServer).SetChatPinned(ctx, req.(*SetChatPinnedRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _ChatService_SetChatPresence_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(SetChatPresenceRequest)
 	if err := dec(in); err != nil {
@@ -764,6 +798,10 @@ var ChatService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _ChatService_MarkChatRead_Handler,
 		},
 		{
+			MethodName: "SetChatPinned",
+			Handler:    _ChatService_SetChatPinned_Handler,
+		},
+		{
 			MethodName: "SetChatPresence",
 			Handler:    _ChatService_SetChatPresence_Handler,
 		},
@@ -777,7 +815,7 @@ var ChatService_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "whatevr.proto",
+	Metadata: "proto/whatevr.proto",
 }
 
 const (
@@ -917,5 +955,5 @@ var SendService_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "whatevr.proto",
+	Metadata: "proto/whatevr.proto",
 }

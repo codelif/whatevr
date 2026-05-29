@@ -30,9 +30,11 @@ type ChatStore interface {
 type ChatActionController interface {
 	MarkChatRead(context.Context, string) (appstore.Chat, error)
 	RefreshLoadedChatAvatars(context.Context, string, []appstore.Message)
+	SetChatPinned(context.Context, string, bool) (appstore.Chat, error)
 	SetChatPresence(context.Context, string, bool) error
 	SubscribeChatPresence(context.Context, string) error
 	DownloadMessageMedia(context.Context, string) (appstore.Message, error)
+	ResolveCachedStickerMedia(context.Context, []appstore.Message) []appstore.Message
 }
 
 type ChatService struct {
@@ -90,6 +92,7 @@ func (s *ChatService) GetMessages(ctx context.Context, req *pb.GetMessagesReques
 	}
 	if s.actions != nil {
 		s.actions.RefreshLoadedChatAvatars(ctx, req.GetChatId(), messages)
+		messages = s.actions.ResolveCachedStickerMedia(ctx, messages)
 	}
 
 	resp := &pb.GetMessagesResponse{Messages: make([]*pb.Message, 0, len(messages))}
@@ -127,6 +130,23 @@ func (s *ChatService) MarkChatRead(ctx context.Context, req *pb.MarkChatReadRequ
 		s.daemon.PublishChatUpdated(toAppChat(chat))
 	}
 	return &pb.MarkChatReadResponse{}, nil
+}
+
+func (s *ChatService) SetChatPinned(ctx context.Context, req *pb.SetChatPinnedRequest) (*pb.SetChatPinnedResponse, error) {
+	if s.actions == nil {
+		return nil, status.Error(codes.Unimplemented, "chat action controller is not available")
+	}
+	if strings.TrimSpace(req.GetChatId()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "chat_id is required")
+	}
+
+	if _, err := s.actions.SetChatPinned(ctx, req.GetChatId(), req.GetPinned()); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, status.Error(codes.NotFound, "chat not found")
+		}
+		return nil, err
+	}
+	return &pb.SetChatPinnedResponse{}, nil
 }
 
 func (s *ChatService) SetChatPresence(ctx context.Context, req *pb.SetChatPresenceRequest) (*pb.SetChatPresenceResponse, error) {
@@ -203,6 +223,8 @@ func toAppChat(chat appstore.Chat) app.Chat {
 		LastMessageStatus:    chat.LastMessageStatus,
 		UnreadCount:          chat.UnreadCount,
 		IsGroup:              chat.IsGroup,
+		IsPinned:             chat.IsPinned,
+		PinnedOrder:          chat.PinnedOrder,
 		AvatarLocalPath:      chat.AvatarLocalPath,
 	}
 }
@@ -218,11 +240,13 @@ func toAppMessage(message appstore.Message) app.Message {
 		TimestampUnix:           message.TimestampUnix,
 		Direction:               message.Direction,
 		Status:                  message.Status,
+		MediaKind:               message.MediaKind,
 		MediaMimeType:           message.MediaMimeType,
 		MediaLocalPath:          message.MediaLocalPath,
 		MediaThumbnailLocalPath: message.MediaThumbnailLocalPath,
 		MediaWidth:              message.MediaWidth,
 		MediaHeight:             message.MediaHeight,
+		MediaAnimated:           message.MediaAnimated,
 	}
 }
 

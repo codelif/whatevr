@@ -42,6 +42,7 @@ using whatevr::v1::LoginEvent;
 using whatevr::v1::LoginStateChanged;
 using whatevr::v1::MarkChatReadRequest;
 using whatevr::v1::MediaDownloadChanged;
+using whatevr::v1::SetChatPinnedRequest;
 using whatevr::v1::SetChatPresenceRequest;
 using whatevr::v1::SubscribeChatPresenceRequest;
 using whatevr::v1::DownloadMessageMediaRequest;
@@ -1160,7 +1161,37 @@ void AppController::requestSelectedChatPresence()
     SubscribeChatPresenceRequest request;
     request.setChatId(m_selectedChatId);
 
-    m_subscribeChatPresenceReply = m_chatClient->SubscribeChatPresence(request);
+	m_subscribeChatPresenceReply = m_chatClient->SubscribeChatPresence(request);
+}
+
+void AppController::setChatPinned(const QString &chatId, bool pinned)
+{
+    if (!m_chatClient || chatId.isEmpty()) {
+        return;
+    }
+
+    SetChatPinnedRequest request;
+    request.setChatId(chatId);
+    request.setPinned(pinned);
+
+    auto reply = m_chatClient->SetChatPinned(request);
+    auto *replyPtr = reply.get();
+    m_setChatPinnedReplies.insert(chatId, std::move(reply));
+
+    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, chatId, pinned](const QGrpcStatus &status) {
+        auto it = m_setChatPinnedReplies.find(chatId);
+        if (it == m_setChatPinnedReplies.end() || it.value().get() != replyPtr) {
+            return;
+        }
+
+        m_setChatPinnedReplies.erase(it);
+        if (!status.isOk()) {
+            m_bannerText = status.message().isEmpty()
+                ? (pinned ? i18nc("@info", "Unable to pin chat") : i18nc("@info", "Unable to unpin chat"))
+                : status.message();
+            emitStateChanged();
+        }
+    });
 }
 
 void AppController::setChatComposing(const QString &chatId, bool composing)

@@ -15,6 +15,7 @@ ItemDelegate {
     property string avatarLocalPath: ""
     property string initials: "?"
     property int unreadCount: 0
+    property bool isPinned: false
     property bool current: false
     readonly property bool hasLastMessage: lastMessage.length > 0
     readonly property bool lastMessageIsOutgoing: lastMessageDirection === 2
@@ -33,7 +34,8 @@ ItemDelegate {
     }
 
 
-    signal selected(string chatId)
+	signal selected(string chatId)
+	signal pinToggled(string chatId, bool pinned)
 
     width: ListView.view ? ListView.view.width : implicitWidth
     implicitHeight: Kirigami.Units.gridUnit * 4.4
@@ -41,6 +43,32 @@ ItemDelegate {
     hoverEnabled: true
     highlighted: current
     onClicked: selected(chatId)
+
+    MouseArea {
+        anchors.fill: parent
+        acceptedButtons: Qt.RightButton
+        hoverEnabled: false
+        z: 1
+
+        onPressed: mouse => {
+            chatContextMenu.x = mouse.x
+            chatContextMenu.y = mouse.y
+            chatContextMenu.open()
+            mouse.accepted = true
+        }
+    }
+
+    Menu {
+        id: chatContextMenu
+
+        MenuItem {
+            text: root.isPinned
+                  ? Whatevr.I18n.i18nc("@action:menu", "Unpin chat")
+                  : Whatevr.I18n.i18nc("@action:menu", "Pin chat")
+            icon.name: root.isPinned ? "window-unpin" : "window-pin"
+            onTriggered: root.pinToggled(root.chatId, !root.isPinned)
+        }
+    }
 
     SystemPalette {
         id: activePalette
@@ -59,7 +87,7 @@ ItemDelegate {
                : (root.hovered ? Qt.alpha(Kirigami.Theme.textColor, 0.05) : "transparent")
     }
 
-    contentItem: RowLayout {
+	contentItem: RowLayout {
         anchors.fill: parent
         anchors.leftMargin: Kirigami.Units.largeSpacing
         anchors.rightMargin: Kirigami.Units.largeSpacing
@@ -166,9 +194,10 @@ ItemDelegate {
                             implicitWidth: secondDeliveryTick.implicitWidth
                             implicitHeight: secondDeliveryTick.implicitHeight
                             color: secondDeliveryTick.color
-                        }
-                    }
-                }
+		}
+	}
+
+}
 
                 Label {
                     Layout.fillWidth: true
@@ -184,21 +213,36 @@ ItemDelegate {
             }
         }
 
-        Rectangle {
-            visible: root.unreadCount > 0
-            Layout.preferredWidth: Math.max(unreadLabel.implicitWidth + Kirigami.Units.largeSpacing,
-                                            Kirigami.Units.gridUnit * 1.5)
-            Layout.preferredHeight: Kirigami.Units.gridUnit * 1.35
-            radius: height / 2
-            color: Kirigami.Theme.highlightColor
+        ColumnLayout {
+            visible: root.unreadCount > 0 || root.isPinned
+            Layout.alignment: Qt.AlignVCenter
+            spacing: Kirigami.Units.smallSpacing / 2
 
-            Label {
-                id: unreadLabel
-                anchors.centerIn: parent
-                text: root.unreadCount > 99 ? "99+" : String(root.unreadCount)
-                color: Kirigami.Theme.highlightedTextColor
-                font.weight: Font.Bold
-                font.pointSize: Kirigami.Theme.smallFont.pointSize
+            Kirigami.Icon {
+                visible: root.isPinned
+                Layout.alignment: Qt.AlignHCenter
+                implicitWidth: Kirigami.Units.iconSizes.small
+                implicitHeight: implicitWidth
+                source: "window-pin"
+                color: Kirigami.Theme.disabledTextColor
+            }
+
+            Rectangle {
+                visible: root.unreadCount > 0
+                Layout.preferredWidth: Math.max(unreadLabel.implicitWidth + Kirigami.Units.largeSpacing,
+                                                Kirigami.Units.gridUnit * 1.5)
+                Layout.preferredHeight: Kirigami.Units.gridUnit * 1.35
+                radius: height / 2
+                color: Kirigami.Theme.highlightColor
+
+                Label {
+                    id: unreadLabel
+                    anchors.centerIn: parent
+                    text: root.unreadCount > 99 ? "99+" : String(root.unreadCount)
+                    color: Kirigami.Theme.highlightedTextColor
+                    font.weight: Font.Bold
+                    font.pointSize: Kirigami.Theme.smallFont.pointSize
+                }
             }
         }
     }

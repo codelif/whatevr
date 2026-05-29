@@ -25,6 +25,8 @@ public:
         LastMessageStatusRole,
         UnreadCountRole,
         IsGroupRole,
+        IsPinnedRole,
+        PinnedOrderRole,
         AvatarLocalPathRole,
         InitialsRole,
     };
@@ -57,6 +59,8 @@ private:
         int lastMessageStatus = 0;
         int unreadCount = 0;
         bool isGroup = false;
+        bool isPinned = false;
+        quint32 pinnedOrder = 0;
         QString avatarLocalPath;
     };
 

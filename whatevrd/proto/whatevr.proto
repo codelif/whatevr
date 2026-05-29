@@ -73,6 +73,7 @@ service ChatService {
   rpc ListChats(ListChatsRequest) returns (ListChatsResponse);
   rpc GetMessages(GetMessagesRequest) returns (GetMessagesResponse);
   rpc MarkChatRead(MarkChatReadRequest) returns (MarkChatReadResponse);
+  rpc SetChatPinned(SetChatPinnedRequest) returns (SetChatPinnedResponse);
   rpc SetChatPresence(SetChatPresenceRequest) returns (SetChatPresenceResponse);
   rpc SubscribeChatPresence(SubscribeChatPresenceRequest) returns (SubscribeChatPresenceResponse);
   rpc DownloadMessageMedia(DownloadMessageMediaRequest) returns (DownloadMessageMediaResponse);
@@ -252,6 +253,13 @@ message MarkChatReadRequest {
 
 message MarkChatReadResponse {}
 
+message SetChatPinnedRequest {
+  string chat_id = 1;
+  bool pinned = 2;
+}
+
+message SetChatPinnedResponse {}
+
 message SetChatPresenceRequest {
   string chat_id = 1;
   bool composing = 2;
@@ -302,6 +310,8 @@ message Chat {
   string avatar_local_path = 7;
   MessageDirection last_message_direction = 8;
   MessageStatus last_message_status = 9;
+  bool is_pinned = 10;
+  uint32 pinned_order = 11;
 }
 
 message Message {
@@ -319,4 +329,6 @@ message Message {
   string media_thumbnail_local_path = 12;
   string sender_name = 13;
   string sender_avatar_local_path = 14;
+  string media_kind = 15;
+  bool media_animated = 16;
 }

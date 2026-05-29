@@ -68,6 +68,7 @@ Kirigami.Page {
                 currentIndex: -1
                 boundsBehavior: Flickable.StopAtBounds
                 flickableDirection: Flickable.VerticalFlick
+                acceptedButtons: Qt.NoButton
                 reuseItems: true
                 spacing: 0
                 cacheBuffer: Math.max(0, height)
@@ -84,12 +85,14 @@ Kirigami.Page {
                     avatarLocalPath: String(model.avatarLocalPath || "")
                     initials: String(model.initials || "?")
                     unreadCount: Number(model.unreadCount || 0)
-                    current: Whatevr.AppController.selectedChatId === chatId
-                    onSelected: id => {
-                        Whatevr.AppController.selectChat(id)
-                        root.chatSelected(id)
-                    }
-                }
+                    isPinned: Boolean(model.isPinned || false)
+					current: Whatevr.AppController.selectedChatId === chatId
+					onSelected: id => {
+						Whatevr.AppController.selectChat(id)
+						root.chatSelected(id)
+					}
+					onPinToggled: (id, pinned) => Whatevr.AppController.setChatPinned(id, pinned)
+				}
 
                 BusyIndicator {
                     anchors.centerIn: parent
