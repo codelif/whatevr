@@ -227,6 +227,7 @@ Item {
         flickableDirection: Flickable.VerticalFlick
         boundsBehavior: Flickable.StopAtBounds
         boundsMovement: Flickable.StopAtBounds
+        acceptedButtons: Qt.NoButton
         flickDeceleration: 4000
         maximumFlickVelocity: 8000
 
@@ -251,11 +252,13 @@ Item {
             showSenderGutter: Boolean(model.showSenderGutter)
             groupStart: Boolean(model.groupStart)
             groupEnd: Boolean(model.groupEnd)
+            mediaKind: String(model.mediaKind || "")
             mediaMimeType: String(model.mediaMimeType || "")
             mediaLocalPath: String(model.mediaLocalPath || "")
             mediaThumbnailLocalPath: String(model.mediaThumbnailLocalPath || "")
             mediaIntrinsicWidth: Number(model.mediaWidth || 0)
             mediaIntrinsicHeight: Number(model.mediaHeight || 0)
+            mediaAnimated: Boolean(model.mediaAnimated)
             mediaDownloading: Whatevr.AppController.isMessageMediaDownloading(messageId)
 
             Connections {

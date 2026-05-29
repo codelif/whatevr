@@ -31,11 +31,13 @@ public:
         StatusRole,
         StatusTextRole,
         IsOutgoingRole,
+        MediaKindRole,
         MediaMimeTypeRole,
         MediaLocalPathRole,
         MediaThumbnailLocalPathRole,
         MediaWidthRole,
         MediaHeightRole,
+        MediaAnimatedRole,
         ShowSenderHeaderRole,
         ShowSenderAvatarRole,
         ShowSenderGutterRole,
@@ -78,11 +80,13 @@ private:
         int direction = 0;
         int status = 0;
         QString statusText;
+        QString mediaKind;
         QString mediaMimeType;
         QString mediaLocalPath;
         QString mediaThumbnailLocalPath;
         int mediaWidth = 0;
         int mediaHeight = 0;
+        bool mediaAnimated = false;
     };
 
     static MessageItem fromProto(const whatevr::v1::Message &message);

@@ -19,6 +19,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(Qt6 ${QT_MIN_VERSION} REQUIRED COMPONENTS Core Gui Network Protobuf Grpc Qml Quick QuickControls2 Widgets)
 find_package(KF6 ${KF_MIN_VERSION} REQUIRED COMPONENTS CoreAddons I18n Kirigami Prison)
 find_package(KF6KirigamiAddons REQUIRED)
+find_package(rlottie REQUIRED)
 
 if(QT_KNOWN_POLICY_QTP0004)
     qt_policy(SET QTP0004 NEW)
@@ -39,6 +40,8 @@ qt_add_executable(whatkevr
     src/models/chatlistmodel.h
     src/models/messagelistmodel.cpp
     src/models/messagelistmodel.h
+    src/ui/rlottiestickeritem.cpp
+    src/ui/rlottiestickeritem.h
 )
 
 set(WHATEVR_PROTO_FILE "${CMAKE_CURRENT_SOURCE_DIR}/../whatevrd/proto/whatevr.proto")
@@ -67,6 +70,7 @@ set_target_properties(whatkevr PROPERTIES
 
 target_include_directories(whatkevr PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
 )
 
 qt_add_qml_module(whatkevr
@@ -106,6 +110,7 @@ target_link_libraries(whatkevr PRIVATE
     KF6::Kirigami
     KF6::Prison
     KirigamiAddonsComponents
+    rlottie::rlottie
 )
 
 install(TARGETS whatkevr RUNTIME DESTINATION ${KDE_INSTALL_BINDIR})

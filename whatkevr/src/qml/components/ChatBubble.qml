@@ -25,11 +25,13 @@ Item {
     property bool showSenderGutter: false
     property bool groupStart: true
     property bool groupEnd: true
+    property string mediaKind: ""
     property string mediaMimeType: ""
     property string mediaLocalPath: ""
     property string mediaThumbnailLocalPath: ""
     property int mediaIntrinsicWidth: 0
     property int mediaIntrinsicHeight: 0
+    property bool mediaAnimated: false
     property bool mediaDownloading: false
     property string mediaDownloadError: ""
 
@@ -46,9 +48,20 @@ Item {
                                                               Kirigami.Units.gridUnit * 28))
     readonly property real maxContentWidth: Math.max(Kirigami.Units.gridUnit * 4, maxBubbleWidth - innerPadding * 2)
 
+    readonly property bool isSticker: mediaKind === "sticker"
+                                      || (mediaKind.length === 0
+                                          && mediaMimeType === "image/webp"
+                                          && (mediaLocalPath.endsWith(".webp")
+                                              || mediaThumbnailLocalPath.endsWith(".thumb.png")))
     readonly property bool isImage: mediaMimeType.startsWith("image/")
+    readonly property bool isAnimatedSticker: isSticker && (mediaAnimated || mediaMimeType === "image/gif")
+    readonly property bool isLottieSticker: isSticker && mediaMimeType === "application/was"
+    readonly property bool isRenderableStickerImage: isSticker && isImage && !isLottieSticker
     readonly property bool hasLocalImage: isImage && mediaLocalPath.length > 0
     readonly property bool hasThumbnailImage: isImage && mediaThumbnailLocalPath.length > 0
+    readonly property bool hasLocalSticker: isSticker
+                                             && mediaLocalPath.length > 0
+                                             && (!isLottieSticker || mediaLocalPath.endsWith(".json"))
 
     // Image geometry must not depend on Image.implicitWidth/implicitHeight.
     // Those values arrive after decode and would resize the delegate while the
@@ -105,6 +118,14 @@ Item {
         return Math.max(1, Math.min(maxImageHeight, imageDisplayWidth / reservedImageAspectRatio))
     }
 
+    readonly property real stickerDisplayWidth: isSticker
+        ? Math.max(1, Math.min(Math.max(0, listWidth - outerMargin * 2 - senderGutterWidth),
+                               Kirigami.Units.gridUnit * 9))
+        : 0
+    readonly property real stickerDisplayHeight: isSticker
+        ? stickerDisplayWidth
+        : 0
+
     // Status icon logic based on enum values from proto:
     // 0=UNSPECIFIED, 1=PENDING, 2=SENT, 3=DELIVERED, 4=READ, 5=FAILED
     readonly property bool statusIsFailed: status === 5
@@ -129,7 +150,7 @@ Item {
 
     readonly property real contentBlockWidth: {
         let w = 0
-        if (isImage) {
+        if (isImage && !isSticker) {
             w = Math.max(w, imageDisplayWidth)
         }
         if (body.length > 0) {
@@ -145,7 +166,9 @@ Item {
     }
 
     width: listWidth
-    height: bubble.y + bubble.height + (groupEnd ? Kirigami.Units.smallSpacing : Kirigami.Units.smallSpacing / 4)
+    height: isSticker
+        ? stickerFooter.y + stickerFooter.height + (groupEnd ? Kirigami.Units.smallSpacing : Kirigami.Units.smallSpacing / 4)
+        : bubble.y + bubble.height + (groupEnd ? Kirigami.Units.smallSpacing : Kirigami.Units.smallSpacing / 4)
 
     SystemPalette {
         id: activePalette
@@ -166,6 +189,8 @@ Item {
 
     Kirigami.ShadowedRectangle {
         id: bubble
+
+        visible: !root.isSticker
 
         readonly property real bubbleRadius: Kirigami.Units.cornerRadius
 
@@ -210,7 +235,7 @@ Item {
             Item {
                 id: mediaSlot
 
-                visible: root.isImage
+                visible: root.isImage && !root.isSticker
                 x: (root.contentBlockWidth - width) / 2
                 y: 0
                 width: root.imageDisplayWidth
@@ -232,7 +257,7 @@ Item {
                     anchors.fill: parent
                     visible: !root.hasLocalImage && root.hasThumbnailImage
                     opacity: status === Image.Ready ? 0.78 : 0
-                    source: visible ? Qt.resolvedUrl("file://" + root.mediaThumbnailLocalPath) : ""
+                    source: mediaSlot.visible && visible ? Qt.resolvedUrl("file://" + root.mediaThumbnailLocalPath) : ""
                     fillMode: Image.PreserveAspectCrop
                     asynchronous: true
                     cache: true
@@ -264,7 +289,7 @@ Item {
                     anchors.fill: parent
                     visible: root.hasLocalImage
                     opacity: status === Image.Ready ? 1 : 0
-                    source: root.hasLocalImage ? Qt.resolvedUrl("file://" + root.mediaLocalPath) : ""
+                    source: mediaSlot.visible && root.hasLocalImage ? Qt.resolvedUrl("file://" + root.mediaLocalPath) : ""
                     fillMode: Image.PreserveAspectFit
                     asynchronous: true
                     cache: true
@@ -361,7 +386,7 @@ Item {
                 }
             }
 
-            Label {
+            TextEdit {
                 id: bodyText
 
                 visible: root.body.length > 0
@@ -369,8 +394,11 @@ Item {
                 y: mediaSlot.visible ? mediaSlot.height + Kirigami.Units.smallSpacing : 0
                 width: root.contentBlockWidth
                 text: root.body
-                wrapMode: Text.Wrap
-                textFormat: Text.PlainText
+                readOnly: true
+                selectByMouse: true
+                selectByKeyboard: true
+                wrapMode: TextEdit.Wrap
+                textFormat: TextEdit.PlainText
                 color: Kirigami.Theme.textColor
             }
 
@@ -482,6 +510,252 @@ Item {
                     text: root.timeText
                     color: Kirigami.Theme.disabledTextColor
                     font.pointSize: Kirigami.Theme.smallFont.pointSize * 0.8
+                }
+            }
+        }
+    }
+
+    Item {
+        id: stickerSlot
+
+        visible: root.isSticker
+        x: root.outgoing
+           ? root.width - width - root.outerMargin
+           : root.outerMargin + root.senderGutterWidth
+        y: root.senderHeaderHeight > 0 ? root.senderHeaderHeight + Kirigami.Units.smallSpacing / 2 : 0
+        width: root.stickerDisplayWidth
+        height: root.stickerDisplayHeight
+
+        Image {
+            id: stickerThumb
+
+            anchors.fill: parent
+            visible: root.isSticker && !root.hasLocalSticker && root.hasThumbnailImage
+            opacity: status === Image.Ready ? 0.7 : 0
+            source: stickerSlot.visible && visible ? Qt.resolvedUrl("file://" + root.mediaThumbnailLocalPath) : ""
+            fillMode: Image.PreserveAspectFit
+            asynchronous: true
+            cache: true
+            smooth: true
+            sourceSize.width: Math.max(1, Math.ceil(width))
+            sourceSize.height: Math.max(1, Math.ceil(height))
+        }
+
+        Image {
+            id: staticSticker
+
+            anchors.fill: parent
+            visible: root.isRenderableStickerImage && root.hasLocalSticker && !root.isAnimatedSticker
+            opacity: status === Image.Ready ? 1 : 0
+            source: stickerSlot.visible && visible ? Qt.resolvedUrl("file://" + root.mediaLocalPath) : ""
+            fillMode: Image.PreserveAspectFit
+            asynchronous: true
+            cache: true
+            smooth: true
+            sourceSize.width: Math.max(1, Math.ceil(width))
+            sourceSize.height: Math.max(1, Math.ceil(height))
+        }
+
+        AnimatedImage {
+            id: animatedSticker
+
+            anchors.fill: parent
+            visible: root.isRenderableStickerImage && root.hasLocalSticker && root.isAnimatedSticker
+            playing: visible && status === AnimatedImage.Ready
+            source: stickerSlot.visible && visible ? Qt.resolvedUrl("file://" + root.mediaLocalPath) : ""
+            fillMode: Image.PreserveAspectFit
+            asynchronous: true
+            cache: true
+            smooth: true
+            sourceSize.width: Math.max(1, Math.ceil(width))
+            sourceSize.height: Math.max(1, Math.ceil(height))
+        }
+
+        Whatevr.RlottieSticker {
+            id: lottieSticker
+
+            anchors.fill: parent
+            visible: root.isLottieSticker && root.hasLocalSticker
+            source: stickerSlot.visible && visible ? Qt.resolvedUrl("file://" + root.mediaLocalPath) : ""
+            playing: visible
+            renderScale: 2.5
+        }
+
+        Item {
+            id: stickerOverlay
+
+            anchors.fill: parent
+            visible: !root.hasLocalSticker
+                     || root.mediaDownloading
+                     || stickerThumb.status === Image.Loading
+                     || staticSticker.status === Image.Loading
+                     || animatedSticker.status === AnimatedImage.Loading
+                     || lottieSticker.status === Whatevr.RlottieSticker.Loading
+                     || staticSticker.status === Image.Error
+                     || animatedSticker.status === AnimatedImage.Error
+                     || lottieSticker.status === Whatevr.RlottieSticker.Error
+                     || root.mediaDownloadError.length > 0
+
+            Rectangle {
+                anchors.centerIn: parent
+                width: stickerOverlayColumn.width + Kirigami.Units.largeSpacing
+                height: stickerOverlayColumn.height + Kirigami.Units.smallSpacing * 2
+                radius: Kirigami.Units.cornerRadius
+                visible: false
+                color: Qt.alpha(Kirigami.Theme.backgroundColor, 0.72)
+                border.color: Qt.alpha(Kirigami.Theme.textColor, 0.10)
+            }
+
+            Column {
+                id: stickerOverlayColumn
+
+                anchors.centerIn: parent
+                width: Math.max(0, parent.width - Kirigami.Units.largeSpacing * 1.5)
+                spacing: Kirigami.Units.smallSpacing
+
+                BusyIndicator {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    visible: root.mediaDownloading
+                             || (!root.hasLocalSticker && root.hasThumbnailImage && stickerThumb.status === Image.Loading)
+                             || (root.hasLocalSticker && (staticSticker.status === Image.Loading
+                                                          || animatedSticker.status === AnimatedImage.Loading
+                                                          || lottieSticker.status === Whatevr.RlottieSticker.Loading))
+                    running: visible
+                    implicitWidth: Kirigami.Units.gridUnit * 1.75
+                    implicitHeight: implicitWidth
+                }
+
+                Button {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    visible: !root.hasLocalSticker && !root.mediaDownloading
+                    flat: true
+                    icon.name: "folder-download-symbolic"
+                    text: Whatevr.I18n.i18nc("@action:button", "Load sticker")
+                    enabled: root.messageId.length > 0
+                    onClicked: Whatevr.AppController.downloadMessageMedia(root.messageId)
+                }
+
+                Label {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: parent.width
+                    visible: (staticSticker.status === Image.Error
+                              || animatedSticker.status === AnimatedImage.Error
+                              || lottieSticker.status === Whatevr.RlottieSticker.Error) && root.hasLocalSticker
+                    text: Whatevr.I18n.i18nc("@info", "Sticker could not be displayed")
+                    color: Kirigami.Theme.negativeTextColor
+                    font.pointSize: Kirigami.Theme.smallFont.pointSize
+                    wrapMode: Text.Wrap
+                    horizontalAlignment: Text.AlignHCenter
+                }
+
+                Label {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: parent.width
+                    visible: !root.mediaDownloading && root.mediaDownloadError.length > 0
+                    text: root.mediaDownloadError
+                    color: Kirigami.Theme.negativeTextColor
+                    font.pointSize: Kirigami.Theme.smallFont.pointSize
+                    wrapMode: Text.Wrap
+                    horizontalAlignment: Text.AlignHCenter
+                }
+            }
+        }
+    }
+
+    Rectangle {
+        id: stickerFooter
+
+        visible: root.isSticker
+        x: root.outgoing ? stickerSlot.x + stickerSlot.width - width : stickerSlot.x
+        y: stickerSlot.y + stickerSlot.height + Kirigami.Units.smallSpacing / 2
+        width: stickerFooterRow.implicitWidth + Kirigami.Units.smallSpacing
+        height: Math.max(stickerFooterRow.implicitHeight + Kirigami.Units.smallSpacing / 2, Kirigami.Units.gridUnit * 1.15)
+        radius: Kirigami.Units.cornerRadius
+        color: root.outgoing
+               ? Qt.alpha(activePalette.highlight, 0.30)
+               : Qt.alpha(Kirigami.Theme.backgroundColor, 0.76)
+        border.color: Qt.alpha(Kirigami.Theme.textColor, root.outgoing ? 0.05 : 0.12)
+
+        Row {
+            id: stickerFooterRow
+
+            anchors.centerIn: parent
+            spacing: Kirigami.Units.smallSpacing / 2
+
+            Label {
+                text: root.timeText
+                color: Kirigami.Theme.disabledTextColor
+                font.pointSize: Kirigami.Theme.smallFont.pointSize * 0.8
+            }
+
+            Item {
+                visible: root.showStatusIcon
+                width: root.statusAreaWidth
+                height: root.statusIconSize
+
+                Kirigami.Icon {
+                    id: stickerSingleIcon
+                    anchors.centerIn: parent
+                    visible: !root.statusIsDoubleTick
+                    source: root.statusSingleIcon
+                    implicitWidth: root.statusIconSize
+                    implicitHeight: root.statusIconSize
+                    color: root.statusIsFailed ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.disabledTextColor
+                    isMask: true
+                }
+                Kirigami.Icon {
+                    anchors.centerIn: parent
+                    anchors.horizontalCenterOffset: 0.75
+                    visible: stickerSingleIcon.visible && root.statusSingleIcon === "checkmark"
+                    source: stickerSingleIcon.source
+                    implicitWidth: stickerSingleIcon.implicitWidth
+                    implicitHeight: stickerSingleIcon.implicitHeight
+                    color: stickerSingleIcon.color
+                    isMask: true
+                }
+
+                Item {
+                    anchors.fill: parent
+                    visible: root.statusIsDoubleTick
+
+                    Kirigami.Icon {
+                        id: firstStickerTick
+                        x: 0
+                        anchors.verticalCenter: parent.verticalCenter
+                        source: "checkmark"
+                        implicitWidth: root.statusIconSize
+                        implicitHeight: root.statusIconSize
+                        color: root.statusIsRead ? activePalette.highlight : Kirigami.Theme.disabledTextColor
+                        isMask: true
+                    }
+                    Kirigami.Icon {
+                        x: firstStickerTick.x + 0.75
+                        anchors.verticalCenter: parent.verticalCenter
+                        source: firstStickerTick.source
+                        implicitWidth: firstStickerTick.implicitWidth
+                        implicitHeight: firstStickerTick.implicitHeight
+                        color: firstStickerTick.color
+                        isMask: true
+                    }
+                    Kirigami.Icon {
+                        id: secondStickerTick
+                        x: root.statusDoubleTickOffset
+                        anchors.verticalCenter: parent.verticalCenter
+                        source: "checkmark"
+                        implicitWidth: root.statusIconSize
+                        implicitHeight: root.statusIconSize
+                        color: root.statusIsRead ? activePalette.highlight : Kirigami.Theme.disabledTextColor
+                        isMask: true
+                    }
+                    Kirigami.Icon {
+                        x: secondStickerTick.x + 0.75
+                        anchors.verticalCenter: parent.verticalCenter
+                        source: secondStickerTick.source
+                        implicitWidth: secondStickerTick.implicitWidth
+                        implicitHeight: secondStickerTick.implicitHeight
+                        color: secondStickerTick.color
+                        isMask: true
+                    }
                 }
             }
         }

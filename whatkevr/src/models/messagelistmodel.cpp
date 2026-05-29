@@ -59,6 +59,8 @@ QVariant MessageListModel::data(const QModelIndex &index, int role) const
         return message.statusText;
     case IsOutgoingRole:
         return message.direction == static_cast<int>(whatevr::v1::MessageDirectionGadget::MessageDirection::MESSAGE_DIRECTION_OUTGOING);
+    case MediaKindRole:
+        return message.mediaKind;
     case MediaMimeTypeRole:
         return message.mediaMimeType;
     case MediaLocalPathRole:
@@ -69,6 +71,8 @@ QVariant MessageListModel::data(const QModelIndex &index, int role) const
         return message.mediaWidth;
     case MediaHeightRole:
         return message.mediaHeight;
+    case MediaAnimatedRole:
+        return message.mediaAnimated;
     case ShowSenderHeaderRole:
         return m_groupChat && !isOutgoing(message) && startsSenderGroup(index.row());
     case ShowSenderAvatarRole:
@@ -100,11 +104,13 @@ QHash<int, QByteArray> MessageListModel::roleNames() const
         {StatusRole, "status"},
         {StatusTextRole, "statusText"},
         {IsOutgoingRole, "isOutgoing"},
+        {MediaKindRole, "mediaKind"},
         {MediaMimeTypeRole, "mediaMimeType"},
         {MediaLocalPathRole, "mediaLocalPath"},
         {MediaThumbnailLocalPathRole, "mediaThumbnailLocalPath"},
         {MediaWidthRole, "mediaWidth"},
         {MediaHeightRole, "mediaHeight"},
+        {MediaAnimatedRole, "mediaAnimated"},
         {ShowSenderHeaderRole, "showSenderHeader"},
         {ShowSenderAvatarRole, "showSenderAvatar"},
         {ShowSenderGutterRole, "showSenderGutter"},
@@ -306,11 +312,13 @@ MessageListModel::MessageItem MessageListModel::fromProto(const whatevr::v1::Mes
         .direction = static_cast<int>(message.direction()),
         .status = static_cast<int>(message.status()),
         .statusText = {},
+        .mediaKind = message.mediaKind(),
         .mediaMimeType = message.mediaMimeType(),
         .mediaLocalPath = message.mediaLocalPath(),
         .mediaThumbnailLocalPath = message.mediaThumbnailLocalPath(),
         .mediaWidth = message.mediaWidth(),
         .mediaHeight = message.mediaHeight(),
+        .mediaAnimated = message.mediaAnimated(),
     };
     item.senderDisplayName = displaySenderName(item);
     item.senderInitials = initialsForName(item.senderDisplayName);
@@ -420,11 +428,13 @@ bool MessageListModel::sameMessageData(const MessageItem &left, const MessageIte
         && left.direction == right.direction
         && left.status == right.status
         && left.statusText == right.statusText
+        && left.mediaKind == right.mediaKind
         && left.mediaMimeType == right.mediaMimeType
         && left.mediaLocalPath == right.mediaLocalPath
         && left.mediaThumbnailLocalPath == right.mediaThumbnailLocalPath
         && left.mediaWidth == right.mediaWidth
-        && left.mediaHeight == right.mediaHeight;
+        && left.mediaHeight == right.mediaHeight
+        && left.mediaAnimated == right.mediaAnimated;
 }
 
 bool MessageListModel::isOutgoing(const MessageItem &message) const
