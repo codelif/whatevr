@@ -32,6 +32,9 @@ type Client struct {
 
 	mu     sync.Mutex
 	client *whatsmeow.Client
+	// WhatsApp app-state writes are version/hash based. Serialize our sends and
+	// full syncs so rapid pin toggles don't encode against stale state.
+	appStateMu sync.Mutex
 
 	lifecycleMu sync.Mutex
 	runMu       sync.Mutex
@@ -65,6 +68,7 @@ type Client struct {
 	reconnectCh   chan struct{} // supervisor wakeup: reconnect immediately
 	reconnectNow  atomic.Bool
 	eventGen      atomic.Uint64
+	pinBackfill   atomic.Bool
 }
 
 type frontendSession struct {

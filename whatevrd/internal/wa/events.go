@@ -1,12 +1,15 @@
 package wa
 
 import (
+	"context"
 	"fmt"
 
+	"go.mau.fi/whatsmeow/appstate"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 
 	"whatevrd/internal/app"
+	appstore "whatevrd/internal/store"
 )
 
 func (c *Client) handleEvent(eventGen uint64, raw any) {
@@ -22,9 +25,16 @@ func (c *Client) handleEvent(eventGen uint64, raw any) {
 		c.syncPresence(ctx, true)
 		c.signalSendQueue()
 		c.signalHistorySyncWorker()
+		c.startPinnedChatBackfill(ctx)
+		c.startUnresolvedGroupNameBackfill(ctx)
 		go c.migrateLIDChats(ctx)
 	case *events.AppStateSyncComplete:
 		c.syncPresence(c.backgroundContext(), true)
+	case *events.AppStateSyncError:
+		if evt.Name == appstate.WAPatchRegularLow && isAppStateConflictError(evt.Error) {
+			c.log.Warnf("WhatsApp regular_low app state sync failed; recovering pinned chats: %v", evt.Error)
+			c.startPinnedChatRecoveryFromAppState(c.backgroundContext())
+		}
 	case *events.Disconnected:
 		c.daemon.SetConnMeta(0, 0, true)
 		c.daemon.SetStateDetail(app.StateReconnecting, "Connection lost. Reconnecting...")
@@ -64,6 +74,12 @@ func (c *Client) handleEvent(eventGen uint64, raw any) {
 		c.handleReceipt(evt)
 	case *events.HistorySync:
 		c.handleHistorySync(eventGen, evt)
+	case *events.Pin:
+		c.handlePinEvent(c.backgroundContext(), evt)
+	case *events.JoinedGroup:
+		c.handleJoinedGroup(c.backgroundContext(), evt)
+	case *events.GroupInfo:
+		c.handleGroupInfoEvent(c.backgroundContext(), evt)
 	case *events.Picture:
 		c.handlePictureEvent(c.backgroundContext(), evt)
 	case *events.ChatPresence:
@@ -82,6 +98,37 @@ func (c *Client) handleEvent(eventGen uint64, raw any) {
 			}
 		}
 		c.daemon.PublishContactAvailability(chatJID.String(), availability, lastSeenUnix)
+	}
+}
+
+func (c *Client) handlePinEvent(ctx context.Context, evt *events.Pin) {
+	if evt == nil || evt.JID.IsEmpty() || evt.Action == nil {
+		return
+	}
+
+	chatJID := c.normalizeJIDForChat(ctx, evt.JID)
+	chatID := chatJID.String()
+	name, nameSource := c.displayNameForChat(ctx, chatJID, false, "", "")
+	if chatJID.Server == types.GroupServer && nameSource == "" {
+		nameSource = appstore.ChatNameSourceGroup
+	}
+	if _, err := c.store.EnsureChatWithNameSource(ctx, chatID, name, nameSource, chatJID.Server == types.GroupServer); err != nil {
+		c.log.Warnf("Failed to ensure pinned chat %s: %v", chatID, err)
+		return
+	}
+
+	pinned := evt.Action.GetPinned()
+	order := uint32(0)
+	if pinned && !evt.Timestamp.IsZero() {
+		order = uint32(evt.Timestamp.Unix())
+	}
+	chat, changed, err := c.store.UpdateChatPinState(ctx, chatID, pinned, order)
+	if err != nil {
+		c.log.Warnf("Failed to update pinned state for %s: %v", chatID, err)
+		return
+	}
+	if changed {
+		c.daemon.PublishChatUpdated(toDaemonChat(chat))
 	}
 }
 
