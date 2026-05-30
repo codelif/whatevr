@@ -6,6 +6,8 @@
 
 #include <KLocalizedString>
 
+#include <algorithm>
+
 #include "whatevr/v1/whatevr.qpb.h"
 
 namespace {
@@ -139,13 +141,22 @@ void MessageListModel::replaceMessages(const QList<whatevr::v1::Message> &messag
     }
 
     if (sameMessageOrder(m_messages, next)) {
+        int firstChanged = -1;
+        int lastChanged = -1;
         for (int i = 0; i < next.size(); ++i) {
             if (sameMessageData(m_messages.at(i), next.at(i))) {
                 continue;
             }
             m_messages[i] = next.at(i);
+            if (firstChanged < 0) {
+                firstChanged = i;
+            }
+            lastChanged = i;
             const QModelIndex changedIndex = index(i, 0);
             Q_EMIT dataChanged(changedIndex, changedIndex);
+        }
+        if (firstChanged >= 0) {
+            emitGroupingRolesChanged(firstChanged, lastChanged);
         }
         return;
     }
@@ -190,6 +201,7 @@ void MessageListModel::prependMessages(const QList<whatevr::v1::Message> &messag
     m_messages = std::move(next);
     rebuildIndex();
     endInsertRows();
+    emitGroupingRolesChanged(static_cast<int>(older.size()) - 1, static_cast<int>(older.size()));
 }
 
 void MessageListModel::clear()
@@ -213,6 +225,7 @@ void MessageListModel::upsertMessage(const whatevr::v1::Message &message)
         m_messages[existingIndex] = item;
         const QModelIndex changedIndex = index(existingIndex, 0);
         Q_EMIT dataChanged(changedIndex, changedIndex);
+        emitGroupingRolesChanged(existingIndex, existingIndex);
         return;
     }
 
@@ -227,6 +240,7 @@ void MessageListModel::upsertMessage(const whatevr::v1::Message &message)
     m_messages.insert(insertAt, item);
     rebuildIndex();
     endInsertRows();
+    emitGroupingRolesChanged(insertAt - 1, insertAt + 1);
 }
 
 bool MessageListModel::updateSenderAvatar(const QString &senderId, const QString &avatarLocalPath)
@@ -486,4 +500,21 @@ void MessageListModel::rebuildIndex()
             m_messageIndexById.insert(m_messages.at(i).id, i);
         }
     }
+}
+
+void MessageListModel::emitGroupingRolesChanged(int firstRow, int lastRow)
+{
+    if (m_messages.isEmpty()) {
+        return;
+    }
+
+    const int first = std::max(0, firstRow - 1);
+    const int last = std::min(static_cast<int>(m_messages.size()) - 1, lastRow + 1);
+    if (first > last) {
+        return;
+    }
+
+    Q_EMIT dataChanged(index(first, 0),
+                       index(last, 0),
+                       {ShowSenderHeaderRole, ShowSenderAvatarRole, ShowSenderGutterRole, GroupStartRole, GroupEndRole});
 }

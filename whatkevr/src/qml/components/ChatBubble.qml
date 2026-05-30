@@ -144,10 +144,9 @@ Item {
 
     readonly property real statusIconSize: Kirigami.Units.iconSizes.small
     readonly property real statusDoubleTickOffset: statusIconSize * 0.4
-    // Double-tick is wider: two icons overlapping
-    readonly property real statusAreaWidth: statusIsDoubleTick
-        ? statusIconSize * 1.4
-        : statusIconSize
+    // Reserve the widest receipt footprint so delivery/read updates do not
+    // resize the bubble and change ListView spacing.
+    readonly property real statusAreaWidth: statusIconSize * 1.4
 
     readonly property real contentBlockWidth: {
         let w = 0

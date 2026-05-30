@@ -102,6 +102,7 @@ private:
     [[nodiscard]] bool endsSenderGroup(int row) const;
     [[nodiscard]] int indexOf(const QString &messageId) const;
     void rebuildIndex();
+    void emitGroupingRolesChanged(int firstRow, int lastRow);
 
     QList<MessageItem> m_messages;
     QHash<QString, int> m_messageIndexById;
