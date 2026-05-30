@@ -291,6 +291,10 @@ func (c *Client) FrontendSessionStateChanged(sessionID string, focused bool, act
 	c.frontendSessions[sessionID] = frontendSession{focused: focused, activeChatID: activeChatID}
 	c.presenceMu.Unlock()
 
+	if previous.focused != focused {
+		c.syncPresence(context.Background(), false)
+	}
+
 	if activeChatID != "" && activeChatID != previous.activeChatID {
 		go c.refreshOpenedChatAvatars(c.backgroundContext(), activeChatID)
 	}
@@ -314,10 +318,7 @@ func (c *Client) syncPresence(ctx context.Context, force bool) {
 	}
 
 	c.presenceMu.Lock()
-	desired := types.PresenceUnavailable
-	if len(c.frontendSessions) > 0 {
-		desired = types.PresenceAvailable
-	}
+	desired := desiredPresenceForSessions(c.frontendSessions)
 	if client.Store.PushName == "" && client.MessengerConfig == nil {
 		c.presenceMu.Unlock()
 		return
@@ -332,6 +333,15 @@ func (c *Client) syncPresence(ctx context.Context, force bool) {
 	if err := client.SendPresence(ctx, desired); err != nil {
 		c.log.Warnf("Failed to update presence to %s: %v", desired, err)
 	}
+}
+
+func desiredPresenceForSessions(sessions map[string]frontendSession) types.Presence {
+	for _, session := range sessions {
+		if session.focused {
+			return types.PresenceAvailable
+		}
+	}
+	return types.PresenceUnavailable
 }
 
 func (c *Client) migrateLIDChats(ctx context.Context) {

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"go.mau.fi/whatsmeow/appstate"
+	"go.mau.fi/whatsmeow/types"
 
 	"whatevrd/internal/app"
 )
@@ -61,6 +62,33 @@ func TestShouldNotifyChatAnyFocusedSessionSuppresses(t *testing.T) {
 
 	if c.ShouldNotifyChat("chat-a") {
 		t.Fatal("any focused session on chat should suppress notifications")
+	}
+}
+
+func TestDesiredPresenceRequiresFocusedSession(t *testing.T) {
+	sessions := map[string]frontendSession{
+		"s1": {focused: false, activeChatID: "chat-a"},
+	}
+
+	if got := desiredPresenceForSessions(sessions); got != types.PresenceUnavailable {
+		t.Fatalf("presence = %s, want unavailable", got)
+	}
+}
+
+func TestDesiredPresenceAnyFocusedSessionAvailable(t *testing.T) {
+	sessions := map[string]frontendSession{
+		"s1": {focused: false, activeChatID: "chat-a"},
+		"s2": {focused: true, activeChatID: "chat-b"},
+	}
+
+	if got := desiredPresenceForSessions(sessions); got != types.PresenceAvailable {
+		t.Fatalf("presence = %s, want available", got)
+	}
+}
+
+func TestDesiredPresenceNoSessionsUnavailable(t *testing.T) {
+	if got := desiredPresenceForSessions(nil); got != types.PresenceUnavailable {
+		t.Fatalf("presence = %s, want unavailable", got)
 	}
 }
 
