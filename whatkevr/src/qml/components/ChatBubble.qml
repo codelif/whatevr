@@ -60,8 +60,9 @@ Item {
     readonly property bool hasLocalImage: isImage && mediaLocalPath.length > 0
     readonly property bool hasThumbnailImage: isImage && mediaThumbnailLocalPath.length > 0
     readonly property bool hasLocalSticker: isSticker
-                                             && mediaLocalPath.length > 0
-                                             && (!isLottieSticker || mediaLocalPath.endsWith(".json"))
+                                              && mediaLocalPath.length > 0
+                                              && (!isLottieSticker || mediaLocalPath.endsWith(".json"))
+    readonly property real imageSourceScale: Math.max(1, Screen.devicePixelRatio)
 
     // Image geometry must not depend on Image.implicitWidth/implicitHeight.
     // Those values arrive after decode and would resize the delegate while the
@@ -262,8 +263,8 @@ Item {
                     asynchronous: true
                     cache: true
                     smooth: true
-                    sourceSize.width: Math.max(1, Math.ceil(width))
-                    sourceSize.height: Math.max(1, Math.ceil(height))
+                    sourceSize.width: Math.max(1, Math.ceil(width * root.imageSourceScale))
+                    sourceSize.height: Math.max(1, Math.ceil(height * root.imageSourceScale))
 
                     layer.enabled: visible && status === Image.Ready
                     layer.effect: MultiEffect {
@@ -294,8 +295,8 @@ Item {
                     asynchronous: true
                     cache: true
                     smooth: true
-                    sourceSize.width: Math.max(1, Math.ceil(width))
-                    sourceSize.height: Math.max(1, Math.ceil(height))
+                    sourceSize.width: Math.max(1, Math.ceil(width * root.imageSourceScale))
+                    sourceSize.height: Math.max(1, Math.ceil(height * root.imageSourceScale))
 
                     layer.enabled: visible && status === Image.Ready
                     layer.effect: MultiEffect {
@@ -537,8 +538,8 @@ Item {
             asynchronous: true
             cache: true
             smooth: true
-            sourceSize.width: Math.max(1, Math.ceil(width))
-            sourceSize.height: Math.max(1, Math.ceil(height))
+            sourceSize.width: Math.max(1, Math.ceil(width * root.imageSourceScale))
+            sourceSize.height: Math.max(1, Math.ceil(height * root.imageSourceScale))
         }
 
         Image {
@@ -552,8 +553,8 @@ Item {
             asynchronous: true
             cache: true
             smooth: true
-            sourceSize.width: Math.max(1, Math.ceil(width))
-            sourceSize.height: Math.max(1, Math.ceil(height))
+            sourceSize.width: Math.max(1, Math.ceil(width * root.imageSourceScale))
+            sourceSize.height: Math.max(1, Math.ceil(height * root.imageSourceScale))
         }
 
         AnimatedImage {
@@ -567,8 +568,8 @@ Item {
             asynchronous: true
             cache: true
             smooth: true
-            sourceSize.width: Math.max(1, Math.ceil(width))
-            sourceSize.height: Math.max(1, Math.ceil(height))
+            sourceSize.width: Math.max(1, Math.ceil(width * root.imageSourceScale))
+            sourceSize.height: Math.max(1, Math.ceil(height * root.imageSourceScale))
         }
 
         Whatevr.RlottieSticker {
