@@ -1,9 +1,12 @@
 #include "appcontroller.h"
 
+#include <QClipboard>
 #include <QDir>
 #include <QDateTime>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QImage>
+#include <QMimeData>
 #include <QQmlEngine>
 #include <QLocale>
 #include <QStandardPaths>
@@ -62,6 +65,16 @@ AppController *s_appControllerInstance = nullptr;
 
 constexpr int kMessageLimit = MessageListModel::MaximumMessageCount;
 constexpr int kCachedChatLimit = 32;
+
+bool isSupportedOutboundImageFile(const QString &filePath)
+{
+    const QString suffix = QFileInfo(filePath).suffix().toLower();
+    return suffix == QStringLiteral("png")
+        || suffix == QStringLiteral("jpg")
+        || suffix == QStringLiteral("jpeg")
+        || suffix == QStringLiteral("webp")
+        || suffix == QStringLiteral("gif");
+}
 
 QList<whatevr::v1::Message> mergeMessages(const QList<whatevr::v1::Message> &base,
                                            const QList<whatevr::v1::Message> &updates)
@@ -699,6 +712,76 @@ void AppController::sendImage(const QString &fileUrl, const QString &caption)
 
         Q_EMIT composerChanged();
     });
+}
+
+bool AppController::sendClipboardImage(const QString &caption)
+{
+    if (!m_sendClient || m_sendMediaReply || m_selectedChatId.isEmpty()) {
+        return false;
+    }
+
+    const QClipboard *clipboard = QGuiApplication::clipboard();
+    if (!clipboard) {
+        return false;
+    }
+
+    const QMimeData *mimeData = clipboard->mimeData();
+    if (!mimeData) {
+        return false;
+    }
+
+    if (mimeData->hasImage()) {
+        const QImage image = qvariant_cast<QImage>(mimeData->imageData());
+        if (image.isNull()) {
+            return false;
+        }
+
+        QString cacheRoot = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
+        if (cacheRoot.isEmpty()) {
+            cacheRoot = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
+        }
+        if (cacheRoot.isEmpty()) {
+            m_composerErrorText = i18nc("@info", "Unable to paste image");
+            Q_EMIT composerChanged();
+            return true;
+        }
+
+        QDir cacheDir(cacheRoot);
+        if (!cacheDir.mkpath(QStringLiteral("clipboard"))) {
+            m_composerErrorText = i18nc("@info", "Unable to paste image");
+            Q_EMIT composerChanged();
+            return true;
+        }
+
+        const QString fileName = QStringLiteral("pasted-%1-%2.png")
+            .arg(QDateTime::currentMSecsSinceEpoch())
+            .arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
+        const QString filePath = cacheDir.filePath(QStringLiteral("clipboard/%1").arg(fileName));
+        if (!image.save(filePath, "PNG")) {
+            m_composerErrorText = i18nc("@info", "Unable to paste image");
+            Q_EMIT composerChanged();
+            return true;
+        }
+
+        sendImage(filePath, caption);
+        return true;
+    }
+
+    if (mimeData->hasUrls()) {
+        const QList<QUrl> urls = mimeData->urls();
+        for (const QUrl &url : urls) {
+            if (!url.isLocalFile()) {
+                continue;
+            }
+            const QString filePath = url.toLocalFile();
+            if (isSupportedOutboundImageFile(filePath)) {
+                sendImage(filePath, caption);
+                return true;
+            }
+        }
+    }
+
+    return false;
 }
 
 void AppController::setSelectedChatComposing(bool composing)

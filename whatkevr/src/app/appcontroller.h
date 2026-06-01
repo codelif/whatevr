@@ -157,6 +157,7 @@ public:
     Q_INVOKABLE void loadOlderMessages();
     Q_INVOKABLE void sendText(const QString &text);
     Q_INVOKABLE void sendImage(const QString &fileUrl, const QString &caption = QString());
+    Q_INVOKABLE bool sendClipboardImage(const QString &caption = QString());
     Q_INVOKABLE void setChatPinned(const QString &chatId, bool pinned);
     Q_INVOKABLE void setSelectedChatComposing(bool composing);
     Q_INVOKABLE void downloadMessageMedia(const QString &messageId);
