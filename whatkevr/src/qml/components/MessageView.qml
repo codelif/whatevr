@@ -27,8 +27,15 @@ Item {
     property real contentHeightBeforePrepend: 0
     property real contentYBeforePrepend: 0
     property real originYBeforePrepend: 0
+    property int clearSelectionGeneration: 0
 
     signal loadOlderMessagesRequested()
+    signal conversationFocusRequested()
+    signal typeIntoComposerRequested(string text)
+
+    function clearMessageSelection() {
+        clearSelectionGeneration += 1
+    }
 
     function maximumY() {
         return list.originY + Math.max(0, list.contentHeight - list.height)
@@ -260,6 +267,9 @@ Item {
             mediaIntrinsicHeight: Number(model.mediaHeight || 0)
             mediaAnimated: Boolean(model.mediaAnimated)
             mediaDownloading: Whatevr.AppController.isMessageMediaDownloading(messageId)
+            clearSelectionGeneration: root.clearSelectionGeneration
+            onConversationFocusRequested: root.conversationFocusRequested()
+            onTypeIntoComposerRequested: text => root.typeIntoComposerRequested(text)
 
             Connections {
                 target: Whatevr.AppController

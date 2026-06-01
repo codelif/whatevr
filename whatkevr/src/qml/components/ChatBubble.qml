@@ -34,6 +34,16 @@ Item {
     property bool mediaAnimated: false
     property bool mediaDownloading: false
     property string mediaDownloadError: ""
+    property int clearSelectionGeneration: 0
+
+    signal conversationFocusRequested()
+    signal typeIntoComposerRequested(string text)
+
+    onClearSelectionGenerationChanged: {
+        if (bodyText.visible) {
+            bodyText.deselect()
+        }
+    }
 
     property real listWidth: 0
     readonly property real outerMargin: Kirigami.Units.largeSpacing
@@ -358,7 +368,10 @@ Item {
                             icon.name: "folder-download-symbolic"
                             text: Whatevr.I18n.i18nc("@action:button", "Load image")
                             enabled: root.messageId.length > 0
-                            onClicked: Whatevr.AppController.downloadMessageMedia(root.messageId)
+                            onClicked: {
+                                Whatevr.AppController.downloadMessageMedia(root.messageId)
+                                root.conversationFocusRequested()
+                            }
                         }
 
                         Label {
@@ -397,9 +410,22 @@ Item {
                 readOnly: true
                 selectByMouse: true
                 selectByKeyboard: true
+                persistentSelection: true
                 wrapMode: TextEdit.Wrap
                 textFormat: TextEdit.PlainText
                 color: Kirigami.Theme.textColor
+
+                Keys.onPressed: event => {
+                    if (event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) {
+                        return
+                    }
+                    if (event.text.length === 0 || event.text.charCodeAt(0) < 0x20) {
+                        return
+                    }
+
+                    root.typeIntoComposerRequested(event.text)
+                    event.accepted = true
+                }
             }
 
             Item {
@@ -632,7 +658,10 @@ Item {
                     icon.name: "folder-download-symbolic"
                     text: Whatevr.I18n.i18nc("@action:button", "Load sticker")
                     enabled: root.messageId.length > 0
-                    onClicked: Whatevr.AppController.downloadMessageMedia(root.messageId)
+                    onClicked: {
+                        Whatevr.AppController.downloadMessageMedia(root.messageId)
+                        root.conversationFocusRequested()
+                    }
                 }
 
                 Label {
@@ -788,4 +817,5 @@ Item {
         initials: root.senderInitials
         backgroundColor: Qt.alpha(foregroundColor, 0.12)
     }
+
 }

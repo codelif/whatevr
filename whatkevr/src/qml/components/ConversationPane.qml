@@ -25,6 +25,7 @@ Kirigami.Page {
            ? Whatevr.AppController.selectedChatName
            : ""
     padding: 0
+    focus: true
     Kirigami.Theme.colorSet: Kirigami.Theme.Window
 
     function initialsForName(name) {
@@ -41,6 +42,41 @@ Kirigami.Page {
         return initials.length > 0 ? initials : "?"
     }
 
+    function shouldTypeIntoComposer(event) {
+        if (!Whatevr.AppController.hasSelectedChat || !composer.visible || !Whatevr.AppController.composerEnabled) {
+            return false
+        }
+        if (event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) {
+            return false
+        }
+        return event.text.length > 0 && event.text.charCodeAt(0) >= 0x20
+    }
+
+    function typeIntoComposer(text) {
+        if (!Whatevr.AppController.hasSelectedChat || !composer.visible || !Whatevr.AppController.composerEnabled || text.length === 0) {
+            return
+        }
+
+        messageView.clearMessageSelection()
+        composer.focusAndInsertText(text)
+    }
+
+    Keys.onPressed: event => {
+        if (!root.shouldTypeIntoComposer(event)) {
+            return
+        }
+
+        root.typeIntoComposer(event.text)
+        event.accepted = true
+    }
+
+    PointHandler {
+        target: null
+        acceptedButtons: Qt.LeftButton
+        enabled: Whatevr.AppController.hasSelectedChat
+        onActiveChanged: if (active) messageView.clearMessageSelection()
+    }
+
     titleDelegate: RowLayout {
         id: headerTitle
 
@@ -53,6 +89,10 @@ Kirigami.Page {
         Layout.minimumWidth: 0
         implicitHeight: avatarSize
         spacing: Kirigami.Units.smallSpacing
+
+        TapHandler {
+            onTapped: root.forceActiveFocus(Qt.MouseFocusReason)
+        }
 
         AvatarImage {
             visible: Whatevr.AppController.hasSelectedChat
@@ -134,6 +174,8 @@ Kirigami.Page {
                 loadingOlderMessages: Whatevr.AppController.olderMessagesLoading
                 canLoadOlderMessages: Whatevr.AppController.canLoadOlderMessages
                 onLoadOlderMessagesRequested: Whatevr.AppController.loadOlderMessages()
+                onConversationFocusRequested: root.forceActiveFocus(Qt.MouseFocusReason)
+                onTypeIntoComposerRequested: text => root.typeIntoComposer(text)
             }
 
             BusyIndicator {
@@ -174,6 +216,8 @@ Kirigami.Page {
         }
 
         MessageComposer {
+            id: composer
+
             Layout.fillWidth: true
             visible: Whatevr.AppController.hasSelectedChat
             enabledForChat: Whatevr.AppController.composerEnabled
@@ -184,4 +228,5 @@ Kirigami.Page {
             onComposingChanged: composing => Whatevr.AppController.setSelectedChatComposing(composing)
         }
     }
+
 }

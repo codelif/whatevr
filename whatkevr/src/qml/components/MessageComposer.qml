@@ -44,6 +44,21 @@ Frame {
         input.clear()
     }
 
+    function forceInputFocus() {
+        if (root.visible && input.enabled) {
+            input.forceActiveFocus(Qt.OtherFocusReason)
+        }
+    }
+
+    function focusAndInsertText(text) {
+        if (!root.visible || !input.enabled || text.length === 0) {
+            return
+        }
+
+        input.forceActiveFocus(Qt.OtherFocusReason)
+        input.insert(input.cursorPosition, text)
+    }
+
     function setComposing(composing) {
         if (composing && (!root.enabledForChat || root.sending || input.text.trim().length === 0)) {
             composing = false
@@ -68,8 +83,16 @@ Frame {
         pauseTimer.restart()
     }
 
-    onEnabledForChatChanged: if (!enabledForChat) root.setComposing(false)
-    onSendingChanged: if (sending) root.setComposing(false)
+    onEnabledForChatChanged: {
+        if (!enabledForChat) {
+            root.setComposing(false)
+        }
+    }
+    onSendingChanged: {
+        if (sending) {
+            root.setComposing(false)
+        }
+    }
 
     contentItem: ColumnLayout {
         spacing: Kirigami.Units.smallSpacing
@@ -130,6 +153,16 @@ Frame {
                         }
                         event.accepted = true
                         root.submitText()
+                    }
+
+                    Keys.onPressed: event => {
+                        if (!event.matches(StandardKey.Paste)) {
+                            return
+                        }
+                        if (Whatevr.AppController.sendClipboardImage(input.text.trim())) {
+                            event.accepted = true
+                            root.setComposing(false)
+                        }
                     }
                 }
             }
