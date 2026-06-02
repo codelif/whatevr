@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"strings"
+
+	"github.com/nyaruka/phonenumbers"
 )
 
 type Chat struct {
@@ -85,6 +87,7 @@ func (db *DB) ListChats(ctx context.Context, limit, offset int) ([]Chat, error) 
 		if err != nil {
 			return nil, err
 		}
+		chat = normalizeListedChatName(chat)
 		chats = append(chats, chat)
 	}
 
@@ -93,6 +96,39 @@ func (db *DB) ListChats(ctx context.Context, limit, offset int) ([]Chat, error) 
 	}
 
 	return chats, nil
+}
+
+func normalizeListedChatName(chat Chat) Chat {
+	if chat.IsGroup || chat.NameSource != ChatNameSourceWhatsApp {
+		return chat
+	}
+	if phone := formatDirectChatPhoneDisplayName(chat.ID); phone != "" {
+		chat.Name = phone
+		chat.NameSource = ChatNameSourcePhone
+	}
+	return chat
+}
+
+func formatDirectChatPhoneDisplayName(chatID string) string {
+	const defaultUserSuffix = "@s.whatsapp.net"
+	user, ok := strings.CutSuffix(chatID, defaultUserSuffix)
+	if !ok || user == "" {
+		return ""
+	}
+	digits := strings.Map(func(r rune) rune {
+		if r >= '0' && r <= '9' {
+			return r
+		}
+		return -1
+	}, user)
+	if digits == "" {
+		return ""
+	}
+	number, err := phonenumbers.Parse("+"+digits, "ZZ")
+	if err != nil || !phonenumbers.IsValidNumber(number) {
+		return "+" + digits
+	}
+	return phonenumbers.Format(number, phonenumbers.INTERNATIONAL)
 }
 
 func (db *DB) MarkChatRead(ctx context.Context, chatID string) (Chat, error) {
