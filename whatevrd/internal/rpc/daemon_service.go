@@ -133,12 +133,15 @@ func toProtoDaemonEvent(event app.DaemonEvent) *pb.DaemonEvent {
 		return &pb.DaemonEvent{
 			Payload: &pb.DaemonEvent_HistorySyncProgress{
 				HistorySyncProgress: &pb.HistorySyncProgress{
-					SyncType:             toProtoHistorySyncType(event.HistorySync.SyncType),
-					ProgressPercent:      event.HistorySync.ProgressPercent,
-					ChunkOrder:           event.HistorySync.ChunkOrder,
-					ConversationsInChunk: event.HistorySync.ConversationsInChunk,
-					MessagesInChunk:      event.HistorySync.MessagesInChunk,
-					IsComplete:           event.HistorySync.IsComplete,
+					SyncType:               toProtoHistorySyncType(event.HistorySync.SyncType),
+					ProgressPercent:        event.HistorySync.ProgressPercent,
+					ChunkOrder:             event.HistorySync.ChunkOrder,
+					ConversationsInChunk:   event.HistorySync.ConversationsInChunk,
+					MessagesInChunk:        event.HistorySync.MessagesInChunk,
+					IsComplete:             event.HistorySync.IsComplete,
+					Phase:                  toProtoHistorySyncPhase(event.HistorySync.Phase),
+					ProcessedConversations: event.HistorySync.ProcessedConversations,
+					ProcessedMessages:      event.HistorySync.ProcessedMessages,
 				},
 			},
 		}
@@ -224,8 +227,25 @@ func toProtoHistorySyncType(t app.HistorySyncType) pb.HistorySyncType {
 		return pb.HistorySyncType_HISTORY_SYNC_TYPE_ON_DEMAND
 	case app.HistorySyncTypeProfilePicture:
 		return pb.HistorySyncType_HISTORY_SYNC_TYPE_PROFILE_PICTURE
+	case app.HistorySyncTypeOfflineCatchup:
+		return pb.HistorySyncType_HISTORY_SYNC_TYPE_OFFLINE_CATCHUP
 	default:
 		return pb.HistorySyncType_HISTORY_SYNC_TYPE_UNSPECIFIED
+	}
+}
+
+func toProtoHistorySyncPhase(phase app.HistorySyncPhase) pb.HistorySyncPhase {
+	switch phase {
+	case app.HistorySyncPhaseQueued:
+		return pb.HistorySyncPhase_HISTORY_SYNC_PHASE_QUEUED
+	case app.HistorySyncPhaseDownloading:
+		return pb.HistorySyncPhase_HISTORY_SYNC_PHASE_DOWNLOADING
+	case app.HistorySyncPhaseProcessing:
+		return pb.HistorySyncPhase_HISTORY_SYNC_PHASE_PROCESSING
+	case app.HistorySyncPhaseComplete:
+		return pb.HistorySyncPhase_HISTORY_SYNC_PHASE_COMPLETE
+	default:
+		return pb.HistorySyncPhase_HISTORY_SYNC_PHASE_UNSPECIFIED
 	}
 }
 

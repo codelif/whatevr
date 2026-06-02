@@ -178,15 +178,29 @@ const (
 	HistorySyncTypeNonBlockingData
 	HistorySyncTypeOnDemand
 	HistorySyncTypeProfilePicture
+	HistorySyncTypeOfflineCatchup
+)
+
+type HistorySyncPhase int32
+
+const (
+	HistorySyncPhaseUnspecified HistorySyncPhase = iota
+	HistorySyncPhaseQueued
+	HistorySyncPhaseDownloading
+	HistorySyncPhaseProcessing
+	HistorySyncPhaseComplete
 )
 
 type HistorySyncEvent struct {
-	SyncType             HistorySyncType
-	ProgressPercent      uint32
-	ChunkOrder           uint32
-	ConversationsInChunk uint32
-	MessagesInChunk      uint32
-	IsComplete           bool
+	SyncType               HistorySyncType
+	ProgressPercent        uint32
+	ChunkOrder             uint32
+	ConversationsInChunk   uint32
+	MessagesInChunk        uint32
+	IsComplete             bool
+	Phase                  HistorySyncPhase
+	ProcessedConversations uint32
+	ProcessedMessages      uint32
 
 	ChatID        string
 	MessagesAdded uint32

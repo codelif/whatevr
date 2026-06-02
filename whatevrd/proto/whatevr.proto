@@ -39,6 +39,15 @@ enum HistorySyncType {
   HISTORY_SYNC_TYPE_NON_BLOCKING_DATA = 6;
   HISTORY_SYNC_TYPE_ON_DEMAND = 7;
   HISTORY_SYNC_TYPE_PROFILE_PICTURE = 8;
+  HISTORY_SYNC_TYPE_OFFLINE_CATCHUP = 9;
+}
+
+enum HistorySyncPhase {
+  HISTORY_SYNC_PHASE_UNSPECIFIED = 0;
+  HISTORY_SYNC_PHASE_QUEUED = 1;
+  HISTORY_SYNC_PHASE_DOWNLOADING = 2;
+  HISTORY_SYNC_PHASE_PROCESSING = 3;
+  HISTORY_SYNC_PHASE_COMPLETE = 4;
 }
 
 enum ContactAvailability {
@@ -140,6 +149,9 @@ message HistorySyncProgress {
   // True when this chunk completes the sync (progress >= 100, or sync type
   // does not carry progress).
   bool is_complete = 6;
+  HistorySyncPhase phase = 7;
+  uint32 processed_conversations = 8;
+  uint32 processed_messages = 9;
 }
 
 message HistoryBackfilled {

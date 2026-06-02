@@ -212,6 +212,8 @@ QString syncTypeLabel(whatevr::v1::HistorySyncTypeGadget::HistorySyncType type)
         return i18nc("@label", "Loading requested history");
     case HistorySyncType::HISTORY_SYNC_TYPE_PROFILE_PICTURE:
         return i18nc("@label", "Syncing profile pictures");
+    case HistorySyncType::HISTORY_SYNC_TYPE_OFFLINE_CATCHUP:
+        return i18nc("@label", "Syncing missed messages");
     case HistorySyncType::HISTORY_SYNC_TYPE_UNSPECIFIED:
     default:
         return i18nc("@label", "Syncing history");
@@ -1811,13 +1813,43 @@ void AppController::applyHistorySyncProgress(const HistorySyncProgress &progress
 
     if (progress.syncType() == whatevr::v1::HistorySyncTypeGadget::HistorySyncType::HISTORY_SYNC_TYPE_PROFILE_PICTURE) {
         m_historySyncDetail = i18nc("@info", "%1 of %2 profile pictures", progress.conversationsInChunk(), progress.messagesInChunk());
+    } else if (progress.syncType() == whatevr::v1::HistorySyncTypeGadget::HistorySyncType::HISTORY_SYNC_TYPE_OFFLINE_CATCHUP) {
+        const QString messagesText = progress.messagesInChunk() > 0
+            ? i18nc("@info", "%1/%2 messages", progress.processedMessages(), progress.messagesInChunk())
+            : i18ncp("@info", "%1 message", "%1 messages", progress.processedMessages());
+        const QString eventsText = progress.conversationsInChunk() > 0
+            ? i18nc("@info", "%1/%2 events", progress.processedConversations(), progress.conversationsInChunk())
+            : i18ncp("@info", "%1 event", "%1 events", progress.processedConversations());
+        m_historySyncDetail = i18nc("@info", "%1 · %2", messagesText, eventsText);
     } else {
         const QString chunkText = progress.chunkOrder() > 0
             ? i18nc("@info", "Chunk %1", progress.chunkOrder())
             : i18nc("@info", "Processing chunk");
-        const QString messagesText = i18ncp("@info", "%1 message", "%1 messages", progress.messagesInChunk());
-        const QString conversationsText = i18ncp("@info", "%1 conversation", "%1 conversations", progress.conversationsInChunk());
-        m_historySyncDetail = i18nc("@info", "%1 · %2 · %3", chunkText, messagesText, conversationsText);
+        switch (progress.phase()) {
+        case whatevr::v1::HistorySyncPhaseGadget::HistorySyncPhase::HISTORY_SYNC_PHASE_QUEUED:
+            m_historySyncDetail = i18nc("@info", "%1 · Queued", chunkText);
+            break;
+        case whatevr::v1::HistorySyncPhaseGadget::HistorySyncPhase::HISTORY_SYNC_PHASE_DOWNLOADING:
+            m_historySyncDetail = i18nc("@info", "%1 · Downloading", chunkText);
+            break;
+        case whatevr::v1::HistorySyncPhaseGadget::HistorySyncPhase::HISTORY_SYNC_PHASE_PROCESSING:
+        case whatevr::v1::HistorySyncPhaseGadget::HistorySyncPhase::HISTORY_SYNC_PHASE_UNSPECIFIED:
+        default: {
+            QStringList details;
+            details << chunkText;
+            if (progress.conversationsInChunk() > 0) {
+                details << i18nc("@info", "%1/%2 conversations", progress.processedConversations(), progress.conversationsInChunk());
+            }
+            if (progress.messagesInChunk() > 0) {
+                details << i18nc("@info", "%1/%2 messages", progress.processedMessages(), progress.messagesInChunk());
+            }
+            if (details.size() == 1) {
+                details << i18nc("@info", "Processing");
+            }
+            m_historySyncDetail = details.join(i18nc("@info list separator", " · "));
+            break;
+        }
+        }
     }
 
     Q_EMIT historySyncChanged();
@@ -1830,8 +1862,10 @@ void AppController::applyHistoryBackfilled(const whatevr::v1::HistoryBackfilled 
         return;
     }
 
-    if (m_selectedChatId == chatId && !m_messagesLoading) {
-        requestMessages(chatId);
+    if (m_selectedChatId == chatId) {
+        if (!m_messagesLoading) {
+            scheduleSelectedChatMessageReload(chatId);
+        }
         return;
     }
 

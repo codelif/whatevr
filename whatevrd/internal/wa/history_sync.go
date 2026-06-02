@@ -27,13 +27,15 @@ func (c *Client) handleManualHistorySyncNotification(ctx context.Context, evt *e
 	if notif == nil {
 		return false
 	}
-	c.markHistorySyncAvatarDeferralActive(historySyncTypeFromNotification(notif.GetSyncType()))
+	syncType := historySyncTypeFromNotification(notif.GetSyncType())
+	c.markHistorySyncAvatarDeferralActive(syncType)
 
 	chunk := historySyncChunkFromNotification(evt.Info.ID, notif)
 	if _, err := c.store.SaveHistorySyncChunk(ctx, chunk); err != nil {
 		c.log.Errorf("Failed to persist history sync notification %s: %v", evt.Info.ID, err)
 		return true
 	}
+	c.publishHistorySyncChunkProgress(chunk, syncType, app.HistorySyncPhaseQueued)
 	c.signalHistorySyncWorker()
 	return true
 }
@@ -154,12 +156,14 @@ func (c *Client) processHistorySyncChunk(ctx context.Context, chunk appstore.His
 		return false
 	}
 	started := time.Now()
+	syncType := historySyncTypeFromNotification(waE2E.HistorySyncType(chunk.SyncType))
 
 	if chunk.Status != appstore.HistorySyncStatusProcessed {
 		if err := c.store.MarkHistorySyncChunkProcessing(ctx, chunk.ID); err != nil {
 			c.log.Errorf("Failed to mark history sync chunk %s processing: %v", chunk.ID, err)
 			return false
 		}
+		c.publishHistorySyncChunkProgress(chunk, syncType, app.HistorySyncPhaseDownloading)
 		downloadStarted := time.Now()
 		blob, err := client.DownloadHistorySync(ctx, historySyncNotificationFromChunk(chunk), true)
 		if err != nil {
@@ -177,6 +181,7 @@ func (c *Client) processHistorySyncChunk(ctx context.Context, chunk appstore.His
 		c.log.Debugf("Acknowledged history sync chunk %s (type %d, chunk %d, progress %d) before ingestion", chunk.ID, chunk.SyncType, chunk.ChunkOrder, chunk.Progress)
 
 		processStarted := time.Now()
+		c.publishHistorySyncChunkProgress(chunk, syncType, app.HistorySyncPhaseProcessing)
 		c.processHistorySyncData(ctx, blob)
 		if ctx.Err() != nil {
 			return false
@@ -202,6 +207,15 @@ func (c *Client) processHistorySyncChunk(ctx context.Context, chunk appstore.His
 		go c.deleteHistorySyncMedia(context.WithoutCancel(ctx), client, chunk)
 	}
 	return true
+}
+
+func (c *Client) publishHistorySyncChunkProgress(chunk appstore.HistorySyncChunk, syncType app.HistorySyncType, phase app.HistorySyncPhase) {
+	c.daemon.PublishHistorySyncProgress(app.HistorySyncEvent{
+		SyncType:        syncType,
+		ProgressPercent: chunk.Progress,
+		ChunkOrder:      chunk.ChunkOrder,
+		Phase:           phase,
+	})
 }
 
 func (c *Client) deleteHistorySyncMedia(ctx context.Context, client *whatsmeow.Client, chunk appstore.HistorySyncChunk) {

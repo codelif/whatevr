@@ -201,6 +201,7 @@ const (
 	HistorySyncType_HISTORY_SYNC_TYPE_NON_BLOCKING_DATA HistorySyncType = 6
 	HistorySyncType_HISTORY_SYNC_TYPE_ON_DEMAND         HistorySyncType = 7
 	HistorySyncType_HISTORY_SYNC_TYPE_PROFILE_PICTURE   HistorySyncType = 8
+	HistorySyncType_HISTORY_SYNC_TYPE_OFFLINE_CATCHUP   HistorySyncType = 9
 )
 
 // Enum value maps for HistorySyncType.
@@ -215,6 +216,7 @@ var (
 		6: "HISTORY_SYNC_TYPE_NON_BLOCKING_DATA",
 		7: "HISTORY_SYNC_TYPE_ON_DEMAND",
 		8: "HISTORY_SYNC_TYPE_PROFILE_PICTURE",
+		9: "HISTORY_SYNC_TYPE_OFFLINE_CATCHUP",
 	}
 	HistorySyncType_value = map[string]int32{
 		"HISTORY_SYNC_TYPE_UNSPECIFIED":       0,
@@ -226,6 +228,7 @@ var (
 		"HISTORY_SYNC_TYPE_NON_BLOCKING_DATA": 6,
 		"HISTORY_SYNC_TYPE_ON_DEMAND":         7,
 		"HISTORY_SYNC_TYPE_PROFILE_PICTURE":   8,
+		"HISTORY_SYNC_TYPE_OFFLINE_CATCHUP":   9,
 	}
 )
 
@@ -254,6 +257,61 @@ func (x HistorySyncType) Number() protoreflect.EnumNumber {
 // Deprecated: Use HistorySyncType.Descriptor instead.
 func (HistorySyncType) EnumDescriptor() ([]byte, []int) {
 	return file_proto_whatevr_proto_rawDescGZIP(), []int{3}
+}
+
+type HistorySyncPhase int32
+
+const (
+	HistorySyncPhase_HISTORY_SYNC_PHASE_UNSPECIFIED HistorySyncPhase = 0
+	HistorySyncPhase_HISTORY_SYNC_PHASE_QUEUED      HistorySyncPhase = 1
+	HistorySyncPhase_HISTORY_SYNC_PHASE_DOWNLOADING HistorySyncPhase = 2
+	HistorySyncPhase_HISTORY_SYNC_PHASE_PROCESSING  HistorySyncPhase = 3
+	HistorySyncPhase_HISTORY_SYNC_PHASE_COMPLETE    HistorySyncPhase = 4
+)
+
+// Enum value maps for HistorySyncPhase.
+var (
+	HistorySyncPhase_name = map[int32]string{
+		0: "HISTORY_SYNC_PHASE_UNSPECIFIED",
+		1: "HISTORY_SYNC_PHASE_QUEUED",
+		2: "HISTORY_SYNC_PHASE_DOWNLOADING",
+		3: "HISTORY_SYNC_PHASE_PROCESSING",
+		4: "HISTORY_SYNC_PHASE_COMPLETE",
+	}
+	HistorySyncPhase_value = map[string]int32{
+		"HISTORY_SYNC_PHASE_UNSPECIFIED": 0,
+		"HISTORY_SYNC_PHASE_QUEUED":      1,
+		"HISTORY_SYNC_PHASE_DOWNLOADING": 2,
+		"HISTORY_SYNC_PHASE_PROCESSING":  3,
+		"HISTORY_SYNC_PHASE_COMPLETE":    4,
+	}
+)
+
+func (x HistorySyncPhase) Enum() *HistorySyncPhase {
+	p := new(HistorySyncPhase)
+	*p = x
+	return p
+}
+
+func (x HistorySyncPhase) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (HistorySyncPhase) Descriptor() protoreflect.EnumDescriptor {
+	return file_proto_whatevr_proto_enumTypes[4].Descriptor()
+}
+
+func (HistorySyncPhase) Type() protoreflect.EnumType {
+	return &file_proto_whatevr_proto_enumTypes[4]
+}
+
+func (x HistorySyncPhase) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use HistorySyncPhase.Descriptor instead.
+func (HistorySyncPhase) EnumDescriptor() ([]byte, []int) {
+	return file_proto_whatevr_proto_rawDescGZIP(), []int{4}
 }
 
 type ContactAvailability int32
@@ -289,11 +347,11 @@ func (x ContactAvailability) String() string {
 }
 
 func (ContactAvailability) Descriptor() protoreflect.EnumDescriptor {
-	return file_proto_whatevr_proto_enumTypes[4].Descriptor()
+	return file_proto_whatevr_proto_enumTypes[5].Descriptor()
 }
 
 func (ContactAvailability) Type() protoreflect.EnumType {
-	return &file_proto_whatevr_proto_enumTypes[4]
+	return &file_proto_whatevr_proto_enumTypes[5]
 }
 
 func (x ContactAvailability) Number() protoreflect.EnumNumber {
@@ -302,7 +360,7 @@ func (x ContactAvailability) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ContactAvailability.Descriptor instead.
 func (ContactAvailability) EnumDescriptor() ([]byte, []int) {
-	return file_proto_whatevr_proto_rawDescGZIP(), []int{4}
+	return file_proto_whatevr_proto_rawDescGZIP(), []int{5}
 }
 
 type AvatarSubjectKind int32
@@ -338,11 +396,11 @@ func (x AvatarSubjectKind) String() string {
 }
 
 func (AvatarSubjectKind) Descriptor() protoreflect.EnumDescriptor {
-	return file_proto_whatevr_proto_enumTypes[5].Descriptor()
+	return file_proto_whatevr_proto_enumTypes[6].Descriptor()
 }
 
 func (AvatarSubjectKind) Type() protoreflect.EnumType {
-	return &file_proto_whatevr_proto_enumTypes[5]
+	return &file_proto_whatevr_proto_enumTypes[6]
 }
 
 func (x AvatarSubjectKind) Number() protoreflect.EnumNumber {
@@ -351,7 +409,7 @@ func (x AvatarSubjectKind) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use AvatarSubjectKind.Descriptor instead.
 func (AvatarSubjectKind) EnumDescriptor() ([]byte, []int) {
-	return file_proto_whatevr_proto_rawDescGZIP(), []int{5}
+	return file_proto_whatevr_proto_rawDescGZIP(), []int{6}
 }
 
 type GetStatusRequest struct {
@@ -898,9 +956,12 @@ type HistorySyncProgress struct {
 	MessagesInChunk      uint32 `protobuf:"varint,5,opt,name=messages_in_chunk,json=messagesInChunk,proto3" json:"messages_in_chunk,omitempty"`
 	// True when this chunk completes the sync (progress >= 100, or sync type
 	// does not carry progress).
-	IsComplete    bool `protobuf:"varint,6,opt,name=is_complete,json=isComplete,proto3" json:"is_complete,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	IsComplete             bool             `protobuf:"varint,6,opt,name=is_complete,json=isComplete,proto3" json:"is_complete,omitempty"`
+	Phase                  HistorySyncPhase `protobuf:"varint,7,opt,name=phase,proto3,enum=whatevr.v1.HistorySyncPhase" json:"phase,omitempty"`
+	ProcessedConversations uint32           `protobuf:"varint,8,opt,name=processed_conversations,json=processedConversations,proto3" json:"processed_conversations,omitempty"`
+	ProcessedMessages      uint32           `protobuf:"varint,9,opt,name=processed_messages,json=processedMessages,proto3" json:"processed_messages,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *HistorySyncProgress) Reset() {
@@ -973,6 +1034,27 @@ func (x *HistorySyncProgress) GetIsComplete() bool {
 		return x.IsComplete
 	}
 	return false
+}
+
+func (x *HistorySyncProgress) GetPhase() HistorySyncPhase {
+	if x != nil {
+		return x.Phase
+	}
+	return HistorySyncPhase_HISTORY_SYNC_PHASE_UNSPECIFIED
+}
+
+func (x *HistorySyncProgress) GetProcessedConversations() uint32 {
+	if x != nil {
+		return x.ProcessedConversations
+	}
+	return 0
+}
+
+func (x *HistorySyncProgress) GetProcessedMessages() uint32 {
+	if x != nil {
+		return x.ProcessedMessages
+	}
+	return 0
 }
 
 type HistoryBackfilled struct {
@@ -3119,7 +3201,7 @@ const file_proto_whatevr_proto_rawDesc = "" +
 	"\x0fupdated_at_unix\x18\x05 \x01(\x03R\rupdatedAtUnix\x12\x1a\n" +
 	"\bfetching\x18\x06 \x01(\bR\bfetching\";\n" +
 	"\rAvatarUpdated\x12*\n" +
-	"\x06avatar\x18\x01 \x01(\v2\x12.whatevr.v1.AvatarR\x06avatar\"\x9e\x02\n" +
+	"\x06avatar\x18\x01 \x01(\v2\x12.whatevr.v1.AvatarR\x06avatar\"\xba\x03\n" +
 	"\x13HistorySyncProgress\x128\n" +
 	"\tsync_type\x18\x01 \x01(\x0e2\x1b.whatevr.v1.HistorySyncTypeR\bsyncType\x12)\n" +
 	"\x10progress_percent\x18\x02 \x01(\rR\x0fprogressPercent\x12\x1f\n" +
@@ -3128,7 +3210,10 @@ const file_proto_whatevr_proto_rawDesc = "" +
 	"\x16conversations_in_chunk\x18\x04 \x01(\rR\x14conversationsInChunk\x12*\n" +
 	"\x11messages_in_chunk\x18\x05 \x01(\rR\x0fmessagesInChunk\x12\x1f\n" +
 	"\vis_complete\x18\x06 \x01(\bR\n" +
-	"isComplete\"S\n" +
+	"isComplete\x122\n" +
+	"\x05phase\x18\a \x01(\x0e2\x1c.whatevr.v1.HistorySyncPhaseR\x05phase\x127\n" +
+	"\x17processed_conversations\x18\b \x01(\rR\x16processedConversations\x12-\n" +
+	"\x12processed_messages\x18\t \x01(\rR\x11processedMessages\"S\n" +
 	"\x11HistoryBackfilled\x12\x17\n" +
 	"\achat_id\x18\x01 \x01(\tR\x06chatId\x12%\n" +
 	"\x0emessages_added\x18\x02 \x01(\rR\rmessagesAdded\"\xd9\x01\n" +
@@ -3283,7 +3368,7 @@ const file_proto_whatevr_proto_rawDesc = "" +
 	"\x13MESSAGE_STATUS_SENT\x10\x02\x12\x1c\n" +
 	"\x18MESSAGE_STATUS_DELIVERED\x10\x03\x12\x17\n" +
 	"\x13MESSAGE_STATUS_READ\x10\x04\x12\x19\n" +
-	"\x15MESSAGE_STATUS_FAILED\x10\x05*\xd2\x02\n" +
+	"\x15MESSAGE_STATUS_FAILED\x10\x05*\xf9\x02\n" +
 	"\x0fHistorySyncType\x12!\n" +
 	"\x1dHISTORY_SYNC_TYPE_UNSPECIFIED\x10\x00\x12'\n" +
 	"#HISTORY_SYNC_TYPE_INITIAL_BOOTSTRAP\x10\x01\x12'\n" +
@@ -3293,7 +3378,14 @@ const file_proto_whatevr_proto_rawDesc = "" +
 	"\x1bHISTORY_SYNC_TYPE_PUSH_NAME\x10\x05\x12'\n" +
 	"#HISTORY_SYNC_TYPE_NON_BLOCKING_DATA\x10\x06\x12\x1f\n" +
 	"\x1bHISTORY_SYNC_TYPE_ON_DEMAND\x10\a\x12%\n" +
-	"!HISTORY_SYNC_TYPE_PROFILE_PICTURE\x10\b*~\n" +
+	"!HISTORY_SYNC_TYPE_PROFILE_PICTURE\x10\b\x12%\n" +
+	"!HISTORY_SYNC_TYPE_OFFLINE_CATCHUP\x10\t*\xbd\x01\n" +
+	"\x10HistorySyncPhase\x12\"\n" +
+	"\x1eHISTORY_SYNC_PHASE_UNSPECIFIED\x10\x00\x12\x1d\n" +
+	"\x19HISTORY_SYNC_PHASE_QUEUED\x10\x01\x12\"\n" +
+	"\x1eHISTORY_SYNC_PHASE_DOWNLOADING\x10\x02\x12!\n" +
+	"\x1dHISTORY_SYNC_PHASE_PROCESSING\x10\x03\x12\x1f\n" +
+	"\x1bHISTORY_SYNC_PHASE_COMPLETE\x10\x04*~\n" +
 	"\x13ContactAvailability\x12$\n" +
 	" CONTACT_AVAILABILITY_UNSPECIFIED\x10\x00\x12\x1f\n" +
 	"\x1bCONTACT_AVAILABILITY_ONLINE\x10\x01\x12 \n" +
@@ -3336,131 +3428,133 @@ func file_proto_whatevr_proto_rawDescGZIP() []byte {
 	return file_proto_whatevr_proto_rawDescData
 }
 
-var file_proto_whatevr_proto_enumTypes = make([]protoimpl.EnumInfo, 6)
+var file_proto_whatevr_proto_enumTypes = make([]protoimpl.EnumInfo, 7)
 var file_proto_whatevr_proto_msgTypes = make([]protoimpl.MessageInfo, 46)
 var file_proto_whatevr_proto_goTypes = []any{
 	(DaemonState)(0),                      // 0: whatevr.v1.DaemonState
 	(MessageDirection)(0),                 // 1: whatevr.v1.MessageDirection
 	(MessageStatus)(0),                    // 2: whatevr.v1.MessageStatus
 	(HistorySyncType)(0),                  // 3: whatevr.v1.HistorySyncType
-	(ContactAvailability)(0),              // 4: whatevr.v1.ContactAvailability
-	(AvatarSubjectKind)(0),                // 5: whatevr.v1.AvatarSubjectKind
-	(*GetStatusRequest)(nil),              // 6: whatevr.v1.GetStatusRequest
-	(*GetStatusResponse)(nil),             // 7: whatevr.v1.GetStatusResponse
-	(*SubscribeEventsRequest)(nil),        // 8: whatevr.v1.SubscribeEventsRequest
-	(*DaemonEvent)(nil),                   // 9: whatevr.v1.DaemonEvent
-	(*Avatar)(nil),                        // 10: whatevr.v1.Avatar
-	(*AvatarUpdated)(nil),                 // 11: whatevr.v1.AvatarUpdated
-	(*HistorySyncProgress)(nil),           // 12: whatevr.v1.HistorySyncProgress
-	(*HistoryBackfilled)(nil),             // 13: whatevr.v1.HistoryBackfilled
-	(*ChatPresenceChanged)(nil),           // 14: whatevr.v1.ChatPresenceChanged
-	(*MediaDownloadChanged)(nil),          // 15: whatevr.v1.MediaDownloadChanged
-	(*ConnectionChanged)(nil),             // 16: whatevr.v1.ConnectionChanged
-	(*ReconnectRequest)(nil),              // 17: whatevr.v1.ReconnectRequest
-	(*ReconnectResponse)(nil),             // 18: whatevr.v1.ReconnectResponse
-	(*LoginStateChanged)(nil),             // 19: whatevr.v1.LoginStateChanged
-	(*NewMessage)(nil),                    // 20: whatevr.v1.NewMessage
-	(*MessageUpdated)(nil),                // 21: whatevr.v1.MessageUpdated
-	(*ChatUpdated)(nil),                   // 22: whatevr.v1.ChatUpdated
-	(*SubscribeLoginEventsRequest)(nil),   // 23: whatevr.v1.SubscribeLoginEventsRequest
-	(*LoginEvent)(nil),                    // 24: whatevr.v1.LoginEvent
-	(*QrCode)(nil),                        // 25: whatevr.v1.QrCode
-	(*LogoutRequest)(nil),                 // 26: whatevr.v1.LogoutRequest
-	(*LogoutResponse)(nil),                // 27: whatevr.v1.LogoutResponse
-	(*HoldSessionRequest)(nil),            // 28: whatevr.v1.HoldSessionRequest
-	(*FrontendSessionEvent)(nil),          // 29: whatevr.v1.FrontendSessionEvent
-	(*UpdateSessionStateRequest)(nil),     // 30: whatevr.v1.UpdateSessionStateRequest
-	(*UpdateSessionStateResponse)(nil),    // 31: whatevr.v1.UpdateSessionStateResponse
-	(*ListChatsRequest)(nil),              // 32: whatevr.v1.ListChatsRequest
-	(*ListChatsResponse)(nil),             // 33: whatevr.v1.ListChatsResponse
-	(*GetMessagesRequest)(nil),            // 34: whatevr.v1.GetMessagesRequest
-	(*GetMessagesResponse)(nil),           // 35: whatevr.v1.GetMessagesResponse
-	(*MarkChatReadRequest)(nil),           // 36: whatevr.v1.MarkChatReadRequest
-	(*MarkChatReadResponse)(nil),          // 37: whatevr.v1.MarkChatReadResponse
-	(*SetChatPinnedRequest)(nil),          // 38: whatevr.v1.SetChatPinnedRequest
-	(*SetChatPinnedResponse)(nil),         // 39: whatevr.v1.SetChatPinnedResponse
-	(*SetChatPresenceRequest)(nil),        // 40: whatevr.v1.SetChatPresenceRequest
-	(*SetChatPresenceResponse)(nil),       // 41: whatevr.v1.SetChatPresenceResponse
-	(*SubscribeChatPresenceRequest)(nil),  // 42: whatevr.v1.SubscribeChatPresenceRequest
-	(*SubscribeChatPresenceResponse)(nil), // 43: whatevr.v1.SubscribeChatPresenceResponse
-	(*DownloadMessageMediaRequest)(nil),   // 44: whatevr.v1.DownloadMessageMediaRequest
-	(*DownloadMessageMediaResponse)(nil),  // 45: whatevr.v1.DownloadMessageMediaResponse
-	(*SendTextRequest)(nil),               // 46: whatevr.v1.SendTextRequest
-	(*SendTextResponse)(nil),              // 47: whatevr.v1.SendTextResponse
-	(*SendMediaRequest)(nil),              // 48: whatevr.v1.SendMediaRequest
-	(*SendMediaResponse)(nil),             // 49: whatevr.v1.SendMediaResponse
-	(*Chat)(nil),                          // 50: whatevr.v1.Chat
-	(*Message)(nil),                       // 51: whatevr.v1.Message
+	(HistorySyncPhase)(0),                 // 4: whatevr.v1.HistorySyncPhase
+	(ContactAvailability)(0),              // 5: whatevr.v1.ContactAvailability
+	(AvatarSubjectKind)(0),                // 6: whatevr.v1.AvatarSubjectKind
+	(*GetStatusRequest)(nil),              // 7: whatevr.v1.GetStatusRequest
+	(*GetStatusResponse)(nil),             // 8: whatevr.v1.GetStatusResponse
+	(*SubscribeEventsRequest)(nil),        // 9: whatevr.v1.SubscribeEventsRequest
+	(*DaemonEvent)(nil),                   // 10: whatevr.v1.DaemonEvent
+	(*Avatar)(nil),                        // 11: whatevr.v1.Avatar
+	(*AvatarUpdated)(nil),                 // 12: whatevr.v1.AvatarUpdated
+	(*HistorySyncProgress)(nil),           // 13: whatevr.v1.HistorySyncProgress
+	(*HistoryBackfilled)(nil),             // 14: whatevr.v1.HistoryBackfilled
+	(*ChatPresenceChanged)(nil),           // 15: whatevr.v1.ChatPresenceChanged
+	(*MediaDownloadChanged)(nil),          // 16: whatevr.v1.MediaDownloadChanged
+	(*ConnectionChanged)(nil),             // 17: whatevr.v1.ConnectionChanged
+	(*ReconnectRequest)(nil),              // 18: whatevr.v1.ReconnectRequest
+	(*ReconnectResponse)(nil),             // 19: whatevr.v1.ReconnectResponse
+	(*LoginStateChanged)(nil),             // 20: whatevr.v1.LoginStateChanged
+	(*NewMessage)(nil),                    // 21: whatevr.v1.NewMessage
+	(*MessageUpdated)(nil),                // 22: whatevr.v1.MessageUpdated
+	(*ChatUpdated)(nil),                   // 23: whatevr.v1.ChatUpdated
+	(*SubscribeLoginEventsRequest)(nil),   // 24: whatevr.v1.SubscribeLoginEventsRequest
+	(*LoginEvent)(nil),                    // 25: whatevr.v1.LoginEvent
+	(*QrCode)(nil),                        // 26: whatevr.v1.QrCode
+	(*LogoutRequest)(nil),                 // 27: whatevr.v1.LogoutRequest
+	(*LogoutResponse)(nil),                // 28: whatevr.v1.LogoutResponse
+	(*HoldSessionRequest)(nil),            // 29: whatevr.v1.HoldSessionRequest
+	(*FrontendSessionEvent)(nil),          // 30: whatevr.v1.FrontendSessionEvent
+	(*UpdateSessionStateRequest)(nil),     // 31: whatevr.v1.UpdateSessionStateRequest
+	(*UpdateSessionStateResponse)(nil),    // 32: whatevr.v1.UpdateSessionStateResponse
+	(*ListChatsRequest)(nil),              // 33: whatevr.v1.ListChatsRequest
+	(*ListChatsResponse)(nil),             // 34: whatevr.v1.ListChatsResponse
+	(*GetMessagesRequest)(nil),            // 35: whatevr.v1.GetMessagesRequest
+	(*GetMessagesResponse)(nil),           // 36: whatevr.v1.GetMessagesResponse
+	(*MarkChatReadRequest)(nil),           // 37: whatevr.v1.MarkChatReadRequest
+	(*MarkChatReadResponse)(nil),          // 38: whatevr.v1.MarkChatReadResponse
+	(*SetChatPinnedRequest)(nil),          // 39: whatevr.v1.SetChatPinnedRequest
+	(*SetChatPinnedResponse)(nil),         // 40: whatevr.v1.SetChatPinnedResponse
+	(*SetChatPresenceRequest)(nil),        // 41: whatevr.v1.SetChatPresenceRequest
+	(*SetChatPresenceResponse)(nil),       // 42: whatevr.v1.SetChatPresenceResponse
+	(*SubscribeChatPresenceRequest)(nil),  // 43: whatevr.v1.SubscribeChatPresenceRequest
+	(*SubscribeChatPresenceResponse)(nil), // 44: whatevr.v1.SubscribeChatPresenceResponse
+	(*DownloadMessageMediaRequest)(nil),   // 45: whatevr.v1.DownloadMessageMediaRequest
+	(*DownloadMessageMediaResponse)(nil),  // 46: whatevr.v1.DownloadMessageMediaResponse
+	(*SendTextRequest)(nil),               // 47: whatevr.v1.SendTextRequest
+	(*SendTextResponse)(nil),              // 48: whatevr.v1.SendTextResponse
+	(*SendMediaRequest)(nil),              // 49: whatevr.v1.SendMediaRequest
+	(*SendMediaResponse)(nil),             // 50: whatevr.v1.SendMediaResponse
+	(*Chat)(nil),                          // 51: whatevr.v1.Chat
+	(*Message)(nil),                       // 52: whatevr.v1.Message
 }
 var file_proto_whatevr_proto_depIdxs = []int32{
 	0,  // 0: whatevr.v1.GetStatusResponse.state:type_name -> whatevr.v1.DaemonState
-	16, // 1: whatevr.v1.DaemonEvent.connection_changed:type_name -> whatevr.v1.ConnectionChanged
-	19, // 2: whatevr.v1.DaemonEvent.login_state_changed:type_name -> whatevr.v1.LoginStateChanged
-	20, // 3: whatevr.v1.DaemonEvent.new_message:type_name -> whatevr.v1.NewMessage
-	21, // 4: whatevr.v1.DaemonEvent.message_updated:type_name -> whatevr.v1.MessageUpdated
-	22, // 5: whatevr.v1.DaemonEvent.chat_updated:type_name -> whatevr.v1.ChatUpdated
-	14, // 6: whatevr.v1.DaemonEvent.chat_presence_changed:type_name -> whatevr.v1.ChatPresenceChanged
-	12, // 7: whatevr.v1.DaemonEvent.history_sync_progress:type_name -> whatevr.v1.HistorySyncProgress
-	13, // 8: whatevr.v1.DaemonEvent.history_backfilled:type_name -> whatevr.v1.HistoryBackfilled
-	15, // 9: whatevr.v1.DaemonEvent.media_download_changed:type_name -> whatevr.v1.MediaDownloadChanged
-	11, // 10: whatevr.v1.DaemonEvent.avatar_updated:type_name -> whatevr.v1.AvatarUpdated
-	5,  // 11: whatevr.v1.Avatar.kind:type_name -> whatevr.v1.AvatarSubjectKind
-	10, // 12: whatevr.v1.AvatarUpdated.avatar:type_name -> whatevr.v1.Avatar
+	17, // 1: whatevr.v1.DaemonEvent.connection_changed:type_name -> whatevr.v1.ConnectionChanged
+	20, // 2: whatevr.v1.DaemonEvent.login_state_changed:type_name -> whatevr.v1.LoginStateChanged
+	21, // 3: whatevr.v1.DaemonEvent.new_message:type_name -> whatevr.v1.NewMessage
+	22, // 4: whatevr.v1.DaemonEvent.message_updated:type_name -> whatevr.v1.MessageUpdated
+	23, // 5: whatevr.v1.DaemonEvent.chat_updated:type_name -> whatevr.v1.ChatUpdated
+	15, // 6: whatevr.v1.DaemonEvent.chat_presence_changed:type_name -> whatevr.v1.ChatPresenceChanged
+	13, // 7: whatevr.v1.DaemonEvent.history_sync_progress:type_name -> whatevr.v1.HistorySyncProgress
+	14, // 8: whatevr.v1.DaemonEvent.history_backfilled:type_name -> whatevr.v1.HistoryBackfilled
+	16, // 9: whatevr.v1.DaemonEvent.media_download_changed:type_name -> whatevr.v1.MediaDownloadChanged
+	12, // 10: whatevr.v1.DaemonEvent.avatar_updated:type_name -> whatevr.v1.AvatarUpdated
+	6,  // 11: whatevr.v1.Avatar.kind:type_name -> whatevr.v1.AvatarSubjectKind
+	11, // 12: whatevr.v1.AvatarUpdated.avatar:type_name -> whatevr.v1.Avatar
 	3,  // 13: whatevr.v1.HistorySyncProgress.sync_type:type_name -> whatevr.v1.HistorySyncType
-	4,  // 14: whatevr.v1.ChatPresenceChanged.availability:type_name -> whatevr.v1.ContactAvailability
-	0,  // 15: whatevr.v1.ConnectionChanged.state:type_name -> whatevr.v1.DaemonState
-	0,  // 16: whatevr.v1.LoginStateChanged.state:type_name -> whatevr.v1.DaemonState
-	51, // 17: whatevr.v1.NewMessage.message:type_name -> whatevr.v1.Message
-	51, // 18: whatevr.v1.MessageUpdated.message:type_name -> whatevr.v1.Message
-	50, // 19: whatevr.v1.ChatUpdated.chat:type_name -> whatevr.v1.Chat
-	25, // 20: whatevr.v1.LoginEvent.qr_code:type_name -> whatevr.v1.QrCode
-	19, // 21: whatevr.v1.LoginEvent.login_state_changed:type_name -> whatevr.v1.LoginStateChanged
-	50, // 22: whatevr.v1.ListChatsResponse.chats:type_name -> whatevr.v1.Chat
-	51, // 23: whatevr.v1.GetMessagesResponse.messages:type_name -> whatevr.v1.Message
-	51, // 24: whatevr.v1.DownloadMessageMediaResponse.message:type_name -> whatevr.v1.Message
-	51, // 25: whatevr.v1.SendTextResponse.message:type_name -> whatevr.v1.Message
-	51, // 26: whatevr.v1.SendMediaResponse.message:type_name -> whatevr.v1.Message
-	1,  // 27: whatevr.v1.Chat.last_message_direction:type_name -> whatevr.v1.MessageDirection
-	2,  // 28: whatevr.v1.Chat.last_message_status:type_name -> whatevr.v1.MessageStatus
-	1,  // 29: whatevr.v1.Message.direction:type_name -> whatevr.v1.MessageDirection
-	2,  // 30: whatevr.v1.Message.status:type_name -> whatevr.v1.MessageStatus
-	6,  // 31: whatevr.v1.DaemonService.GetStatus:input_type -> whatevr.v1.GetStatusRequest
-	8,  // 32: whatevr.v1.DaemonService.SubscribeEvents:input_type -> whatevr.v1.SubscribeEventsRequest
-	17, // 33: whatevr.v1.DaemonService.Reconnect:input_type -> whatevr.v1.ReconnectRequest
-	23, // 34: whatevr.v1.LoginService.SubscribeLoginEvents:input_type -> whatevr.v1.SubscribeLoginEventsRequest
-	26, // 35: whatevr.v1.LoginService.Logout:input_type -> whatevr.v1.LogoutRequest
-	28, // 36: whatevr.v1.FrontendService.HoldSession:input_type -> whatevr.v1.HoldSessionRequest
-	30, // 37: whatevr.v1.FrontendService.UpdateSessionState:input_type -> whatevr.v1.UpdateSessionStateRequest
-	32, // 38: whatevr.v1.ChatService.ListChats:input_type -> whatevr.v1.ListChatsRequest
-	34, // 39: whatevr.v1.ChatService.GetMessages:input_type -> whatevr.v1.GetMessagesRequest
-	36, // 40: whatevr.v1.ChatService.MarkChatRead:input_type -> whatevr.v1.MarkChatReadRequest
-	38, // 41: whatevr.v1.ChatService.SetChatPinned:input_type -> whatevr.v1.SetChatPinnedRequest
-	40, // 42: whatevr.v1.ChatService.SetChatPresence:input_type -> whatevr.v1.SetChatPresenceRequest
-	42, // 43: whatevr.v1.ChatService.SubscribeChatPresence:input_type -> whatevr.v1.SubscribeChatPresenceRequest
-	44, // 44: whatevr.v1.ChatService.DownloadMessageMedia:input_type -> whatevr.v1.DownloadMessageMediaRequest
-	46, // 45: whatevr.v1.SendService.SendText:input_type -> whatevr.v1.SendTextRequest
-	48, // 46: whatevr.v1.SendService.SendMedia:input_type -> whatevr.v1.SendMediaRequest
-	7,  // 47: whatevr.v1.DaemonService.GetStatus:output_type -> whatevr.v1.GetStatusResponse
-	9,  // 48: whatevr.v1.DaemonService.SubscribeEvents:output_type -> whatevr.v1.DaemonEvent
-	18, // 49: whatevr.v1.DaemonService.Reconnect:output_type -> whatevr.v1.ReconnectResponse
-	24, // 50: whatevr.v1.LoginService.SubscribeLoginEvents:output_type -> whatevr.v1.LoginEvent
-	27, // 51: whatevr.v1.LoginService.Logout:output_type -> whatevr.v1.LogoutResponse
-	29, // 52: whatevr.v1.FrontendService.HoldSession:output_type -> whatevr.v1.FrontendSessionEvent
-	31, // 53: whatevr.v1.FrontendService.UpdateSessionState:output_type -> whatevr.v1.UpdateSessionStateResponse
-	33, // 54: whatevr.v1.ChatService.ListChats:output_type -> whatevr.v1.ListChatsResponse
-	35, // 55: whatevr.v1.ChatService.GetMessages:output_type -> whatevr.v1.GetMessagesResponse
-	37, // 56: whatevr.v1.ChatService.MarkChatRead:output_type -> whatevr.v1.MarkChatReadResponse
-	39, // 57: whatevr.v1.ChatService.SetChatPinned:output_type -> whatevr.v1.SetChatPinnedResponse
-	41, // 58: whatevr.v1.ChatService.SetChatPresence:output_type -> whatevr.v1.SetChatPresenceResponse
-	43, // 59: whatevr.v1.ChatService.SubscribeChatPresence:output_type -> whatevr.v1.SubscribeChatPresenceResponse
-	45, // 60: whatevr.v1.ChatService.DownloadMessageMedia:output_type -> whatevr.v1.DownloadMessageMediaResponse
-	47, // 61: whatevr.v1.SendService.SendText:output_type -> whatevr.v1.SendTextResponse
-	49, // 62: whatevr.v1.SendService.SendMedia:output_type -> whatevr.v1.SendMediaResponse
-	47, // [47:63] is the sub-list for method output_type
-	31, // [31:47] is the sub-list for method input_type
-	31, // [31:31] is the sub-list for extension type_name
-	31, // [31:31] is the sub-list for extension extendee
-	0,  // [0:31] is the sub-list for field type_name
+	4,  // 14: whatevr.v1.HistorySyncProgress.phase:type_name -> whatevr.v1.HistorySyncPhase
+	5,  // 15: whatevr.v1.ChatPresenceChanged.availability:type_name -> whatevr.v1.ContactAvailability
+	0,  // 16: whatevr.v1.ConnectionChanged.state:type_name -> whatevr.v1.DaemonState
+	0,  // 17: whatevr.v1.LoginStateChanged.state:type_name -> whatevr.v1.DaemonState
+	52, // 18: whatevr.v1.NewMessage.message:type_name -> whatevr.v1.Message
+	52, // 19: whatevr.v1.MessageUpdated.message:type_name -> whatevr.v1.Message
+	51, // 20: whatevr.v1.ChatUpdated.chat:type_name -> whatevr.v1.Chat
+	26, // 21: whatevr.v1.LoginEvent.qr_code:type_name -> whatevr.v1.QrCode
+	20, // 22: whatevr.v1.LoginEvent.login_state_changed:type_name -> whatevr.v1.LoginStateChanged
+	51, // 23: whatevr.v1.ListChatsResponse.chats:type_name -> whatevr.v1.Chat
+	52, // 24: whatevr.v1.GetMessagesResponse.messages:type_name -> whatevr.v1.Message
+	52, // 25: whatevr.v1.DownloadMessageMediaResponse.message:type_name -> whatevr.v1.Message
+	52, // 26: whatevr.v1.SendTextResponse.message:type_name -> whatevr.v1.Message
+	52, // 27: whatevr.v1.SendMediaResponse.message:type_name -> whatevr.v1.Message
+	1,  // 28: whatevr.v1.Chat.last_message_direction:type_name -> whatevr.v1.MessageDirection
+	2,  // 29: whatevr.v1.Chat.last_message_status:type_name -> whatevr.v1.MessageStatus
+	1,  // 30: whatevr.v1.Message.direction:type_name -> whatevr.v1.MessageDirection
+	2,  // 31: whatevr.v1.Message.status:type_name -> whatevr.v1.MessageStatus
+	7,  // 32: whatevr.v1.DaemonService.GetStatus:input_type -> whatevr.v1.GetStatusRequest
+	9,  // 33: whatevr.v1.DaemonService.SubscribeEvents:input_type -> whatevr.v1.SubscribeEventsRequest
+	18, // 34: whatevr.v1.DaemonService.Reconnect:input_type -> whatevr.v1.ReconnectRequest
+	24, // 35: whatevr.v1.LoginService.SubscribeLoginEvents:input_type -> whatevr.v1.SubscribeLoginEventsRequest
+	27, // 36: whatevr.v1.LoginService.Logout:input_type -> whatevr.v1.LogoutRequest
+	29, // 37: whatevr.v1.FrontendService.HoldSession:input_type -> whatevr.v1.HoldSessionRequest
+	31, // 38: whatevr.v1.FrontendService.UpdateSessionState:input_type -> whatevr.v1.UpdateSessionStateRequest
+	33, // 39: whatevr.v1.ChatService.ListChats:input_type -> whatevr.v1.ListChatsRequest
+	35, // 40: whatevr.v1.ChatService.GetMessages:input_type -> whatevr.v1.GetMessagesRequest
+	37, // 41: whatevr.v1.ChatService.MarkChatRead:input_type -> whatevr.v1.MarkChatReadRequest
+	39, // 42: whatevr.v1.ChatService.SetChatPinned:input_type -> whatevr.v1.SetChatPinnedRequest
+	41, // 43: whatevr.v1.ChatService.SetChatPresence:input_type -> whatevr.v1.SetChatPresenceRequest
+	43, // 44: whatevr.v1.ChatService.SubscribeChatPresence:input_type -> whatevr.v1.SubscribeChatPresenceRequest
+	45, // 45: whatevr.v1.ChatService.DownloadMessageMedia:input_type -> whatevr.v1.DownloadMessageMediaRequest
+	47, // 46: whatevr.v1.SendService.SendText:input_type -> whatevr.v1.SendTextRequest
+	49, // 47: whatevr.v1.SendService.SendMedia:input_type -> whatevr.v1.SendMediaRequest
+	8,  // 48: whatevr.v1.DaemonService.GetStatus:output_type -> whatevr.v1.GetStatusResponse
+	10, // 49: whatevr.v1.DaemonService.SubscribeEvents:output_type -> whatevr.v1.DaemonEvent
+	19, // 50: whatevr.v1.DaemonService.Reconnect:output_type -> whatevr.v1.ReconnectResponse
+	25, // 51: whatevr.v1.LoginService.SubscribeLoginEvents:output_type -> whatevr.v1.LoginEvent
+	28, // 52: whatevr.v1.LoginService.Logout:output_type -> whatevr.v1.LogoutResponse
+	30, // 53: whatevr.v1.FrontendService.HoldSession:output_type -> whatevr.v1.FrontendSessionEvent
+	32, // 54: whatevr.v1.FrontendService.UpdateSessionState:output_type -> whatevr.v1.UpdateSessionStateResponse
+	34, // 55: whatevr.v1.ChatService.ListChats:output_type -> whatevr.v1.ListChatsResponse
+	36, // 56: whatevr.v1.ChatService.GetMessages:output_type -> whatevr.v1.GetMessagesResponse
+	38, // 57: whatevr.v1.ChatService.MarkChatRead:output_type -> whatevr.v1.MarkChatReadResponse
+	40, // 58: whatevr.v1.ChatService.SetChatPinned:output_type -> whatevr.v1.SetChatPinnedResponse
+	42, // 59: whatevr.v1.ChatService.SetChatPresence:output_type -> whatevr.v1.SetChatPresenceResponse
+	44, // 60: whatevr.v1.ChatService.SubscribeChatPresence:output_type -> whatevr.v1.SubscribeChatPresenceResponse
+	46, // 61: whatevr.v1.ChatService.DownloadMessageMedia:output_type -> whatevr.v1.DownloadMessageMediaResponse
+	48, // 62: whatevr.v1.SendService.SendText:output_type -> whatevr.v1.SendTextResponse
+	50, // 63: whatevr.v1.SendService.SendMedia:output_type -> whatevr.v1.SendMediaResponse
+	48, // [48:64] is the sub-list for method output_type
+	32, // [32:48] is the sub-list for method input_type
+	32, // [32:32] is the sub-list for extension type_name
+	32, // [32:32] is the sub-list for extension extendee
+	0,  // [0:32] is the sub-list for field type_name
 }
 
 func init() { file_proto_whatevr_proto_init() }
@@ -3489,7 +3583,7 @@ func file_proto_whatevr_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_whatevr_proto_rawDesc), len(file_proto_whatevr_proto_rawDesc)),
-			NumEnums:      6,
+			NumEnums:      7,
 			NumMessages:   46,
 			NumExtensions: 0,
 			NumServices:   5,
