@@ -35,12 +35,14 @@ Item {
     property bool mediaDownloading: false
     property string mediaDownloadError: ""
     property int clearSelectionGeneration: 0
+    property string activeSelectionMessageId: ""
 
     signal conversationFocusRequested()
+    signal messageSelectionClaimed(string messageId)
     signal typeIntoComposerRequested(string text)
 
     onClearSelectionGenerationChanged: {
-        if (bodyText.visible) {
+        if (bodyText.visible && (activeSelectionMessageId.length === 0 || activeSelectionMessageId !== messageId)) {
             bodyText.deselect()
         }
     }
@@ -152,11 +154,45 @@ Item {
     }
     readonly property bool showStatusIcon: outgoing && (statusIsDoubleTick || statusSingleIcon.length > 0)
 
-    readonly property real statusIconSize: Kirigami.Units.iconSizes.small
-    readonly property real statusDoubleTickOffset: statusIconSize * 0.4
+    readonly property real statusIconSize: Kirigami.Units.iconSizes.small * 0.82
+    readonly property real statusDoubleTickOffset: statusIconSize * 0.36
     // Reserve the widest receipt footprint so delivery/read updates do not
     // resize the bubble and change ListView spacing.
-    readonly property real statusAreaWidth: statusIconSize * 1.4
+    readonly property real statusAreaWidth: statusIconSize * 1.32
+    readonly property real tntSpacing: Kirigami.Units.smallSpacing / 2
+    readonly property real tntGap: Kirigami.Units.smallSpacing / 2
+    readonly property real inlineTntGap: Kirigami.Units.smallSpacing
+    readonly property real tntWidth: footerMetrics.advanceWidth
+                                     + (showStatusIcon ? statusAreaWidth + tntSpacing : 0)
+    readonly property real tntHeight: Math.max(footerMetrics.height, showStatusIcon ? statusIconSize : 0)
+    readonly property bool hasBody: body.length > 0
+    readonly property bool hasInlineMedia: isImage && !isSticker
+    readonly property bool imageOnly: hasInlineMedia && !hasBody
+    readonly property string widestBodyLine: widestLine(body)
+    readonly property real naturalTextWidth: Math.min(maxContentWidth, widestBodyLineMetrics.advanceWidth)
+    readonly property bool bodyHasExplicitLineBreaks: body.indexOf("\n") !== -1
+    readonly property bool bodyLongEnoughForInlineTnt: naturalTextWidth >= tntWidth * 1.1
+    readonly property bool tntFitsInline: hasBody
+                                         && !bodyHasExplicitLineBreaks
+                                         && bodyLongEnoughForInlineTnt
+                                         && naturalTextWidth + tntWidth + inlineTntGap <= maxContentWidth
+    readonly property real inlineTntReserve: 0
+    readonly property real inlineTntYOffset: Kirigami.Units.smallSpacing / 2
+    readonly property real blockTntReserve: tntHeight + tntGap
+
+    function widestLine(text) {
+        let best = ""
+        let bestWidth = 0
+        const lines = String(text || "").split("\n")
+        for (let i = 0; i < lines.length; ++i) {
+            const lineWidth = bodyFontMetrics.advanceWidth(lines[i])
+            if (lineWidth > bestWidth) {
+                best = lines[i]
+                bestWidth = lineWidth
+            }
+        }
+        return best
+    }
 
     readonly property real contentBlockWidth: {
         let w = 0
@@ -164,15 +200,14 @@ Item {
             w = Math.max(w, imageDisplayWidth)
         }
         if (body.length > 0) {
-            w = Math.max(w, Math.min(maxContentWidth, bodyMetrics.advanceWidth))
+            let bodyW = naturalTextWidth
+            if (tntFitsInline) {
+                bodyW = Math.min(maxContentWidth, naturalTextWidth + tntWidth + inlineTntGap)
+            }
+            w = Math.max(w, bodyW)
         }
-        // Footer width: time text + optional status icon
-        let footerW = footerMetrics.advanceWidth + Kirigami.Units.smallSpacing
-        if (root.showStatusIcon) {
-            footerW += root.statusAreaWidth + Kirigami.Units.smallSpacing
-        }
-        w = Math.max(w, Math.min(maxContentWidth, footerW))
-        return Math.max(w, Kirigami.Units.gridUnit * 4)
+        w = Math.max(w, Math.min(maxContentWidth, tntWidth))
+        return Math.max(w, hasBody ? Kirigami.Units.gridUnit * 2 : Kirigami.Units.gridUnit * 4)
     }
 
     width: listWidth
@@ -188,6 +223,17 @@ Item {
     TextMetrics {
         id: bodyMetrics
         text: root.body
+        font: bodyText.font
+    }
+
+    TextMetrics {
+        id: widestBodyLineMetrics
+        text: root.widestBodyLine
+        font: bodyText.font
+    }
+
+    FontMetrics {
+        id: bodyFontMetrics
         font: bodyText.font
     }
 
@@ -237,8 +283,15 @@ Item {
                     if (h > 0) h += Kirigami.Units.smallSpacing
                     h += bodyText.height
                 }
-                if (h > 0) h += Kirigami.Units.smallSpacing / 2
-                h += footerSlot.height
+                if (root.imageOnly) {
+                    h += root.blockTntReserve
+                } else if (bodyText.visible) {
+                    h += root.tntFitsInline ? root.inlineTntReserve : root.blockTntReserve
+                } else if (h > 0) {
+                    h += root.blockTntReserve
+                } else {
+                    h += footerSlot.height
+                }
                 return h
             }
 
@@ -415,6 +468,12 @@ Item {
                 textFormat: TextEdit.PlainText
                 color: Kirigami.Theme.textColor
 
+                onSelectedTextChanged: {
+                    if (selectedText.length > 0) {
+                        root.messageSelectionClaimed(root.messageId)
+                    }
+                }
+
                 Keys.onPressed: event => {
                     if (event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) {
                         return
@@ -431,7 +490,7 @@ Item {
             Item {
                 id: footerSlot
 
-                x: 0
+                x: Math.max(0, parent.width - width)
                 y: {
                     let off = 0
                     if (mediaSlot.visible) off += mediaSlot.height
@@ -439,19 +498,26 @@ Item {
                         if (off > 0) off += Kirigami.Units.smallSpacing
                         off += bodyText.height
                     }
-                    if (off > 0) off += Kirigami.Units.smallSpacing / 2
-                    return off
+                    if (root.imageOnly) {
+                        return mediaSlot.height + root.tntGap
+                    }
+                    if (bodyText.visible) {
+                        return root.tntFitsInline ? off - height + root.inlineTntReserve + root.inlineTntYOffset : off + root.tntGap
+                    }
+                    return Math.max(0, off)
                 }
-                width: root.contentBlockWidth
-                height: Math.max(timeLabel.implicitHeight, statusArea.visible ? statusArea.implicitHeight : 0)
+                width: root.tntWidth
+                height: root.tntHeight
 
                 Item {
                     id: statusArea
                     anchors.right: parent.right
-                    anchors.verticalCenter: timeLabel.verticalCenter
+                    anchors.verticalCenter: parent.verticalCenter
                     visible: root.showStatusIcon
                     implicitWidth: root.statusAreaWidth
                     implicitHeight: root.statusIconSize
+                    width: implicitWidth
+                    height: implicitHeight
 
                     // Single icon (clock, single checkmark, error)
                     Kirigami.Icon {
@@ -532,10 +598,12 @@ Item {
 
                 Label {
                     id: timeLabel
-                    anchors.left: parent.left
+                    anchors.right: statusArea.visible ? statusArea.left : parent.right
+                    anchors.rightMargin: statusArea.visible ? root.tntSpacing : 0
+                    anchors.verticalCenter: parent.verticalCenter
                     text: root.timeText
                     color: Kirigami.Theme.disabledTextColor
-                    font.pointSize: Kirigami.Theme.smallFont.pointSize * 0.8
+                    font.pointSize: Kirigami.Theme.smallFont.pointSize * 0.72
                 }
             }
         }

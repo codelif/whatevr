@@ -38,6 +38,8 @@ qt_add_executable(whatkevr
     src/app/appcontroller.h
     src/models/chatlistmodel.cpp
     src/models/chatlistmodel.h
+    src/models/emojimodel.cpp
+    src/models/emojimodel.h
     src/models/messagelistmodel.cpp
     src/models/messagelistmodel.h
     src/ui/rlottiestickeritem.cpp
@@ -89,10 +91,18 @@ qt_add_qml_module(whatkevr
         src/qml/components/KineticWheelScroller.qml
         src/qml/components/DiscreetScrollBar.qml
         src/qml/components/ChatBubble.qml
+        src/qml/components/EmojiPicker.qml
         src/qml/components/MessageView.qml
         src/qml/components/MessageComposer.qml
         src/qml/pages/LoginPage.qml
         src/qml/pages/StatusPage.qml
+)
+
+qt_add_resources(whatkevr emoji_metadata
+    PREFIX /
+    FILES
+        data/emoji/emoji_17_0_ordering.json
+        data/emoji/LICENSE.googlefonts-emoji-metadata
 )
 
 target_link_libraries(whatkevr PRIVATE

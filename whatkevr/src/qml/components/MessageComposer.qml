@@ -11,6 +11,10 @@ Frame {
     property bool enabledForChat: false
     property bool sending: false
     property string errorText: ""
+    property real composerOverlayX: 0
+    property real composerOverlayY: 0
+    property real composerOverlayWidth: 0
+    property real composerOverlayHeight: 0
 
     signal sendTextRequested(string text)
     signal sendImageRequested(string fileUrl, string caption)
@@ -50,13 +54,75 @@ Frame {
         }
     }
 
-    function focusAndInsertText(text) {
+    function focusAndInsertText(text, focusInput) {
         if (!root.visible || !input.enabled || text.length === 0) {
             return
         }
 
-        input.forceActiveFocus(Qt.OtherFocusReason)
+        if (focusInput === undefined || focusInput) {
+            input.forceActiveFocus(Qt.OtherFocusReason)
+        }
         input.insert(input.cursorPosition, text)
+    }
+
+    function updateComposerOverlayRect() {
+        if (!Overlay.overlay) {
+            return
+        }
+
+        const pos = root.mapToItem(Overlay.overlay, 0, 0)
+        root.composerOverlayX = pos.x
+        root.composerOverlayY = pos.y
+        root.composerOverlayWidth = root.width
+        root.composerOverlayHeight = root.height
+    }
+
+    function positionEmojiPicker() {
+        if (!Overlay.overlay) {
+            return false
+        }
+
+        root.updateComposerOverlayRect()
+
+        const margin = Kirigami.Units.smallSpacing
+        const minHeight = Kirigami.Units.gridUnit * 12
+        const maxHeight = Kirigami.Units.gridUnit * 24
+        const minWidth = Kirigami.Units.gridUnit * 20
+        const maxWidth = Kirigami.Units.gridUnit * 30
+        const targetX = root.composerOverlayX + margin
+        const availableWidth = Math.max(0,
+                                        Math.min(root.composerOverlayWidth - margin * 2,
+                                                 Overlay.overlay.width - targetX - margin))
+        const availableAbove = root.composerOverlayY - margin * 2
+
+        if (availableWidth < minWidth || availableAbove < minHeight) {
+            return false
+        }
+
+        emojiPicker.width = Math.min(maxWidth, availableWidth)
+        emojiPicker.height = Math.min(maxHeight, availableAbove)
+        emojiPicker.x = targetX
+        emojiPicker.y = Math.max(margin, root.composerOverlayY - emojiPicker.height - margin)
+        return true
+    }
+
+    function toggleEmojiPicker() {
+        if (emojiPicker.opened) {
+            emojiPicker.close()
+            return
+        }
+
+        emojiPicker.prepareForOpen()
+        if (!root.positionEmojiPicker()) {
+            return
+        }
+        emojiPicker.open()
+    }
+
+    function handlePickerGeometryChanged() {
+        if (emojiPicker.opened && !root.positionEmojiPicker()) {
+            emojiPicker.close()
+        }
     }
 
     function setComposing(composing) {
@@ -86,6 +152,7 @@ Frame {
     onEnabledForChatChanged: {
         if (!enabledForChat) {
             root.setComposing(false)
+            emojiPicker.close()
         }
     }
     onSendingChanged: {
@@ -110,12 +177,27 @@ Frame {
             spacing: Kirigami.Units.smallSpacing
 
             ToolButton {
-                icon.name: "image-x-generic-symbolic"
-                text: Whatevr.I18n.i18nc("@action:button", "Attach image")
+                id: emojiButton
+
+                text: Whatevr.I18n.i18nc("@action:button", "Choose emoji")
                 display: AbstractButton.IconOnly
+                checkable: true
+                checked: emojiPicker.opened
                 enabled: root.enabledForChat && !root.sending
-                onClicked: imageDialog.open()
+                onClicked: root.toggleEmojiPicker()
                 Layout.alignment: Qt.AlignVCenter
+
+                contentItem: Text {
+                    text: "☺"
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                    color: emojiButton.checked ? Kirigami.Theme.highlightColor : Kirigami.Theme.textColor
+                    opacity: emojiButton.enabled ? 1 : 0.38
+                    font.family: Kirigami.Theme.defaultFont.family
+                    font.pixelSize: Math.round(Kirigami.Theme.defaultFont.pixelSize * 1.55)
+                    font.weight: Font.DemiBold
+                    renderType: Text.QtRendering
+                }
             }
 
             ScrollView {
@@ -156,15 +238,33 @@ Frame {
                     }
 
                     Keys.onPressed: event => {
-                        if (!event.matches(StandardKey.Paste)) {
+                        if (event.matches(StandardKey.Paste)) {
+                            if (Whatevr.AppController.sendClipboardImage(input.text.trim())) {
+                                event.accepted = true
+                                root.setComposing(false)
+                            }
                             return
                         }
-                        if (Whatevr.AppController.sendClipboardImage(input.text.trim())) {
+
+                        if (event.key === Qt.Key_Backspace
+                                && event.modifiers === Qt.NoModifier
+                                && input.cursorPosition > 0
+                                && input.selectionStart === input.selectionEnd) {
+                            const previous = Whatevr.AppController.previousGraphemeBoundary(input.text, input.cursorPosition)
+                            input.remove(previous, input.cursorPosition)
                             event.accepted = true
-                            root.setComposing(false)
                         }
                     }
                 }
+            }
+
+            ToolButton {
+                icon.name: "image-x-generic-symbolic"
+                text: Whatevr.I18n.i18nc("@action:button", "Attach image")
+                display: AbstractButton.IconOnly
+                enabled: root.enabledForChat && !root.sending
+                onClicked: imageDialog.open()
+                Layout.alignment: Qt.AlignVCenter
             }
 
             ToolButton {
@@ -176,6 +276,112 @@ Frame {
                 Layout.alignment: Qt.AlignVCenter
             }
         }
+    }
+
+    EmojiPicker {
+        id: emojiPicker
+
+        parent: Overlay.overlay
+        z: 10001
+        onEmojiSelected: emoji => root.focusAndInsertText(emoji, false)
+    }
+
+    Item {
+        id: emojiInteractionGuard
+
+        parent: Overlay.overlay
+        anchors.fill: parent
+        visible: emojiPicker.opened
+        z: 10000
+
+        readonly property real pickerBottom: emojiPicker.y + emojiPicker.height
+        readonly property real pickerRight: emojiPicker.x + emojiPicker.width
+        readonly property real composerBottom: root.composerOverlayY + root.composerOverlayHeight
+        readonly property real composerRight: root.composerOverlayX + root.composerOverlayWidth
+
+        function closePicker(mouse) {
+            emojiPicker.close()
+            mouse.accepted = true
+        }
+
+        MouseArea {
+            x: 0
+            y: 0
+            width: parent.width
+            height: Math.max(0, emojiPicker.y)
+            hoverEnabled: true
+            acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
+            onPressed: mouse => emojiInteractionGuard.closePicker(mouse)
+        }
+
+        MouseArea {
+            x: 0
+            y: emojiPicker.y
+            width: Math.max(0, emojiPicker.x)
+            height: emojiPicker.height
+            hoverEnabled: true
+            acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
+            onPressed: mouse => emojiInteractionGuard.closePicker(mouse)
+        }
+
+        MouseArea {
+            x: emojiInteractionGuard.pickerRight
+            y: emojiPicker.y
+            width: Math.max(0, parent.width - emojiInteractionGuard.pickerRight)
+            height: emojiPicker.height
+            hoverEnabled: true
+            acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
+            onPressed: mouse => emojiInteractionGuard.closePicker(mouse)
+        }
+
+        MouseArea {
+            x: 0
+            y: emojiInteractionGuard.pickerBottom
+            width: parent.width
+            height: Math.max(0, root.composerOverlayY - emojiInteractionGuard.pickerBottom)
+            hoverEnabled: true
+            acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
+            onPressed: mouse => emojiInteractionGuard.closePicker(mouse)
+        }
+
+        MouseArea {
+            x: 0
+            y: root.composerOverlayY
+            width: Math.max(0, root.composerOverlayX)
+            height: root.composerOverlayHeight
+            hoverEnabled: true
+            acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
+            onPressed: mouse => emojiInteractionGuard.closePicker(mouse)
+        }
+
+        MouseArea {
+            x: emojiInteractionGuard.composerRight
+            y: root.composerOverlayY
+            width: Math.max(0, parent.width - emojiInteractionGuard.composerRight)
+            height: root.composerOverlayHeight
+            hoverEnabled: true
+            acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
+            onPressed: mouse => emojiInteractionGuard.closePicker(mouse)
+        }
+
+        MouseArea {
+            x: 0
+            y: emojiInteractionGuard.composerBottom
+            width: parent.width
+            height: Math.max(0, parent.height - emojiInteractionGuard.composerBottom)
+            hoverEnabled: true
+            acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
+            onPressed: mouse => emojiInteractionGuard.closePicker(mouse)
+        }
+    }
+
+    onWidthChanged: root.handlePickerGeometryChanged()
+    onHeightChanged: root.handlePickerGeometryChanged()
+
+    Connections {
+        target: Overlay.overlay
+        function onWidthChanged() { root.handlePickerGeometryChanged() }
+        function onHeightChanged() { root.handlePickerGeometryChanged() }
     }
 
     Timer {

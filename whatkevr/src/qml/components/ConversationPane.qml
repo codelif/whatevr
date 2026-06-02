@@ -77,6 +77,12 @@ Kirigami.Page {
         onActiveChanged: if (active) messageView.clearMessageSelection()
     }
 
+    DragHandler {
+        target: null
+        acceptedButtons: Qt.LeftButton
+        enabled: Whatevr.AppController.hasSelectedChat
+    }
+
     titleDelegate: RowLayout {
         id: headerTitle
 
@@ -159,6 +165,15 @@ Kirigami.Page {
 
             Layout.fillWidth: true
             Layout.fillHeight: true
+
+            MouseArea {
+                anchors.fill: parent
+                acceptedButtons: Qt.LeftButton
+                onPressed: mouse => {
+                    root.forceActiveFocus(Qt.MouseFocusReason)
+                    mouse.accepted = true
+                }
+            }
 
             MessageView {
                 id: messageView

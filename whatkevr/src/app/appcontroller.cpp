@@ -10,6 +10,7 @@
 #include <QQmlEngine>
 #include <QLocale>
 #include <QStandardPaths>
+#include <QTextBoundaryFinder>
 #include <QTimer>
 #include <QUrl>
 #include <QUuid>
@@ -24,6 +25,7 @@
 #include <algorithm>
 
 #include "../models/chatlistmodel.h"
+#include "../models/emojimodel.h"
 #include "../models/messagelistmodel.h"
 #include "whatevr/v1/whatevr.qpb.h"
 #include "whatevr/v1/whatevr_client.grpc.qpb.h"
@@ -241,6 +243,7 @@ AppController::AppController(QObject *parent)
     : QObject(parent)
 {
     m_chatListModel = new ChatListModel(this);
+    m_emojiModel = new EmojiModel(this);
     m_messageListModel = new MessageListModel(this);
     m_frontendSessionId = QUuid::createUuid().toString(QUuid::WithoutBraces);
 
@@ -434,6 +437,11 @@ bool AppController::chatsEmpty() const
 QAbstractItemModel *AppController::messageListModel() const
 {
     return m_messageListModel;
+}
+
+QAbstractItemModel *AppController::emojiModel() const
+{
+    return m_emojiModel;
 }
 
 bool AppController::messagesLoading() const
@@ -714,6 +722,28 @@ void AppController::sendImage(const QString &fileUrl, const QString &caption)
 
         Q_EMIT composerChanged();
     });
+}
+
+void AppController::addRecentEmoji(const QString &emoji)
+{
+    m_emojiModel->addRecentEmoji(emoji);
+}
+
+int AppController::previousGraphemeBoundary(const QString &text, int cursorPosition) const
+{
+    const int position = qBound(0, cursorPosition, text.size());
+    if (position <= 0) {
+        return 0;
+    }
+
+    QTextBoundaryFinder finder(QTextBoundaryFinder::Grapheme, text);
+    finder.setPosition(position);
+    const int boundary = finder.toPreviousBoundary();
+    if (boundary >= 0 && boundary < position) {
+        return boundary;
+    }
+
+    return qMax(0, position - 1);
 }
 
 bool AppController::sendClipboardImage(const QString &caption)

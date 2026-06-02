@@ -56,6 +56,7 @@ enum class DaemonState : int32_t;
 }
 
 class ChatListModel;
+class EmojiModel;
 class MessageListModel;
 
 class AppController final : public QObject
@@ -84,6 +85,7 @@ class AppController final : public QObject
     Q_PROPERTY(bool chatsLoading READ chatsLoading NOTIFY chatsChanged FINAL)
     Q_PROPERTY(bool chatsEmpty READ chatsEmpty NOTIFY chatsChanged FINAL)
     Q_PROPERTY(QAbstractItemModel *messageListModel READ messageListModel CONSTANT FINAL)
+    Q_PROPERTY(QAbstractItemModel *emojiModel READ emojiModel CONSTANT FINAL)
     Q_PROPERTY(bool messagesLoading READ messagesLoading NOTIFY messagesChanged FINAL)
     Q_PROPERTY(bool olderMessagesLoading READ olderMessagesLoading NOTIFY messagesChanged FINAL)
     Q_PROPERTY(bool canLoadOlderMessages READ canLoadOlderMessages NOTIFY messagesChanged FINAL)
@@ -131,6 +133,7 @@ public:
     [[nodiscard]] bool chatsLoading() const;
     [[nodiscard]] bool chatsEmpty() const;
     [[nodiscard]] QAbstractItemModel *messageListModel() const;
+    [[nodiscard]] QAbstractItemModel *emojiModel() const;
     [[nodiscard]] bool messagesLoading() const;
     [[nodiscard]] bool olderMessagesLoading() const;
     [[nodiscard]] bool canLoadOlderMessages() const;
@@ -157,6 +160,8 @@ public:
     Q_INVOKABLE void loadOlderMessages();
     Q_INVOKABLE void sendText(const QString &text);
     Q_INVOKABLE void sendImage(const QString &fileUrl, const QString &caption = QString());
+    Q_INVOKABLE void addRecentEmoji(const QString &emoji);
+    Q_INVOKABLE [[nodiscard]] int previousGraphemeBoundary(const QString &text, int cursorPosition) const;
     Q_INVOKABLE bool sendClipboardImage(const QString &caption = QString());
     Q_INVOKABLE void setChatPinned(const QString &chatId, bool pinned);
     Q_INVOKABLE void setSelectedChatComposing(bool composing);
@@ -254,6 +259,7 @@ private:
     QStringList m_messageCacheOrder;
 
     ChatListModel *m_chatListModel = nullptr;
+    EmojiModel *m_emojiModel = nullptr;
     MessageListModel *m_messageListModel = nullptr;
 
     std::shared_ptr<QAbstractGrpcChannel> m_channel;

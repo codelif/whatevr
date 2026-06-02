@@ -28,12 +28,31 @@ Item {
     property real contentYBeforePrepend: 0
     property real originYBeforePrepend: 0
     property int clearSelectionGeneration: 0
+    property string activeSelectionMessageId: ""
 
     signal loadOlderMessagesRequested()
     signal conversationFocusRequested()
     signal typeIntoComposerRequested(string text)
 
+    DragHandler {
+        target: null
+        acceptedButtons: Qt.LeftButton
+    }
+
     function clearMessageSelection() {
+        activeSelectionMessageId = ""
+        clearSelectionGeneration += 1
+    }
+
+    function claimMessageSelection(messageId) {
+        if (messageId.length === 0) {
+            return
+        }
+        if (activeSelectionMessageId === messageId) {
+            return
+        }
+
+        activeSelectionMessageId = messageId
         clearSelectionGeneration += 1
     }
 
@@ -268,7 +287,9 @@ Item {
             mediaAnimated: Boolean(model.mediaAnimated)
             mediaDownloading: Whatevr.AppController.isMessageMediaDownloading(messageId)
             clearSelectionGeneration: root.clearSelectionGeneration
+            activeSelectionMessageId: root.activeSelectionMessageId
             onConversationFocusRequested: root.conversationFocusRequested()
+            onMessageSelectionClaimed: messageId => root.claimMessageSelection(messageId)
             onTypeIntoComposerRequested: text => root.typeIntoComposerRequested(text)
 
             Connections {
