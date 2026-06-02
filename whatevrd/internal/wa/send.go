@@ -436,7 +436,7 @@ func (c *Client) markPendingMessageFailed(ctx context.Context, messageID string,
 	}
 }
 
-func (c *Client) handleReceipt(evt *events.Receipt) {
+func (c *Client) handleReceipt(evt *events.Receipt, offlineSync bool) {
 	status, ok := receiptStatus(evt.Type)
 	if !ok {
 		return
@@ -462,7 +462,9 @@ func (c *Client) handleReceipt(evt *events.Receipt) {
 			continue
 		}
 
-		c.publishMessageStatusUpdated(context.Background(), message)
+		if !offlineSync {
+			c.publishMessageStatusUpdated(context.Background(), message)
+		}
 	}
 }
 

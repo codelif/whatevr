@@ -63,6 +63,15 @@ type Client struct {
 	profilePictureSyncActive  bool
 	profilePictureSyncRunning bool
 
+	offlineSyncMu                sync.Mutex
+	offlineSyncActive            bool
+	offlineSyncTotalEvents       uint32
+	offlineSyncTotalMessages     uint32
+	offlineSyncProcessedEvents   uint32
+	offlineSyncProcessedMessages uint32
+	offlineSyncChangedChats      map[string]uint32
+	offlineSyncLastPublish       time.Time
+
 	sendQueueMu   sync.Mutex
 	sendQueueWake chan struct{}
 	reconnectCh   chan struct{} // supervisor wakeup: reconnect immediately

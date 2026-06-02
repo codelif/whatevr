@@ -16,6 +16,18 @@ func (c *Client) handleEvent(eventGen uint64, raw any) {
 	if !c.isCurrentEventGeneration(eventGen) {
 		return
 	}
+	if evt, ok := raw.(*events.OfflineSyncPreview); ok {
+		c.handleOfflineSyncPreview(evt)
+		return
+	}
+	if evt, ok := raw.(*events.OfflineSyncCompleted); ok {
+		c.handleOfflineSyncCompleted(evt)
+		return
+	}
+	offlineSync := c.offlineSyncInProgress()
+	if offlineSync {
+		defer c.recordOfflineSyncEvent()
+	}
 
 	switch evt := raw.(type) {
 	case *events.Connected:
@@ -69,9 +81,11 @@ func (c *Client) handleEvent(eventGen uint64, raw any) {
 		c.daemon.SetConnMeta(0, 0, false)
 		c.daemon.SetStateDetail(app.StateOffline, evt.String())
 	case *events.Message:
-		c.handleMessage(c.backgroundContext(), evt)
+		c.handleMessage(c.backgroundContext(), evt, offlineSync)
+	case *events.UndecryptableMessage:
+		c.handleUndecryptableMessage(c.backgroundContext(), evt)
 	case *events.Receipt:
-		c.handleReceipt(evt)
+		c.handleReceipt(evt, offlineSync)
 	case *events.HistorySync:
 		c.handleHistorySync(eventGen, evt)
 	case *events.Pin:
