@@ -48,6 +48,48 @@ func TestPublishChatPresencePausedClearsImmediately(t *testing.T) {
 	assertChatPresenceEvent(t, nextDaemonEvent(t, events), "chat-1", "sender-1", false)
 }
 
+func TestClearChatComposingClearsMatchingSender(t *testing.T) {
+	withComposingPresenceTTL(t, time.Second)
+	d := NewDaemon(Paths{})
+	events, cancel := d.SubscribeDaemonEvents()
+	defer cancel()
+	drainInitialDaemonEvent(t, events)
+
+	d.PublishChatPresence("chat-1", "sender-1", true)
+	assertChatPresenceEvent(t, nextDaemonEvent(t, events), "chat-1", "sender-1", true)
+	if !d.ClearChatComposing("chat-1", "sender-1") {
+		t.Fatal("ClearChatComposing returned false")
+	}
+	assertChatPresenceEvent(t, nextDaemonEvent(t, events), "chat-1", "sender-1", false)
+}
+
+func TestClearChatComposingKeepsDifferentSender(t *testing.T) {
+	withComposingPresenceTTL(t, time.Second)
+	d := NewDaemon(Paths{})
+	events, cancel := d.SubscribeDaemonEvents()
+	defer cancel()
+	drainInitialDaemonEvent(t, events)
+
+	d.PublishChatPresence("chat-1", "sender-1", true)
+	assertChatPresenceEvent(t, nextDaemonEvent(t, events), "chat-1", "sender-1", true)
+	if d.ClearChatComposing("chat-1", "sender-2") {
+		t.Fatal("ClearChatComposing returned true for different sender")
+	}
+	assertNoDaemonEvent(t, events, 20*time.Millisecond)
+}
+
+func TestClearChatComposingReturnsFalseWhenNotComposing(t *testing.T) {
+	d := NewDaemon(Paths{})
+	events, cancel := d.SubscribeDaemonEvents()
+	defer cancel()
+	drainInitialDaemonEvent(t, events)
+
+	if d.ClearChatComposing("chat-1", "sender-1") {
+		t.Fatal("ClearChatComposing returned true without composing state")
+	}
+	assertNoDaemonEvent(t, events, 20*time.Millisecond)
+}
+
 func TestHasActiveHistorySyncTracksIncompleteProgress(t *testing.T) {
 	d := NewDaemon(Paths{})
 	if d.HasActiveHistorySync() {

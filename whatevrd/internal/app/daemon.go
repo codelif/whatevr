@@ -429,6 +429,26 @@ func (d *Daemon) PublishChatPresence(chatID, senderID string, isComposing bool) 
 	}
 }
 
+func (d *Daemon) ClearChatComposing(chatID, senderID string) bool {
+	d.subMu.Lock()
+	state, ok := d.presenceByChatID[chatID]
+	if !ok || !state.IsComposing || state.SenderID != senderID {
+		d.subMu.Unlock()
+		return false
+	}
+	state.IsComposing = false
+	d.presenceByChatID[chatID] = state
+	d.subMu.Unlock()
+
+	d.broadcastDaemonEvent(DaemonEvent{
+		Kind:        DaemonEventChatPresence,
+		Chat:        Chat{ID: chatID},
+		SenderID:    senderID,
+		IsComposing: false,
+	})
+	return true
+}
+
 func (d *Daemon) scheduleComposingPresenceExpiry(chatID, senderID string, updatedAt time.Time) {
 	ttl := composingPresenceTTL
 	go func() {

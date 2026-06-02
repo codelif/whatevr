@@ -340,6 +340,7 @@ func (c *Client) ingestMessage(ctx context.Context, evt *events.Message, opts in
 			message := toDaemonMessage(saved.Message)
 			chat := toDaemonChat(saved.Chat)
 			c.daemon.PublishNewMessage(message, chat)
+			c.clearComposingAfterLiveIncomingMessage(message)
 			if c.notifier != nil && c.shouldNotifyLiveMessage(message, chat.ID, textInput.CountUnread) {
 				c.notifier.NotifyMessage(ctx, message, chat)
 			}
@@ -378,6 +379,7 @@ func (c *Client) ingestMessage(ctx context.Context, evt *events.Message, opts in
 			message := toDaemonMessage(saved.Message)
 			chat := toDaemonChat(saved.Chat)
 			c.daemon.PublishNewMessage(message, chat)
+			c.clearComposingAfterLiveIncomingMessage(message)
 			if c.notifier != nil && c.shouldNotifyLiveMessage(message, chat.ID, mediaInput.CountUnread) {
 				c.notifier.NotifyMessage(ctx, message, chat)
 			}
@@ -386,6 +388,13 @@ func (c *Client) ingestMessage(ctx context.Context, evt *events.Message, opts in
 	}
 
 	return appstore.SavedTextMessage{}, false
+}
+
+func (c *Client) clearComposingAfterLiveIncomingMessage(message app.Message) {
+	if message.Direction != appstore.DirectionIncoming || message.ChatID == "" || message.SenderID == "" {
+		return
+	}
+	c.daemon.ClearChatComposing(message.ChatID, message.SenderID)
 }
 
 func (c *Client) shouldNotifyLiveMessage(message app.Message, chatID string, countUnread bool) bool {
