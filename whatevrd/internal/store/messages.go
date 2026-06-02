@@ -87,6 +87,12 @@ type SavedTextMessage struct {
 	Inserted bool
 }
 
+type MessageTimestampCorrection struct {
+	Message Message
+	Chat    Chat
+	Changed bool
+}
+
 func (db *DB) SaveTextMessage(ctx context.Context, input TextMessageInput) (SavedTextMessage, error) {
 	if input.ID == "" {
 		return SavedTextMessage{}, errors.New("message id is required")
@@ -243,21 +249,7 @@ func (db *DB) SaveMediaMessage(ctx context.Context, input MediaMessageInput) (Sa
 		input.MediaPayload = []byte{}
 	}
 
-	lastMessage := input.Text
-	if lastMessage == "" {
-		switch {
-		case input.MediaKind == MediaKindSticker:
-			lastMessage = "[Sticker]"
-		case input.MediaMimeType == "image/jpeg" || input.MediaMimeType == "image/png" || input.MediaMimeType == "image/webp" || input.MediaMimeType == "image/gif":
-			lastMessage = "[Image]"
-		case input.MediaMimeType == "video/mp4" || input.MediaMimeType == "video/webm":
-			lastMessage = "[Video]"
-		case input.MediaMimeType == "audio/ogg" || input.MediaMimeType == "audio/mpeg":
-			lastMessage = "[Audio]"
-		default:
-			lastMessage = "[Media]"
-		}
-	}
+	lastMessage := messageSummary(input.Text, input.MediaKind, input.MediaMimeType)
 
 	tx, err := db.conn.BeginTx(ctx, nil)
 	if err != nil {
@@ -326,6 +318,172 @@ func (db *DB) SaveMediaMessage(ctx context.Context, input MediaMessageInput) (Sa
 	}
 
 	return SavedTextMessage{Message: message, Chat: chat, Inserted: inserted}, nil
+}
+
+func messageSummary(text, mediaKind, mediaMimeType string) string {
+	if text != "" {
+		return text
+	}
+	switch {
+	case mediaKind == MediaKindSticker:
+		return "[Sticker]"
+	case mediaMimeType == "image/jpeg" || mediaMimeType == "image/png" || mediaMimeType == "image/webp" || mediaMimeType == "image/gif":
+		return "[Image]"
+	case mediaMimeType == "video/mp4" || mediaMimeType == "video/webm":
+		return "[Video]"
+	case mediaMimeType == "audio/ogg" || mediaMimeType == "audio/mpeg":
+		return "[Audio]"
+	default:
+		return "[Media]"
+	}
+}
+
+func (db *DB) RecordUndecryptableMessageTimestamp(ctx context.Context, id, chatID, messageID, senderID string, timestamp time.Time) (MessageTimestampCorrection, error) {
+	if id == "" || chatID == "" || messageID == "" || timestamp.IsZero() {
+		return MessageTimestampCorrection{}, nil
+	}
+	timestampUnix := timestamp.Unix()
+	if timestampUnix <= 0 {
+		return MessageTimestampCorrection{}, nil
+	}
+
+	tx, err := db.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return MessageTimestampCorrection{}, err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO undecryptable_messages (id, chat_id, message_id, sender_id, timestamp)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			chat_id = excluded.chat_id,
+			message_id = excluded.message_id,
+			sender_id = CASE WHEN excluded.sender_id != '' THEN excluded.sender_id ELSE undecryptable_messages.sender_id END,
+			timestamp = MIN(undecryptable_messages.timestamp, excluded.timestamp),
+			updated_at = unixepoch()
+	`, id, chatID, messageID, senderID, timestampUnix); err != nil {
+		return MessageTimestampCorrection{}, err
+	}
+
+	var effectiveTimestampUnix int64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT timestamp
+		FROM undecryptable_messages
+		WHERE id = ?
+	`, id).Scan(&effectiveTimestampUnix); err != nil {
+		return MessageTimestampCorrection{}, err
+	}
+
+	result, err := tx.ExecContext(ctx, `
+		UPDATE messages
+		SET timestamp = ?
+		WHERE id = ? AND timestamp > ?
+	`, effectiveTimestampUnix, id, effectiveTimestampUnix)
+	if err != nil {
+		return MessageTimestampCorrection{}, err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return MessageTimestampCorrection{}, err
+	}
+
+	var correction MessageTimestampCorrection
+	if rowsAffected > 0 {
+		if err := recomputeChatSummaryTx(ctx, tx, chatID); err != nil {
+			return MessageTimestampCorrection{}, err
+		}
+		message, err := getMessageTx(ctx, tx, id)
+		if err != nil {
+			return MessageTimestampCorrection{}, err
+		}
+		chat, err := getChatTx(ctx, tx, chatID)
+		if err != nil {
+			return MessageTimestampCorrection{}, err
+		}
+		correction = MessageTimestampCorrection{Message: message, Chat: chat, Changed: true}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return MessageTimestampCorrection{}, err
+	}
+	return correction, nil
+}
+
+func (db *DB) LookupUndecryptableMessageTimestamp(ctx context.Context, id string) (time.Time, bool, error) {
+	if id == "" {
+		return time.Time{}, false, nil
+	}
+	var timestampUnix int64
+	err := db.conn.QueryRowContext(ctx, `
+		SELECT timestamp
+		FROM undecryptable_messages
+		WHERE id = ?
+	`, id).Scan(&timestampUnix)
+	if errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, false, nil
+	}
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	if timestampUnix <= 0 {
+		return time.Time{}, false, nil
+	}
+	return time.Unix(timestampUnix, 0), true, nil
+}
+
+func (db *DB) PruneUndecryptableMessageTimestamps(ctx context.Context, olderThan time.Time) error {
+	if olderThan.IsZero() {
+		return nil
+	}
+	_, err := db.conn.ExecContext(ctx, `
+		DELETE FROM undecryptable_messages
+		WHERE created_at < ?
+	`, olderThan.Unix())
+	return err
+}
+
+func recomputeChatSummaryTx(ctx context.Context, tx *sql.Tx, chatID string) error {
+	_, err := tx.ExecContext(ctx, `
+		UPDATE chats
+		SET last_message = COALESCE((
+				SELECT CASE
+					WHEN text != '' THEN text
+					WHEN media_kind = 'sticker' THEN '[Sticker]'
+					WHEN media_mime_type IN ('image/jpeg', 'image/png', 'image/webp', 'image/gif') THEN '[Image]'
+					WHEN media_mime_type IN ('video/mp4', 'video/webm') THEN '[Video]'
+					WHEN media_mime_type IN ('audio/ogg', 'audio/mpeg') THEN '[Audio]'
+					ELSE '[Media]'
+				END
+				FROM messages
+				WHERE chat_id = ?
+				ORDER BY timestamp DESC, id DESC
+				LIMIT 1
+			), ''),
+			last_message_time = COALESCE((
+				SELECT timestamp
+				FROM messages
+				WHERE chat_id = ?
+				ORDER BY timestamp DESC, id DESC
+				LIMIT 1
+			), 0),
+			last_message_direction = COALESCE((
+				SELECT direction
+				FROM messages
+				WHERE chat_id = ?
+				ORDER BY timestamp DESC, id DESC
+				LIMIT 1
+			), ''),
+			last_message_status = COALESCE((
+				SELECT status
+				FROM messages
+				WHERE chat_id = ?
+				ORDER BY timestamp DESC, id DESC
+				LIMIT 1
+			), '')
+		WHERE id = ?
+	`, chatID, chatID, chatID, chatID, chatID)
+	return err
 }
 
 func (db *DB) ListMessages(ctx context.Context, chatID string, limit int, beforeMessageID string) ([]Message, error) {

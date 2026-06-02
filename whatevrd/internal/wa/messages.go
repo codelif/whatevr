@@ -28,9 +28,12 @@ type ingestSource int
 const (
 	sourceLive ingestSource = iota
 	sourceHistorySync
+	sourceOfflineSync
 )
 
 const liveNotificationMaxAge = 2 * time.Minute
+const historySyncProgressInterval = 250 * time.Millisecond
+const undecryptableMessageRetention = 7 * 24 * time.Hour
 
 type ingestOptions struct {
 	source           ingestSource
@@ -43,7 +46,8 @@ type ingestOptions struct {
 	// Used during history sync when the conversation is already read on
 	// the phone — we don't want to spuriously bump unread badges that
 	// the user already cleared.
-	forceRead bool
+	forceRead         bool
+	timestampOverride time.Time
 }
 
 func (c *Client) handleHistorySync(eventGen uint64, evt *events.HistorySync) {
@@ -84,7 +88,28 @@ func (c *Client) processHistorySyncData(ctx context.Context, data *waHistorySync
 		ConversationsInChunk: uint32(len(conversations)),
 		MessagesInChunk:      totalMessages,
 		IsComplete:           false,
+		Phase:                app.HistorySyncPhaseProcessing,
 	})
+	processedConversations := uint32(0)
+	processedMessages := uint32(0)
+	lastProgressPublish := time.Now()
+	publishProcessingProgress := func(force bool) {
+		if !force && time.Since(lastProgressPublish) < historySyncProgressInterval {
+			return
+		}
+		lastProgressPublish = time.Now()
+		c.daemon.PublishHistorySyncProgress(app.HistorySyncEvent{
+			SyncType:               syncType,
+			ProgressPercent:        progressPercent,
+			ChunkOrder:             chunkOrder,
+			ConversationsInChunk:   uint32(len(conversations)),
+			MessagesInChunk:        totalMessages,
+			IsComplete:             false,
+			Phase:                  app.HistorySyncPhaseProcessing,
+			ProcessedConversations: processedConversations,
+			ProcessedMessages:      processedMessages,
+		})
+	}
 
 	for _, conv := range conversations {
 		if ctx.Err() != nil {
@@ -124,13 +149,16 @@ func (c *Client) processHistorySyncData(ctx context.Context, data *waHistorySync
 			if ctx.Err() != nil {
 				return
 			}
+			processedMessages++
 			webMsg := msg.GetMessage()
 			if webMsg == nil {
+				publishProcessingProgress(false)
 				continue
 			}
 			parsedEvt, err := client.ParseWebMessage(chatJID, webMsg)
 			if err != nil {
 				c.log.Warnf("Failed to parse history sync message: %v", err)
+				publishProcessingProgress(false)
 				continue
 			}
 			opts := ingestOptions{
@@ -145,7 +173,10 @@ func (c *Client) processHistorySyncData(ctx context.Context, data *waHistorySync
 				messagesAdded++
 				lastSavedChat = saved.Chat
 			}
+			publishProcessingProgress(false)
 		}
+		processedConversations++
+		publishProcessingProgress(true)
 
 		// Mirror the phone's read state on the chat row even if the
 		// per-message rows we just inserted didn't bump it (CountUnread
@@ -180,25 +211,88 @@ func (c *Client) processHistorySyncData(ctx context.Context, data *waHistorySync
 
 	complete := historySyncIsComplete(syncType, progressPercent)
 	c.daemon.PublishHistorySyncProgress(app.HistorySyncEvent{
-		SyncType:             syncType,
-		ProgressPercent:      progressPercent,
-		ChunkOrder:           chunkOrder,
-		ConversationsInChunk: uint32(len(conversations)),
-		MessagesInChunk:      totalMessages,
-		IsComplete:           complete,
+		SyncType:               syncType,
+		ProgressPercent:        progressPercent,
+		ChunkOrder:             chunkOrder,
+		ConversationsInChunk:   uint32(len(conversations)),
+		MessagesInChunk:        totalMessages,
+		IsComplete:             complete,
+		Phase:                  historySyncProgressPhase(complete),
+		ProcessedConversations: processedConversations,
+		ProcessedMessages:      processedMessages,
 	})
 	if complete {
 		c.finishHistorySyncAvatarDeferral(syncType, progressPercent)
 	}
 }
 
-func (c *Client) handleMessage(ctx context.Context, evt *events.Message) {
+func (c *Client) handleMessage(ctx context.Context, evt *events.Message, offlineSync bool) {
 	if c.handleManualHistorySyncNotification(ctx, evt) {
 		return
 	}
-	saved, _ := c.ingestMessage(ctx, evt, ingestOptions{source: sourceLive})
+	source := sourceLive
+	if offlineSync {
+		source = sourceOfflineSync
+	}
+	opts := ingestOptions{source: source}
+	if timestamp, ok := c.originalRetryTimestamp(ctx, evt); ok {
+		opts.timestampOverride = timestamp
+	}
+	saved, inserted := c.ingestMessage(ctx, evt, opts)
+	if offlineSync {
+		c.recordOfflineSyncMessage(saved.Chat.ID, inserted)
+		return
+	}
 	c.refreshRawGroupNameForChat(ctx, saved.Chat)
 	c.refreshLiveMessageAvatars(ctx, evt)
+}
+
+func (c *Client) handleUndecryptableMessage(ctx context.Context, evt *events.UndecryptableMessage) {
+	if evt == nil {
+		return
+	}
+	chatID, internalID := c.internalMessageIDFromInfo(ctx, evt.Info)
+	if chatID == "" || internalID == "" || evt.Info.Timestamp.IsZero() {
+		return
+	}
+
+	correction, err := c.store.RecordUndecryptableMessageTimestamp(ctx, internalID, chatID, string(evt.Info.ID), senderID(evt.Info), evt.Info.Timestamp)
+	if err != nil {
+		c.log.Warnf("Failed to record undecryptable message timestamp for %s: %v", internalID, err)
+		return
+	}
+	if err := c.store.PruneUndecryptableMessageTimestamps(ctx, time.Now().Add(-undecryptableMessageRetention)); err != nil {
+		c.log.Warnf("Failed to prune undecryptable message timestamps: %v", err)
+	}
+	if correction.Changed {
+		c.daemon.PublishMessageUpdated(toDaemonMessage(correction.Message))
+		c.daemon.PublishChatUpdated(toDaemonChat(correction.Chat))
+	}
+}
+
+func (c *Client) originalRetryTimestamp(ctx context.Context, evt *events.Message) (time.Time, bool) {
+	if evt == nil || (evt.RetryCount <= 0 && evt.UnavailableRequestID == "") {
+		return time.Time{}, false
+	}
+	_, internalID := c.internalMessageIDFromInfo(ctx, evt.Info)
+	if internalID == "" {
+		return time.Time{}, false
+	}
+	timestamp, ok, err := c.store.LookupUndecryptableMessageTimestamp(ctx, internalID)
+	if err != nil {
+		c.log.Warnf("Failed to look up undecryptable message timestamp for %s: %v", internalID, err)
+		return time.Time{}, false
+	}
+	return timestamp, ok
+}
+
+func (c *Client) internalMessageIDFromInfo(ctx context.Context, info types.MessageInfo) (string, string) {
+	chatJID := c.normalizeJIDForChat(ctx, info.Chat)
+	chatID := chatJID.String()
+	if chatID == "" || info.ID == "" {
+		return "", ""
+	}
+	return chatID, internalMessageIDForChat(chatID, info.ID)
 }
 
 func (c *Client) refreshLiveMessageAvatars(ctx context.Context, evt *events.Message) {
@@ -237,6 +331,8 @@ func (c *Client) ingestMessage(ctx context.Context, evt *events.Message, opts in
 		}
 		if opts.source == sourceLive {
 			c.log.Infof("Stored text message %s from %s", saved.Message.ID, saved.Message.SenderID)
+		} else if opts.source == sourceOfflineSync {
+			c.log.Debugf("Stored offline-sync text message %s from %s", saved.Message.ID, saved.Message.SenderID)
 		} else {
 			c.log.Debugf("Stored history text message %s from %s", saved.Message.ID, saved.Message.SenderID)
 		}
@@ -273,6 +369,8 @@ func (c *Client) ingestMessage(ctx context.Context, evt *events.Message, opts in
 		}
 		if opts.source == sourceLive {
 			c.log.Infof("Stored media message %s from %s", saved.Message.ID, saved.Message.SenderID)
+		} else if opts.source == sourceOfflineSync {
+			c.log.Debugf("Stored offline-sync media message %s from %s", saved.Message.ID, saved.Message.SenderID)
 		} else {
 			c.log.Debugf("Stored history media message %s from %s", saved.Message.ID, saved.Message.SenderID)
 		}
@@ -348,7 +446,7 @@ func (c *Client) imageMessageInput(ctx context.Context, evt *events.Message, opt
 			SenderID:       senderID(info),
 			SenderName:     c.senderName(ctx, senderJID(info)),
 			Text:           caption,
-			Timestamp:      info.Timestamp,
+			Timestamp:      messageTimestamp(info, opts, evt.SourceWebMsg),
 			Direction:      direction,
 			Status:         status,
 			IsGroup:        info.IsGroup,
@@ -400,7 +498,7 @@ func (c *Client) stickerMessageInput(ctx context.Context, evt *events.Message, o
 			ChatNameSource: c.chatNameSource(ctx, chatJID, info.IsGroup, opts.chatNameOverride, opts.chatNameSource),
 			SenderID:       senderID(info),
 			SenderName:     c.senderName(ctx, senderJID(info)),
-			Timestamp:      info.Timestamp,
+			Timestamp:      messageTimestamp(info, opts, evt.SourceWebMsg),
 			Direction:      direction,
 			Status:         status,
 			IsGroup:        info.IsGroup,
@@ -485,7 +583,7 @@ func (c *Client) textMessageInput(ctx context.Context, evt *events.Message, opts
 		SenderID:       senderID(info),
 		SenderName:     c.senderName(ctx, senderJID(info)),
 		Text:           text,
-		Timestamp:      info.Timestamp,
+		Timestamp:      messageTimestamp(info, opts, evt.SourceWebMsg),
 		Direction:      direction,
 		Status:         status,
 		IsGroup:        info.IsGroup,
@@ -517,6 +615,39 @@ func messageDirectionAndStatus(info types.MessageInfo, opts ingestOptions) (stri
 		return appstore.DirectionOutgoing, status
 	}
 	return appstore.DirectionIncoming, appstore.StatusDelivered
+}
+
+func messageTimestamp(info types.MessageInfo, opts ingestOptions, webMsg *waWeb.WebMessageInfo) time.Time {
+	if !opts.timestampOverride.IsZero() {
+		return opts.timestampOverride
+	}
+	if opts.source == sourceHistorySync && info.IsFromMe && webMsg != nil {
+		if timestamp, ok := whatsAppUnixTimestamp(webMsg.GetMessageC2STimestamp()); ok {
+			return timestamp
+		}
+	}
+	return info.Timestamp
+}
+
+func whatsAppUnixTimestamp(value uint64) (time.Time, bool) {
+	const maxReasonableUnixSeconds = 4102444800 // 2100-01-01
+	if value == 0 {
+		return time.Time{}, false
+	}
+	if value <= maxReasonableUnixSeconds {
+		return time.Unix(int64(value), 0), true
+	}
+	if value <= maxReasonableUnixSeconds*1000 {
+		return time.UnixMilli(int64(value)), true
+	}
+	return time.Time{}, false
+}
+
+func historySyncProgressPhase(complete bool) app.HistorySyncPhase {
+	if complete {
+		return app.HistorySyncPhaseComplete
+	}
+	return app.HistorySyncPhaseProcessing
 }
 
 func shouldCountUnread(evt *events.Message, opts ingestOptions) bool {
@@ -653,11 +784,11 @@ func (c *Client) displayNameForChat(ctx context.Context, chatJID types.JID, isGr
 	if name := c.contactNameForJID(ctx, chatJID); name != "" {
 		return name, appstore.ChatNameSourceContact
 	}
-	if name := c.whatsAppNameForJID(ctx, chatJID); name != "" {
-		return name, appstore.ChatNameSourceWhatsApp
-	}
 	if phone := formatPhoneDisplayName(chatJID); phone != "" {
 		return phone, appstore.ChatNameSourcePhone
+	}
+	if name := c.whatsAppNameForJID(ctx, chatJID); name != "" {
+		return name, appstore.ChatNameSourceWhatsApp
 	}
 	return "", ""
 }

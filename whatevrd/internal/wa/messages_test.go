@@ -1,6 +1,7 @@
 package wa
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -160,10 +161,104 @@ func TestNotificationTimestampFreshSuppressesStaleReconnectBacklog(t *testing.T)
 	}
 }
 
+func TestMessageTimestampPrefersOutgoingHistoryC2STimestamp(t *testing.T) {
+	c2s := uint64(1_700_000_100)
+	info := types.MessageInfo{
+		MessageSource: types.MessageSource{IsFromMe: true},
+		Timestamp:     time.Unix(1_700_000_200, 0),
+	}
+	webMsg := &waWeb.WebMessageInfo{MessageC2STimestamp: &c2s}
+
+	got := messageTimestamp(info, ingestOptions{source: sourceHistorySync}, webMsg)
+	if want := time.Unix(1_700_000_100, 0); !got.Equal(want) {
+		t.Fatalf("messageTimestamp() = %v, want %v", got, want)
+	}
+}
+
+func TestMessageTimestampParsesMillisecondC2STimestamp(t *testing.T) {
+	c2s := uint64(1_700_000_100_123)
+	info := types.MessageInfo{
+		MessageSource: types.MessageSource{IsFromMe: true},
+		Timestamp:     time.Unix(1_700_000_200, 0),
+	}
+	webMsg := &waWeb.WebMessageInfo{MessageC2STimestamp: &c2s}
+
+	got := messageTimestamp(info, ingestOptions{source: sourceHistorySync}, webMsg)
+	if want := time.UnixMilli(1_700_000_100_123); !got.Equal(want) {
+		t.Fatalf("messageTimestamp() = %v, want %v", got, want)
+	}
+}
+
+func TestMessageTimestampFallsBackForIncomingLiveAndInvalidC2S(t *testing.T) {
+	fallback := time.Unix(1_700_000_200, 0)
+	c2s := uint64(1_700_000_100)
+	invalidC2S := uint64(9_999_999_999_999)
+
+	cases := []struct {
+		name   string
+		info   types.MessageInfo
+		opts   ingestOptions
+		webMsg *waWeb.WebMessageInfo
+	}{
+		{
+			name:   "incoming history",
+			info:   types.MessageInfo{MessageSource: types.MessageSource{IsFromMe: false}, Timestamp: fallback},
+			opts:   ingestOptions{source: sourceHistorySync},
+			webMsg: &waWeb.WebMessageInfo{MessageC2STimestamp: &c2s},
+		},
+		{
+			name:   "live outgoing",
+			info:   types.MessageInfo{MessageSource: types.MessageSource{IsFromMe: true}, Timestamp: fallback},
+			opts:   ingestOptions{source: sourceLive},
+			webMsg: &waWeb.WebMessageInfo{MessageC2STimestamp: &c2s},
+		},
+		{
+			name:   "invalid c2s",
+			info:   types.MessageInfo{MessageSource: types.MessageSource{IsFromMe: true}, Timestamp: fallback},
+			opts:   ingestOptions{source: sourceHistorySync},
+			webMsg: &waWeb.WebMessageInfo{MessageC2STimestamp: &invalidC2S},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := messageTimestamp(tc.info, tc.opts, tc.webMsg); !got.Equal(fallback) {
+				t.Fatalf("messageTimestamp() = %v, want fallback %v", got, fallback)
+			}
+		})
+	}
+}
+
+func TestMessageTimestampPrefersRetryTimestampOverride(t *testing.T) {
+	fallback := time.Unix(1_700_000_200, 0)
+	override := time.Unix(1_700_000_100, 0)
+	c2s := uint64(1_700_000_050)
+	info := types.MessageInfo{
+		MessageSource: types.MessageSource{IsFromMe: true},
+		Timestamp:     fallback,
+	}
+	webMsg := &waWeb.WebMessageInfo{MessageC2STimestamp: &c2s}
+
+	got := messageTimestamp(info, ingestOptions{source: sourceHistorySync, timestampOverride: override}, webMsg)
+	if !got.Equal(override) {
+		t.Fatalf("messageTimestamp() = %v, want override %v", got, override)
+	}
+}
+
 func TestFormatPhoneDisplayNameFormatsInternationalNumber(t *testing.T) {
 	jid := types.NewJID("917060029183", types.DefaultUserServer)
 	if got, want := formatPhoneDisplayName(jid), "+91 70600 29183"; got != want {
 		t.Fatalf("formatPhoneDisplayName() = %q, want %q", got, want)
+	}
+}
+
+func TestDisplayNameForChatUsesPhoneFallbackForOneToOne(t *testing.T) {
+	client := &Client{}
+	jid := types.NewJID("917060029183", types.DefaultUserServer)
+
+	name, source := client.displayNameForChat(context.Background(), jid, false, "", "")
+	if name != "+91 70600 29183" || source != appstore.ChatNameSourcePhone {
+		t.Fatalf("displayNameForChat() = %q, %q; want formatted phone source", name, source)
 	}
 }
 

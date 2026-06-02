@@ -123,6 +123,102 @@ func TestSaveTextMessageDoesNotRegressChatSummary(t *testing.T) {
 	}
 }
 
+func TestRecordUndecryptableMessageTimestampKeepsEarliest(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	if _, err := db.RecordUndecryptableMessageTimestamp(ctx, "chat-1:msg-1", "chat-1", "msg-1", "sender-1", time.Unix(200, 0)); err != nil {
+		t.Fatalf("record later timestamp: %v", err)
+	}
+	if _, err := db.RecordUndecryptableMessageTimestamp(ctx, "chat-1:msg-1", "chat-1", "msg-1", "sender-1", time.Unix(100, 0)); err != nil {
+		t.Fatalf("record earlier timestamp: %v", err)
+	}
+	if _, err := db.RecordUndecryptableMessageTimestamp(ctx, "chat-1:msg-1", "chat-1", "msg-1", "sender-1", time.Unix(300, 0)); err != nil {
+		t.Fatalf("record latest timestamp: %v", err)
+	}
+
+	timestamp, ok, err := db.LookupUndecryptableMessageTimestamp(ctx, "chat-1:msg-1")
+	if err != nil {
+		t.Fatalf("lookup timestamp: %v", err)
+	}
+	if !ok || timestamp.Unix() != 100 {
+		t.Fatalf("lookup = %v, %t, want unix 100", timestamp, ok)
+	}
+}
+
+func TestRecordUndecryptableMessageTimestampCorrectsExistingMessageAndChatSummary(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	if _, err := db.SaveTextMessage(ctx, TextMessageInput{
+		ID:        "chat-1:newer",
+		ChatID:    "chat-1",
+		ChatName:  "Test Chat",
+		SenderID:  "sender-1",
+		Text:      "newer",
+		Timestamp: time.Unix(300, 0),
+		Direction: DirectionIncoming,
+		Status:    StatusDelivered,
+	}); err != nil {
+		t.Fatalf("save newer message: %v", err)
+	}
+	if _, err := db.RecordUndecryptableMessageTimestamp(ctx, "chat-1:image", "chat-1", "image", "sender-2", time.Unix(200, 0)); err != nil {
+		t.Fatalf("record original undecryptable timestamp: %v", err)
+	}
+	if _, err := db.SaveMediaMessage(ctx, MediaMessageInput{
+		TextMessageInput: TextMessageInput{
+			ID:        "chat-1:image",
+			ChatID:    "chat-1",
+			ChatName:  "Test Chat",
+			SenderID:  "sender-2",
+			Timestamp: time.Unix(400, 0),
+			Direction: DirectionIncoming,
+			Status:    StatusDelivered,
+		},
+		MediaKind:     MediaKindImage,
+		MediaMimeType: "image/jpeg",
+	}); err != nil {
+		t.Fatalf("save image message: %v", err)
+	}
+	chat, err := db.GetChat(ctx, "chat-1")
+	if err != nil {
+		t.Fatalf("get chat before correction: %v", err)
+	}
+	if chat.LastMessage != "[Image]" || chat.LastMessageTime != 400 {
+		t.Fatalf("chat before correction = %+v, want image at 400", chat)
+	}
+
+	correction, err := db.RecordUndecryptableMessageTimestamp(ctx, "chat-1:image", "chat-1", "image", "sender-2", time.Unix(300, 0))
+	if err != nil {
+		t.Fatalf("record undecryptable timestamp: %v", err)
+	}
+	if !correction.Changed {
+		t.Fatal("expected timestamp correction")
+	}
+	if correction.Message.TimestampUnix != 200 {
+		t.Fatalf("corrected timestamp = %d, want 200", correction.Message.TimestampUnix)
+	}
+	if correction.Chat.LastMessage != "newer" || correction.Chat.LastMessageTime != 300 {
+		t.Fatalf("corrected chat = %+v, want newer at 300", correction.Chat)
+	}
+
+	message, err := db.GetMessage(ctx, "chat-1:image")
+	if err != nil {
+		t.Fatalf("get corrected message: %v", err)
+	}
+	if message.TimestampUnix != 200 {
+		t.Fatalf("stored timestamp = %d, want 200", message.TimestampUnix)
+	}
+}
+
 func TestListMessagesIncludesSenderProfile(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
@@ -428,6 +524,39 @@ func TestPhoneFallbackReplacesRawChatName(t *testing.T) {
 	}
 	if second.Chat.Name != "+91 70600 29183" || second.Chat.NameSource != ChatNameSourcePhone {
 		t.Fatalf("phone fallback did not replace raw name: %+v", second.Chat)
+	}
+}
+
+func TestListChatsFormatsWhatsAppNameForDirectChat(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	chatID := "917060029183@s.whatsapp.net"
+	if _, err := db.EnsureChatWithNameSource(ctx, chatID, "~Alice", ChatNameSourceWhatsApp, false); err != nil {
+		t.Fatalf("ensure chat: %v", err)
+	}
+
+	chats, err := db.ListChats(ctx, 10, 0)
+	if err != nil {
+		t.Fatalf("list chats: %v", err)
+	}
+	if len(chats) != 1 {
+		t.Fatalf("got %d chats, want 1", len(chats))
+	}
+	if chats[0].Name != "+91 70600 29183" || chats[0].NameSource != ChatNameSourcePhone {
+		t.Fatalf("listed chat = %+v, want formatted phone", chats[0])
+	}
+
+	stored, err := db.GetChat(ctx, chatID)
+	if err != nil {
+		t.Fatalf("get chat: %v", err)
+	}
+	if stored.Name != "~Alice" || stored.NameSource != ChatNameSourceWhatsApp {
+		t.Fatalf("stored chat = %+v, want original WhatsApp name", stored)
 	}
 }
 

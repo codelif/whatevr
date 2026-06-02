@@ -10,7 +10,7 @@ import (
 	"modernc.org/sqlite"
 )
 
-const schemaVersion = 2
+const schemaVersion = 3
 
 type DB struct {
 	conn *sql.DB
@@ -131,6 +131,16 @@ func (db *DB) migrate(ctx context.Context) error {
 			created_at INTEGER NOT NULL DEFAULT (unixepoch()),
 			updated_at INTEGER NOT NULL DEFAULT (unixepoch())
 		)`,
+		`CREATE TABLE IF NOT EXISTS undecryptable_messages (
+			id TEXT PRIMARY KEY,
+			chat_id TEXT NOT NULL,
+			message_id TEXT NOT NULL,
+			sender_id TEXT NOT NULL DEFAULT '',
+			timestamp INTEGER NOT NULL,
+			created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+			updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_undecryptable_messages_created_at ON undecryptable_messages(created_at)`,
 	}
 
 	for _, statement := range statements {
@@ -183,7 +193,29 @@ func (db *DB) migrate(ctx context.Context) error {
 		return err
 	}
 
+	if err := db.ensureUndecryptableMessagesTable(ctx); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+func (db *DB) ensureUndecryptableMessagesTable(ctx context.Context) error {
+	if _, err := db.conn.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS undecryptable_messages (
+			id TEXT PRIMARY KEY,
+			chat_id TEXT NOT NULL,
+			message_id TEXT NOT NULL,
+			sender_id TEXT NOT NULL DEFAULT '',
+			timestamp INTEGER NOT NULL,
+			created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+			updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+		)
+	`); err != nil {
+		return err
+	}
+	_, err := db.conn.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_undecryptable_messages_created_at ON undecryptable_messages(created_at)`)
+	return err
 }
 
 func (db *DB) ensureAvatarTable(ctx context.Context) error {
