@@ -13,6 +13,7 @@ Item {
     property string chatId: ""
     property alias model: list.model
     property bool loadingOlderMessages: false
+    property bool showLoadingOlderMessages: false
     property bool canLoadOlderMessages: false
 
     // The list is inverted (newest at index 0, rendered bottom-to-top). Loading
@@ -40,6 +41,28 @@ Item {
     signal loadOlderMessagesRequested()
     signal conversationFocusRequested()
     signal typeIntoComposerRequested(string text)
+
+    onLoadingOlderMessagesChanged: {
+        if (loadingOlderMessages) {
+            loadingOlderMessagesDelayTimer.restart()
+            return
+        }
+
+        loadingOlderMessagesDelayTimer.stop()
+        showLoadingOlderMessages = false
+    }
+
+    Timer {
+        id: loadingOlderMessagesDelayTimer
+
+        interval: 500
+        repeat: false
+        onTriggered: {
+            if (root.loadingOlderMessages) {
+                root.showLoadingOlderMessages = true
+            }
+        }
+    }
 
     DragHandler {
         target: null
@@ -249,7 +272,7 @@ Item {
         radius: height / 2
         color: Qt.alpha(Kirigami.Theme.backgroundColor, 0.88)
         border.color: Qt.alpha(Kirigami.Theme.textColor, 0.12)
-        visible: root.loadingOlderMessages
+        visible: root.showLoadingOlderMessages
         z: 10
 
         Row {
@@ -258,7 +281,7 @@ Item {
             spacing: Kirigami.Units.smallSpacing
 
             BusyIndicator {
-                running: root.loadingOlderMessages
+                running: root.showLoadingOlderMessages
                 implicitWidth: Kirigami.Units.iconSizes.smallMedium
                 implicitHeight: implicitWidth
             }
