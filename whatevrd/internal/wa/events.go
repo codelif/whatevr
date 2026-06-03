@@ -88,6 +88,8 @@ func (c *Client) handleEvent(eventGen uint64, raw any) {
 		c.handleReceipt(evt, offlineSync)
 	case *events.HistorySync:
 		c.handleHistorySync(eventGen, evt)
+	case *events.MediaRetry:
+		c.handleMediaRetry(c.backgroundContext(), evt)
 	case *events.Pin:
 		c.handlePinEvent(c.backgroundContext(), evt)
 	case *events.JoinedGroup:

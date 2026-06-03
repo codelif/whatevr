@@ -8,6 +8,8 @@ import (
 
 var composingPresenceTTL = 15 * time.Second
 
+const daemonSubscriberBuffer = 256
+
 type Status struct {
 	State               State
 	Detail              string
@@ -276,7 +278,7 @@ func (d *Daemon) PublishQRCode(code string, expiresAt time.Time) {
 
 func (d *Daemon) SubscribeDaemonEvents() (<-chan DaemonEvent, func()) {
 	id := d.nextSubID.Add(1)
-	ch := make(chan DaemonEvent, 16)
+	ch := make(chan DaemonEvent, daemonSubscriberBuffer)
 
 	d.subMu.Lock()
 	d.daemonSubs[id] = ch
@@ -313,7 +315,7 @@ func (d *Daemon) SubscribeDaemonEvents() (<-chan DaemonEvent, func()) {
 
 func (d *Daemon) SubscribeLoginEvents() (<-chan LoginEvent, func()) {
 	id := d.nextSubID.Add(1)
-	ch := make(chan LoginEvent, 16)
+	ch := make(chan LoginEvent, 32)
 
 	d.subMu.Lock()
 	d.loginSubs[id] = ch

@@ -106,7 +106,11 @@ func (db *DB) migrate(ctx context.Context) error {
 			FOREIGN KEY(chat_id) REFERENCES chats(id) ON DELETE CASCADE
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_chat_timestamp ON messages(chat_id, timestamp DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_messages_chat_timestamp_id ON messages(chat_id, timestamp DESC, id DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_messages_chat_read_candidates ON messages(chat_id, direction, is_read, timestamp ASC, id ASC)`,
+		`CREATE INDEX IF NOT EXISTS idx_messages_sender_chat ON messages(sender_id, chat_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_chats_last_message_time ON chats(last_message_time DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_chats_list_order ON chats((CASE WHEN is_pinned != 0 THEN 0 ELSE 1 END), pinned_order DESC, last_message_time DESC, id ASC)`,
 		`CREATE TABLE IF NOT EXISTS senders (
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL DEFAULT '',
@@ -196,7 +200,24 @@ func (db *DB) migrate(ctx context.Context) error {
 	if err := db.ensureUndecryptableMessagesTable(ctx); err != nil {
 		return err
 	}
+	if err := db.ensureQueryIndexes(ctx); err != nil {
+		return err
+	}
 
+	return nil
+}
+
+func (db *DB) ensureQueryIndexes(ctx context.Context) error {
+	for _, statement := range []string{
+		`CREATE INDEX IF NOT EXISTS idx_messages_pending_outgoing ON messages(direction, status, next_send_attempt, timestamp ASC, id ASC)`,
+		`CREATE INDEX IF NOT EXISTS idx_messages_downloaded_stickers ON messages(media_kind, media_local_path)`,
+		`CREATE INDEX IF NOT EXISTS idx_messages_sticker_cache_key ON messages(media_kind, media_cache_key, media_local_path)`,
+		`CREATE INDEX IF NOT EXISTS idx_history_sync_chunks_prune ON history_sync_chunks(status, updated_at)`,
+	} {
+		if _, err := db.conn.ExecContext(ctx, statement); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -578,6 +599,7 @@ func (db *DB) ensureMediaColumns(ctx context.Context) error {
 		{"media_height", `ALTER TABLE messages ADD COLUMN media_height INTEGER NOT NULL DEFAULT 0`},
 		{"media_animated", `ALTER TABLE messages ADD COLUMN media_animated INTEGER NOT NULL DEFAULT 0`},
 		{"media_payload", `ALTER TABLE messages ADD COLUMN media_payload BLOB NOT NULL DEFAULT x''`},
+		{"media_cache_key", `ALTER TABLE messages ADD COLUMN media_cache_key TEXT NOT NULL DEFAULT ''`},
 	}
 	for _, a := range alterations {
 		if existing[a.col] {

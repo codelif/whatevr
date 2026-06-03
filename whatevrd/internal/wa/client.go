@@ -53,6 +53,8 @@ type Client struct {
 
 	mediaDownloadMu sync.Mutex
 	mediaDownloads  map[string]*mediaDownloadState
+	mediaRetryMu    sync.Mutex
+	mediaRetries    map[string]*mediaRetryState
 
 	historySyncMu             sync.Mutex
 	historySyncRunning        bool
@@ -95,6 +97,14 @@ type mediaDownloadState struct {
 	err     error
 }
 
+type mediaRetryState struct {
+	done       chan struct{}
+	mediaKey   []byte
+	directPath string
+	err        error
+	completed  bool
+}
+
 func New(ctx context.Context, paths app.Paths, daemon *app.Daemon, store *appstore.DB, notifier MessageNotifier) (*Client, error) {
 	level := os.Getenv("WHATEVRD_LOG_LEVEL")
 	if level == "" {
@@ -115,6 +125,7 @@ func New(ctx context.Context, paths app.Paths, daemon *app.Daemon, store *appsto
 		log:              log,
 		frontendSessions: make(map[string]frontendSession),
 		mediaDownloads:   make(map[string]*mediaDownloadState),
+		mediaRetries:     make(map[string]*mediaRetryState),
 		sendQueueWake:    make(chan struct{}, 1),
 		reconnectCh:      make(chan struct{}, 1),
 	}
@@ -304,9 +315,6 @@ func (c *Client) FrontendSessionStateChanged(sessionID string, focused bool, act
 		c.syncPresence(context.Background(), false)
 	}
 
-	if activeChatID != "" && activeChatID != previous.activeChatID {
-		go c.refreshOpenedChatAvatars(c.backgroundContext(), activeChatID)
-	}
 }
 
 func (c *Client) ShouldNotifyChat(chatID string) bool {

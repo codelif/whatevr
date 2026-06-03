@@ -11,8 +11,7 @@ Item {
     property color backgroundColor: Qt.alpha(activePalette.highlight, 0.14)
     property color foregroundColor: activePalette.highlight
     readonly property string avatarSource: avatarLocalPath.length > 0 ? "file://" + avatarLocalPath : ""
-    readonly property bool avatarLoadFailed: avatarLocalPath.length > 0 && avatarProbe.status === Image.Error
-    readonly property bool hasUsableAvatar: avatarLocalPath.length > 0 && !avatarLoadFailed
+    readonly property bool hasUsableAvatar: avatarLocalPath.length > 0
     readonly property bool initialsAreAlphabetic: /^[A-Za-z]+$/.test(initials)
     readonly property bool showInitials: !hasUsableAvatar && initialsAreAlphabetic
 
@@ -32,15 +31,6 @@ Item {
         radius: width / 2
         antialiasing: true
         color: root.backgroundColor
-    }
-
-    Image {
-        id: avatarProbe
-
-        visible: false
-        source: root.avatarSource
-        asynchronous: true
-        cache: true
     }
 
     KirigamiAddons.Avatar {

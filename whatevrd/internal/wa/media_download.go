@@ -4,12 +4,18 @@ import (
 	"archive/zip"
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/proto/waMmsRetry"
+	"go.mau.fi/whatsmeow/types"
+	"go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/grpc/codes"
 	grpcstatus "google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
@@ -18,6 +24,17 @@ import (
 
 	appstore "whatevrd/internal/store"
 )
+
+const mediaRetryTimeout = 30 * time.Second
+
+type downloadableMedia interface {
+	GetDirectPath() string
+	GetURL() string
+	GetMediaKey() []byte
+	GetFileEncSHA256() []byte
+	GetFileSHA256() []byte
+	GetFileLength() uint64
+}
 
 func (c *Client) DownloadMessageMedia(ctx context.Context, messageID string) (appstore.Message, error) {
 	messageID = strings.TrimSpace(messageID)
@@ -104,8 +121,23 @@ func (c *Client) DownloadMessageMedia(ctx context.Context, messageID string) (ap
 
 	data, err := client.Download(ctx, media)
 	if err != nil {
-		state.err = grpcstatus.Errorf(codes.Unavailable, "download media: %v", err)
-		return appstore.Message{}, state.err
+		if staleMediaDownloadError(err) {
+			message, err = c.refreshMediaForDownload(ctx, client, message, media)
+			if err != nil {
+				state.err = err
+				return appstore.Message{}, state.err
+			}
+			media, err = downloadableMediaMessage(message)
+			if err != nil {
+				state.err = err
+				return appstore.Message{}, state.err
+			}
+			data, err = client.Download(ctx, media)
+		}
+		if err != nil {
+			state.err = grpcstatus.Errorf(codes.Unavailable, "download media: %v", err)
+			return appstore.Message{}, state.err
+		}
 	}
 	if len(data) == 0 || len(data) > maxOutboundMediaBytes {
 		state.err = grpcstatus.Errorf(codes.ResourceExhausted, "media size must be between 1 byte and %d MiB", maxOutboundMediaBytes/(1024*1024))
@@ -147,6 +179,212 @@ func (c *Client) DownloadMessageMedia(ctx context.Context, messageID string) (ap
 	state.message = updated
 	c.daemon.PublishMessageUpdated(toDaemonMessage(updated))
 	return updated, nil
+}
+
+func staleMediaDownloadError(err error) bool {
+	return errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith403) ||
+		errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith404) ||
+		errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith410)
+}
+
+func (c *Client) refreshMediaForDownload(ctx context.Context, client *whatsmeow.Client, message appstore.Message, media downloadableMedia) (appstore.Message, error) {
+	info, err := mediaRetryMessageInfo(message)
+	if err != nil {
+		return appstore.Message{}, err
+	}
+	mediaKey := append([]byte(nil), media.GetMediaKey()...)
+	if len(mediaKey) == 0 {
+		return appstore.Message{}, grpcstatus.Error(codes.FailedPrecondition, "media retry is missing media key")
+	}
+
+	state := &mediaRetryState{done: make(chan struct{}), mediaKey: mediaKey}
+	c.mediaRetryMu.Lock()
+	if c.mediaRetries == nil {
+		c.mediaRetries = make(map[string]*mediaRetryState)
+	}
+	if existing := c.mediaRetries[message.ID]; existing != nil {
+		state = existing
+	} else {
+		c.mediaRetries[message.ID] = state
+	}
+	c.mediaRetryMu.Unlock()
+	defer c.removeMediaRetryState(message.ID, state)
+
+	if err := client.SendMediaRetryReceipt(ctx, info, mediaKey); err != nil {
+		return appstore.Message{}, grpcstatus.Errorf(codes.Unavailable, "request media retry: %v", err)
+	}
+	directPath, err := waitMediaRetry(ctx, state)
+	if err != nil {
+		return appstore.Message{}, err
+	}
+
+	payload, err := refreshedMediaPayload(message, directPath)
+	if err != nil {
+		return appstore.Message{}, err
+	}
+	updated, err := c.store.UpdateMessageMediaPayload(ctx, message.ID, payload)
+	if err != nil {
+		return appstore.Message{}, err
+	}
+	return updated, nil
+}
+
+func (c *Client) removeMediaRetryState(messageID string, state *mediaRetryState) {
+	c.mediaRetryMu.Lock()
+	if c.mediaRetries[messageID] == state {
+		delete(c.mediaRetries, messageID)
+	}
+	c.mediaRetryMu.Unlock()
+}
+
+func waitMediaRetry(ctx context.Context, state *mediaRetryState) (string, error) {
+	timer := time.NewTimer(mediaRetryTimeout)
+	defer timer.Stop()
+
+	select {
+	case <-state.done:
+		if state.err != nil {
+			return "", state.err
+		}
+		if state.directPath == "" {
+			return "", grpcstatus.Error(codes.FailedPrecondition, "media retry response did not include a download path")
+		}
+		return state.directPath, nil
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case <-timer.C:
+		return "", grpcstatus.Error(codes.Unavailable, "media retry response timed out")
+	}
+}
+
+func (c *Client) handleMediaRetry(ctx context.Context, evt *events.MediaRetry) {
+	if evt == nil || evt.MessageID == "" || evt.ChatID.IsEmpty() {
+		return
+	}
+	chatIDs := []string{evt.ChatID.String()}
+	if normalized := c.normalizeJIDForChat(ctx, evt.ChatID).String(); normalized != "" && normalized != chatIDs[0] {
+		chatIDs = append(chatIDs, normalized)
+	}
+
+	var messageID string
+	var state *mediaRetryState
+	c.mediaRetryMu.Lock()
+	for _, chatID := range chatIDs {
+		candidateID := internalMessageIDForChat(chatID, evt.MessageID)
+		candidate := c.mediaRetries[candidateID]
+		if candidate != nil && !candidate.completed {
+			messageID = candidateID
+			state = candidate
+			break
+		}
+	}
+	if state == nil {
+		c.mediaRetryMu.Unlock()
+		return
+	}
+	mediaKey := append([]byte(nil), state.mediaKey...)
+	c.mediaRetryMu.Unlock()
+
+	notif, err := whatsmeow.DecryptMediaRetryNotification(evt, mediaKey)
+	if err != nil {
+		c.completeMediaRetry(messageID, "", mediaRetryEventError(err))
+		return
+	}
+	if notif.GetResult() != waMmsRetry.MediaRetryNotification_SUCCESS {
+		c.completeMediaRetry(messageID, "", grpcstatus.Errorf(codes.FailedPrecondition, "media retry failed with result %s", notif.GetResult().String()))
+		return
+	}
+	c.completeMediaRetry(messageID, notif.GetDirectPath(), nil)
+}
+
+func (c *Client) completeMediaRetry(messageID, directPath string, err error) {
+	c.mediaRetryMu.Lock()
+	state := c.mediaRetries[messageID]
+	if state == nil || state.completed {
+		c.mediaRetryMu.Unlock()
+		return
+	}
+	state.directPath = directPath
+	state.err = err
+	state.completed = true
+	close(state.done)
+	c.mediaRetryMu.Unlock()
+}
+
+func mediaRetryEventError(err error) error {
+	if errors.Is(err, whatsmeow.ErrMediaNotAvailableOnPhone) {
+		return grpcstatus.Error(codes.NotFound, "media is no longer available on WhatsApp")
+	}
+	return grpcstatus.Errorf(codes.Unavailable, "media retry response: %v", err)
+}
+
+func mediaRetryMessageInfo(message appstore.Message) (*types.MessageInfo, error) {
+	chat, err := types.ParseJID(message.ChatID)
+	if err != nil {
+		return nil, grpcstatus.Errorf(codes.InvalidArgument, "invalid media chat ID: %v", err)
+	}
+	externalID := strings.TrimSpace(appstore.ExternalMessageID(message.ChatID, message.ID))
+	if externalID == "" {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "message ID is required")
+	}
+
+	fromMe := message.Direction == appstore.DirectionOutgoing
+	isGroup := chat.Server == types.GroupServer
+	var sender types.JID
+	if isGroup && !fromMe {
+		senderID := strings.TrimSpace(message.SenderID)
+		if senderID == "" {
+			return nil, grpcstatus.Error(codes.FailedPrecondition, "media retry is missing group sender")
+		}
+		sender, err = types.ParseJID(senderID)
+		if err != nil {
+			return nil, grpcstatus.Errorf(codes.InvalidArgument, "invalid media sender ID: %v", err)
+		}
+	}
+
+	return &types.MessageInfo{
+		MessageSource: types.MessageSource{
+			Chat:     chat,
+			Sender:   sender,
+			IsFromMe: fromMe,
+			IsGroup:  isGroup,
+		},
+		ID: types.MessageID(externalID),
+	}, nil
+}
+
+func refreshedMediaPayload(message appstore.Message, directPath string) ([]byte, error) {
+	directPath = strings.TrimSpace(directPath)
+	if directPath == "" {
+		return nil, grpcstatus.Error(codes.FailedPrecondition, "media retry response did not include a download path")
+	}
+
+	switch message.MediaKind {
+	case appstore.MediaKindSticker:
+		var sticker waE2E.StickerMessage
+		if err := proto.Unmarshal(message.MediaPayload, &sticker); err != nil {
+			return nil, grpcstatus.Errorf(codes.Internal, "decode sticker metadata: %v", err)
+		}
+		sticker.DirectPath = proto.String(directPath)
+		sticker.URL = nil
+		payload, err := proto.Marshal(&sticker)
+		if err != nil {
+			return nil, grpcstatus.Errorf(codes.Internal, "encode sticker metadata: %v", err)
+		}
+		return payload, nil
+	default:
+		var img waE2E.ImageMessage
+		if err := proto.Unmarshal(message.MediaPayload, &img); err != nil {
+			return nil, grpcstatus.Errorf(codes.Internal, "decode media metadata: %v", err)
+		}
+		img.DirectPath = proto.String(directPath)
+		img.URL = nil
+		payload, err := proto.Marshal(&img)
+		if err != nil {
+			return nil, grpcstatus.Errorf(codes.Internal, "encode media metadata: %v", err)
+		}
+		return payload, nil
+	}
 }
 
 func (c *Client) ResolveCachedStickerMedia(ctx context.Context, messages []appstore.Message) []appstore.Message {
@@ -202,6 +440,16 @@ func (c *Client) existingStickerContentPath(message appstore.Message, key string
 }
 
 func (c *Client) findDownloadedStickerPath(ctx context.Context, messageID, key string) (string, error) {
+	path, err := c.store.DownloadedStickerPathByCacheKey(ctx, messageID, key)
+	if err != nil || path != "" {
+		if path != "" {
+			if _, statErr := os.Stat(path); statErr != nil {
+				return "", nil
+			}
+		}
+		return path, err
+	}
+
 	messages, err := c.store.ListDownloadedStickerMessages(ctx)
 	if err != nil {
 		return "", err
@@ -224,6 +472,9 @@ func (c *Client) findDownloadedStickerPath(ctx context.Context, messageID, key s
 func stickerCacheKey(message appstore.Message) (string, error) {
 	if message.MediaKind != appstore.MediaKindSticker {
 		return "", nil
+	}
+	if message.MediaCacheKey != "" {
+		return message.MediaCacheKey, nil
 	}
 	var sticker waE2E.StickerMessage
 	if err := proto.Unmarshal(message.MediaPayload, &sticker); err != nil {
@@ -303,14 +554,7 @@ func extractLottieSticker(archivePath string) (string, error) {
 	return "", grpcstatus.Error(codes.FailedPrecondition, "animated sticker archive does not contain animation.json")
 }
 
-func downloadableMediaMessage(message appstore.Message) (interface {
-	GetDirectPath() string
-	GetURL() string
-	GetMediaKey() []byte
-	GetFileEncSHA256() []byte
-	GetFileSHA256() []byte
-	GetFileLength() uint64
-}, error) {
+func downloadableMediaMessage(message appstore.Message) (downloadableMedia, error) {
 	switch message.MediaKind {
 	case appstore.MediaKindSticker:
 		var sticker waE2E.StickerMessage

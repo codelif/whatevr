@@ -2,6 +2,7 @@ package wa
 
 import (
 	"context"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
@@ -520,7 +521,21 @@ func (c *Client) stickerMessageInput(ctx context.Context, evt *events.Message, o
 		MediaHeight:             int32(stickerMsg.GetHeight()),
 		MediaAnimated:           stickerMsg.GetIsAnimated(),
 		MediaPayload:            payload,
+		MediaCacheKey:           stickerMediaCacheKey(stickerMsg),
 	}, true
+}
+
+func stickerMediaCacheKey(sticker *waE2E.StickerMessage) string {
+	if sticker == nil {
+		return ""
+	}
+	if hash := sticker.GetFileSHA256(); len(hash) > 0 {
+		return hex.EncodeToString(hash)
+	}
+	if hash := sticker.GetFileEncSHA256(); len(hash) > 0 {
+		return hex.EncodeToString(hash)
+	}
+	return ""
 }
 
 func (c *Client) saveMessageThumbnail(chatID, messageID string, thumbnail []byte) string {

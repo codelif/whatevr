@@ -143,6 +143,14 @@ func (db *DB) MarkHistorySyncChunkAcked(ctx context.Context, id string) error {
 	return err
 }
 
+func (db *DB) PruneAckedHistorySyncChunks(ctx context.Context, olderThan time.Time) error {
+	_, err := db.conn.ExecContext(ctx, `
+		DELETE FROM history_sync_chunks
+		WHERE status = ? AND updated_at < ?
+	`, HistorySyncStatusAcked, olderThan.Unix())
+	return err
+}
+
 func (db *DB) MarkHistorySyncChunkFailed(ctx context.Context, id, errorText string) error {
 	_, err := db.conn.ExecContext(ctx, `
 		UPDATE history_sync_chunks

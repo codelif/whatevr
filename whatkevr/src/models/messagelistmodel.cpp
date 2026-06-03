@@ -85,6 +85,10 @@ QVariant MessageListModel::data(const QModelIndex &index, int role) const
         return startsSenderGroup(index.row());
     case GroupEndRole:
         return endsSenderGroup(index.row());
+    case MediaDownloadingRole:
+        return message.mediaDownloading;
+    case MediaDownloadErrorRole:
+        return message.mediaDownloadError;
     default:
         return {};
     }
@@ -118,6 +122,8 @@ QHash<int, QByteArray> MessageListModel::roleNames() const
         {ShowSenderGutterRole, "showSenderGutter"},
         {GroupStartRole, "groupStart"},
         {GroupEndRole, "groupEnd"},
+        {MediaDownloadingRole, "mediaDownloading"},
+        {MediaDownloadErrorRole, "mediaDownloadError"},
     };
 }
 
@@ -126,7 +132,13 @@ void MessageListModel::replaceMessages(const QList<whatevr::v1::Message> &messag
     QList<MessageItem> next;
     next.reserve(messages.size());
     for (const auto &message : messages) {
-        next.append(fromProto(message));
+        MessageItem item = fromProto(message);
+        const int existingIndex = indexOf(item.id);
+        if (existingIndex >= 0) {
+            item.mediaDownloading = m_messages.at(existingIndex).mediaDownloading;
+            item.mediaDownloadError = m_messages.at(existingIndex).mediaDownloadError;
+        }
+        next.append(std::move(item));
     }
 
     std::sort(next.begin(), next.end(), [](const MessageItem &left, const MessageItem &right) {
@@ -171,9 +183,26 @@ void MessageListModel::prependMessages(const QList<whatevr::v1::Message> &messag
 {
     QList<MessageItem> older;
     older.reserve(messages.size());
+    QSet<QString> seenIncoming;
     for (const auto &message : messages) {
         const MessageItem item = fromProto(message);
-        if (indexOf(item.id) < 0) {
+        if (item.id.isEmpty() || seenIncoming.contains(item.id)) {
+            continue;
+        }
+        seenIncoming.insert(item.id);
+
+        const int existingIndex = indexOf(item.id);
+        if (existingIndex >= 0) {
+            if (!sameMessageData(m_messages.at(existingIndex), item)) {
+                MessageItem updated = item;
+                updated.mediaDownloading = m_messages.at(existingIndex).mediaDownloading;
+                updated.mediaDownloadError = m_messages.at(existingIndex).mediaDownloadError;
+                m_messages[existingIndex] = std::move(updated);
+                const QModelIndex changedIndex = index(existingIndex, 0);
+                Q_EMIT dataChanged(changedIndex, changedIndex);
+                emitGroupingRolesChanged(existingIndex, existingIndex);
+            }
+        } else {
             older.append(item);
         }
     }
@@ -222,7 +251,10 @@ void MessageListModel::upsertMessage(const whatevr::v1::Message &message)
     const int existingIndex = indexOf(item.id);
 
     if (existingIndex >= 0) {
-        m_messages[existingIndex] = item;
+        MessageItem updated = item;
+        updated.mediaDownloading = m_messages.at(existingIndex).mediaDownloading;
+        updated.mediaDownloadError = m_messages.at(existingIndex).mediaDownloadError;
+        m_messages[existingIndex] = std::move(updated);
         const QModelIndex changedIndex = index(existingIndex, 0);
         Q_EMIT dataChanged(changedIndex, changedIndex);
         emitGroupingRolesChanged(existingIndex, existingIndex);
@@ -268,6 +300,25 @@ bool MessageListModel::updateSenderAvatar(const QString &senderId, const QString
         Q_EMIT dataChanged(index(firstChanged, 0), index(lastChanged, 0), {SenderAvatarLocalPathRole});
     }
     return changed;
+}
+
+bool MessageListModel::setMediaDownloadState(const QString &messageId, bool downloading, const QString &errorText)
+{
+    const int messageIndex = indexOf(messageId);
+    if (messageIndex < 0) {
+        return false;
+    }
+
+    auto &message = m_messages[messageIndex];
+    if (message.mediaDownloading == downloading && message.mediaDownloadError == errorText) {
+        return false;
+    }
+
+    message.mediaDownloading = downloading;
+    message.mediaDownloadError = errorText;
+    const QModelIndex changedIndex = index(messageIndex, 0);
+    Q_EMIT dataChanged(changedIndex, changedIndex, {MediaDownloadingRole, MediaDownloadErrorRole});
+    return true;
 }
 
 QStringList MessageListModel::uniqueIncomingSenderIds() const
@@ -333,6 +384,8 @@ MessageListModel::MessageItem MessageListModel::fromProto(const whatevr::v1::Mes
         .mediaWidth = message.mediaWidth(),
         .mediaHeight = message.mediaHeight(),
         .mediaAnimated = message.mediaAnimated(),
+        .mediaDownloading = false,
+        .mediaDownloadError = {},
     };
     item.senderDisplayName = displaySenderName(item);
     item.senderInitials = initialsForName(item.senderDisplayName);
@@ -448,7 +501,9 @@ bool MessageListModel::sameMessageData(const MessageItem &left, const MessageIte
         && left.mediaThumbnailLocalPath == right.mediaThumbnailLocalPath
         && left.mediaWidth == right.mediaWidth
         && left.mediaHeight == right.mediaHeight
-        && left.mediaAnimated == right.mediaAnimated;
+        && left.mediaAnimated == right.mediaAnimated
+        && left.mediaDownloading == right.mediaDownloading
+        && left.mediaDownloadError == right.mediaDownloadError;
 }
 
 bool MessageListModel::isOutgoing(const MessageItem &message) const

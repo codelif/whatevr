@@ -62,6 +62,9 @@ Kirigami.Page {
             ListView {
                 id: chatList
 
+                property string contextChatId: ""
+                property bool contextChatPinned: false
+
                 anchors.fill: parent
                 clip: true
                 model: Whatevr.AppController.chatListModel
@@ -92,7 +95,28 @@ Kirigami.Page {
 						root.chatSelected(id)
 					}
 					onPinToggled: (id, pinned) => Whatevr.AppController.setChatPinned(id, pinned)
+                    onContextMenuRequested: (id, pinned, x, y) => {
+                        chatList.contextChatId = id
+                        chatList.contextChatPinned = pinned
+                        chatContextMenu.x = x
+                        chatContextMenu.y = y
+                        chatContextMenu.open()
+                    }
 				}
+
+                Menu {
+                    id: chatContextMenu
+
+                    parent: chatList
+
+                    MenuItem {
+                        text: chatList.contextChatPinned
+                              ? Whatevr.I18n.i18nc("@action:menu", "Unpin chat")
+                              : Whatevr.I18n.i18nc("@action:menu", "Pin chat")
+                        icon.name: chatList.contextChatPinned ? "window-unpin" : "window-pin"
+                        onTriggered: Whatevr.AppController.setChatPinned(chatList.contextChatId, !chatList.contextChatPinned)
+                    }
+                }
 
                 BusyIndicator {
                     anchors.centerIn: parent

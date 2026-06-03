@@ -1,12 +1,14 @@
 package wa
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"go.mau.fi/whatsmeow"
 	"google.golang.org/protobuf/proto"
 
 	waE2E "go.mau.fi/whatsmeow/proto/waE2E"
@@ -14,6 +16,97 @@ import (
 	"whatevrd/internal/app"
 	appstore "whatevrd/internal/store"
 )
+
+func TestStaleMediaDownloadErrorIncludesForbidden(t *testing.T) {
+	if !staleMediaDownloadError(whatsmeow.ErrMediaDownloadFailedWith403) {
+		t.Fatal("403 media download error should request media retry")
+	}
+	if staleMediaDownloadError(context.Canceled) {
+		t.Fatal("context cancellation should not request media retry")
+	}
+}
+
+func TestRefreshedImagePayloadReplacesExpiredURL(t *testing.T) {
+	payload, err := proto.Marshal(&waE2E.ImageMessage{
+		URL:        proto.String("https://mmg.whatsapp.net/v/t62.7118-24/image.enc"),
+		DirectPath: proto.String("/old/path.enc?ccb=11-4"),
+		Mimetype:   proto.String("image/jpeg"),
+	})
+	if err != nil {
+		t.Fatalf("marshal image: %v", err)
+	}
+
+	updatedPayload, err := refreshedMediaPayload(appstore.Message{
+		MediaKind:    appstore.MediaKindImage,
+		MediaPayload: payload,
+	}, "/new/path.enc?ccb=11-4")
+	if err != nil {
+		t.Fatalf("refreshedMediaPayload() error = %v", err)
+	}
+
+	var image waE2E.ImageMessage
+	if err := proto.Unmarshal(updatedPayload, &image); err != nil {
+		t.Fatalf("unmarshal image: %v", err)
+	}
+	if got := image.GetDirectPath(); got != "/new/path.enc?ccb=11-4" {
+		t.Fatalf("DirectPath = %q, want refreshed path", got)
+	}
+	if got := image.GetURL(); got != "" {
+		t.Fatalf("URL = %q, want empty so direct path is used", got)
+	}
+}
+
+func TestUpdateMessageMediaPayloadPersistsRefreshedPayload(t *testing.T) {
+	ctx := context.Background()
+	_, db := newTestMediaClient(t)
+	defer db.Close()
+
+	originalPayload, err := proto.Marshal(&waE2E.ImageMessage{
+		URL:        proto.String("https://mmg.whatsapp.net/v/t62.7118-24/image.enc"),
+		DirectPath: proto.String("/old/path.enc?ccb=11-4"),
+		Mimetype:   proto.String("image/jpeg"),
+	})
+	if err != nil {
+		t.Fatalf("marshal original image: %v", err)
+	}
+	if _, err := db.SaveMediaMessage(ctx, appstore.MediaMessageInput{
+		TextMessageInput: appstore.TextMessageInput{
+			ID:        "chat-1:image-1",
+			ChatID:    "chat-1",
+			ChatName:  "Chat One",
+			SenderID:  "sender-1",
+			Timestamp: time.Unix(100, 0),
+		},
+		MediaKind:     appstore.MediaKindImage,
+		MediaMimeType: "image/jpeg",
+		MediaPayload:  originalPayload,
+	}); err != nil {
+		t.Fatalf("save image message: %v", err)
+	}
+
+	refreshedPayload, err := refreshedMediaPayload(appstore.Message{
+		MediaKind:    appstore.MediaKindImage,
+		MediaPayload: originalPayload,
+	}, "/new/path.enc?ccb=11-4")
+	if err != nil {
+		t.Fatalf("refreshedMediaPayload() error = %v", err)
+	}
+	updated, err := db.UpdateMessageMediaPayload(ctx, "chat-1:image-1", refreshedPayload)
+	if err != nil {
+		t.Fatalf("UpdateMessageMediaPayload() error = %v", err)
+	}
+	if !bytes.Equal(updated.MediaPayload, refreshedPayload) {
+		t.Fatal("updated message did not include refreshed payload")
+	}
+
+	loaded, err := db.GetMessage(ctx, "chat-1:image-1")
+	if err != nil {
+		t.Fatalf("GetMessage() error = %v", err)
+	}
+	if !bytes.Equal(loaded.MediaPayload, refreshedPayload) {
+		t.Fatal("stored message did not persist refreshed payload")
+	}
+}
 
 func TestDownloadableStickerIgnoresPlaceholderURLWhenDirectPathExists(t *testing.T) {
 	payload, err := proto.Marshal(&waE2E.StickerMessage{
@@ -143,6 +236,7 @@ func newTestMediaClient(t *testing.T) (*Client, *appstore.DB) {
 		paths:          app.Paths{MediaCacheDir: cacheDir},
 		daemon:         app.NewDaemon(app.Paths{}),
 		mediaDownloads: make(map[string]*mediaDownloadState),
+		mediaRetries:   make(map[string]*mediaRetryState),
 	}, db
 }
 

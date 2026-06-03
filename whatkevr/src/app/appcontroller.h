@@ -194,6 +194,8 @@ private:
     void setChatComposing(const QString &chatId, bool composing);
     void ensureFrontendSession();
     void updateFrontendSessionState();
+    void sendFrontendSessionState();
+    void sendSelectedChatReadIfActive();
     void ensureDaemonStream();
     void ensureLoginStream();
     void scheduleRetry(int delayMs = 2000);
@@ -289,6 +291,10 @@ private:
     QTimer *m_retryTimer = nullptr;
     QTimer *m_qrTimer = nullptr;
     QTimer *m_selectedChatReloadTimer = nullptr;
+    QTimer *m_updateSessionStateTimer = nullptr;
+    QTimer *m_markChatReadTimer = nullptr;
     QString m_pendingSelectedChatReloadId;
     QString m_localComposingChatId;
+    QString m_markChatReadChatId;
+    QString m_pendingMarkChatReadId;
 };

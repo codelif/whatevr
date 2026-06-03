@@ -247,7 +247,7 @@ Item {
         clip: true
 
         spacing: Kirigami.Units.smallSpacing / 2
-        cacheBuffer: Math.max(0, height)
+        cacheBuffer: Math.max(0, height * 0.35)
         reuseItems: true
 
         flickableDirection: Flickable.VerticalFlick
@@ -263,6 +263,10 @@ Item {
             id: messageDelegate
 
             required property var model
+            property bool pooledByListView: false
+            readonly property bool insideViewport: !pooledByListView
+                                                   && y + height >= list.contentY
+                                                   && y <= list.contentY + list.height
 
             listWidth: list.width
             messageId: String(model.messageId || "")
@@ -285,30 +289,22 @@ Item {
             mediaIntrinsicWidth: Number(model.mediaWidth || 0)
             mediaIntrinsicHeight: Number(model.mediaHeight || 0)
             mediaAnimated: Boolean(model.mediaAnimated)
-            mediaDownloading: Whatevr.AppController.isMessageMediaDownloading(messageId)
+            pooled: pooledByListView
+            activeInViewport: insideViewport
+            mediaDownloading: Boolean(model.mediaDownloading)
+            mediaDownloadError: String(model.mediaDownloadError || "")
             clearSelectionGeneration: root.clearSelectionGeneration
             activeSelectionMessageId: root.activeSelectionMessageId
             onConversationFocusRequested: root.conversationFocusRequested()
             onMessageSelectionClaimed: messageId => root.claimMessageSelection(messageId)
             onTypeIntoComposerRequested: text => root.typeIntoComposerRequested(text)
 
-            Connections {
-                target: Whatevr.AppController
+            ListView.onPooled: {
+                pooledByListView = true
+            }
 
-                function onMediaDownloadChanged(messageId) {
-                    if (messageId === messageDelegate.messageId) {
-                        messageDelegate.mediaDownloading = Whatevr.AppController.isMessageMediaDownloading(messageId)
-                        if (messageDelegate.mediaDownloading) {
-                            messageDelegate.mediaDownloadError = ""
-                        }
-                    }
-                }
-
-                function onMediaDownloadFailed(messageId, errorText) {
-                    if (messageId === messageDelegate.messageId) {
-                        messageDelegate.mediaDownloadError = errorText
-                    }
-                }
+            ListView.onReused: {
+                pooledByListView = false
             }
         }
 

@@ -67,6 +67,7 @@ AppController *s_appControllerInstance = nullptr;
 
 constexpr int kMessageLimit = MessageListModel::MaximumMessageCount;
 constexpr int kCachedChatLimit = 32;
+constexpr int kCachedMessagesPerChatLimit = kMessageLimit * 4;
 
 bool isSupportedOutboundImageFile(const QString &filePath)
 {
@@ -257,17 +258,32 @@ AppController::AppController(QObject *parent)
 
     m_selectedChatReloadTimer = new QTimer(this);
     m_selectedChatReloadTimer->setSingleShot(true);
-    m_selectedChatReloadTimer->setInterval(250);
+    m_selectedChatReloadTimer->setInterval(300);
     connect(m_selectedChatReloadTimer, &QTimer::timeout, this, [this]() {
         const QString chatId = m_pendingSelectedChatReloadId;
-        m_pendingSelectedChatReloadId.clear();
-        if (chatId.isEmpty() || chatId != m_selectedChatId || m_messagesLoading || m_olderMessagesLoading) {
+        if (chatId.isEmpty() || chatId != m_selectedChatId) {
+            m_pendingSelectedChatReloadId.clear();
             return;
         }
+        if (m_messagesLoading || m_olderMessagesLoading) {
+            m_selectedChatReloadTimer->start();
+            return;
+        }
+        m_pendingSelectedChatReloadId.clear();
         m_messageCache.remove(chatId);
         m_messageCacheOrder.removeAll(chatId);
         requestMessages(chatId);
     });
+
+    m_updateSessionStateTimer = new QTimer(this);
+    m_updateSessionStateTimer->setSingleShot(true);
+    m_updateSessionStateTimer->setInterval(75);
+    connect(m_updateSessionStateTimer, &QTimer::timeout, this, &AppController::sendFrontendSessionState);
+
+    m_markChatReadTimer = new QTimer(this);
+    m_markChatReadTimer->setSingleShot(true);
+    m_markChatReadTimer->setInterval(120);
+    connect(m_markChatReadTimer, &QTimer::timeout, this, &AppController::sendSelectedChatReadIfActive);
 
     connect(qGuiApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
         updateFrontendSessionState();
@@ -580,6 +596,16 @@ void AppController::selectChat(const QString &chatId)
         setChatComposing(m_localComposingChatId, false);
     }
 
+    m_selectedChatReloadTimer->stop();
+    m_pendingSelectedChatReloadId.clear();
+    m_messagesReply.reset();
+    m_messagesLoadingChatId.clear();
+    m_markChatReadReply.reset();
+    m_markChatReadChatId.clear();
+    m_pendingMarkChatReadId.clear();
+    m_markChatReadTimer->stop();
+    m_subscribeChatPresenceReply.reset();
+
     m_selectedChatId = chatId;
     m_selectedChatComposing = false;
     m_selectedChatAvailability = 0;
@@ -604,9 +630,7 @@ void AppController::selectChat(const QString &chatId)
 
     if (!m_selectedChatId.isEmpty()) {
         requestSelectedChatPresence();
-        if (!restoredMessages) {
-            requestMessages(m_selectedChatId);
-        }
+        requestMessages(m_selectedChatId);
         requestSelectedChatReadIfActive();
     }
 }
@@ -840,6 +864,8 @@ void AppController::downloadMessageMedia(const QString &messageId)
         return;
     }
     m_mediaDownloadReplies.insert(id, reply);
+    m_mediaDownloadingMessageIds.insert(id);
+    m_messageListModel->setMediaDownloadState(id, true);
     Q_EMIT mediaDownloadChanged(id);
 
     auto *replyPtr = reply.get();
@@ -851,15 +877,19 @@ void AppController::downloadMessageMedia(const QString &messageId)
 
         if (!status.isOk()) {
             m_mediaDownloadReplies.remove(id);
+            m_mediaDownloadingMessageIds.remove(id);
             const QString errorText = status.message().isEmpty()
                 ? i18nc("@info", "Unable to download image")
                 : status.message();
+            m_messageListModel->setMediaDownloadState(id, false, errorText);
             Q_EMIT mediaDownloadFailed(id, errorText);
             return;
         }
 
         const auto response = replyPtr->read<DownloadMessageMediaResponse>();
         m_mediaDownloadReplies.remove(id);
+        m_mediaDownloadingMessageIds.remove(id);
+        m_messageListModel->setMediaDownloadState(id, false);
         if (response && response->hasMessage()) {
             applyMessageEvent(response->message());
         }
@@ -1249,12 +1279,37 @@ void AppController::requestSelectedChatReadIfActive()
         return;
     }
 
+    m_pendingMarkChatReadId = m_selectedChatId;
+    m_markChatReadTimer->start();
+}
+
+void AppController::sendSelectedChatReadIfActive()
+{
+    if (!m_chatClient || m_pendingMarkChatReadId.isEmpty() || m_pendingMarkChatReadId != m_selectedChatId || QGuiApplication::applicationState() != Qt::ApplicationActive) {
+        m_pendingMarkChatReadId.clear();
+        return;
+    }
+
+    const QString chatId = m_pendingMarkChatReadId;
+    m_pendingMarkChatReadId.clear();
+    if (m_markChatReadReply && m_markChatReadChatId == chatId) {
+        return;
+    }
+    if (m_markChatReadReply) {
+        m_markChatReadReply.reset();
+        m_markChatReadChatId.clear();
+    }
+
     MarkChatReadRequest request;
-    request.setChatId(m_selectedChatId);
+    request.setChatId(chatId);
 
     m_markChatReadReply = m_chatClient->MarkChatRead(request);
     auto *reply = m_markChatReadReply.get();
-    const QString chatId = m_selectedChatId;
+    if (!reply) {
+        m_markChatReadChatId.clear();
+        return;
+    }
+    m_markChatReadChatId = chatId;
 
     connect(reply, &QGrpcCallReply::finished, this, [this, reply, chatId](const QGrpcStatus &status) {
         if (m_markChatReadReply.get() != reply) {
@@ -1262,6 +1317,7 @@ void AppController::requestSelectedChatReadIfActive()
         }
 
         m_markChatReadReply.reset();
+        m_markChatReadChatId.clear();
         Q_UNUSED(status)
         Q_UNUSED(chatId)
     });
@@ -1276,7 +1332,23 @@ void AppController::requestSelectedChatPresence()
     SubscribeChatPresenceRequest request;
     request.setChatId(m_selectedChatId);
 
-	m_subscribeChatPresenceReply = m_chatClient->SubscribeChatPresence(request);
+    m_subscribeChatPresenceReply.reset();
+    m_subscribeChatPresenceReply = m_chatClient->SubscribeChatPresence(request);
+    auto *reply = m_subscribeChatPresenceReply.get();
+    if (!reply) {
+        return;
+    }
+    const QString chatId = m_selectedChatId;
+
+    connect(reply, &QGrpcCallReply::finished, this, [this, reply, chatId](const QGrpcStatus &status) {
+        if (m_subscribeChatPresenceReply.get() != reply) {
+            return;
+        }
+
+        m_subscribeChatPresenceReply.reset();
+        Q_UNUSED(status)
+        Q_UNUSED(chatId)
+    });
 }
 
 void AppController::setChatPinned(const QString &chatId, bool pinned)
@@ -1373,6 +1445,15 @@ void AppController::ensureFrontendSession()
 
 void AppController::updateFrontendSessionState()
 {
+    if (!m_frontendClient || m_frontendSessionId.isEmpty() || !m_updateSessionStateTimer) {
+        return;
+    }
+
+    m_updateSessionStateTimer->start();
+}
+
+void AppController::sendFrontendSessionState()
+{
     if (!m_frontendClient || m_frontendSessionId.isEmpty()) {
         return;
     }
@@ -1382,7 +1463,17 @@ void AppController::updateFrontendSessionState()
     request.setFocused(QGuiApplication::applicationState() == Qt::ApplicationActive);
     request.setActiveChatId(m_selectedChatId);
 
+    m_updateSessionStateReply.reset();
     m_updateSessionStateReply = m_frontendClient->UpdateSessionState(request);
+    auto *reply = m_updateSessionStateReply.get();
+    if (!reply) {
+        return;
+    }
+    connect(reply, &QGrpcCallReply::finished, this, [this, reply](const QGrpcStatus &) {
+        if (m_updateSessionStateReply.get() == reply) {
+            m_updateSessionStateReply.reset();
+        }
+    });
 }
 
 void AppController::ensureDaemonStream()
@@ -1721,6 +1812,9 @@ void AppController::applyMediaDownloadChanged(const MediaDownloadChanged &downlo
         m_mediaDownloadingMessageIds.remove(messageId);
     }
 
+    const QString errorText = download.downloading() ? QString() : download.errorText();
+    m_messageListModel->setMediaDownloadState(messageId, download.downloading(), errorText);
+
     if (wasDownloading != download.downloading()) {
         Q_EMIT mediaDownloadChanged(messageId);
     }
@@ -1744,7 +1838,8 @@ void AppController::applyMessageEvent(const whatevr::v1::Message &message)
             cached->messages[existingIndex] = message;
         } else {
             cached->messages.append(message);
-            if (message.chatId() != m_selectedChatId && cached->messages.size() > kMessageLimit) {
+            const int cachedMessageLimit = message.chatId() == m_selectedChatId ? kCachedMessagesPerChatLimit : kMessageLimit;
+            while (cached->messages.size() > cachedMessageLimit) {
                 cached->messages.removeFirst();
             }
         }
@@ -1767,7 +1862,9 @@ void AppController::applyMessageEvent(const whatevr::v1::Message &message)
     if (wasEmpty) {
         Q_EMIT messagesChanged();
     }
-    requestSelectedChatReadIfActive();
+    if (message.direction() == whatevr::v1::MessageDirectionGadget::MessageDirection::MESSAGE_DIRECTION_INCOMING) {
+        requestSelectedChatReadIfActive();
+    }
 }
 
 void AppController::cacheMessages(const QString &chatId, const QList<whatevr::v1::Message> &messages, bool canLoadOlderMessages)
@@ -1776,9 +1873,15 @@ void AppController::cacheMessages(const QString &chatId, const QList<whatevr::v1
         return;
     }
 
+    QList<whatevr::v1::Message> cachedMessages = messages;
+    const bool truncatedCachedMessages = cachedMessages.size() > kCachedMessagesPerChatLimit;
+    if (truncatedCachedMessages) {
+        cachedMessages = cachedMessages.mid(cachedMessages.size() - kCachedMessagesPerChatLimit);
+    }
+
     m_messageCache.insert(chatId, CachedMessages {
-        .messages = messages,
-        .canLoadOlderMessages = canLoadOlderMessages,
+        .messages = cachedMessages,
+        .canLoadOlderMessages = canLoadOlderMessages || truncatedCachedMessages,
     });
     m_messageCacheOrder.removeAll(chatId);
     m_messageCacheOrder.append(chatId);
@@ -1822,6 +1925,7 @@ void AppController::scheduleSelectedChatMessageReload(const QString &chatId)
         return;
     }
     m_pendingSelectedChatReloadId = chatId;
+    m_selectedChatReloadTimer->setInterval(m_historySyncVisible ? 1000 : 300);
     m_selectedChatReloadTimer->start();
 }
 

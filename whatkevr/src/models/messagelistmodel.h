@@ -43,6 +43,8 @@ public:
         ShowSenderGutterRole,
         GroupStartRole,
         GroupEndRole,
+        MediaDownloadingRole,
+        MediaDownloadErrorRole,
     };
     Q_ENUM(Role)
 
@@ -59,6 +61,7 @@ public:
     void clear();
     void upsertMessage(const whatevr::v1::Message &message);
     bool updateSenderAvatar(const QString &senderId, const QString &avatarLocalPath);
+    bool setMediaDownloadState(const QString &messageId, bool downloading, const QString &errorText = QString());
     [[nodiscard]] QStringList uniqueIncomingSenderIds() const;
     void setGroupChat(bool groupChat);
     [[nodiscard]] bool isEmpty() const;
@@ -87,6 +90,8 @@ private:
         int mediaWidth = 0;
         int mediaHeight = 0;
         bool mediaAnimated = false;
+        bool mediaDownloading = false;
+        QString mediaDownloadError;
     };
 
     static MessageItem fromProto(const whatevr::v1::Message &message);

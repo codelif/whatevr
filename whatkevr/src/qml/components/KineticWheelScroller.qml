@@ -25,6 +25,7 @@ Item {
     property bool gestureActive: false
     property bool gestureHeld: false
     property int holdCancelTimeout: 95
+    property int gestureIdleTimeout: 180
     property int launchMaxAge: 75
     property real flickLaunchThreshold: 520
     property real minimumFlickDistance: 24
@@ -181,6 +182,23 @@ Item {
         lastImpulseTimestamp = 0
     }
 
+    function finishIdleGesture() {
+        gestureActive = false
+        gestureHeld = false
+        kineticActive = false
+        velocity = 0
+        pendingDelta = 0
+        lastWheelTimestamp = 0
+        lastImpulseTimestamp = 0
+        lastInputTimestamp = 0
+        lastRealDeltaTimestamp = 0
+        gestureTotalDistance = 0
+        finishInteraction()
+        if (frameDriver.running) {
+            frameDriver.stop()
+        }
+    }
+
     WheelHandler {
         target: null
         acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
@@ -302,6 +320,10 @@ Item {
             if (root.gestureActive) {
                 if (root.lastRealDeltaTimestamp > 0 && now - root.lastRealDeltaTimestamp > root.holdCancelTimeout) {
                     root.cancelHeldGesture()
+                }
+                const idleTimestamp = Math.max(root.lastInputTimestamp, root.lastRealDeltaTimestamp)
+                if (idleTimestamp > 0 && now - idleTimestamp > root.gestureIdleTimeout) {
+                    root.finishIdleGesture()
                 }
                 return
             }

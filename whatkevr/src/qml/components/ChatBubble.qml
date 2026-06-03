@@ -32,6 +32,8 @@ Item {
     property int mediaIntrinsicWidth: 0
     property int mediaIntrinsicHeight: 0
     property bool mediaAnimated: false
+    property bool pooled: false
+    property bool activeInViewport: true
     property bool mediaDownloading: false
     property string mediaDownloadError: ""
     property int clearSelectionGeneration: 0
@@ -72,8 +74,10 @@ Item {
     readonly property bool hasLocalImage: isImage && mediaLocalPath.length > 0
     readonly property bool hasThumbnailImage: isImage && mediaThumbnailLocalPath.length > 0
     readonly property bool hasLocalSticker: isSticker
-                                              && mediaLocalPath.length > 0
-                                              && (!isLottieSticker || mediaLocalPath.endsWith(".json"))
+                                               && mediaLocalPath.length > 0
+                                               && (!isLottieSticker || mediaLocalPath.endsWith(".json"))
+    readonly property bool mediaSourceActive: !pooled
+    readonly property bool animationActive: mediaSourceActive && activeInViewport
     readonly property real imageSourceScale: Math.max(1, Screen.devicePixelRatio)
 
     // Image geometry must not depend on Image.implicitWidth/implicitHeight.
@@ -320,7 +324,7 @@ Item {
                     anchors.fill: parent
                     visible: !root.hasLocalImage && root.hasThumbnailImage
                     opacity: status === Image.Ready ? 0.78 : 0
-                    source: mediaSlot.visible && visible ? Qt.resolvedUrl("file://" + root.mediaThumbnailLocalPath) : ""
+                    source: root.mediaSourceActive && mediaSlot.visible && visible ? Qt.resolvedUrl("file://" + root.mediaThumbnailLocalPath) : ""
                     fillMode: Image.PreserveAspectCrop
                     asynchronous: true
                     cache: true
@@ -328,7 +332,7 @@ Item {
                     sourceSize.width: Math.max(1, Math.ceil(width * root.imageSourceScale))
                     sourceSize.height: Math.max(1, Math.ceil(height * root.imageSourceScale))
 
-                    layer.enabled: visible && status === Image.Ready
+                    layer.enabled: root.activeInViewport && visible && status === Image.Ready
                     layer.effect: MultiEffect {
                         blurEnabled: true
                         blurMax: 12
@@ -352,15 +356,15 @@ Item {
                     anchors.fill: parent
                     visible: root.hasLocalImage
                     opacity: status === Image.Ready ? 1 : 0
-                    source: mediaSlot.visible && root.hasLocalImage ? Qt.resolvedUrl("file://" + root.mediaLocalPath) : ""
+                    source: root.mediaSourceActive && mediaSlot.visible && root.hasLocalImage ? Qt.resolvedUrl("file://" + root.mediaLocalPath) : ""
                     fillMode: Image.PreserveAspectFit
                     asynchronous: true
-                    cache: true
+                    cache: false
                     smooth: true
                     sourceSize.width: Math.max(1, Math.ceil(width * root.imageSourceScale))
                     sourceSize.height: Math.max(1, Math.ceil(height * root.imageSourceScale))
 
-                    layer.enabled: visible && status === Image.Ready
+                    layer.enabled: root.activeInViewport && visible && status === Image.Ready
                     layer.effect: MultiEffect {
                         maskEnabled: true
                         maskSource: imageMask
@@ -380,7 +384,7 @@ Item {
                     anchors.fill: parent
                     radius: Kirigami.Units.cornerRadius
                     visible: false
-                    layer.enabled: true
+                    layer.enabled: root.activeInViewport && mediaSlot.visible
                 }
 
                 Item {
@@ -626,10 +630,10 @@ Item {
             anchors.fill: parent
             visible: root.isSticker && !root.hasLocalSticker && root.hasThumbnailImage
             opacity: status === Image.Ready ? 0.7 : 0
-            source: stickerSlot.visible && visible ? Qt.resolvedUrl("file://" + root.mediaThumbnailLocalPath) : ""
+            source: root.mediaSourceActive && stickerSlot.visible && visible ? Qt.resolvedUrl("file://" + root.mediaThumbnailLocalPath) : ""
             fillMode: Image.PreserveAspectFit
             asynchronous: true
-            cache: true
+            cache: false
             smooth: true
             sourceSize.width: Math.max(1, Math.ceil(width * root.imageSourceScale))
             sourceSize.height: Math.max(1, Math.ceil(height * root.imageSourceScale))
@@ -641,10 +645,10 @@ Item {
             anchors.fill: parent
             visible: root.isRenderableStickerImage && root.hasLocalSticker && !root.isAnimatedSticker
             opacity: status === Image.Ready ? 1 : 0
-            source: stickerSlot.visible && visible ? Qt.resolvedUrl("file://" + root.mediaLocalPath) : ""
+            source: root.mediaSourceActive && stickerSlot.visible && visible ? Qt.resolvedUrl("file://" + root.mediaLocalPath) : ""
             fillMode: Image.PreserveAspectFit
             asynchronous: true
-            cache: true
+            cache: false
             smooth: true
             sourceSize.width: Math.max(1, Math.ceil(width * root.imageSourceScale))
             sourceSize.height: Math.max(1, Math.ceil(height * root.imageSourceScale))
@@ -655,11 +659,11 @@ Item {
 
             anchors.fill: parent
             visible: root.isRenderableStickerImage && root.hasLocalSticker && root.isAnimatedSticker
-            playing: visible && status === AnimatedImage.Ready
-            source: stickerSlot.visible && visible ? Qt.resolvedUrl("file://" + root.mediaLocalPath) : ""
+            playing: root.animationActive && visible && status === AnimatedImage.Ready
+            source: root.mediaSourceActive && stickerSlot.visible && visible ? Qt.resolvedUrl("file://" + root.mediaLocalPath) : ""
             fillMode: Image.PreserveAspectFit
             asynchronous: true
-            cache: true
+            cache: false
             smooth: true
             sourceSize.width: Math.max(1, Math.ceil(width * root.imageSourceScale))
             sourceSize.height: Math.max(1, Math.ceil(height * root.imageSourceScale))
@@ -670,8 +674,8 @@ Item {
 
             anchors.fill: parent
             visible: root.isLottieSticker && root.hasLocalSticker
-            source: stickerSlot.visible && visible ? Qt.resolvedUrl("file://" + root.mediaLocalPath) : ""
-            playing: visible
+            source: root.mediaSourceActive && stickerSlot.visible && visible ? Qt.resolvedUrl("file://" + root.mediaLocalPath) : ""
+            playing: root.animationActive && visible
             renderScale: 2.5
         }
 

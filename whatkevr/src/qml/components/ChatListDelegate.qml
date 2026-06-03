@@ -36,6 +36,7 @@ ItemDelegate {
 
 	signal selected(string chatId)
 	signal pinToggled(string chatId, bool pinned)
+    signal contextMenuRequested(string chatId, bool pinned, real x, real y)
 
     width: ListView.view ? ListView.view.width : implicitWidth
     implicitHeight: Kirigami.Units.gridUnit * 4.4
@@ -51,22 +52,9 @@ ItemDelegate {
         z: 1
 
         onPressed: mouse => {
-            chatContextMenu.x = mouse.x
-            chatContextMenu.y = mouse.y
-            chatContextMenu.open()
+            const pos = root.mapToItem(ListView.view, mouse.x, mouse.y)
+            root.contextMenuRequested(root.chatId, root.isPinned, pos.x, pos.y)
             mouse.accepted = true
-        }
-    }
-
-    Menu {
-        id: chatContextMenu
-
-        MenuItem {
-            text: root.isPinned
-                  ? Whatevr.I18n.i18nc("@action:menu", "Unpin chat")
-                  : Whatevr.I18n.i18nc("@action:menu", "Pin chat")
-            icon.name: root.isPinned ? "window-unpin" : "window-pin"
-            onTriggered: root.pinToggled(root.chatId, !root.isPinned)
         }
     }
 

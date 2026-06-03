@@ -202,6 +202,9 @@ func (c *Client) processHistorySyncChunk(ctx context.Context, chunk appstore.His
 		c.log.Errorf("Failed to mark history sync chunk %s acked: %v", chunk.ID, err)
 		return false
 	}
+	if err := c.store.PruneAckedHistorySyncChunks(ctx, time.Now().Add(-7*24*time.Hour)); err != nil {
+		c.log.Warnf("Failed to prune acked history sync chunks: %v", err)
+	}
 	c.log.Debugf("Finished history sync chunk %s (type %d, chunk %d, progress %d) in %s", chunk.ID, chunk.SyncType, chunk.ChunkOrder, chunk.Progress, time.Since(started).Round(time.Millisecond))
 	if chunk.DirectPath != "" {
 		go c.deleteHistorySyncMedia(context.WithoutCancel(ctx), client, chunk)

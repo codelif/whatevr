@@ -90,11 +90,6 @@ func (s *ChatService) GetMessages(ctx context.Context, req *pb.GetMessagesReques
 		}
 		return nil, err
 	}
-	if s.actions != nil {
-		s.actions.RefreshLoadedChatAvatars(ctx, req.GetChatId(), messages)
-		messages = s.actions.ResolveCachedStickerMedia(ctx, messages)
-	}
-
 	resp := &pb.GetMessagesResponse{Messages: make([]*pb.Message, 0, len(messages))}
 	for _, message := range messages {
 		resp.Messages = append(resp.Messages, toProtoMessage(toAppMessage(message)))
