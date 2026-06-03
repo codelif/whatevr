@@ -689,8 +689,8 @@ func (db *DB) MigrateChatID(ctx context.Context, fromChatID, toChatID string) (C
 			END,
 			last_message_time = MAX(chats.last_message_time, excluded.last_message_time),
 			unread_count = chats.unread_count + excluded.unread_count,
-			is_pinned = excluded.is_pinned,
-			pinned_order = excluded.pinned_order,
+			is_pinned = MAX(chats.is_pinned, excluded.is_pinned),
+			pinned_order = MAX(chats.pinned_order, excluded.pinned_order),
 			is_group = excluded.is_group
 	`, toChatID, fromChatID, ChatNameSourceRaw, toChatID, ChatNameSourceRaw, toChatID); err != nil {
 		return Chat{}, false, err

@@ -95,6 +95,14 @@ func (s *ChatService) GetMessages(ctx context.Context, req *pb.GetMessagesReques
 		resp.Messages = append(resp.Messages, toProtoMessage(toAppMessage(message)))
 	}
 
+	// Lazily fetch the chat avatar plus the avatars of the senders in this page of
+	// messages. Runs on the initial open and on every "load older" page, so newly
+	// surfaced senders (e.g. group participants further back in history) get picked
+	// up as the user scrolls. Already-cached subjects are skipped via the avatar TTL.
+	if s.actions != nil {
+		s.actions.RefreshLoadedChatAvatars(ctx, req.GetChatId(), messages)
+	}
+
 	return resp, nil
 }
 

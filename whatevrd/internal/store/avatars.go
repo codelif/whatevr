@@ -88,25 +88,32 @@ func (db *DB) ListAvatars(ctx context.Context, subjects []AvatarSubject) ([]Avat
 	return avatars, nil
 }
 
-func (db *DB) ListKnownAvatarSubjects(ctx context.Context) ([]AvatarSubject, error) {
+// ListChatAvatarSubjects returns chat avatar subjects ordered the same way as
+// ListChats (pinned first, then most recent), limited to the given count. It is
+// used to bound the post-history-sync profile-picture prefetch to the chats that
+// are actually visible on the chat list; the rest load lazily on demand.
+func (db *DB) ListChatAvatarSubjects(ctx context.Context, limit int) ([]AvatarSubject, error) {
+	if limit <= 0 {
+		limit = 100
+	}
 	rows, err := db.conn.QueryContext(ctx, `
-		SELECT 'chat', id FROM chats WHERE id != ''
-		UNION
-		SELECT 'sender', id FROM senders WHERE id != '' AND id != 'me'
-		ORDER BY 1, 2
-	`)
+		SELECT id FROM chats
+		WHERE id != ''
+		ORDER BY CASE WHEN is_pinned != 0 THEN 0 ELSE 1 END, pinned_order DESC, last_message_time DESC, id ASC
+		LIMIT ?
+	`, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	subjects := make([]AvatarSubject, 0)
+	subjects := make([]AvatarSubject, 0, limit)
 	for rows.Next() {
-		var subject AvatarSubject
-		if err := rows.Scan(&subject.Kind, &subject.ID); err != nil {
+		var id string
+		if err := rows.Scan(&id); err != nil {
 			return nil, err
 		}
-		subjects = append(subjects, subject)
+		subjects = append(subjects, AvatarSubject{Kind: AvatarSubjectChat, ID: id})
 	}
 	return subjects, rows.Err()
 }

@@ -18,6 +18,23 @@ func (c *Client) startPinnedChatBackfill(ctx context.Context) {
 	c.startPinnedChatRecovery(ctx, "backfill", c.backfillPinnedChatsFromAppState)
 }
 
+// reconcileAfterHistorySync runs once the initial history sync has settled, when
+// whatsmeow has populated its LID→PN mappings from the synced messages and the
+// regular_low app state is stable. It first merges any chats that were created
+// under a raw @lid JID into their canonical phone-number chat, then reconciles
+// pins so they attach to those canonical chats. Running this post-sync (rather
+// than only on Connected, where the mappings are not yet available) is what makes
+// pins, display names and duplicates resolve without a daemon restart.
+func (c *Client) reconcileAfterHistorySync(ctx context.Context) {
+	if ctx.Err() != nil {
+		return
+	}
+	c.migrateLIDChats(ctx)
+	if err := c.backfillPinnedChatsFromAppState(ctx); err != nil {
+		c.log.Warnf("Failed to reconcile pinned chats after history sync: %v", err)
+	}
+}
+
 func (c *Client) startPinnedChatRecovery(ctx context.Context, reason string, fn func(context.Context) error) {
 	if !c.pinBackfill.CompareAndSwap(false, true) {
 		return

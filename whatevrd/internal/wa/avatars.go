@@ -26,6 +26,10 @@ const (
 	errorAvatarTTL                = 24 * time.Hour
 	avatarQueueSize               = 256
 	historySyncAvatarDeferralIdle = 45 * time.Second
+	// profilePictureSyncChatLimit bounds the eager post-history-sync avatar
+	// prefetch to the chats actually visible on the chat list. Everything else
+	// loads lazily on demand (chat open, paging older messages, live messages).
+	profilePictureSyncChatLimit = 100
 )
 
 type avatarJob struct {
@@ -179,6 +183,11 @@ func (c *Client) runProfilePictureSync(ctx context.Context) {
 		c.flushDeferredAvatarJobs()
 	}()
 
+	// History sync has settled: LID→PN mappings and the regular_low app state are
+	// now populated, so merge any LID-duplicated chats and reconcile pins onto the
+	// canonical PN chats before prefetching avatars.
+	c.reconcileAfterHistorySync(ctx)
+
 	jobs, err := c.profilePictureSyncJobs(ctx)
 	if err != nil {
 		c.log.Warnf("Failed to list profile picture sync subjects: %v", err)
@@ -208,7 +217,7 @@ func (c *Client) runProfilePictureSync(ctx context.Context) {
 }
 
 func (c *Client) profilePictureSyncJobs(ctx context.Context) ([]avatarJob, error) {
-	subjects, err := c.store.ListKnownAvatarSubjects(ctx)
+	subjects, err := c.store.ListChatAvatarSubjects(ctx, profilePictureSyncChatLimit)
 	if err != nil {
 		return nil, err
 	}
