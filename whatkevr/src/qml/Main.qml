@@ -8,10 +8,16 @@ Kirigami.ApplicationWindow {
     readonly property bool chatWideLayout: pageStack.width >= pageStack.defaultColumnWidth * 2
     readonly property bool chatSingleColumnLayout: !chatWideLayout
     property string currentMode: ""
-    property bool conversationOnStack: false
-    property bool closeChatAfterTransition: false
+
+    // The chat-list and conversation panes are created once on entering chat
+    // mode and kept alive for the whole session. Navigation happens purely by
+    // moving between columns, so opening a chat never recreates a pane and
+    // nothing is ever orphaned. transientPageItem holds the single login/status
+    // page when not in chat mode.
     property var chatListPageItem: null
     property var conversationPageItem: null
+    property var transientPageItem: null
+    property bool pendingSelectionClear: false
 
     width: 1180
     height: 760
@@ -70,81 +76,115 @@ Kirigami.ApplicationWindow {
         ConversationPane {}
     }
 
-    function createPage(component) {
-        return component.createObject(pageStack)
-    }
-
-    function pushPage(component) {
-        const page = createPage(component)
-        if (!page) {
-            console.warn("Failed to create page")
-            return null
-        }
-        return pageStack.push(page)
-    }
-
     function scheduleRebuildPageStack() {
         pageStackRebuildTimer.restart()
     }
 
-    function resetToPage(mode, pageComponent) {
-        destroyChatPages()
-        currentMode = mode
-        conversationOnStack = false
-        closeChatAfterTransition = false
-        chatListPageItem = null
-        conversationPageItem = null
-        pushPage(pageComponent)
-    }
-
     function destroyChatPages() {
         pageStack.clear()
-        conversationPageItem = null
-        chatListPageItem = null
-        conversationOnStack = false
-    }
-
-    function openChatList() {
-        chatListPageItem = pushPage(chatListPaneComponent)
-        if (chatListPageItem && chatListPageItem.chatSelected) {
-            chatListPageItem.chatSelected.connect(openConversation)
+        if (conversationPageItem) {
+            conversationPageItem.destroy()
+            conversationPageItem = null
+        }
+        if (chatListPageItem) {
+            chatListPageItem.destroy()
+            chatListPageItem = null
         }
     }
 
-    function openConversation() {
-        closeChatAfterTransition = false
-        if (!conversationOnStack) {
-            conversationPageItem = pushPage(conversationPaneComponent)
-            conversationOnStack = conversationPageItem !== null
-            if (conversationPageItem) {
-                conversationPageItem.closeChatRequested.connect(closeConversation)
+    function clearTransientPage() {
+        if (transientPageItem) {
+            transientPageItem.destroy()
+            transientPageItem = null
+        }
+    }
+
+    function resetToPage(mode, pageComponent) {
+        destroyChatPages()
+        clearTransientPage()
+        pageStack.clear()
+        currentMode = mode
+
+        const page = pageComponent.createObject(pageStack)
+        if (!page) {
+            console.warn("Failed to create page")
+            return
+        }
+        transientPageItem = page
+        pageStack.push(page)
+    }
+
+    function ensureChatPages() {
+        if (!chatListPageItem) {
+            const listPage = chatListPaneComponent.createObject(pageStack)
+            if (listPage) {
+                chatListPageItem = listPage
+                pageStack.push(listPage)
+                if (listPage.chatSelected) {
+                    listPage.chatSelected.connect(showConversation)
+                }
             }
+        }
+
+        if (!conversationPageItem) {
+            const conversationPage = conversationPaneComponent.createObject(pageStack)
+            if (conversationPage) {
+                conversationPageItem = conversationPage
+                pageStack.push(conversationPage)
+                if (conversationPage.closeChatRequested) {
+                    conversationPage.closeChatRequested.connect(closeConversation)
+                }
+            }
+        }
+
+        // Pushing the conversation page leaves currentIndex at 1. Anchor it to
+        // the actual selection so the very first wide -> single-column switch
+        // shows the right column instead of an empty conversation pane.
+        pageStack.currentIndex = Whatevr.AppController.hasSelectedChat ? 1 : 0
+    }
+
+    function showConversation() {
+        if (currentMode !== "chat") {
+            return
+        }
+        if (chatSingleColumnLayout) {
+            // Defer the column move so selectChat()'s synchronous model rebuild
+            // and the MessageView bottom-pin settle first; otherwise the slide
+            // animation is starved of frames and appears to snap.
+            Qt.callLater(navigateToConversation)
         } else {
-            pageStack.goForward()
+            pageStack.currentIndex = 1
         }
         updateCloseChatActionVisibility()
     }
 
+    function navigateToConversation() {
+        if (currentMode === "chat" && Whatevr.AppController.hasSelectedChat) {
+            pageStack.currentIndex = 1
+        }
+    }
+
     function closeConversation() {
-        if (!Whatevr.AppController.hasSelectedChat) {
-            return
+        if (Whatevr.AppController.hasSelectedChat) {
+            Whatevr.AppController.selectChat("")
         }
-
-        if (conversationPageItem) {
-            conversationPageItem.closeChatActionVisible = false
-        }
-
-        if (chatSingleColumnLayout && pageStack.currentIndex > 0) {
-            closeChatAfterTransition = true
-            pageStack.goBack()
-            Qt.callLater(finishCloseChatIfSettled)
-            return
-        }
-
-        Whatevr.AppController.selectChat("")
-        if (chatWideLayout && pageStack.currentIndex > 0) {
+        if (pageStack.currentIndex > 0) {
             pageStack.currentIndex = 0
         }
+        updateCloseChatActionVisibility()
+    }
+
+    function syncChatLayout() {
+        if (currentMode !== "chat") {
+            return
+        }
+
+        ensureChatPages()
+
+        // Keep currentIndex in sync in every layout so layout switches never
+        // reveal the wrong column. In wide mode both columns are visible, so
+        // this only sets which one is focused.
+        pageStack.currentIndex = Whatevr.AppController.hasSelectedChat ? 1 : 0
         updateCloseChatActionVisibility()
     }
 
@@ -155,75 +195,15 @@ Kirigami.ApplicationWindow {
 
         conversationPageItem.closeChatActionVisible = currentMode === "chat"
                 && Whatevr.AppController.hasSelectedChat
-                && !closeChatAfterTransition
                 && (!chatSingleColumnLayout || pageStack.currentIndex > 0)
-    }
-
-    function scheduleCloseChatAfterBack() {
-        if (!chatSingleColumnLayout || pageStack.currentIndex !== 0 || !Whatevr.AppController.hasSelectedChat) {
-            return
-        }
-
-        closeChatAfterTransition = true
-        updateCloseChatActionVisibility()
-        Qt.callLater(finishCloseChatIfSettled)
-    }
-
-    function finishCloseChatIfSettled() {
-        if (!closeChatAfterTransition || pageStack.columnView.moving) {
-            return
-        }
-
-        closeChatAfterTransition = false
-        if (Whatevr.AppController.hasSelectedChat) {
-            Whatevr.AppController.selectChat("")
-        }
-        cleanupMobileConversationPage()
-        updateCloseChatActionVisibility()
-    }
-
-    function cleanupMobileConversationPage() {
-        if (!chatSingleColumnLayout || pageStack.currentIndex !== 0 || !conversationOnStack || Whatevr.AppController.hasSelectedChat) {
-            return
-        }
-
-        pageStack.pop()
-        conversationOnStack = false
-        conversationPageItem = null
-    }
-
-    function ensureChatLayout() {
-        if (currentMode !== "chat") {
-            return
-        }
-
-        if (chatWideLayout && !conversationOnStack) {
-            openConversation()
-        }
-    }
-
-    function syncChatLayout() {
-        if (currentMode !== "chat") {
-            return
-        }
-
-        ensureChatLayout()
-
-        if (chatSingleColumnLayout) {
-            if (Whatevr.AppController.hasSelectedChat && conversationOnStack) {
-                pageStack.currentIndex = 1
-            } else {
-                pageStack.currentIndex = 0
-                closeChatAfterTransition = false
-                Qt.callLater(cleanupMobileConversationPage)
-            }
-        }
     }
 
     function rebuildPageStack() {
         const nextMode = appMode()
         if (nextMode === currentMode) {
-            ensureChatLayout()
+            if (nextMode === "chat") {
+                syncChatLayout()
+            }
             return
         }
 
@@ -235,14 +215,10 @@ Kirigami.ApplicationWindow {
             resetToPage(nextMode, statusPageComponent)
             break
         case "chat":
-            destroyChatPages()
+            clearTransientPage()
+            pageStack.clear()
             currentMode = nextMode
-            conversationOnStack = false
-            closeChatAfterTransition = false
-            chatListPageItem = null
-            conversationPageItem = null
-            openChatList()
-            ensureChatLayout()
+            syncChatLayout()
             break
         }
     }
@@ -254,7 +230,22 @@ Kirigami.ApplicationWindow {
 
         function onCurrentIndexChanged() {
             root.updateCloseChatActionVisibility()
-            root.scheduleCloseChatAfterBack()
+
+            if (root.currentMode !== "chat"
+                    || !root.chatSingleColumnLayout
+                    || root.pageStack.currentIndex !== 0
+                    || !Whatevr.AppController.hasSelectedChat) {
+                return
+            }
+
+            // Navigated back to the chat list (button or swipe). Drop the
+            // selection once any in-flight column animation settles so the
+            // conversation does not visibly empty mid-transition.
+            if (root.pageStack.columnView.moving) {
+                root.pendingSelectionClear = true
+            } else {
+                Whatevr.AppController.selectChat("")
+            }
         }
     }
 
@@ -262,10 +253,17 @@ Kirigami.ApplicationWindow {
         target: root.pageStack.columnView
 
         function onMovingChanged() {
-            root.updateCloseChatActionVisibility()
-            if (!root.pageStack.columnView.moving) {
-                root.finishCloseChatIfSettled()
+            if (root.pageStack.columnView.moving) {
+                return
             }
+
+            if (root.pendingSelectionClear
+                    && root.pageStack.currentIndex === 0
+                    && Whatevr.AppController.hasSelectedChat) {
+                Whatevr.AppController.selectChat("")
+            }
+            root.pendingSelectionClear = false
+            root.updateCloseChatActionVisibility()
         }
     }
 

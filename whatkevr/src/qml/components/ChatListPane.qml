@@ -74,7 +74,7 @@ Kirigami.Page {
                 acceptedButtons: Qt.NoButton
                 reuseItems: true
                 spacing: 0
-                cacheBuffer: Math.max(0, height)
+                cacheBuffer: Math.max(0, Math.round(height * 0.3))
                 ScrollBar.vertical: DiscreetScrollBar {}
 
                 delegate: ChatListDelegate {

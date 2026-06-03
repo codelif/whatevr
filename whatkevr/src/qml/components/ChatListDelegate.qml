@@ -1,6 +1,5 @@
 import QtQuick
 import QtQuick.Controls
-import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 import Whatevr as Whatevr
 
@@ -33,9 +32,8 @@ ItemDelegate {
         }
     }
 
-
-	signal selected(string chatId)
-	signal pinToggled(string chatId, bool pinned)
+    signal selected(string chatId)
+    signal pinToggled(string chatId, bool pinned)
     signal contextMenuRequested(string chatId, bool pinned, real x, real y)
 
     width: ListView.view ? ListView.view.width : implicitWidth
@@ -75,44 +73,107 @@ ItemDelegate {
                : (root.hovered ? Qt.alpha(Kirigami.Theme.textColor, 0.05) : "transparent")
     }
 
-	contentItem: RowLayout {
-        anchors.fill: parent
-        anchors.leftMargin: Kirigami.Units.largeSpacing
-        anchors.rightMargin: Kirigami.Units.largeSpacing
-        spacing: Kirigami.Units.largeSpacing
+    // Anchor-based layout (no QtQuick Layouts): the constraint solver is the
+    // dominant per-frame cost when the full-width rows are resized in
+    // single-column mode, so the row is positioned with plain anchors instead.
+    contentItem: Item {
+        id: content
+
+        implicitHeight: Kirigami.Units.gridUnit * 4.4
 
         AvatarImage {
-            Layout.preferredWidth: Kirigami.Units.gridUnit * 2.45
-            Layout.preferredHeight: Layout.preferredWidth
+            id: avatar
+
+            anchors.left: parent.left
+            anchors.leftMargin: Kirigami.Units.largeSpacing
+            anchors.verticalCenter: parent.verticalCenter
+            width: Kirigami.Units.gridUnit * 2.45
+            height: width
             avatarLocalPath: root.avatarLocalPath
             initials: root.initials
             backgroundColor: Qt.alpha(foregroundColor, root.highlighted ? 0.22 : 0.14)
         }
 
-        ColumnLayout {
-            Layout.fillWidth: true
+        Column {
+            id: trailing
+
+            visible: root.unreadCount > 0 || root.isPinned
+            anchors.right: parent.right
+            anchors.rightMargin: Kirigami.Units.largeSpacing
+            anchors.verticalCenter: parent.verticalCenter
             spacing: Kirigami.Units.smallSpacing / 2
 
+            Kirigami.Icon {
+                visible: root.isPinned
+                anchors.horizontalCenter: parent.horizontalCenter
+                width: Kirigami.Units.iconSizes.small
+                height: width
+                source: "window-pin"
+                color: Kirigami.Theme.disabledTextColor
+            }
+
+            Rectangle {
+                visible: root.unreadCount > 0
+                anchors.horizontalCenter: parent.horizontalCenter
+                width: Math.max(unreadLabel.implicitWidth + Kirigami.Units.largeSpacing,
+                                Kirigami.Units.gridUnit * 1.5)
+                height: Kirigami.Units.gridUnit * 1.35
+                radius: height / 2
+                color: Kirigami.Theme.highlightColor
+
+                Label {
+                    id: unreadLabel
+                    anchors.centerIn: parent
+                    text: root.unreadCount > 99 ? "99+" : String(root.unreadCount)
+                    color: Kirigami.Theme.highlightedTextColor
+                    font.weight: Font.Bold
+                    font.pointSize: Kirigami.Theme.smallFont.pointSize
+                }
+            }
+        }
+
+        Item {
+            id: middle
+
+            anchors.left: avatar.right
+            anchors.leftMargin: Kirigami.Units.largeSpacing
+            anchors.right: trailing.visible ? trailing.left : parent.right
+            anchors.rightMargin: Kirigami.Units.largeSpacing
+            anchors.verticalCenter: parent.verticalCenter
+            height: nameLabel.implicitHeight + Kirigami.Units.smallSpacing / 2 + lastRow.height
+
             Label {
-                Layout.fillWidth: true
+                id: nameLabel
+
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
                 text: root.name
                 elide: Text.ElideRight
                 maximumLineCount: 1
                 font.weight: root.unreadCount > 0 ? Font.DemiBold : Font.Medium
             }
 
-            RowLayout {
-                Layout.fillWidth: true
-                Layout.minimumWidth: 0
-                spacing: Kirigami.Units.smallSpacing
+            Item {
+                id: lastRow
+
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: nameLabel.bottom
+                anchors.topMargin: Kirigami.Units.smallSpacing / 2
+                height: Math.max(lastMessageLabel.implicitHeight,
+                                 root.showDeliveryStatus ? root.deliveryIconSize : 0)
 
                 Item {
+                    id: deliveryStatus
+
                     visible: root.showDeliveryStatus
-                    Layout.preferredWidth: root.deliveryStatusIsDoubleTick
-                                           ? root.deliveryIconSize * 1.4
-                                           : root.deliveryIconSize
-                    Layout.preferredHeight: root.deliveryIconSize
-                    Layout.alignment: Qt.AlignVCenter
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: visible
+                           ? (root.deliveryStatusIsDoubleTick ? root.deliveryIconSize * 1.4 : root.deliveryIconSize)
+                           : 0
+                    height: root.deliveryIconSize
 
                     Kirigami.Icon {
                         id: singleDeliveryIcon
@@ -182,14 +243,17 @@ ItemDelegate {
                             implicitWidth: secondDeliveryTick.implicitWidth
                             implicitHeight: secondDeliveryTick.implicitHeight
                             color: secondDeliveryTick.color
-		}
-	}
-
-}
+                        }
+                    }
+                }
 
                 Label {
-                    Layout.fillWidth: true
-                    Layout.minimumWidth: 0
+                    id: lastMessageLabel
+
+                    anchors.left: deliveryStatus.visible ? deliveryStatus.right : parent.left
+                    anchors.leftMargin: deliveryStatus.visible ? Kirigami.Units.smallSpacing : 0
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
                     text: root.hasLastMessage
                           ? root.lastMessage.replace(/[\r\n]+/g, " ")
                           : Whatevr.I18n.i18nc("@info", "No messages yet")
@@ -197,39 +261,6 @@ ItemDelegate {
                     maximumLineCount: 1
                     color: root.unreadCount > 0 ? Kirigami.Theme.textColor : Kirigami.Theme.disabledTextColor
                     opacity: root.unreadCount > 0 ? 0.84 : 1.0
-                }
-            }
-        }
-
-        ColumnLayout {
-            visible: root.unreadCount > 0 || root.isPinned
-            Layout.alignment: Qt.AlignVCenter
-            spacing: Kirigami.Units.smallSpacing / 2
-
-            Kirigami.Icon {
-                visible: root.isPinned
-                Layout.alignment: Qt.AlignHCenter
-                implicitWidth: Kirigami.Units.iconSizes.small
-                implicitHeight: implicitWidth
-                source: "window-pin"
-                color: Kirigami.Theme.disabledTextColor
-            }
-
-            Rectangle {
-                visible: root.unreadCount > 0
-                Layout.preferredWidth: Math.max(unreadLabel.implicitWidth + Kirigami.Units.largeSpacing,
-                                                Kirigami.Units.gridUnit * 1.5)
-                Layout.preferredHeight: Kirigami.Units.gridUnit * 1.35
-                radius: height / 2
-                color: Kirigami.Theme.highlightColor
-
-                Label {
-                    id: unreadLabel
-                    anchors.centerIn: parent
-                    text: root.unreadCount > 99 ? "99+" : String(root.unreadCount)
-                    color: Kirigami.Theme.highlightedTextColor
-                    font.weight: Font.Bold
-                    font.pointSize: Kirigami.Theme.smallFont.pointSize
                 }
             }
         }

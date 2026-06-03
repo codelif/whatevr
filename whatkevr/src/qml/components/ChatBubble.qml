@@ -80,6 +80,15 @@ Item {
     readonly property bool animationActive: mediaSourceActive && activeInViewport
     readonly property real imageSourceScale: Math.max(1, Screen.devicePixelRatio)
 
+    // Decode images at a stable, layout-independent resolution. Binding
+    // sourceSize to the live displayed width re-decodes the image on every
+    // resize frame (flashing the loading state); these caps match the largest
+    // size each media kind can ever be shown at, so a resize only rescales an
+    // already-decoded pixmap instead of reloading it.
+    readonly property int imageDecodeWidthCap: Math.max(1, Math.ceil(Kirigami.Units.gridUnit * 28 * imageSourceScale))
+    readonly property int imageDecodeHeightCap: Math.max(1, Math.ceil(Kirigami.Units.gridUnit * 24 * imageSourceScale))
+    readonly property int stickerDecodeCap: Math.max(1, Math.ceil(Kirigami.Units.gridUnit * 9 * imageSourceScale))
+
     // Image geometry must not depend on Image.implicitWidth/implicitHeight.
     // Those values arrive after decode and would resize the delegate while the
     // ListView is already scrolling. Reserve a frame from message metadata when
@@ -329,8 +338,8 @@ Item {
                     asynchronous: true
                     cache: true
                     smooth: true
-                    sourceSize.width: Math.max(1, Math.ceil(width * root.imageSourceScale))
-                    sourceSize.height: Math.max(1, Math.ceil(height * root.imageSourceScale))
+                    sourceSize.width: root.imageDecodeWidthCap
+                    sourceSize.height: root.imageDecodeHeightCap
 
                     layer.enabled: root.activeInViewport && visible && status === Image.Ready
                     layer.effect: MultiEffect {
@@ -361,8 +370,8 @@ Item {
                     asynchronous: true
                     cache: false
                     smooth: true
-                    sourceSize.width: Math.max(1, Math.ceil(width * root.imageSourceScale))
-                    sourceSize.height: Math.max(1, Math.ceil(height * root.imageSourceScale))
+                    sourceSize.width: root.imageDecodeWidthCap
+                    sourceSize.height: root.imageDecodeHeightCap
 
                     layer.enabled: root.activeInViewport && visible && status === Image.Ready
                     layer.effect: MultiEffect {
@@ -635,8 +644,8 @@ Item {
             asynchronous: true
             cache: false
             smooth: true
-            sourceSize.width: Math.max(1, Math.ceil(width * root.imageSourceScale))
-            sourceSize.height: Math.max(1, Math.ceil(height * root.imageSourceScale))
+            sourceSize.width: root.stickerDecodeCap
+            sourceSize.height: root.stickerDecodeCap
         }
 
         Image {
@@ -650,8 +659,8 @@ Item {
             asynchronous: true
             cache: false
             smooth: true
-            sourceSize.width: Math.max(1, Math.ceil(width * root.imageSourceScale))
-            sourceSize.height: Math.max(1, Math.ceil(height * root.imageSourceScale))
+            sourceSize.width: root.stickerDecodeCap
+            sourceSize.height: root.stickerDecodeCap
         }
 
         AnimatedImage {
@@ -665,8 +674,8 @@ Item {
             asynchronous: true
             cache: false
             smooth: true
-            sourceSize.width: Math.max(1, Math.ceil(width * root.imageSourceScale))
-            sourceSize.height: Math.max(1, Math.ceil(height * root.imageSourceScale))
+            sourceSize.width: root.stickerDecodeCap
+            sourceSize.height: root.stickerDecodeCap
         }
 
         Whatevr.RlottieSticker {
