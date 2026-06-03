@@ -13,7 +13,7 @@ ScrollBar {
 
     // Smallest the visible thumb is allowed to get; keeps it grabbable/visible
     // even when the proportional size would shrink to a couple of pixels.
-    readonly property real minThumb: Kirigami.Units.gridUnit * 2
+    readonly property real minThumb: Kirigami.Units.gridUnit
     readonly property real thumbHeight: Math.max(root.size * root.height, minThumb)
 
     Behavior on implicitWidth {
