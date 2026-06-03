@@ -12,21 +12,28 @@ Item {
 
     property string chatId: ""
     property alias model: list.model
-    property bool atBottom: true
-    property bool nearBottom: true
-    property bool pinToBottom: true
-    property bool bottomPinInProgress: false
-    property bool openingChat: false
     property bool loadingOlderMessages: false
     property bool canLoadOlderMessages: false
-    property real topLoadThreshold: Kirigami.Units.gridUnit * 6
-    property real bottomFollowThreshold: Kirigami.Units.gridUnit * 2
-    property bool pendingEndInsertShouldPin: false
 
-    property bool preservingPrependPosition: false
-    property real contentHeightBeforePrepend: 0
-    property real contentYBeforePrepend: 0
-    property real originYBeforePrepend: 0
+    // The list is inverted (newest at index 0, rendered bottom-to-top). Loading
+    // older history therefore appends at the *end* of the model, which can never
+    // shift the anchored viewport, so no scroll-position restoration is needed.
+    //
+    // followNewest: true while the newest message is in view, so freshly arrived
+    // messages keep the view pinned to the bottom. Detection is index-based
+    // (orientation-agnostic): the newest message is always index 0 and the
+    // oldest is always the highest index, regardless of the physical edge they
+    // map to.
+    property bool openingChat: false
+    property bool followNewest: true
+
+    // How close (in rows) to the newest message we must be to keep following it.
+    property int followRowThreshold: 2
+    // Start fetching older history once the topmost visible row is within this
+    // many rows of the oldest loaded message, so the next page usually arrives
+    // before the user reaches the edge.
+    property int prefetchRowThreshold: 24
+
     property int clearSelectionGeneration: 0
     property string activeSelectionMessageId: ""
 
@@ -56,188 +63,69 @@ Item {
         clearSelectionGeneration += 1
     }
 
-    function maximumY() {
-        return list.originY + Math.max(0, list.contentHeight - list.height)
-    }
-
-    function clampContentY(value) {
-        return Math.max(list.originY, Math.min(maximumY(), value))
-    }
-
-    function pinToBottomNow() {
-        bottomPinInProgress = true
+    function scrollToNewest() {
         if (list.count > 0) {
-            list.positionViewAtEnd()
+            list.positionViewAtBeginning()
         }
-        list.contentY = maximumY()
-        bottomPinFinishTimer.restart()
     }
 
-    function scrollToBottom() {
-        pinToBottomNow()
-    }
-
-    function schedulePinToBottom() {
-        bottomPinInProgress = true
-        pinToBottomTimer.restart()
-    }
-
-    function scheduleFinishPrependPositionPreservation() {
-        finishPrependPositionTimer.restart()
-    }
-
-    function beginPrependPositionPreservation() {
-        pinToBottom = false
-        preservingPrependPosition = true
-        contentHeightBeforePrepend = list.contentHeight
-        contentYBeforePrepend = list.contentY
-        originYBeforePrepend = list.originY
-    }
-
-    function restorePrependPosition() {
-        if (!preservingPrependPosition) {
+    // Recompute followNewest and fire predictive history prefetch. Cheap: two
+    // indexAt probes, no allocations, safe to call on every contentY change.
+    function updateScrollState() {
+        if (list.count === 0) {
+            followNewest = true
             return
         }
 
-        const insertedHeight = Math.max(0, list.contentHeight - contentHeightBeforePrepend)
-        const originYDelta = list.originY - originYBeforePrepend
-        list.contentY = clampContentY(contentYBeforePrepend + originYDelta + insertedHeight)
-    }
+        const cx = list.width / 2
+        const topIndex = list.indexAt(cx, list.contentY + 1)
+        const bottomIndex = list.indexAt(cx, list.contentY + Math.max(1, list.height - 1))
 
-    function finishPrependPositionPreservation() {
-        if (!preservingPrependPosition) {
-            return
+        let lo = -1
+        let hi = -1
+        if (topIndex >= 0) {
+            lo = topIndex
+            hi = topIndex
+        }
+        if (bottomIndex >= 0) {
+            lo = lo < 0 ? bottomIndex : Math.min(lo, bottomIndex)
+            hi = hi < 0 ? bottomIndex : Math.max(hi, bottomIndex)
         }
 
-        restorePrependPosition()
-        preservingPrependPosition = false
-        maybeLoadOlderMessages()
-    }
-
-    function prepareViewportForModelReset() {
-        if (openingChat) {
-            bottomPinInProgress = true
-            return
+        if (lo >= 0) {
+            followNewest = lo <= followRowThreshold
         }
 
-        if (!pinToBottom && !atBottom && list.count > 0) {
-            beginPrependPositionPreservation()
-        } else {
-            bottomPinInProgress = true
-        }
-    }
-
-    function finishViewportForModelReset() {
-        if (preservingPrependPosition) {
-            scheduleFinishPrependPositionPreservation()
-        } else if (openingChat || pinToBottom || atBottom) {
-            pinToBottom = true
-            atBottom = true
-            nearBottom = true
-            schedulePinToBottom()
+        if (!openingChat
+                && hi >= 0
+                && canLoadOlderMessages
+                && !loadingOlderMessages
+                && hi >= list.count - 1 - prefetchRowThreshold) {
+            loadOlderMessagesRequested()
         }
     }
 
-    function forceBottomPin() {
-        pinToBottom = true
-        atBottom = true
-        nearBottom = true
-        schedulePinToBottom()
-    }
-
-    function updateBottomState() {
-        const distanceFromBottom = maximumY() - list.contentY
-        atBottom = distanceFromBottom <= 4
-        nearBottom = distanceFromBottom <= bottomFollowThreshold
+    function afterModelReset() {
+        scrollToNewest()
+        openingChat = false
+        followNewest = true
+        Qt.callLater(updateScrollState)
     }
 
     onChatIdChanged: {
-        pendingEndInsertShouldPin = false
-        preservingPrependPosition = false
-        if (chatId.length > 0) {
-            openingChat = true
-            forceBottomPin()
-        } else {
+        followNewest = true
+        if (chatId.length === 0) {
             openingChat = false
-            pinToBottom = true
-            atBottom = true
-            nearBottom = true
-        }
-    }
-
-    function maybeLoadOlderMessages() {
-        if (!canLoadOlderMessages
-                || loadingOlderMessages
-                || preservingPrependPosition
-                || openingChat
-                || bottomPinInProgress
-                || pinToBottom
-                || list.count === 0) {
-            return
-        }
-
-        if (list.contentY <= list.originY + topLoadThreshold) {
-            beginPrependPositionPreservation()
-            loadOlderMessagesRequested()
-            scheduleFinishPrependPositionPreservation()
-        }
-    }
-
-    onLoadingOlderMessagesChanged: {
-        if (!loadingOlderMessages && preservingPrependPosition) {
-            scheduleFinishPrependPositionPreservation()
+        } else {
+            openingChat = true
+            Qt.callLater(scrollToNewest)
         }
     }
 
     onVisibleChanged: {
-        if (visible) {
-            forceBottomPin()
+        if (visible && followNewest) {
+            Qt.callLater(scrollToNewest)
         }
-    }
-
-    Timer {
-        id: pinToBottomTimer
-
-        interval: 0
-        repeat: false
-        onTriggered: {
-            if (root.pinToBottom) {
-                root.pinToBottomNow()
-            }
-        }
-    }
-
-    Timer {
-        id: finishPrependPositionTimer
-
-        interval: 0
-        repeat: false
-        onTriggered: {
-            if (!root.loadingOlderMessages && root.preservingPrependPosition) {
-                root.finishPrependPositionPreservation()
-            }
-        }
-    }
-
-    Timer {
-        id: bottomPinFinishTimer
-
-        interval: 0
-        repeat: false
-        onTriggered: {
-            if (root.pinToBottom) {
-                list.contentY = root.maximumY()
-            }
-            root.updateBottomState()
-            root.openingChat = false
-            root.bottomPinInProgress = false
-        }
-    }
-
-    Component.onDestruction: {
-        pinToBottomTimer.stop()
-        finishPrependPositionTimer.stop()
-        bottomPinFinishTimer.stop()
     }
 
     ListView {
@@ -246,8 +134,12 @@ Item {
         anchors.fill: parent
         clip: true
 
+        // Newest at the bottom; older history stacks upward off the top edge.
+        verticalLayoutDirection: ListView.BottomToTop
+
         spacing: Kirigami.Units.smallSpacing / 2
-        cacheBuffer: Math.max(0, height * 0.35)
+        // Generous cache so fast flicks through history stay populated.
+        cacheBuffer: Math.max(height * 0.6, Kirigami.Units.gridUnit * 40)
         reuseItems: true
 
         flickableDirection: Flickable.VerticalFlick
@@ -308,69 +200,36 @@ Item {
             }
         }
 
-        onDraggingChanged: {
-            if (dragging) {
-                root.pinToBottom = false
-            }
-        }
-        onContentYChanged: {
-            root.updateBottomState()
-            if (!root.nearBottom && !root.preservingPrependPosition && !root.bottomPinInProgress) {
-                root.pinToBottom = false
-            }
-            root.maybeLoadOlderMessages()
-        }
-        onContentHeightChanged: {
-            if (root.preservingPrependPosition) {
-                root.restorePrependPosition()
-            } else if (root.pinToBottom && contentHeight > height) {
-                root.pinToBottomNow()
-            }
-        }
-        onOriginYChanged: {
-            if (root.preservingPrependPosition) {
-                root.restorePrependPosition()
-            }
-        }
-        onCountChanged: {
-            if (root.preservingPrependPosition) {
-                root.restorePrependPosition()
-            } else if (root.pendingEndInsertShouldPin || root.pinToBottom || root.nearBottom) {
-                root.pendingEndInsertShouldPin = false
-                root.forceBottomPin()
-            }
-        }
+        onContentYChanged: root.updateScrollState()
+        onMovementEnded: root.updateScrollState()
 
         Connections {
             target: list.model
             ignoreUnknownSignals: true
-            function onModelAboutToBeReset() {
-                root.prepareViewportForModelReset()
-            }
             function onModelReset() {
-                root.finishViewportForModelReset()
-            }
-            function onRowsAboutToBeInserted(parent, first, last) {
-                root.pendingEndInsertShouldPin = first >= list.count && (root.pinToBottom || root.nearBottom)
+                // Chat switches and structural reloads land here; show the newest
+                // message. Older-history appends do not reset the model.
+                Qt.callLater(root.afterModelReset)
             }
             function onRowsInserted(parent, first, last) {
-                if (root.pendingEndInsertShouldPin) {
-                    root.forceBottomPin()
+                // first === 0 means a new newest message arrived at the bottom.
+                // Older history is appended at the end (first > 0) and must not
+                // move the viewport.
+                if (first === 0 && root.followNewest) {
+                    Qt.callLater(root.scrollToNewest)
                 }
-                root.pendingEndInsertShouldPin = false
             }
         }
 
-        Component.onCompleted: {
-            root.forceBottomPin()
-        }
+        Component.onCompleted: Qt.callLater(root.scrollToNewest)
     }
 
     Connections {
         target: Whatevr.AppController
 
         function onOutgoingMessageAddedToSelectedChat() {
-            root.forceBottomPin()
+            root.followNewest = true
+            Qt.callLater(root.scrollToNewest)
         }
     }
 
@@ -379,7 +238,6 @@ Item {
         target: list
         wheelStep: Kirigami.Units.gridUnit * 4
         maximumVelocity: 16000
-        onScrollStarted: root.pinToBottom = false
     }
 
     Rectangle {

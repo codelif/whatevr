@@ -57,7 +57,9 @@ public:
     [[nodiscard]] QHash<int, QByteArray> roleNames() const override;
 
     void replaceMessages(const QList<whatevr::v1::Message> &messages);
-    void prependMessages(const QList<whatevr::v1::Message> &messages);
+    // Messages are stored newest-first (index 0 == newest). Older history pages
+    // are therefore appended at the end of the list.
+    void appendOlderMessages(const QList<whatevr::v1::Message> &messages);
     void clear();
     void upsertMessage(const whatevr::v1::Message &message);
     bool updateSenderAvatar(const QString &senderId, const QString &avatarLocalPath);

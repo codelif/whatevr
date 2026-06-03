@@ -1266,7 +1266,7 @@ void AppController::requestOlderMessages()
             cacheMessages(chatId,
                           mergeMessages(baseMessages, response->messages()),
                           response->messages().size() >= kMessageLimit);
-            m_messageListModel->prependMessages(response->messages());
+            m_messageListModel->appendOlderMessages(response->messages());
             m_canLoadOlderMessages = response->messages().size() >= kMessageLimit;
         }
         Q_EMIT messagesChanged();

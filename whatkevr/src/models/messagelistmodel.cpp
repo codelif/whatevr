@@ -141,11 +141,13 @@ void MessageListModel::replaceMessages(const QList<whatevr::v1::Message> &messag
         next.append(std::move(item));
     }
 
+    // Newest first: index 0 is the most recent message. The view renders the
+    // list bottom-to-top, so older history lands at higher indices.
     std::sort(next.begin(), next.end(), [](const MessageItem &left, const MessageItem &right) {
         if (left.timestampUnix != right.timestampUnix) {
-            return left.timestampUnix < right.timestampUnix;
+            return left.timestampUnix > right.timestampUnix;
         }
-        return left.id < right.id;
+        return left.id > right.id;
     });
 
     if (sameMessages(m_messages, next)) {
@@ -179,7 +181,7 @@ void MessageListModel::replaceMessages(const QList<whatevr::v1::Message> &messag
     endResetModel();
 }
 
-void MessageListModel::prependMessages(const QList<whatevr::v1::Message> &messages)
+void MessageListModel::appendOlderMessages(const QList<whatevr::v1::Message> &messages)
 {
     QList<MessageItem> older;
     older.reserve(messages.size());
@@ -211,26 +213,26 @@ void MessageListModel::prependMessages(const QList<whatevr::v1::Message> &messag
         return;
     }
 
+    // Keep the batch newest-first so it slots onto the end of the (newest-first)
+    // list while preserving the global ordering.
     std::sort(older.begin(), older.end(), [](const MessageItem &left, const MessageItem &right) {
         if (left.timestampUnix != right.timestampUnix) {
-            return left.timestampUnix < right.timestampUnix;
+            return left.timestampUnix > right.timestampUnix;
         }
-        return left.id < right.id;
+        return left.id > right.id;
     });
 
-    beginInsertRows(QModelIndex(), 0, static_cast<int>(older.size()) - 1);
-    QList<MessageItem> next;
-    next.reserve(older.size() + m_messages.size());
+    const int firstNew = static_cast<int>(m_messages.size());
+    beginInsertRows(QModelIndex(), firstNew, firstNew + static_cast<int>(older.size()) - 1);
+    m_messages.reserve(m_messages.size() + older.size());
     for (const auto &message : older) {
-        next.append(message);
+        m_messages.append(message);
     }
-    for (const auto &message : m_messages) {
-        next.append(message);
-    }
-    m_messages = std::move(next);
     rebuildIndex();
     endInsertRows();
-    emitGroupingRolesChanged(static_cast<int>(older.size()) - 1, static_cast<int>(older.size()));
+    // Refresh grouping roles around the seam: the previously-oldest message now
+    // has an older neighbour and may no longer start a sender group.
+    emitGroupingRolesChanged(firstNew - 1, firstNew);
 }
 
 void MessageListModel::clear()
@@ -261,11 +263,12 @@ void MessageListModel::upsertMessage(const whatevr::v1::Message &message)
         return;
     }
 
-    int insertAt = static_cast<int>(m_messages.size());
-    while (insertAt > 0
-           && (m_messages.at(insertAt - 1).timestampUnix > item.timestampUnix
-               || (m_messages.at(insertAt - 1).timestampUnix == item.timestampUnix && m_messages.at(insertAt - 1).id > item.id))) {
-        --insertAt;
+    // Newest-first order: advance past every message that is newer than this one.
+    int insertAt = 0;
+    while (insertAt < static_cast<int>(m_messages.size())
+           && (m_messages.at(insertAt).timestampUnix > item.timestampUnix
+               || (m_messages.at(insertAt).timestampUnix == item.timestampUnix && m_messages.at(insertAt).id > item.id))) {
+        ++insertAt;
     }
 
     beginInsertRows(QModelIndex(), insertAt, insertAt);
@@ -358,7 +361,7 @@ int MessageListModel::messageCount() const
 
 QString MessageListModel::oldestMessageId() const
 {
-    return m_messages.isEmpty() ? QString() : m_messages.first().id;
+    return m_messages.isEmpty() ? QString() : m_messages.last().id;
 }
 
 MessageListModel::MessageItem MessageListModel::fromProto(const whatevr::v1::Message &message)
@@ -513,11 +516,13 @@ bool MessageListModel::isOutgoing(const MessageItem &message) const
 
 bool MessageListModel::startsSenderGroup(int row) const
 {
-    if (row <= 0 || row >= m_messages.size()) {
+    // Newest-first storage: the chronologically previous (older) message is at
+    // row + 1, and the oldest message (last index) always starts a group.
+    if (row < 0 || row >= static_cast<int>(m_messages.size()) - 1) {
         return true;
     }
     const auto &message = m_messages.at(row);
-    const auto &previous = m_messages.at(row - 1);
+    const auto &previous = m_messages.at(row + 1);
     if (isOutgoing(message) != isOutgoing(previous) || message.senderId != previous.senderId) {
         return true;
     }
@@ -526,11 +531,13 @@ bool MessageListModel::startsSenderGroup(int row) const
 
 bool MessageListModel::endsSenderGroup(int row) const
 {
-    if (row < 0 || row >= m_messages.size() - 1) {
+    // Newest-first storage: the chronologically next (newer) message is at
+    // row - 1, and the newest message (index 0) always ends a group.
+    if (row <= 0 || row >= static_cast<int>(m_messages.size())) {
         return true;
     }
     const auto &message = m_messages.at(row);
-    const auto &next = m_messages.at(row + 1);
+    const auto &next = m_messages.at(row - 1);
     if (isOutgoing(message) != isOutgoing(next) || message.senderId != next.senderId) {
         return true;
     }
