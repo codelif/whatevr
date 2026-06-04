@@ -45,6 +45,17 @@ type Message struct {
 	SendAttempts            int32
 	LastSendError           string
 	NextSendAttempt         int64
+	ReplyTo                 MessageReply
+}
+
+type MessageReply struct {
+	MessageID     string
+	SenderID      string
+	SenderName    string
+	Text          string
+	MediaKind     string
+	MediaMimeType string
+	Direction     string
 }
 
 type MediaMessageInput struct {
@@ -81,6 +92,7 @@ type TextMessageInput struct {
 	Status         string
 	IsGroup        bool
 	CountUnread    bool
+	ReplyTo        MessageReply
 }
 
 type SavedTextMessage struct {
@@ -130,10 +142,11 @@ func (db *DB) SaveTextMessage(ctx context.Context, input TextMessageInput) (Save
 	}
 
 	result, err := tx.ExecContext(ctx, `
-		INSERT INTO messages (id, chat_id, sender_id, text, timestamp, direction, is_read, status)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO messages (id, chat_id, sender_id, text, timestamp, direction, is_read, status, reply_to_message_id, reply_to_sender_id, reply_to_sender_name, reply_to_text, reply_to_media_kind, reply_to_media_mime_type, reply_to_direction)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO NOTHING
-	`, input.ID, input.ChatID, input.SenderID, input.Text, input.Timestamp.Unix(), input.Direction, boolToInt(!input.CountUnread), input.Status)
+	`, input.ID, input.ChatID, input.SenderID, input.Text, input.Timestamp.Unix(), input.Direction, boolToInt(!input.CountUnread), input.Status,
+		input.ReplyTo.MessageID, input.ReplyTo.SenderID, input.ReplyTo.SenderName, input.ReplyTo.Text, input.ReplyTo.MediaKind, input.ReplyTo.MediaMimeType, input.ReplyTo.Direction)
 	if err != nil {
 		return SavedTextMessage{}, err
 	}
@@ -267,11 +280,12 @@ func (db *DB) SaveMediaMessage(ctx context.Context, input MediaMessageInput) (Sa
 	}
 
 	result, err := tx.ExecContext(ctx, `
-		INSERT INTO messages (id, chat_id, sender_id, text, timestamp, direction, is_read, status, media_kind, media_mime_type, media_local_path, media_thumbnail_local_path, media_width, media_height, media_animated, media_payload, media_cache_key)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO messages (id, chat_id, sender_id, text, timestamp, direction, is_read, status, media_kind, media_mime_type, media_local_path, media_thumbnail_local_path, media_width, media_height, media_animated, media_payload, media_cache_key, reply_to_message_id, reply_to_sender_id, reply_to_sender_name, reply_to_text, reply_to_media_kind, reply_to_media_mime_type, reply_to_direction)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO NOTHING
 	`, input.ID, input.ChatID, input.SenderID, input.Text, input.Timestamp.Unix(), input.Direction,
-		boolToInt(!input.CountUnread), input.Status, input.MediaKind, input.MediaMimeType, input.MediaLocalPath, input.MediaThumbnailLocalPath, input.MediaWidth, input.MediaHeight, boolToInt(input.MediaAnimated), input.MediaPayload, input.MediaCacheKey)
+		boolToInt(!input.CountUnread), input.Status, input.MediaKind, input.MediaMimeType, input.MediaLocalPath, input.MediaThumbnailLocalPath, input.MediaWidth, input.MediaHeight, boolToInt(input.MediaAnimated), input.MediaPayload, input.MediaCacheKey,
+		input.ReplyTo.MessageID, input.ReplyTo.SenderID, input.ReplyTo.SenderName, input.ReplyTo.Text, input.ReplyTo.MediaKind, input.ReplyTo.MediaMimeType, input.ReplyTo.Direction)
 	if err != nil {
 		return SavedTextMessage{}, err
 	}
@@ -498,6 +512,7 @@ func (db *DB) ListMessages(ctx context.Context, chatID string, limit int, before
 		       COALESCE(NULLIF(s.name, ''), NULLIF(c.name, ''), ''),
 		       COALESCE(NULLIF(sa.local_path, ''), NULLIF(ca.local_path, ''), NULLIF(s.avatar_local_path, ''), NULLIF(c.avatar_local_path, ''), ''),
 		       m.text, m.timestamp, m.direction, m.is_read, m.status, m.media_kind, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_animated,
+		       m.reply_to_message_id, m.reply_to_sender_id, m.reply_to_sender_name, m.reply_to_text, m.reply_to_media_kind, m.reply_to_media_mime_type, m.reply_to_direction,
 		       m.send_attempts, m.last_send_error, m.next_send_attempt
 		FROM messages m
 		LEFT JOIN senders s ON s.id = m.sender_id
@@ -553,6 +568,13 @@ func (db *DB) ListMessages(ctx context.Context, chatID string, limit int, before
 			&message.MediaWidth,
 			&message.MediaHeight,
 			&message.MediaAnimated,
+			&message.ReplyTo.MessageID,
+			&message.ReplyTo.SenderID,
+			&message.ReplyTo.SenderName,
+			&message.ReplyTo.Text,
+			&message.ReplyTo.MediaKind,
+			&message.ReplyTo.MediaMimeType,
+			&message.ReplyTo.Direction,
 			&message.SendAttempts,
 			&message.LastSendError,
 			&message.NextSendAttempt,
@@ -590,6 +612,7 @@ func (db *DB) ListPendingOutgoingMessages(ctx context.Context, limit int, now ti
 
 	rows, err := db.conn.QueryContext(ctx, `
 		SELECT id, chat_id, sender_id, text, timestamp, direction, is_read, status, media_kind, media_mime_type, media_local_path, media_thumbnail_local_path, media_width, media_height, media_animated, media_payload,
+		       reply_to_message_id, reply_to_sender_id, reply_to_sender_name, reply_to_text, reply_to_media_kind, reply_to_media_mime_type, reply_to_direction,
 		       send_attempts, last_send_error, next_send_attempt
 		FROM messages
 		WHERE direction = ? AND status = ? AND next_send_attempt <= ?
@@ -621,6 +644,13 @@ func (db *DB) ListPendingOutgoingMessages(ctx context.Context, limit int, now ti
 			&message.MediaHeight,
 			&message.MediaAnimated,
 			&message.MediaPayload,
+			&message.ReplyTo.MessageID,
+			&message.ReplyTo.SenderID,
+			&message.ReplyTo.SenderName,
+			&message.ReplyTo.Text,
+			&message.ReplyTo.MediaKind,
+			&message.ReplyTo.MediaMimeType,
+			&message.ReplyTo.Direction,
 			&message.SendAttempts,
 			&message.LastSendError,
 			&message.NextSendAttempt,
@@ -941,6 +971,7 @@ func getMessageRow(ctx context.Context, queryer interface {
 		       COALESCE(NULLIF(s.name, ''), NULLIF(c.name, ''), ''),
 		       COALESCE(NULLIF(sa.local_path, ''), NULLIF(ca.local_path, ''), NULLIF(s.avatar_local_path, ''), NULLIF(c.avatar_local_path, ''), ''),
 		       m.text, m.timestamp, m.direction, m.is_read, m.status, m.media_kind, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_animated, m.media_payload, m.media_cache_key,
+		       m.reply_to_message_id, m.reply_to_sender_id, m.reply_to_sender_name, m.reply_to_text, m.reply_to_media_kind, m.reply_to_media_mime_type, m.reply_to_direction,
 		       m.send_attempts, m.last_send_error, m.next_send_attempt
 		FROM messages m
 		LEFT JOIN senders s ON s.id = m.sender_id
@@ -968,6 +999,13 @@ func getMessageRow(ctx context.Context, queryer interface {
 		&message.MediaAnimated,
 		&message.MediaPayload,
 		&message.MediaCacheKey,
+		&message.ReplyTo.MessageID,
+		&message.ReplyTo.SenderID,
+		&message.ReplyTo.SenderName,
+		&message.ReplyTo.Text,
+		&message.ReplyTo.MediaKind,
+		&message.ReplyTo.MediaMimeType,
+		&message.ReplyTo.Direction,
 		&message.SendAttempts,
 		&message.LastSendError,
 		&message.NextSendAttempt,

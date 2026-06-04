@@ -15,10 +15,19 @@ Frame {
     property real composerOverlayY: 0
     property real composerOverlayWidth: 0
     property real composerOverlayHeight: 0
+    property string replyToMessageId: ""
+    property string replyToSenderName: ""
+    property string replyToText: ""
+    property string replyToMediaKind: ""
+    property string replyToMediaMimeType: ""
+    property bool replyToOutgoing: false
+    readonly property bool replying: replyToMessageId.length > 0
 
-    signal sendTextRequested(string text)
-    signal sendImageRequested(string fileUrl, string caption)
+    signal sendTextRequested(string text, string replyToMessageId)
+    signal sendImageRequested(string fileUrl, string caption, string replyToMessageId)
     signal composingChanged(bool composing)
+    signal clearReplyRequested()
+    signal replyConsumed()
 
     padding: Kirigami.Units.smallSpacing
 
@@ -44,7 +53,8 @@ Frame {
             return
         }
         root.setComposing(false)
-        root.sendTextRequested(text)
+        root.sendTextRequested(text, root.replyToMessageId)
+        root.replyConsumed()
         input.clear()
     }
 
@@ -153,6 +163,7 @@ Frame {
         if (!enabledForChat) {
             root.setComposing(false)
             emojiPicker.close()
+            root.clearReplyRequested()
         }
     }
     onSendingChanged: {
@@ -170,6 +181,20 @@ Frame {
             type: Kirigami.MessageType.Error
             showCloseButton: false
             text: root.errorText
+        }
+
+        ReplyPreview {
+            Layout.fillWidth: true
+            visible: root.replying
+            senderName: root.replyToSenderName
+            body: root.replyToText
+            mediaKind: root.replyToMediaKind
+            mediaMimeType: root.replyToMediaMimeType
+            outgoing: root.replyToOutgoing
+            showCloseButton: true
+            fillColor: Qt.alpha(Kirigami.Theme.textColor, 0.045)
+            borderColor: Qt.alpha(Kirigami.Theme.textColor, 0.09)
+            onCloseRequested: root.clearReplyRequested()
         }
 
         RowLayout {
@@ -239,9 +264,10 @@ Frame {
 
                     Keys.onPressed: event => {
                         if (event.matches(StandardKey.Paste)) {
-                            if (Whatevr.AppController.sendClipboardImage(input.text.trim())) {
+                            if (Whatevr.AppController.sendClipboardImage(input.text.trim(), root.replyToMessageId)) {
                                 event.accepted = true
                                 root.setComposing(false)
+                                root.replyConsumed()
                             }
                             return
                         }
@@ -408,7 +434,8 @@ Frame {
         fileMode: Platform.FileDialog.OpenFile
         onAccepted: {
             root.setComposing(false)
-            root.sendImageRequested(file, input.text.trim())
+            root.sendImageRequested(file, input.text.trim(), root.replyToMessageId)
+            root.replyConsumed()
         }
     }
 }

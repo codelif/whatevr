@@ -55,6 +55,7 @@ Item {
     signal loadOlderMessagesRequested()
     signal conversationFocusRequested()
     signal typeIntoComposerRequested(string text)
+    signal replyToMessageRequested(string messageId, string senderName, string text, string mediaKind, string mediaMimeType, bool outgoing)
 
     onLoadingOlderMessagesChanged: {
         if (loadingOlderMessages) {
@@ -284,11 +285,18 @@ Item {
             activeInViewport: insideViewport
             mediaDownloading: Boolean(model.mediaDownloading)
             mediaDownloadError: String(model.mediaDownloadError || "")
+            replyToMessageId: String(model.replyToMessageId || "")
+            replyToSenderName: String(model.replyToSenderName || "")
+            replyToText: String(model.replyToText || "")
+            replyToMediaKind: String(model.replyToMediaKind || "")
+            replyToMediaMimeType: String(model.replyToMediaMimeType || "")
+            replyToOutgoing: Boolean(model.replyToIsOutgoing)
             clearSelectionGeneration: root.clearSelectionGeneration
             activeSelectionMessageId: root.activeSelectionMessageId
             onConversationFocusRequested: root.conversationFocusRequested()
             onMessageSelectionClaimed: messageId => root.claimMessageSelection(messageId)
             onTypeIntoComposerRequested: text => root.typeIntoComposerRequested(text)
+            onReplyRequested: (messageId, senderName, text, mediaKind, mediaMimeType, outgoing) => root.replyToMessageRequested(messageId, senderName, text, mediaKind, mediaMimeType, outgoing)
 
             ListView.onPooled: {
                 pooledByListView = true

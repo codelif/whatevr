@@ -5,9 +5,11 @@ import (
 	"testing"
 	"time"
 
+	waE2E "go.mau.fi/whatsmeow/proto/waE2E"
 	waHistorySync "go.mau.fi/whatsmeow/proto/waHistorySync"
 	waWeb "go.mau.fi/whatsmeow/proto/waWeb"
 	"go.mau.fi/whatsmeow/types"
+	"google.golang.org/protobuf/proto"
 
 	"whatevrd/internal/app"
 	appstore "whatevrd/internal/store"
@@ -242,6 +244,44 @@ func TestMessageTimestampPrefersRetryTimestampOverride(t *testing.T) {
 	got := messageTimestamp(info, ingestOptions{source: sourceHistorySync, timestampOverride: override}, webMsg)
 	if !got.Equal(override) {
 		t.Fatalf("messageTimestamp() = %v, want override %v", got, override)
+	}
+}
+
+func TestQuotedReplyPreviewExtractsImageCaption(t *testing.T) {
+	text, mediaKind, mimeType := quotedReplyPreview(&waE2E.Message{
+		ImageMessage: &waE2E.ImageMessage{
+			Caption:  proto.String("caption"),
+			Mimetype: proto.String("image/png"),
+		},
+	})
+	if text != "caption" || mediaKind != appstore.MediaKindImage || mimeType != "image/png" {
+		t.Fatalf("quotedReplyPreview() = %q, %q, %q", text, mediaKind, mimeType)
+	}
+}
+
+func TestOutgoingReplyContextInfoUsesExternalIDAndParticipant(t *testing.T) {
+	message := appstore.Message{
+		ID:     "chat-1:new",
+		ChatID: "chat-1",
+		Text:   "reply",
+		ReplyTo: appstore.MessageReply{
+			MessageID: "chat-1:quoted",
+			SenderID:  "111@s.whatsapp.net",
+			Text:      "quoted",
+		},
+	}
+	contextInfo := outgoingReplyContextInfo(nil, message)
+	if contextInfo == nil {
+		t.Fatal("expected context info")
+	}
+	if contextInfo.GetStanzaID() != "quoted" {
+		t.Fatalf("stanza ID = %q, want quoted", contextInfo.GetStanzaID())
+	}
+	if contextInfo.GetParticipant() != "111@s.whatsapp.net" {
+		t.Fatalf("participant = %q", contextInfo.GetParticipant())
+	}
+	if contextInfo.GetQuotedMessage().GetConversation() != "quoted" {
+		t.Fatalf("quoted message = %+v", contextInfo.GetQuotedMessage())
 	}
 }
 

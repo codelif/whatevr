@@ -461,6 +461,7 @@ func (c *Client) imageMessageInput(ctx context.Context, evt *events.Message, opt
 			Status:         status,
 			IsGroup:        info.IsGroup,
 			CountUnread:    shouldCountUnread(evt, opts),
+			ReplyTo:        c.replyFromContextInfo(ctx, chatID, imgMsg.GetContextInfo()),
 		},
 		MediaKind:               appstore.MediaKindImage,
 		MediaMimeType:           mimeType,
@@ -513,6 +514,7 @@ func (c *Client) stickerMessageInput(ctx context.Context, evt *events.Message, o
 			Status:         status,
 			IsGroup:        info.IsGroup,
 			CountUnread:    shouldCountUnread(evt, opts),
+			ReplyTo:        c.replyFromContextInfo(ctx, chatID, stickerMsg.GetContextInfo()),
 		},
 		MediaKind:               appstore.MediaKindSticker,
 		MediaMimeType:           mimeType,
@@ -612,7 +614,109 @@ func (c *Client) textMessageInput(ctx context.Context, evt *events.Message, opts
 		Status:         status,
 		IsGroup:        info.IsGroup,
 		CountUnread:    shouldCountUnread(evt, opts),
+		ReplyTo:        c.replyFromContextInfo(ctx, chatID, contextInfoFromMessage(evt.Message)),
 	}, true
+}
+
+func contextInfoFromMessage(message *waE2E.Message) *waE2E.ContextInfo {
+	if message == nil {
+		return nil
+	}
+	if extended := message.GetExtendedTextMessage(); extended != nil {
+		return extended.GetContextInfo()
+	}
+	if image := message.GetImageMessage(); image != nil {
+		return image.GetContextInfo()
+	}
+	if sticker := message.GetStickerMessage(); sticker != nil {
+		return sticker.GetContextInfo()
+	}
+	return nil
+}
+
+func (c *Client) replyFromContextInfo(ctx context.Context, chatID string, contextInfo *waE2E.ContextInfo) appstore.MessageReply {
+	if contextInfo == nil || contextInfo.GetStanzaID() == "" {
+		return appstore.MessageReply{}
+	}
+
+	replyChatID := chatID
+	if remoteJID := strings.TrimSpace(contextInfo.GetRemoteJID()); remoteJID != "" {
+		if jid, err := types.ParseJID(remoteJID); err == nil {
+			replyChatID = c.normalizeJIDForChat(ctx, jid).String()
+		}
+	}
+	if replyChatID == "" {
+		return appstore.MessageReply{}
+	}
+
+	senderID, senderName := c.replySenderFromParticipant(ctx, contextInfo.GetParticipant())
+	direction := ""
+	if senderID == "me" {
+		direction = appstore.DirectionOutgoing
+	} else if senderID != "" {
+		direction = appstore.DirectionIncoming
+	}
+	text, mediaKind, mediaMimeType := quotedReplyPreview(contextInfo.GetQuotedMessage())
+
+	return appstore.MessageReply{
+		MessageID:     internalMessageIDForChat(replyChatID, types.MessageID(contextInfo.GetStanzaID())),
+		SenderID:      senderID,
+		SenderName:    senderName,
+		Text:          text,
+		MediaKind:     mediaKind,
+		MediaMimeType: mediaMimeType,
+		Direction:     direction,
+	}
+}
+
+func (c *Client) replySenderFromParticipant(ctx context.Context, participant string) (string, string) {
+	participant = strings.TrimSpace(participant)
+	if participant == "" {
+		return "", ""
+	}
+	jid, err := types.ParseJID(participant)
+	if err != nil {
+		return participant, ""
+	}
+	jid = bareAvatarJID(c.normalizeJIDForChat(ctx, jid))
+	if c.isOwnJID(jid) {
+		return "me", ""
+	}
+	return jid.String(), c.senderName(ctx, jid)
+}
+
+func (c *Client) isOwnJID(jid types.JID) bool {
+	client := c.currentClient()
+	if client == nil || client.Store.ID == nil || jid.IsEmpty() {
+		return false
+	}
+	own := client.Store.ID.ToNonAD()
+	jid = jid.ToNonAD()
+	return own.User == jid.User && own.Server == jid.Server
+}
+
+func quotedReplyPreview(message *waE2E.Message) (string, string, string) {
+	if message == nil {
+		return "", "", ""
+	}
+	if text := textFromMessage(message); text != "" {
+		return text, "", ""
+	}
+	if image := message.GetImageMessage(); image != nil {
+		mimeType := image.GetMimetype()
+		if mimeType == "" {
+			mimeType = "image/jpeg"
+		}
+		return image.GetCaption(), appstore.MediaKindImage, mimeType
+	}
+	if sticker := message.GetStickerMessage(); sticker != nil {
+		mimeType := sticker.GetMimetype()
+		if mimeType == "" {
+			mimeType = "image/webp"
+		}
+		return "", appstore.MediaKindSticker, mimeType
+	}
+	return "", "", ""
 }
 
 // maybeUpdateStatusFromHistory applies the status reported by history sync.
@@ -1013,6 +1117,15 @@ func toDaemonMessage(message appstore.Message) app.Message {
 		MediaWidth:              message.MediaWidth,
 		MediaHeight:             message.MediaHeight,
 		MediaAnimated:           message.MediaAnimated,
+		ReplyTo: app.MessageReply{
+			MessageID:     message.ReplyTo.MessageID,
+			SenderID:      message.ReplyTo.SenderID,
+			SenderName:    message.ReplyTo.SenderName,
+			Text:          message.ReplyTo.Text,
+			MediaKind:     message.ReplyTo.MediaKind,
+			MediaMimeType: message.ReplyTo.MediaMimeType,
+			Direction:     message.ReplyTo.Direction,
+		},
 	}
 }
 

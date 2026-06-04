@@ -46,6 +46,12 @@ public:
         GroupEndRole,
         MediaDownloadingRole,
         MediaDownloadErrorRole,
+        ReplyToMessageIdRole,
+        ReplyToSenderNameRole,
+        ReplyToTextRole,
+        ReplyToMediaKindRole,
+        ReplyToMediaMimeTypeRole,
+        ReplyToIsOutgoingRole,
     };
     Q_ENUM(Role)
 
@@ -97,6 +103,13 @@ private:
         bool mediaAnimated = false;
         bool mediaDownloading = false;
         QString mediaDownloadError;
+        QString replyToMessageId;
+        QString replyToSenderId;
+        QString replyToSenderName;
+        QString replyToText;
+        QString replyToMediaKind;
+        QString replyToMediaMimeType;
+        int replyToDirection = 0;
     };
 
     static MessageItem fromProto(const whatevr::v1::Message &message);

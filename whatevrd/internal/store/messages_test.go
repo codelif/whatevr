@@ -78,6 +78,72 @@ func TestSaveTextMessageDoesNotUnreadOutgoingMessages(t *testing.T) {
 	}
 }
 
+func TestSaveTextMessagePersistsReplyMetadata(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	chatID := "chat-1"
+	if _, err := db.SaveTextMessage(ctx, TextMessageInput{
+		ID:        chatID + ":original",
+		ChatID:    chatID,
+		SenderID:  "sender-1",
+		Text:      "original text",
+		Timestamp: time.Unix(100, 0),
+		Direction: DirectionIncoming,
+		Status:    StatusDelivered,
+	}); err != nil {
+		t.Fatalf("save original message: %v", err)
+	}
+
+	saved, err := db.SaveTextMessage(ctx, TextMessageInput{
+		ID:        chatID + ":reply",
+		ChatID:    chatID,
+		SenderID:  "me",
+		Text:      "reply text",
+		Timestamp: time.Unix(200, 0),
+		Direction: DirectionOutgoing,
+		Status:    StatusPending,
+		ReplyTo: MessageReply{
+			MessageID:     chatID + ":original",
+			SenderID:      "sender-1",
+			SenderName:    "Alice",
+			Text:          "original text",
+			MediaKind:     MediaKindImage,
+			MediaMimeType: "image/jpeg",
+			Direction:     DirectionIncoming,
+		},
+	})
+	if err != nil {
+		t.Fatalf("save reply message: %v", err)
+	}
+	if saved.Message.ReplyTo.MessageID != chatID+":original" || saved.Message.ReplyTo.SenderName != "Alice" || saved.Message.ReplyTo.MediaKind != MediaKindImage {
+		t.Fatalf("saved reply metadata = %+v", saved.Message.ReplyTo)
+	}
+
+	messages, err := db.ListMessages(ctx, chatID, 10, "")
+	if err != nil {
+		t.Fatalf("list messages: %v", err)
+	}
+	if len(messages) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(messages))
+	}
+	if messages[1].ReplyTo.MessageID != chatID+":original" || messages[1].ReplyTo.Text != "original text" {
+		t.Fatalf("listed reply metadata = %+v", messages[1].ReplyTo)
+	}
+
+	pending, err := db.ListPendingOutgoingMessages(ctx, 10, time.Now())
+	if err != nil {
+		t.Fatalf("list pending: %v", err)
+	}
+	if len(pending) != 1 || pending[0].ReplyTo.MessageID != chatID+":original" {
+		t.Fatalf("pending reply metadata = %+v", pending)
+	}
+}
+
 func TestSaveTextMessageDoesNotRegressChatSummary(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))

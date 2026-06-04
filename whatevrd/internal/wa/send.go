@@ -40,7 +40,7 @@ type readBatch struct {
 	messageIDs []types.MessageID
 }
 
-func (c *Client) SendText(ctx context.Context, chatID, text string) (appstore.SavedTextMessage, error) {
+func (c *Client) SendText(ctx context.Context, chatID, text, replyToMessageID string) (appstore.SavedTextMessage, error) {
 	client := c.currentClient()
 	if client == nil {
 		return appstore.SavedTextMessage{}, grpcstatus.Error(codes.Unavailable, "WhatsApp client is not initialized")
@@ -60,6 +60,10 @@ func (c *Client) SendText(ctx context.Context, chatID, text string) (appstore.Sa
 	}
 	targetJID = c.normalizeJIDForChat(ctx, targetJID)
 	chatID = targetJID.String()
+	replyTo, err := c.replySnapshotForSend(ctx, chatID, replyToMessageID)
+	if err != nil {
+		return appstore.SavedTextMessage{}, err
+	}
 
 	messageID := client.GenerateMessageID()
 	saved, err := c.store.SaveTextMessage(ctx, appstore.TextMessageInput{
@@ -73,6 +77,7 @@ func (c *Client) SendText(ctx context.Context, chatID, text string) (appstore.Sa
 		Status:      appstore.StatusPending,
 		IsGroup:     targetJID.Server == types.GroupServer || targetJID.Server == types.BroadcastServer,
 		CountUnread: false,
+		ReplyTo:     replyTo,
 	})
 	if err != nil {
 		return appstore.SavedTextMessage{}, err
@@ -126,7 +131,7 @@ func (c *Client) SubscribeChatPresence(ctx context.Context, chatID string) error
 	return client.SubscribePresence(ctx, jid)
 }
 
-func (c *Client) SendMedia(ctx context.Context, chatID, filePath, caption string) (appstore.SavedTextMessage, error) {
+func (c *Client) SendMedia(ctx context.Context, chatID, filePath, caption, replyToMessageID string) (appstore.SavedTextMessage, error) {
 	client := c.currentClient()
 	if client == nil {
 		return appstore.SavedTextMessage{}, grpcstatus.Error(codes.Unavailable, "WhatsApp client is not initialized")
@@ -146,6 +151,10 @@ func (c *Client) SendMedia(ctx context.Context, chatID, filePath, caption string
 	}
 	targetJID = c.normalizeJIDForChat(ctx, targetJID)
 	chatID = targetJID.String()
+	replyTo, err := c.replySnapshotForSend(ctx, chatID, replyToMessageID)
+	if err != nil {
+		return appstore.SavedTextMessage{}, err
+	}
 
 	messageID := client.GenerateMessageID()
 	mediaDir := filepath.Join(c.paths.MediaCacheDir, "messages", chatID)
@@ -174,6 +183,7 @@ func (c *Client) SendMedia(ctx context.Context, chatID, filePath, caption string
 			Status:      appstore.StatusPending,
 			IsGroup:     targetJID.Server == types.GroupServer || targetJID.Server == types.BroadcastServer,
 			CountUnread: false,
+			ReplyTo:     replyTo,
 		},
 		MediaKind:      appstore.MediaKindImage,
 		MediaMimeType:  mimeType,
@@ -192,6 +202,42 @@ func (c *Client) SendMedia(ctx context.Context, chatID, filePath, caption string
 	c.refreshAvatarIfDue(ctx, appstore.AvatarSubject{Kind: appstore.AvatarSubjectChat, ID: chatID})
 	c.signalSendQueue()
 	return saved, nil
+}
+
+func (c *Client) replySnapshotForSend(ctx context.Context, chatID, replyToMessageID string) (appstore.MessageReply, error) {
+	replyToMessageID = strings.TrimSpace(replyToMessageID)
+	if replyToMessageID == "" {
+		return appstore.MessageReply{}, nil
+	}
+
+	messageID := replyToMessageID
+	if !strings.HasPrefix(messageID, chatID+":") {
+		messageID = internalMessageIDForChat(chatID, types.MessageID(messageID))
+	}
+	message, err := c.store.GetMessage(ctx, messageID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return appstore.MessageReply{}, grpcstatus.Error(codes.NotFound, "reply message not found")
+		}
+		return appstore.MessageReply{}, err
+	}
+	if message.ChatID != chatID {
+		return appstore.MessageReply{}, grpcstatus.Error(codes.InvalidArgument, "reply message is not in this chat")
+	}
+
+	return replyFromStoredMessage(message), nil
+}
+
+func replyFromStoredMessage(message appstore.Message) appstore.MessageReply {
+	return appstore.MessageReply{
+		MessageID:     message.ID,
+		SenderID:      message.SenderID,
+		SenderName:    message.SenderName,
+		Text:          message.Text,
+		MediaKind:     message.MediaKind,
+		MediaMimeType: message.MediaMimeType,
+		Direction:     message.Direction,
+	}
 }
 
 func readOutboundMedia(filePath string) ([]byte, string, string, error) {
@@ -354,9 +400,17 @@ func (c *Client) sendPendingMessage(ctx context.Context, client *whatsmeow.Clien
 		return c.sendPendingMediaMessage(ctx, client, targetJID, externalID, message)
 	}
 
-	if _, err := client.SendMessage(ctx, targetJID, &waE2E.Message{
-		Conversation: proto.String(message.Text),
-	}, whatsmeow.SendRequestExtra{ID: externalID}); err != nil {
+	outgoingMessage := &waE2E.Message{Conversation: proto.String(message.Text)}
+	if contextInfo := outgoingReplyContextInfo(client, message); contextInfo != nil {
+		outgoingMessage = &waE2E.Message{
+			ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+				Text:        proto.String(message.Text),
+				ContextInfo: contextInfo,
+			},
+		}
+	}
+
+	if _, err := client.SendMessage(ctx, targetJID, outgoingMessage, whatsmeow.SendRequestExtra{ID: externalID}); err != nil {
 		// Transient: back off and retry.
 		newAttempts := message.SendAttempts + 1
 		delay := sendQueueBackoff(newAttempts)
@@ -398,6 +452,9 @@ func (c *Client) sendPendingMediaMessage(ctx context.Context, client *whatsmeow.
 		FileSHA256:    resp.FileSHA256,
 		FileLength:    &resp.FileLength,
 	}
+	if contextInfo := outgoingReplyContextInfo(client, message); contextInfo != nil {
+		imgMsg.ContextInfo = contextInfo
+	}
 
 	if _, err := client.SendMessage(ctx, targetJID, &waE2E.Message{ImageMessage: imgMsg}, whatsmeow.SendRequestExtra{ID: externalID}); err != nil {
 		newAttempts := message.SendAttempts + 1
@@ -411,6 +468,77 @@ func (c *Client) sendPendingMediaMessage(ctx context.Context, client *whatsmeow.
 
 	c.markPendingMessageSent(ctx, message.ID)
 	return nil
+}
+
+func outgoingReplyContextInfo(client *whatsmeow.Client, message appstore.Message) *waE2E.ContextInfo {
+	if message.ReplyTo.MessageID == "" {
+		return nil
+	}
+	stanzaID := appstore.ExternalMessageID(message.ChatID, message.ReplyTo.MessageID)
+	contextInfo := &waE2E.ContextInfo{
+		StanzaID:      proto.String(stanzaID),
+		RemoteJID:     proto.String(message.ChatID),
+		QuotedMessage: quotedMessageForReply(message.ReplyTo),
+	}
+	if participant := outgoingReplyParticipant(client, message.ReplyTo.SenderID); participant != "" {
+		contextInfo.Participant = proto.String(participant)
+	}
+	return contextInfo
+}
+
+func outgoingReplyParticipant(client *whatsmeow.Client, senderID string) string {
+	senderID = strings.TrimSpace(senderID)
+	if senderID == "" {
+		return ""
+	}
+	if senderID != "me" {
+		return senderID
+	}
+	if client == nil || client.Store.ID == nil {
+		return ""
+	}
+	return client.Store.ID.ToNonAD().String()
+}
+
+func quotedMessageForReply(reply appstore.MessageReply) *waE2E.Message {
+	if reply.MediaKind == appstore.MediaKindSticker {
+		sticker := &waE2E.StickerMessage{}
+		if reply.MediaMimeType != "" {
+			sticker.Mimetype = proto.String(reply.MediaMimeType)
+		}
+		return &waE2E.Message{StickerMessage: sticker}
+	}
+	if reply.MediaKind == appstore.MediaKindImage || strings.HasPrefix(reply.MediaMimeType, "image/") {
+		image := &waE2E.ImageMessage{}
+		if reply.Text != "" {
+			image.Caption = proto.String(reply.Text)
+		}
+		if reply.MediaMimeType != "" {
+			image.Mimetype = proto.String(reply.MediaMimeType)
+		}
+		return &waE2E.Message{ImageMessage: image}
+	}
+	if reply.Text != "" {
+		return &waE2E.Message{Conversation: proto.String(reply.Text)}
+	}
+	return &waE2E.Message{Conversation: proto.String(replyMediaSummary(reply.MediaKind, reply.MediaMimeType))}
+}
+
+func replyMediaSummary(mediaKind, mediaMimeType string) string {
+	switch {
+	case mediaKind == appstore.MediaKindSticker:
+		return "[Sticker]"
+	case mediaKind == appstore.MediaKindImage || strings.HasPrefix(mediaMimeType, "image/"):
+		return "[Image]"
+	case strings.HasPrefix(mediaMimeType, "video/"):
+		return "[Video]"
+	case strings.HasPrefix(mediaMimeType, "audio/"):
+		return "[Audio]"
+	case mediaKind != "" || mediaMimeType != "":
+		return "[Media]"
+	default:
+		return "[Message]"
+	}
 }
 
 func (c *Client) markPendingMessageSent(ctx context.Context, messageID string) {

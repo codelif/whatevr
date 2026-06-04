@@ -648,7 +648,7 @@ void AppController::loadOlderMessages()
 }
 
 
-void AppController::sendText(const QString &text)
+void AppController::sendText(const QString &text, const QString &replyToMessageId)
 {
     const QString trimmed = text.trimmed();
     if (!m_sendClient || m_sendTextReply || m_selectedChatId.isEmpty() || trimmed.isEmpty()) {
@@ -660,6 +660,7 @@ void AppController::sendText(const QString &text)
     SendTextRequest request;
     request.setChatId(m_selectedChatId);
     request.setText(trimmed);
+    request.setReplyToMessageId(replyToMessageId.trimmed());
 
     m_sendInFlight = true;
     m_composerErrorText.clear();
@@ -695,7 +696,7 @@ void AppController::sendText(const QString &text)
     });
 }
 
-void AppController::sendImage(const QString &fileUrl, const QString &caption)
+void AppController::sendImage(const QString &fileUrl, const QString &caption, const QString &replyToMessageId)
 {
     if (!m_sendClient || m_sendMediaReply || m_selectedChatId.isEmpty() || fileUrl.isEmpty()) {
         return;
@@ -713,6 +714,7 @@ void AppController::sendImage(const QString &fileUrl, const QString &caption)
     request.setChatId(m_selectedChatId);
     request.setFilePath(filePath);
     request.setCaption(caption.trimmed());
+    request.setReplyToMessageId(replyToMessageId.trimmed());
 
     m_sendInFlight = true;
     m_composerErrorText.clear();
@@ -770,7 +772,7 @@ int AppController::previousGraphemeBoundary(const QString &text, int cursorPosit
     return qMax(0, position - 1);
 }
 
-bool AppController::sendClipboardImage(const QString &caption)
+bool AppController::sendClipboardImage(const QString &caption, const QString &replyToMessageId)
 {
     if (!m_sendClient || m_sendMediaReply || m_selectedChatId.isEmpty()) {
         return false;
@@ -819,7 +821,7 @@ bool AppController::sendClipboardImage(const QString &caption)
             return true;
         }
 
-        sendImage(filePath, caption);
+        sendImage(filePath, caption, replyToMessageId);
         return true;
     }
 
@@ -831,7 +833,7 @@ bool AppController::sendClipboardImage(const QString &caption)
             }
             const QString filePath = url.toLocalFile();
             if (isSupportedOutboundImageFile(filePath)) {
-                sendImage(filePath, caption);
+                sendImage(filePath, caption, replyToMessageId);
                 return true;
             }
         }

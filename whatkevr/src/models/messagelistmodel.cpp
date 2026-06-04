@@ -91,6 +91,18 @@ QVariant MessageListModel::data(const QModelIndex &index, int role) const
         return message.mediaDownloading;
     case MediaDownloadErrorRole:
         return message.mediaDownloadError;
+    case ReplyToMessageIdRole:
+        return message.replyToMessageId;
+    case ReplyToSenderNameRole:
+        return message.replyToSenderName;
+    case ReplyToTextRole:
+        return message.replyToText;
+    case ReplyToMediaKindRole:
+        return message.replyToMediaKind;
+    case ReplyToMediaMimeTypeRole:
+        return message.replyToMediaMimeType;
+    case ReplyToIsOutgoingRole:
+        return message.replyToDirection == static_cast<int>(whatevr::v1::MessageDirectionGadget::MessageDirection::MESSAGE_DIRECTION_OUTGOING);
     default:
         return {};
     }
@@ -127,6 +139,12 @@ QHash<int, QByteArray> MessageListModel::roleNames() const
         {GroupEndRole, "groupEnd"},
         {MediaDownloadingRole, "mediaDownloading"},
         {MediaDownloadErrorRole, "mediaDownloadError"},
+        {ReplyToMessageIdRole, "replyToMessageId"},
+        {ReplyToSenderNameRole, "replyToSenderName"},
+        {ReplyToTextRole, "replyToText"},
+        {ReplyToMediaKindRole, "replyToMediaKind"},
+        {ReplyToMediaMimeTypeRole, "replyToMediaMimeType"},
+        {ReplyToIsOutgoingRole, "replyToIsOutgoing"},
     };
 }
 
@@ -392,7 +410,22 @@ MessageListModel::MessageItem MessageListModel::fromProto(const whatevr::v1::Mes
         .mediaAnimated = message.mediaAnimated(),
         .mediaDownloading = false,
         .mediaDownloadError = {},
+        .replyToMessageId = {},
+        .replyToSenderId = {},
+        .replyToSenderName = {},
+        .replyToText = {},
+        .replyToMediaKind = {},
+        .replyToMediaMimeType = {},
+        .replyToDirection = 0,
     };
+    const auto &replyTo = message.replyTo();
+    item.replyToMessageId = replyTo.messageId();
+    item.replyToSenderId = replyTo.senderId();
+    item.replyToSenderName = replyTo.senderName();
+    item.replyToText = replyTo.text();
+    item.replyToMediaKind = replyTo.mediaKind();
+    item.replyToMediaMimeType = replyTo.mediaMimeType();
+    item.replyToDirection = static_cast<int>(replyTo.direction());
     item.senderDisplayName = displaySenderName(item);
     item.senderInitials = initialsForName(item.senderDisplayName);
     item.timeText = formatTime(item.timestampUnix);
@@ -545,7 +578,14 @@ bool MessageListModel::sameMessageData(const MessageItem &left, const MessageIte
         && left.mediaHeight == right.mediaHeight
         && left.mediaAnimated == right.mediaAnimated
         && left.mediaDownloading == right.mediaDownloading
-        && left.mediaDownloadError == right.mediaDownloadError;
+        && left.mediaDownloadError == right.mediaDownloadError
+        && left.replyToMessageId == right.replyToMessageId
+        && left.replyToSenderId == right.replyToSenderId
+        && left.replyToSenderName == right.replyToSenderName
+        && left.replyToText == right.replyToText
+        && left.replyToMediaKind == right.replyToMediaKind
+        && left.replyToMediaMimeType == right.replyToMediaMimeType
+        && left.replyToDirection == right.replyToDirection;
 }
 
 bool MessageListModel::isOutgoing(const MessageItem &message) const

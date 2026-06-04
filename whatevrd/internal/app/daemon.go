@@ -246,6 +246,17 @@ type Message struct {
 	MediaWidth              int32
 	MediaHeight             int32
 	MediaAnimated           bool
+	ReplyTo                 MessageReply
+}
+
+type MessageReply struct {
+	MessageID     string
+	SenderID      string
+	SenderName    string
+	Text          string
+	MediaKind     string
+	MediaMimeType string
+	Direction     string
 }
 
 type LoginEventKind int

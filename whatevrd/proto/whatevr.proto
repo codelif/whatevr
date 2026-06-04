@@ -296,6 +296,7 @@ message DownloadMessageMediaResponse {
 message SendTextRequest {
   string chat_id = 1;
   string text = 2;
+  string reply_to_message_id = 3;
 }
 
 message SendTextResponse {
@@ -306,6 +307,7 @@ message SendMediaRequest {
   string chat_id = 1;
   string file_path = 2;
   string caption = 3;
+  string reply_to_message_id = 4;
 }
 
 message SendMediaResponse {
@@ -343,4 +345,15 @@ message Message {
   string sender_avatar_local_path = 14;
   string media_kind = 15;
   bool media_animated = 16;
+  MessageReply reply_to = 17;
+}
+
+message MessageReply {
+  string message_id = 1;
+  string sender_id = 2;
+  string sender_name = 3;
+  string text = 4;
+  string media_kind = 5;
+  string media_mime_type = 6;
+  MessageDirection direction = 7;
 }

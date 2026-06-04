@@ -39,10 +39,17 @@ Item {
     property string mediaDownloadError: ""
     property int clearSelectionGeneration: 0
     property string activeSelectionMessageId: ""
+    property string replyToMessageId: ""
+    property string replyToSenderName: ""
+    property string replyToText: ""
+    property string replyToMediaKind: ""
+    property string replyToMediaMimeType: ""
+    property bool replyToOutgoing: false
 
     signal conversationFocusRequested()
     signal messageSelectionClaimed(string messageId)
     signal typeIntoComposerRequested(string text)
+    signal replyRequested(string messageId, string senderName, string text, string mediaKind, string mediaMimeType, bool outgoing)
 
     onClearSelectionGenerationChanged: {
         if (bodyText.visible && (activeSelectionMessageId.length === 0 || activeSelectionMessageId !== messageId)) {
@@ -52,6 +59,7 @@ Item {
 
     property real listWidth: 0
     readonly property bool showDateSeparator: dateSeparatorText.length > 0
+    readonly property bool hasReplyPreview: replyToMessageId.length > 0
     readonly property real dateSeparatorHeight: showDateSeparator
         ? dateSeparator.implicitHeight + Kirigami.Units.largeSpacing
         : 0
@@ -66,6 +74,9 @@ Item {
                                                     Math.min(Math.max(0, listWidth - outerMargin * 2 - senderGutterWidth),
                                                               Kirigami.Units.gridUnit * 28))
     readonly property real maxContentWidth: Math.max(Kirigami.Units.gridUnit * 4, maxBubbleWidth - innerPadding * 2)
+    readonly property real messageBaseY: dateSeparatorHeight + (senderHeaderHeight > 0 ? senderHeaderHeight + Kirigami.Units.smallSpacing / 2 : 0)
+    readonly property real replyGlowPadding: Kirigami.Units.smallSpacing
+    property real replyGlowOpacity: 0
 
     readonly property bool isSticker: mediaKind === "sticker"
                                       || (mediaKind.length === 0
@@ -212,6 +223,57 @@ Item {
         return best
     }
 
+    function currentSenderNameForReply() {
+        return root.outgoing ? Whatevr.I18n.i18nc("@label quoted own message sender", "You") : root.senderName
+    }
+
+    function requestReply() {
+        if (root.messageId.length === 0) {
+            return
+        }
+        root.triggerReplyGlow()
+        root.messageSelectionClaimed(root.messageId)
+        root.replyRequested(root.messageId, root.currentSenderNameForReply(), root.body, root.mediaKind, root.mediaMimeType, root.outgoing)
+        root.conversationFocusRequested()
+    }
+
+    function triggerReplyGlow() {
+        replyGlowAnimation.restart()
+    }
+
+    function contentOffsetBeforeMedia() {
+        return replyPreview.visible ? replyPreview.height + Kirigami.Units.smallSpacing : 0
+    }
+
+    function contentOffsetBeforeBody() {
+        let offset = 0
+        if (replyPreview.visible) {
+            offset += replyPreview.height
+        }
+        if (mediaSlot.visible) {
+            if (offset > 0) offset += Kirigami.Units.smallSpacing
+            offset += mediaSlot.height
+        }
+        if (offset > 0) offset += Kirigami.Units.smallSpacing
+        return offset
+    }
+
+    function contentOffsetBeforeFooter() {
+        let offset = 0
+        if (replyPreview.visible) {
+            offset += replyPreview.height
+        }
+        if (mediaSlot.visible) {
+            if (offset > 0) offset += Kirigami.Units.smallSpacing
+            offset += mediaSlot.height
+        }
+        if (bodyText.visible) {
+            if (offset > 0) offset += Kirigami.Units.smallSpacing
+            offset += bodyText.height
+        }
+        return offset
+    }
+
     readonly property real contentBlockWidth: {
         let w = 0
         if (isImage && !isSticker) {
@@ -224,9 +286,32 @@ Item {
             }
             w = Math.max(w, bodyW)
         }
+        if (hasReplyPreview) {
+            w = Math.max(w, Math.min(maxContentWidth, Kirigami.Units.gridUnit * 12))
+        }
         w = Math.max(w, Math.min(maxContentWidth, tntWidth))
         return Math.max(w, hasBody ? Kirigami.Units.gridUnit * 2 : Kirigami.Units.gridUnit * 4)
     }
+    readonly property real replyGlowLeft: isSticker
+        ? Math.min(stickerSlot.x,
+                   stickerReplyPreview.visible ? stickerReplyPreview.x : stickerSlot.x,
+                   stickerFooter.x)
+        : bubble.x
+    readonly property real replyGlowTop: isSticker
+        ? Math.min(stickerSlot.y,
+                   stickerReplyPreview.visible ? stickerReplyPreview.y : stickerSlot.y,
+                   stickerFooter.y)
+        : bubble.y
+    readonly property real replyGlowRight: isSticker
+        ? Math.max(stickerSlot.x + stickerSlot.width,
+                   stickerReplyPreview.visible ? stickerReplyPreview.x + stickerReplyPreview.width : stickerSlot.x + stickerSlot.width,
+                   stickerFooter.x + stickerFooter.width)
+        : bubble.x + bubble.width
+    readonly property real replyGlowBottom: isSticker
+        ? Math.max(stickerSlot.y + stickerSlot.height,
+                   stickerReplyPreview.visible ? stickerReplyPreview.y + stickerReplyPreview.height : stickerSlot.y + stickerSlot.height,
+                   stickerFooter.y + stickerFooter.height)
+        : bubble.y + bubble.height
 
     width: listWidth
     height: (isSticker
@@ -236,6 +321,50 @@ Item {
     SystemPalette {
         id: activePalette
         colorGroup: SystemPalette.Active
+    }
+
+    HoverHandler {
+        id: rowHoverHandler
+
+        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+    }
+
+    TapHandler {
+        acceptedButtons: Qt.LeftButton
+        onDoubleTapped: {
+            if (root.messageId.length > 0) {
+                root.requestReply()
+            }
+        }
+    }
+
+    SequentialAnimation {
+        id: replyGlowAnimation
+
+        PropertyAction {
+            target: root
+            property: "replyGlowOpacity"
+            value: 0
+        }
+        NumberAnimation {
+            target: root
+            property: "replyGlowOpacity"
+            from: 0
+            to: 1
+            duration: Kirigami.Units.shortDuration
+            easing.type: Easing.OutCubic
+        }
+        PauseAnimation {
+            duration: Kirigami.Units.shortDuration
+        }
+        NumberAnimation {
+            target: root
+            property: "replyGlowOpacity"
+            from: 1
+            to: 0
+            duration: Kirigami.Units.longDuration
+            easing.type: Easing.OutCubic
+        }
     }
 
     TextMetrics {
@@ -271,7 +400,7 @@ Item {
         x: root.outgoing
            ? root.width - width - root.outerMargin
            : root.outerMargin + root.senderGutterWidth
-        y: root.dateSeparatorHeight + (root.senderHeaderHeight > 0 ? root.senderHeaderHeight + Kirigami.Units.smallSpacing / 2 : 0)
+        y: root.messageBaseY
         width: root.contentBlockWidth + root.innerPadding * 2
         height: contentColumn.height + root.innerPadding * 2
 
@@ -294,7 +423,11 @@ Item {
             width: root.contentBlockWidth
             height: {
                 let h = 0
+                if (replyPreview.visible) {
+                    h += replyPreview.height
+                }
                 if (mediaSlot.visible) {
+                    if (h > 0) h += Kirigami.Units.smallSpacing
                     h += mediaSlot.height
                 }
                 if (bodyText.visible) {
@@ -313,12 +446,28 @@ Item {
                 return h
             }
 
+            ReplyPreview {
+                id: replyPreview
+
+                visible: root.hasReplyPreview
+                x: 0
+                y: 0
+                width: root.contentBlockWidth
+                senderName: root.replyToSenderName
+                body: root.replyToText
+                mediaKind: root.replyToMediaKind
+                mediaMimeType: root.replyToMediaMimeType
+                outgoing: root.replyToOutgoing
+                fillColor: Qt.alpha(Kirigami.Theme.textColor, root.outgoing ? 0.06 : 0.045)
+                borderColor: Qt.alpha(Kirigami.Theme.textColor, 0.07)
+            }
+
             Item {
                 id: mediaSlot
 
                 visible: root.isImage && !root.isSticker
                 x: (root.contentBlockWidth - width) / 2
-                y: 0
+                y: root.contentOffsetBeforeMedia()
                 width: root.imageDisplayWidth
                 height: visible ? root.imageDisplayHeight : 0
                 clip: true
@@ -475,13 +624,13 @@ Item {
 
                 visible: root.body.length > 0
                 x: 0
-                y: mediaSlot.visible ? mediaSlot.height + Kirigami.Units.smallSpacing : 0
+                y: root.contentOffsetBeforeBody()
                 width: root.contentBlockWidth
                 text: root.body
                 readOnly: true
-                selectByMouse: true
-                selectByKeyboard: true
-                persistentSelection: true
+                selectByMouse: false
+                selectByKeyboard: false
+                persistentSelection: false
                 wrapMode: TextEdit.Wrap
                 textFormat: TextEdit.PlainText
                 color: Kirigami.Theme.textColor
@@ -510,14 +659,9 @@ Item {
 
                 x: Math.max(0, parent.width - width)
                 y: {
-                    let off = 0
-                    if (mediaSlot.visible) off += mediaSlot.height
-                    if (bodyText.visible) {
-                        if (off > 0) off += Kirigami.Units.smallSpacing
-                        off += bodyText.height
-                    }
+                    const off = root.contentOffsetBeforeFooter()
                     if (root.imageOnly) {
-                        return mediaSlot.height + root.tntGap
+                        return mediaSlot.y + mediaSlot.height + root.tntGap
                     }
                     if (bodyText.visible) {
                         return root.tntFitsInline ? off - height + root.inlineTntReserve + root.inlineTntYOffset : off + root.tntGap
@@ -627,6 +771,25 @@ Item {
         }
     }
 
+    ReplyPreview {
+        id: stickerReplyPreview
+
+        visible: root.isSticker && root.hasReplyPreview
+        x: root.outgoing
+           ? root.width - width - root.outerMargin
+           : root.outerMargin + root.senderGutterWidth
+        y: root.messageBaseY
+        width: Math.min(Math.max(0, root.width - root.outerMargin * 2 - root.senderGutterWidth),
+                        Math.max(root.stickerDisplayWidth, Kirigami.Units.gridUnit * 12))
+        senderName: root.replyToSenderName
+        body: root.replyToText
+        mediaKind: root.replyToMediaKind
+        mediaMimeType: root.replyToMediaMimeType
+        outgoing: root.replyToOutgoing
+        fillColor: Qt.alpha(Kirigami.Theme.backgroundColor, 0.78)
+        borderColor: Qt.alpha(Kirigami.Theme.textColor, 0.08)
+    }
+
     Item {
         id: stickerSlot
 
@@ -634,7 +797,7 @@ Item {
         x: root.outgoing
            ? root.width - width - root.outerMargin
            : root.outerMargin + root.senderGutterWidth
-        y: root.dateSeparatorHeight + (root.senderHeaderHeight > 0 ? root.senderHeaderHeight + Kirigami.Units.smallSpacing / 2 : 0)
+        y: root.messageBaseY + (stickerReplyPreview.visible ? stickerReplyPreview.height + Kirigami.Units.smallSpacing : 0)
         width: root.stickerDisplayWidth
         height: root.stickerDisplayHeight
 
@@ -872,6 +1035,96 @@ Item {
                         isMask: true
                     }
                 }
+            }
+        }
+    }
+
+    Item {
+        id: replyGlowOverlay
+
+        readonly property real innerMargin: Math.max(1, Math.round(Kirigami.Units.smallSpacing / 2))
+
+        visible: root.replyGlowOpacity > 0
+        opacity: root.replyGlowOpacity
+        x: Math.round(root.replyGlowLeft - root.replyGlowPadding)
+        y: Math.round(root.replyGlowTop - root.replyGlowPadding)
+        z: 7
+        width: Math.max(0, Math.round(root.replyGlowRight - root.replyGlowLeft + root.replyGlowPadding * 2))
+        height: Math.max(0, Math.round(root.replyGlowBottom - root.replyGlowTop + root.replyGlowPadding * 2))
+
+        Rectangle {
+            id: replyGlowOuter
+
+            anchors.fill: parent
+            radius: Kirigami.Units.cornerRadius + root.replyGlowPadding
+            color: Qt.alpha(Kirigami.Theme.highlightColor, 0.06)
+            border.color: Qt.alpha(Kirigami.Theme.highlightColor, 0.72)
+            border.width: Math.max(2, Math.round(Kirigami.Units.smallSpacing / 2))
+        }
+
+        Rectangle {
+            anchors.fill: parent
+            anchors.margins: replyGlowOverlay.innerMargin
+            radius: Math.max(0, replyGlowOuter.radius - replyGlowOverlay.innerMargin)
+            color: "transparent"
+            border.color: Qt.alpha(Kirigami.Theme.highlightColor, 0.28)
+            border.width: 1
+        }
+    }
+
+    ToolButton {
+        id: replyButton
+
+        readonly property real visualX: root.isSticker ? stickerSlot.x : bubble.x
+        readonly property real visualY: root.isSticker ? stickerSlot.y : bubble.y
+        readonly property real visualWidth: root.isSticker ? stickerSlot.width : bubble.width
+        readonly property real visualHeight: root.isSticker ? stickerSlot.height : bubble.height
+        readonly property real desiredX: root.outgoing
+                                         ? visualX - width - Kirigami.Units.smallSpacing
+                                         : visualX + visualWidth + Kirigami.Units.smallSpacing
+
+        visible: root.messageId.length > 0 && !root.pooled
+        enabled: opacity > 0.01
+        opacity: (rowHoverHandler.hovered || hovered || pressed) ? 1 : 0
+        x: Math.round(Math.max(root.outerMargin,
+                               Math.min(root.width - root.outerMargin - width, desiredX)))
+        y: Math.round(visualY + Math.max(0, visualHeight - height) / 2)
+        z: 8
+        width: Math.round(Math.max(Kirigami.Units.iconSizes.smallMedium + Kirigami.Units.smallSpacing,
+                                   Math.min(Kirigami.Units.gridUnit * 1.45,
+                                            visualHeight - Kirigami.Units.smallSpacing)))
+        height: width
+        icon.name: "edit-undo"
+        icon.width: Kirigami.Units.iconSizes.smallMedium
+        icon.height: icon.width
+        text: Whatevr.I18n.i18nc("@action:button", "Reply")
+        display: AbstractButton.IconOnly
+        focusPolicy: Qt.NoFocus
+        hoverEnabled: true
+        onClicked: root.requestReply()
+
+        contentItem: Item {
+            Kirigami.Icon {
+                anchors.centerIn: parent
+                source: replyButton.icon.name
+                width: replyButton.icon.width
+                height: replyButton.icon.height
+                color: Kirigami.Theme.textColor
+                isMask: true
+            }
+        }
+
+        background: Rectangle {
+            radius: width / 2
+            color: Qt.alpha(Kirigami.Theme.backgroundColor, replyButton.hovered || replyButton.pressed ? 0.98 : 0.9)
+            border.color: Qt.alpha(Kirigami.Theme.textColor, replyButton.hovered || replyButton.pressed ? 0.24 : 0.14)
+            border.width: 1
+        }
+
+        Behavior on opacity {
+            NumberAnimation {
+                duration: Kirigami.Units.shortDuration
+                easing.type: Easing.OutCubic
             }
         }
     }

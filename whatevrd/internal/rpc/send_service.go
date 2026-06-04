@@ -18,8 +18,8 @@ const (
 )
 
 type SendController interface {
-	SendText(context.Context, string, string) (appstore.SavedTextMessage, error)
-	SendMedia(context.Context, string, string, string) (appstore.SavedTextMessage, error)
+	SendText(context.Context, string, string, string) (appstore.SavedTextMessage, error)
+	SendMedia(context.Context, string, string, string, string) (appstore.SavedTextMessage, error)
 }
 
 type SendService struct {
@@ -46,7 +46,7 @@ func (s *SendService) SendText(ctx context.Context, req *pb.SendTextRequest) (*p
 		return nil, status.Errorf(codes.InvalidArgument, "text must be <= %d characters", maxSendTextRunes)
 	}
 
-	saved, err := s.sender.SendText(ctx, strings.TrimSpace(req.GetChatId()), text)
+	saved, err := s.sender.SendText(ctx, strings.TrimSpace(req.GetChatId()), text, strings.TrimSpace(req.GetReplyToMessageId()))
 	if err != nil {
 		return nil, err
 	}
@@ -70,7 +70,7 @@ func (s *SendService) SendMedia(ctx context.Context, req *pb.SendMediaRequest) (
 		return nil, status.Errorf(codes.InvalidArgument, "caption must be <= %d characters", maxCaptionRunes)
 	}
 
-	saved, err := s.sender.SendMedia(ctx, strings.TrimSpace(req.GetChatId()), filePath, caption)
+	saved, err := s.sender.SendMedia(ctx, strings.TrimSpace(req.GetChatId()), filePath, caption, strings.TrimSpace(req.GetReplyToMessageId()))
 	if err != nil {
 		return nil, err
 	}

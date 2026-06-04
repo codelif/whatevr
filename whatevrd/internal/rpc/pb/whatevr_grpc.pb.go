@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.1
 // - protoc             v7.34.1
-// source: proto/whatevr.proto
+// source: whatevr.proto
 
 package pb
 
@@ -197,7 +197,7 @@ var DaemonService_ServiceDesc = grpc.ServiceDesc{
 			ServerStreams: true,
 		},
 	},
-	Metadata: "proto/whatevr.proto",
+	Metadata: "whatevr.proto",
 }
 
 const (
@@ -341,7 +341,7 @@ var LoginService_ServiceDesc = grpc.ServiceDesc{
 			ServerStreams: true,
 		},
 	},
-	Metadata: "proto/whatevr.proto",
+	Metadata: "whatevr.proto",
 }
 
 const (
@@ -485,7 +485,7 @@ var FrontendService_ServiceDesc = grpc.ServiceDesc{
 			ServerStreams: true,
 		},
 	},
-	Metadata: "proto/whatevr.proto",
+	Metadata: "whatevr.proto",
 }
 
 const (
@@ -815,7 +815,7 @@ var ChatService_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "proto/whatevr.proto",
+	Metadata: "whatevr.proto",
 }
 
 const (
@@ -955,5 +955,5 @@ var SendService_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "proto/whatevr.proto",
+	Metadata: "whatevr.proto",
 }

@@ -266,7 +266,7 @@ func toProtoChat(chat app.Chat) *pb.Chat {
 }
 
 func toProtoMessage(message app.Message) *pb.Message {
-	return &pb.Message{
+	protoMessage := &pb.Message{
 		Id:                      message.ID,
 		ChatId:                  message.ChatID,
 		SenderId:                message.SenderID,
@@ -284,6 +284,18 @@ func toProtoMessage(message app.Message) *pb.Message {
 		MediaHeight:             message.MediaHeight,
 		MediaAnimated:           message.MediaAnimated,
 	}
+	if message.ReplyTo.MessageID != "" {
+		protoMessage.ReplyTo = &pb.MessageReply{
+			MessageId:     message.ReplyTo.MessageID,
+			SenderId:      message.ReplyTo.SenderID,
+			SenderName:    message.ReplyTo.SenderName,
+			Text:          message.ReplyTo.Text,
+			MediaKind:     message.ReplyTo.MediaKind,
+			MediaMimeType: message.ReplyTo.MediaMimeType,
+			Direction:     toProtoMessageDirection(message.ReplyTo.Direction),
+		}
+	}
+	return protoMessage
 }
 
 func toProtoMessageDirection(direction string) pb.MessageDirection {

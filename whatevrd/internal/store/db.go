@@ -103,6 +103,13 @@ func (db *DB) migrate(ctx context.Context) error {
 			direction TEXT NOT NULL,
 			is_read INTEGER NOT NULL DEFAULT 1,
 			status TEXT NOT NULL,
+			reply_to_message_id TEXT NOT NULL DEFAULT '',
+			reply_to_sender_id TEXT NOT NULL DEFAULT '',
+			reply_to_sender_name TEXT NOT NULL DEFAULT '',
+			reply_to_text TEXT NOT NULL DEFAULT '',
+			reply_to_media_kind TEXT NOT NULL DEFAULT '',
+			reply_to_media_mime_type TEXT NOT NULL DEFAULT '',
+			reply_to_direction TEXT NOT NULL DEFAULT '',
 			FOREIGN KEY(chat_id) REFERENCES chats(id) ON DELETE CASCADE
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_chat_timestamp ON messages(chat_id, timestamp DESC)`,
@@ -190,6 +197,9 @@ func (db *DB) migrate(ctx context.Context) error {
 	}
 
 	if err := db.ensureSendRetryColumns(ctx); err != nil {
+		return err
+	}
+	if err := db.ensureReplyColumns(ctx); err != nil {
 		return err
 	}
 
@@ -641,6 +651,51 @@ func (db *DB) ensureSendRetryColumns(ctx context.Context) error {
 		{"send_attempts", `ALTER TABLE messages ADD COLUMN send_attempts INTEGER NOT NULL DEFAULT 0`},
 		{"last_send_error", `ALTER TABLE messages ADD COLUMN last_send_error TEXT NOT NULL DEFAULT ''`},
 		{"next_send_attempt", `ALTER TABLE messages ADD COLUMN next_send_attempt INTEGER NOT NULL DEFAULT 0`},
+	}
+	for _, a := range alterations {
+		if existing[a.col] {
+			continue
+		}
+		if _, err := db.conn.ExecContext(ctx, a.def); err != nil {
+			return fmt.Errorf("add messages.%s: %w", a.col, err)
+		}
+	}
+	return nil
+}
+
+func (db *DB) ensureReplyColumns(ctx context.Context) error {
+	rows, err := db.conn.QueryContext(ctx, `PRAGMA table_info(messages)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	existing := make(map[string]bool)
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull, pk int
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			return err
+		}
+		existing[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	alterations := []struct {
+		col string
+		def string
+	}{
+		{"reply_to_message_id", `ALTER TABLE messages ADD COLUMN reply_to_message_id TEXT NOT NULL DEFAULT ''`},
+		{"reply_to_sender_id", `ALTER TABLE messages ADD COLUMN reply_to_sender_id TEXT NOT NULL DEFAULT ''`},
+		{"reply_to_sender_name", `ALTER TABLE messages ADD COLUMN reply_to_sender_name TEXT NOT NULL DEFAULT ''`},
+		{"reply_to_text", `ALTER TABLE messages ADD COLUMN reply_to_text TEXT NOT NULL DEFAULT ''`},
+		{"reply_to_media_kind", `ALTER TABLE messages ADD COLUMN reply_to_media_kind TEXT NOT NULL DEFAULT ''`},
+		{"reply_to_media_mime_type", `ALTER TABLE messages ADD COLUMN reply_to_media_mime_type TEXT NOT NULL DEFAULT ''`},
+		{"reply_to_direction", `ALTER TABLE messages ADD COLUMN reply_to_direction TEXT NOT NULL DEFAULT ''`},
 	}
 	for _, a := range alterations {
 		if existing[a.col] {

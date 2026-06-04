@@ -250,6 +250,15 @@ func toAppMessage(message appstore.Message) app.Message {
 		MediaWidth:              message.MediaWidth,
 		MediaHeight:             message.MediaHeight,
 		MediaAnimated:           message.MediaAnimated,
+		ReplyTo: app.MessageReply{
+			MessageID:     message.ReplyTo.MessageID,
+			SenderID:      message.ReplyTo.SenderID,
+			SenderName:    message.ReplyTo.SenderName,
+			Text:          message.ReplyTo.Text,
+			MediaKind:     message.ReplyTo.MediaKind,
+			MediaMimeType: message.ReplyTo.MediaMimeType,
+			Direction:     message.ReplyTo.Direction,
+		},
 	}
 }
 

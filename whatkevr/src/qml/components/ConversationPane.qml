@@ -10,6 +10,13 @@ Kirigami.Page {
     id: root
 
     property bool closeChatActionVisible: false
+    property string replyChatId: ""
+    property string replyToMessageId: ""
+    property string replyToSenderName: ""
+    property string replyToText: ""
+    property string replyToMediaKind: ""
+    property string replyToMediaMimeType: ""
+    property bool replyToOutgoing: false
 
     readonly property bool messagesCurrent: Whatevr.AppController.hasSelectedChat
                                             && Whatevr.AppController.displayedMessagesChatId === Whatevr.AppController.selectedChatId
@@ -61,6 +68,30 @@ Kirigami.Page {
         composer.focusAndInsertText(text)
     }
 
+    function clearReplyTarget() {
+        replyChatId = ""
+        replyToMessageId = ""
+        replyToSenderName = ""
+        replyToText = ""
+        replyToMediaKind = ""
+        replyToMediaMimeType = ""
+        replyToOutgoing = false
+    }
+
+    function setReplyTarget(messageId, senderName, text, mediaKind, mediaMimeType, outgoing) {
+        if (messageId.length === 0 || !Whatevr.AppController.hasSelectedChat) {
+            return
+        }
+        replyChatId = Whatevr.AppController.selectedChatId
+        replyToMessageId = messageId
+        replyToSenderName = senderName
+        replyToText = text
+        replyToMediaKind = mediaKind
+        replyToMediaMimeType = mediaMimeType
+        replyToOutgoing = outgoing
+        composer.forceInputFocus()
+    }
+
     Keys.onPressed: event => {
         if (!root.shouldTypeIntoComposer(event)) {
             return
@@ -81,6 +112,16 @@ Kirigami.Page {
         target: null
         acceptedButtons: Qt.LeftButton
         enabled: Whatevr.AppController.hasSelectedChat
+    }
+
+    Connections {
+        target: Whatevr.AppController
+
+        function onSelectionChanged() {
+            if (root.replyChatId.length > 0 && root.replyChatId !== Whatevr.AppController.selectedChatId) {
+                root.clearReplyTarget()
+            }
+        }
     }
 
     titleDelegate: RowLayout {
@@ -191,6 +232,7 @@ Kirigami.Page {
                 onLoadOlderMessagesRequested: Whatevr.AppController.loadOlderMessages()
                 onConversationFocusRequested: root.forceActiveFocus(Qt.MouseFocusReason)
                 onTypeIntoComposerRequested: text => root.typeIntoComposer(text)
+                onReplyToMessageRequested: (messageId, senderName, text, mediaKind, mediaMimeType, outgoing) => root.setReplyTarget(messageId, senderName, text, mediaKind, mediaMimeType, outgoing)
             }
 
             BusyIndicator {
@@ -238,9 +280,17 @@ Kirigami.Page {
             enabledForChat: Whatevr.AppController.composerEnabled
             sending: Whatevr.AppController.sendInFlight
             errorText: Whatevr.AppController.composerErrorText
-            onSendTextRequested: text => Whatevr.AppController.sendText(text)
-            onSendImageRequested: (fileUrl, caption) => Whatevr.AppController.sendImage(fileUrl, caption)
+            replyToMessageId: root.replyToMessageId
+            replyToSenderName: root.replyToSenderName
+            replyToText: root.replyToText
+            replyToMediaKind: root.replyToMediaKind
+            replyToMediaMimeType: root.replyToMediaMimeType
+            replyToOutgoing: root.replyToOutgoing
+            onSendTextRequested: (text, replyToMessageId) => Whatevr.AppController.sendText(text, replyToMessageId)
+            onSendImageRequested: (fileUrl, caption, replyToMessageId) => Whatevr.AppController.sendImage(fileUrl, caption, replyToMessageId)
             onComposingChanged: composing => Whatevr.AppController.setSelectedChatComposing(composing)
+            onClearReplyRequested: root.clearReplyTarget()
+            onReplyConsumed: root.clearReplyTarget()
         }
     }
 

@@ -158,11 +158,11 @@ public:
     Q_INVOKABLE void selectChat(const QString &chatId);
     Q_INVOKABLE void retryMessages();
     Q_INVOKABLE void loadOlderMessages();
-    Q_INVOKABLE void sendText(const QString &text);
-    Q_INVOKABLE void sendImage(const QString &fileUrl, const QString &caption = QString());
+    Q_INVOKABLE void sendText(const QString &text, const QString &replyToMessageId = QString());
+    Q_INVOKABLE void sendImage(const QString &fileUrl, const QString &caption = QString(), const QString &replyToMessageId = QString());
     Q_INVOKABLE void addRecentEmoji(const QString &emoji);
     Q_INVOKABLE [[nodiscard]] int previousGraphemeBoundary(const QString &text, int cursorPosition) const;
-    Q_INVOKABLE bool sendClipboardImage(const QString &caption = QString());
+    Q_INVOKABLE bool sendClipboardImage(const QString &caption = QString(), const QString &replyToMessageId = QString());
     Q_INVOKABLE void setChatPinned(const QString &chatId, bool pinned);
     Q_INVOKABLE void setSelectedChatComposing(bool composing);
     Q_INVOKABLE void downloadMessageMedia(const QString &messageId);
