@@ -2144,6 +2144,7 @@ type GetMessagesRequest struct {
 	ChatId          string                 `protobuf:"bytes,1,opt,name=chat_id,json=chatId,proto3" json:"chat_id,omitempty"`
 	Limit           int32                  `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`
 	BeforeMessageId string                 `protobuf:"bytes,3,opt,name=before_message_id,json=beforeMessageId,proto3" json:"before_message_id,omitempty"`
+	AroundMessageId string                 `protobuf:"bytes,4,opt,name=around_message_id,json=aroundMessageId,proto3" json:"around_message_id,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -2195,6 +2196,13 @@ func (x *GetMessagesRequest) GetLimit() int32 {
 func (x *GetMessagesRequest) GetBeforeMessageId() string {
 	if x != nil {
 		return x.BeforeMessageId
+	}
+	return ""
+}
+
+func (x *GetMessagesRequest) GetAroundMessageId() string {
+	if x != nil {
+		return x.AroundMessageId
 	}
 	return ""
 }
@@ -3395,11 +3403,12 @@ const file_whatevr_proto_rawDesc = "" +
 	"\x05limit\x18\x01 \x01(\x05R\x05limit\x12\x16\n" +
 	"\x06offset\x18\x02 \x01(\x05R\x06offset\";\n" +
 	"\x11ListChatsResponse\x12&\n" +
-	"\x05chats\x18\x01 \x03(\v2\x10.whatevr.v1.ChatR\x05chats\"o\n" +
+	"\x05chats\x18\x01 \x03(\v2\x10.whatevr.v1.ChatR\x05chats\"\x9b\x01\n" +
 	"\x12GetMessagesRequest\x12\x17\n" +
 	"\achat_id\x18\x01 \x01(\tR\x06chatId\x12\x14\n" +
 	"\x05limit\x18\x02 \x01(\x05R\x05limit\x12*\n" +
-	"\x11before_message_id\x18\x03 \x01(\tR\x0fbeforeMessageId\"F\n" +
+	"\x11before_message_id\x18\x03 \x01(\tR\x0fbeforeMessageId\x12*\n" +
+	"\x11around_message_id\x18\x04 \x01(\tR\x0faroundMessageId\"F\n" +
 	"\x13GetMessagesResponse\x12/\n" +
 	"\bmessages\x18\x01 \x03(\v2\x13.whatevr.v1.MessageR\bmessages\".\n" +
 	"\x13MarkChatReadRequest\x12\x17\n" +

@@ -10,6 +10,7 @@ Control {
     property string body: ""
     property string mediaKind: ""
     property string mediaMimeType: ""
+    property string targetMessageId: ""
     property bool outgoing: false
     property bool showCloseButton: false
     property color accentColor: Kirigami.Theme.highlightColor
@@ -17,6 +18,7 @@ Control {
     property color borderColor: Qt.alpha(Kirigami.Theme.textColor, 0.08)
 
     signal closeRequested()
+    signal activated(string messageId)
 
     function fallbackBody() {
         if (mediaKind === "sticker") {
@@ -50,6 +52,15 @@ Control {
     bottomPadding: Kirigami.Units.smallSpacing
     implicitHeight: Math.max(Kirigami.Units.gridUnit * 2.35,
                              content.implicitHeight + topPadding + bottomPadding)
+
+    MouseArea {
+        anchors.fill: parent
+        acceptedButtons: Qt.LeftButton
+        cursorShape: Qt.PointingHandCursor
+        enabled: !root.showCloseButton && root.targetMessageId.length > 0
+        z: 2
+        onClicked: root.activated(root.targetMessageId)
+    }
 
     background: Rectangle {
         radius: Kirigami.Units.cornerRadius * 0.8

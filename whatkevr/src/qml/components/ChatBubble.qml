@@ -50,6 +50,7 @@ Item {
     signal messageSelectionClaimed(string messageId)
     signal typeIntoComposerRequested(string text)
     signal replyRequested(string messageId, string senderName, string text, string mediaKind, string mediaMimeType, bool outgoing)
+    signal replyPreviewActivated(string messageId)
 
     onClearSelectionGenerationChanged: {
         if (bodyText.visible && (activeSelectionMessageId.length === 0 || activeSelectionMessageId !== messageId)) {
@@ -457,9 +458,11 @@ Item {
                 body: root.replyToText
                 mediaKind: root.replyToMediaKind
                 mediaMimeType: root.replyToMediaMimeType
+                targetMessageId: root.replyToMessageId
                 outgoing: root.replyToOutgoing
                 fillColor: Qt.alpha(Kirigami.Theme.textColor, root.outgoing ? 0.06 : 0.045)
                 borderColor: Qt.alpha(Kirigami.Theme.textColor, 0.07)
+                onActivated: messageId => root.replyPreviewActivated(messageId)
             }
 
             Item {
@@ -628,9 +631,9 @@ Item {
                 width: root.contentBlockWidth
                 text: root.body
                 readOnly: true
-                selectByMouse: false
-                selectByKeyboard: false
-                persistentSelection: false
+                selectByMouse: true
+                selectByKeyboard: true
+                persistentSelection: true
                 wrapMode: TextEdit.Wrap
                 textFormat: TextEdit.PlainText
                 color: Kirigami.Theme.textColor
@@ -785,9 +788,11 @@ Item {
         body: root.replyToText
         mediaKind: root.replyToMediaKind
         mediaMimeType: root.replyToMediaMimeType
+        targetMessageId: root.replyToMessageId
         outgoing: root.replyToOutgoing
         fillColor: Qt.alpha(Kirigami.Theme.backgroundColor, 0.78)
         borderColor: Qt.alpha(Kirigami.Theme.textColor, 0.08)
+        onActivated: messageId => root.replyPreviewActivated(messageId)
     }
 
     Item {

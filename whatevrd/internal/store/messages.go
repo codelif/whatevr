@@ -547,49 +547,97 @@ func (db *DB) ListMessages(ctx context.Context, chatID string, limit int, before
 	}
 	defer rows.Close()
 
-	messages := make([]Message, 0, limit)
-	for rows.Next() {
-		var message Message
-		if err := rows.Scan(
-			&message.ID,
-			&message.ChatID,
-			&message.SenderID,
-			&message.SenderName,
-			&message.SenderAvatarLocalPath,
-			&message.Text,
-			&message.TimestampUnix,
-			&message.Direction,
-			&message.IsRead,
-			&message.Status,
-			&message.MediaKind,
-			&message.MediaMimeType,
-			&message.MediaLocalPath,
-			&message.MediaThumbnailLocalPath,
-			&message.MediaWidth,
-			&message.MediaHeight,
-			&message.MediaAnimated,
-			&message.ReplyTo.MessageID,
-			&message.ReplyTo.SenderID,
-			&message.ReplyTo.SenderName,
-			&message.ReplyTo.Text,
-			&message.ReplyTo.MediaKind,
-			&message.ReplyTo.MediaMimeType,
-			&message.ReplyTo.Direction,
-			&message.SendAttempts,
-			&message.LastSendError,
-			&message.NextSendAttempt,
-		); err != nil {
-			return nil, err
-		}
-		messages = append(messages, message)
-	}
-
-	if err := rows.Err(); err != nil {
+	messages, err := scanMessageRows(rows, limit)
+	if err != nil {
 		return nil, err
 	}
 
 	reverseMessages(messages)
 	return messages, nil
+}
+
+func (db *DB) ListMessagesAround(ctx context.Context, chatID string, limit int, targetMessageID string) ([]Message, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if targetMessageID == "" {
+		return nil, sql.ErrNoRows
+	}
+
+	target, err := db.GetMessage(ctx, targetMessageID)
+	if err != nil {
+		return nil, err
+	}
+	if target.ChatID != chatID {
+		return nil, sql.ErrNoRows
+	}
+	if limit == 1 {
+		return []Message{target}, nil
+	}
+
+	capacity := limit - 1
+	olderDesc, err := db.listMessagesAroundSide(ctx, chatID, target.TimestampUnix, target.ID, capacity, false)
+	if err != nil {
+		return nil, err
+	}
+	newerAsc, err := db.listMessagesAroundSide(ctx, chatID, target.TimestampUnix, target.ID, capacity, true)
+	if err != nil {
+		return nil, err
+	}
+
+	olderTake := min(len(olderDesc), capacity/2)
+	newerTake := min(len(newerAsc), capacity-olderTake)
+	if olderTake+newerTake < capacity {
+		olderTake = min(len(olderDesc), capacity-newerTake)
+	}
+
+	olderSelected := append([]Message(nil), olderDesc[:olderTake]...)
+	reverseMessages(olderSelected)
+
+	messages := make([]Message, 0, olderTake+1+newerTake)
+	messages = append(messages, olderSelected...)
+	messages = append(messages, target)
+	messages = append(messages, newerAsc[:newerTake]...)
+	return messages, nil
+}
+
+func (db *DB) listMessagesAroundSide(ctx context.Context, chatID string, timestamp int64, messageID string, limit int, newer bool) ([]Message, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+
+	comparison := `AND (m.timestamp < ? OR (m.timestamp = ? AND m.id < ?))`
+	order := `ORDER BY m.timestamp DESC, m.id DESC`
+	if newer {
+		comparison = `AND (m.timestamp > ? OR (m.timestamp = ? AND m.id > ?))`
+		order = `ORDER BY m.timestamp ASC, m.id ASC`
+	}
+
+	query := `
+		SELECT m.id, m.chat_id, m.sender_id,
+		       COALESCE(NULLIF(s.name, ''), NULLIF(c.name, ''), ''),
+		       COALESCE(NULLIF(sa.local_path, ''), NULLIF(ca.local_path, ''), NULLIF(s.avatar_local_path, ''), NULLIF(c.avatar_local_path, ''), ''),
+		       m.text, m.timestamp, m.direction, m.is_read, m.status, m.media_kind, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_animated,
+		       m.reply_to_message_id, m.reply_to_sender_id, m.reply_to_sender_name, m.reply_to_text, m.reply_to_media_kind, m.reply_to_media_mime_type, m.reply_to_direction,
+		       m.send_attempts, m.last_send_error, m.next_send_attempt
+		FROM messages m
+		LEFT JOIN senders s ON s.id = m.sender_id
+		LEFT JOIN chats c ON c.id = m.sender_id
+		LEFT JOIN avatars sa ON sa.subject_kind = 'sender' AND sa.subject_id = m.sender_id
+		LEFT JOIN avatars ca ON ca.subject_kind = 'chat' AND ca.subject_id = m.sender_id
+		WHERE m.chat_id = ?
+	` + comparison + `
+		` + order + `
+		LIMIT ?
+	`
+
+	rows, err := db.conn.QueryContext(ctx, query, chatID, timestamp, timestamp, messageID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return scanMessageRows(rows, limit)
 }
 
 func (db *DB) messageCursor(ctx context.Context, id string) (int64, string, error) {
@@ -1050,6 +1098,49 @@ func reverseMessages(messages []Message) {
 	for left, right := 0, len(messages)-1; left < right; left, right = left+1, right-1 {
 		messages[left], messages[right] = messages[right], messages[left]
 	}
+}
+
+func scanMessageRows(rows *sql.Rows, capacity int) ([]Message, error) {
+	messages := make([]Message, 0, capacity)
+	for rows.Next() {
+		var message Message
+		if err := rows.Scan(
+			&message.ID,
+			&message.ChatID,
+			&message.SenderID,
+			&message.SenderName,
+			&message.SenderAvatarLocalPath,
+			&message.Text,
+			&message.TimestampUnix,
+			&message.Direction,
+			&message.IsRead,
+			&message.Status,
+			&message.MediaKind,
+			&message.MediaMimeType,
+			&message.MediaLocalPath,
+			&message.MediaThumbnailLocalPath,
+			&message.MediaWidth,
+			&message.MediaHeight,
+			&message.MediaAnimated,
+			&message.ReplyTo.MessageID,
+			&message.ReplyTo.SenderID,
+			&message.ReplyTo.SenderName,
+			&message.ReplyTo.Text,
+			&message.ReplyTo.MediaKind,
+			&message.ReplyTo.MediaMimeType,
+			&message.ReplyTo.Direction,
+			&message.SendAttempts,
+			&message.LastSendError,
+			&message.NextSendAttempt,
+		); err != nil {
+			return nil, err
+		}
+		messages = append(messages, message)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return messages, nil
 }
 
 func nextMessageStatus(current, incoming string) (string, bool) {

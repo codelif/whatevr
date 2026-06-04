@@ -24,6 +24,7 @@ const (
 type ChatStore interface {
 	ListChats(context.Context, int, int) ([]appstore.Chat, error)
 	ListMessages(context.Context, string, int, string) ([]appstore.Message, error)
+	ListMessagesAround(context.Context, string, int, string) ([]appstore.Message, error)
 	MarkChatRead(context.Context, string) (appstore.Chat, error)
 }
 
@@ -83,7 +84,13 @@ func (s *ChatService) GetMessages(ctx context.Context, req *pb.GetMessagesReques
 		return nil, err
 	}
 
-	messages, err := s.store.ListMessages(ctx, req.GetChatId(), limit, req.GetBeforeMessageId())
+	var messages []appstore.Message
+	aroundMessageID := strings.TrimSpace(req.GetAroundMessageId())
+	if aroundMessageID != "" {
+		messages, err = s.store.ListMessagesAround(ctx, req.GetChatId(), limit, aroundMessageID)
+	} else {
+		messages, err = s.store.ListMessages(ctx, req.GetChatId(), limit, req.GetBeforeMessageId())
+	}
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, status.Error(codes.NotFound, "message not found")

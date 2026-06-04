@@ -76,6 +76,7 @@ public:
     [[nodiscard]] bool isEmpty() const;
     [[nodiscard]] int messageCount() const;
     [[nodiscard]] QString oldestMessageId() const;
+    [[nodiscard]] Q_INVOKABLE int indexOf(const QString &messageId) const;
     [[nodiscard]] Q_INVOKABLE QString dateTextForRow(int row) const;
 
 private:
@@ -125,7 +126,6 @@ private:
     [[nodiscard]] bool startsSenderGroup(int row) const;
     [[nodiscard]] bool endsSenderGroup(int row) const;
     [[nodiscard]] bool startsDayGroup(int row) const;
-    [[nodiscard]] int indexOf(const QString &messageId) const;
     void rebuildIndex();
     void emitGroupingRolesChanged(int firstRow, int lastRow);
 

@@ -51,6 +51,8 @@ Item {
     // those programmatic jumps don't flash the floating date pill.
     property bool programmaticScroll: false
     property real lastScrollY: 0
+    property string pendingJumpMessageId: ""
+    property double pendingJumpDeadlineMs: 0
 
     signal loadOlderMessagesRequested()
     signal conversationFocusRequested()
@@ -87,6 +89,22 @@ Item {
         onTriggered: root.floatingDateActive = false
     }
 
+    Timer {
+        id: jumpSettleTimer
+
+        interval: 50
+        repeat: false
+        onTriggered: root.settlePendingJump()
+    }
+
+    Timer {
+        id: jumpTimeoutTimer
+
+        interval: 1200
+        repeat: false
+        onTriggered: root.finishPendingJump()
+    }
+
     DragHandler {
         target: null
         acceptedButtons: Qt.LeftButton
@@ -120,6 +138,120 @@ Item {
         pendingNewestMessageCount = 0
         followNewest = true
         atNewest = true
+    }
+
+    function showReferencedMessageUnavailable() {
+        const window = ApplicationWindow.window
+        if (window && typeof window.showPassiveNotification === "function") {
+            window.showPassiveNotification(Whatevr.I18n.i18nc("@info:status", "Referenced message is not available."), "short")
+        }
+    }
+
+    function beginProgrammaticJump(messageId) {
+        pendingJumpMessageId = messageId
+        pendingJumpDeadlineMs = Date.now() + 1000
+        programmaticScroll = true
+        followNewest = false
+        atNewest = false
+        floatingDateActive = false
+        floatingDateIdleTimer.stop()
+        jumpSettleTimer.stop()
+        jumpTimeoutTimer.restart()
+        kineticWheelScroller.stopKinetic()
+        list.cancelFlick()
+    }
+
+    function finishPendingJump() {
+        jumpSettleTimer.stop()
+        jumpTimeoutTimer.stop()
+        pendingJumpMessageId = ""
+        pendingJumpDeadlineMs = 0
+        programmaticScroll = false
+        lastScrollY = list.contentY
+        Qt.callLater(updateScrollState)
+    }
+
+    function itemIsVisible(item) {
+        return item !== null
+               && !item.pooled
+               && item.messageId === pendingJumpMessageId
+               && item.y + item.height > list.contentY
+               && item.y < list.contentY + list.height
+    }
+
+    function retryOrFailPendingJump() {
+        if (Date.now() <= pendingJumpDeadlineMs) {
+            jumpSettleTimer.restart()
+            return
+        }
+
+        finishPendingJump()
+    }
+
+    function settlePendingJump() {
+        if (pendingJumpMessageId.length === 0 || !list.model || typeof list.model.indexOf !== "function") {
+            finishPendingJump()
+            return
+        }
+
+        const index = list.model.indexOf(pendingJumpMessageId)
+        if (index < 0 || index >= list.count) {
+            finishPendingJump()
+            showReferencedMessageUnavailable()
+            return
+        }
+
+        const item = list.itemAtIndex(index)
+        if (item === null || item.pooled || item.messageId !== pendingJumpMessageId) {
+            retryOrFailPendingJump()
+            return
+        }
+
+        item.triggerReplyGlow()
+        finishPendingJump()
+    }
+
+    function jumpToReplyTarget(messageId) {
+        if (messageId.length === 0) {
+            showReferencedMessageUnavailable()
+            return
+        }
+        beginProgrammaticJump(messageId)
+        Whatevr.AppController.jumpToMessage(messageId)
+    }
+
+    function jumpToLoadedMessage(messageId) {
+        if (messageId.length === 0 || !list.model || typeof list.model.indexOf !== "function") {
+            finishPendingJump()
+            showReferencedMessageUnavailable()
+            return
+        }
+        if (pendingJumpMessageId !== messageId) {
+            return
+        }
+
+        const index = list.model.indexOf(messageId)
+        if (index < 0 || index >= list.count) {
+            finishPendingJump()
+            showReferencedMessageUnavailable()
+            return
+        }
+
+        const currentItem = list.itemAtIndex(index)
+        if (itemIsVisible(currentItem)) {
+            currentItem.triggerReplyGlow()
+            finishPendingJump()
+            return
+        }
+
+        programmaticScroll = true
+        floatingDateActive = false
+        floatingDateIdleTimer.stop()
+        kineticWheelScroller.stopKinetic()
+        list.cancelFlick()
+        list.positionViewAtIndex(index, ListView.Center)
+        list.forceLayout()
+        Qt.callLater(settlePendingJump)
     }
 
     function displayedPendingNewestMessageCount() {
@@ -172,6 +304,7 @@ Item {
         }
 
         if (!openingChat
+                && pendingJumpMessageId.length === 0
                 && hi >= 0
                 && canLoadOlderMessages
                 && !loadingOlderMessages
@@ -199,17 +332,28 @@ Item {
     }
 
     function afterModelReset() {
-        scrollToNewest()
+        if (pendingJumpMessageId.length === 0) {
+            scrollToNewest()
+        } else {
+            programmaticScroll = true
+            floatingDateActive = false
+            floatingDateIdleTimer.stop()
+        }
         floatingDateActive = false
         floatingDateIdleTimer.stop()
         openingChat = false
-        followNewest = true
-        atNewest = true
-        pendingNewestMessageCount = 0
+        if (pendingJumpMessageId.length === 0) {
+            followNewest = true
+            atNewest = true
+            pendingNewestMessageCount = 0
+        }
         Qt.callLater(updateScrollState)
     }
 
     onChatIdChanged: {
+        if (pendingJumpMessageId.length > 0) {
+            finishPendingJump()
+        }
         pendingNewestMessageCount = 0
         atNewest = true
         followNewest = true
@@ -222,7 +366,7 @@ Item {
     }
 
     onVisibleChanged: {
-        if (visible && followNewest) {
+        if (visible && followNewest && pendingJumpMessageId.length === 0) {
             Qt.callLater(scrollToNewest)
         }
     }
@@ -297,6 +441,7 @@ Item {
             onMessageSelectionClaimed: messageId => root.claimMessageSelection(messageId)
             onTypeIntoComposerRequested: text => root.typeIntoComposerRequested(text)
             onReplyRequested: (messageId, senderName, text, mediaKind, mediaMimeType, outgoing) => root.replyToMessageRequested(messageId, senderName, text, mediaKind, mediaMimeType, outgoing)
+            onReplyPreviewActivated: messageId => root.jumpToReplyTarget(messageId)
 
             ListView.onPooled: {
                 pooledByListView = true
@@ -327,7 +472,7 @@ Item {
                 // Older history is appended at the end (first > 0) and must not
                 // move the viewport.
                 if (first === 0) {
-                    if (root.followNewest) {
+                    if (root.followNewest && root.pendingJumpMessageId.length === 0) {
                         Qt.callLater(root.scrollToNewest)
                     } else {
                         root.pendingNewestMessageCount = Math.min(100, root.pendingNewestMessageCount + last - first + 1)
@@ -343,8 +488,23 @@ Item {
         target: Whatevr.AppController
 
         function onOutgoingMessageAddedToSelectedChat() {
+            if (root.pendingJumpMessageId.length > 0) {
+                return
+            }
             root.followNewest = true
             Qt.callLater(root.scrollToNewest)
+        }
+
+        function onMessageJumpReady(messageId) {
+            root.jumpToLoadedMessage(messageId)
+        }
+
+        function onMessageJumpUnavailable(messageId) {
+            if (root.pendingJumpMessageId !== messageId) {
+                return
+            }
+            root.finishPendingJump()
+            root.showReferencedMessageUnavailable()
         }
     }
 

@@ -617,6 +617,9 @@ void AppController::selectChat(const QString &chatId)
     m_canLoadOlderMessages = false;
     m_olderMessagesLoadingChatId.clear();
     m_olderMessagesReply.reset();
+    m_jumpToMessageChatId.clear();
+    m_jumpToMessageId.clear();
+    m_jumpToMessageReply.reset();
     updateSelectedChatData();
     const bool restoredMessages = restoreCachedMessages(chatId);
     if (restoredMessages) {
@@ -647,6 +650,96 @@ void AppController::loadOlderMessages()
     requestOlderMessages();
 }
 
+void AppController::jumpToMessage(const QString &messageId)
+{
+    const QString trimmed = messageId.trimmed();
+    if (trimmed.isEmpty() || m_selectedChatId.isEmpty()) {
+        Q_EMIT messageJumpUnavailable(trimmed);
+        return;
+    }
+
+    if (m_messageListModel->indexOf(trimmed) >= 0) {
+        Q_EMIT messageJumpReady(trimmed);
+        return;
+    }
+
+    if (!m_chatClient) {
+        Q_EMIT messageJumpUnavailable(trimmed);
+        return;
+    }
+
+    if (m_jumpToMessageReply) {
+        m_jumpToMessageReply.reset();
+    }
+    if (m_messagesReply) {
+        m_messagesReply.reset();
+        m_messagesLoading = false;
+        m_messagesLoadingChatId.clear();
+    }
+    if (m_olderMessagesReply) {
+        m_olderMessagesReply.reset();
+        m_olderMessagesLoading = false;
+        m_olderMessagesLoadingChatId.clear();
+    }
+
+    GetMessagesRequest request;
+    request.setChatId(m_selectedChatId);
+    request.setLimit(kMessageLimit);
+    request.setAroundMessageId(trimmed);
+
+    m_jumpToMessageChatId = m_selectedChatId;
+    m_jumpToMessageId = trimmed;
+    m_jumpToMessageReply = m_chatClient->GetMessages(request);
+    auto *reply = m_jumpToMessageReply.get();
+    const QString chatId = m_selectedChatId;
+
+    connect(reply, &QGrpcCallReply::finished, this, [this, reply, chatId, trimmed](const QGrpcStatus &status) {
+        if (m_jumpToMessageReply.get() != reply) {
+            return;
+        }
+
+        if (m_jumpToMessageChatId != chatId || m_jumpToMessageId != trimmed || m_selectedChatId != chatId) {
+            m_jumpToMessageReply.reset();
+            return;
+        }
+
+        if (!status.isOk()) {
+            m_jumpToMessageReply.reset();
+            m_jumpToMessageChatId.clear();
+            m_jumpToMessageId.clear();
+            Q_EMIT messageJumpUnavailable(trimmed);
+            return;
+        }
+
+        const auto response = reply->read<GetMessagesResponse>();
+        m_jumpToMessageReply.reset();
+        m_jumpToMessageChatId.clear();
+        m_jumpToMessageId.clear();
+        if (!response || response->messages().isEmpty()) {
+            Q_EMIT messageJumpUnavailable(trimmed);
+            return;
+        }
+
+        QList<whatevr::v1::Message> visibleMessages = response->messages();
+        const auto cached = m_messageCache.constFind(chatId);
+        if (cached != m_messageCache.constEnd()) {
+            visibleMessages = mergeMessages(cached->messages, response->messages());
+        }
+
+        cacheMessages(chatId, visibleMessages, response->messages().size() >= kMessageLimit);
+        if (m_selectedChatId == chatId) {
+            m_displayedMessagesChatId = chatId;
+            m_messageListModel->replaceMessages(visibleMessages);
+            m_canLoadOlderMessages = response->messages().size() >= kMessageLimit;
+            m_messagesLoading = false;
+            m_olderMessagesLoading = false;
+            Q_EMIT messagesChanged();
+            QTimer::singleShot(0, this, [this, trimmed] {
+                Q_EMIT messageJumpReady(trimmed);
+            });
+        }
+    });
+}
 
 void AppController::sendText(const QString &text, const QString &replyToMessageId)
 {

@@ -158,6 +158,7 @@ public:
     Q_INVOKABLE void selectChat(const QString &chatId);
     Q_INVOKABLE void retryMessages();
     Q_INVOKABLE void loadOlderMessages();
+    Q_INVOKABLE void jumpToMessage(const QString &messageId);
     Q_INVOKABLE void sendText(const QString &text, const QString &replyToMessageId = QString());
     Q_INVOKABLE void sendImage(const QString &fileUrl, const QString &caption = QString(), const QString &replyToMessageId = QString());
     Q_INVOKABLE void addRecentEmoji(const QString &emoji);
@@ -177,6 +178,8 @@ Q_SIGNALS:
     void selectionChanged();
     void historySyncChanged();
     void outgoingMessageAddedToSelectedChat();
+    void messageJumpReady(const QString &messageId);
+    void messageJumpUnavailable(const QString &messageId);
     void mediaDownloadChanged(const QString &messageId);
     void mediaDownloadFailed(const QString &messageId, const QString &errorText);
 
@@ -236,6 +239,8 @@ private:
     bool m_canLoadOlderMessages = false;
     QString m_messagesLoadingChatId;
     QString m_olderMessagesLoadingChatId;
+    QString m_jumpToMessageChatId;
+    QString m_jumpToMessageId;
     QString m_displayedMessagesChatId;
     QString m_messageErrorText;
     bool m_sendInFlight = false;
@@ -275,6 +280,7 @@ private:
     std::unique_ptr<QGrpcCallReply> m_chatsReply;
     std::unique_ptr<QGrpcCallReply> m_messagesReply;
     std::unique_ptr<QGrpcCallReply> m_olderMessagesReply;
+    std::unique_ptr<QGrpcCallReply> m_jumpToMessageReply;
     std::unique_ptr<QGrpcCallReply> m_markChatReadReply;
     std::unique_ptr<QGrpcCallReply> m_subscribeChatPresenceReply;
     QHash<QString, std::shared_ptr<QGrpcCallReply>> m_setChatPinnedReplies;

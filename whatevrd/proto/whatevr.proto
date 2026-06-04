@@ -253,6 +253,7 @@ message GetMessagesRequest {
   string chat_id = 1;
   int32 limit = 2;
   string before_message_id = 3;
+  string around_message_id = 4;
 }
 
 message GetMessagesResponse {

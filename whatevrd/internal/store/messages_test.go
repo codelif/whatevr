@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -785,6 +786,77 @@ func TestListMessagesReturnsAscendingOrderAndPagination(t *testing.T) {
 	}
 	if len(older) != 1 || older[0].ID != "chat-1:1" {
 		t.Fatalf("unexpected paginated messages: %+v", older)
+	}
+}
+
+func TestListMessagesAroundReturnsBoundedWindow(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	for i := 1; i <= 7; i++ {
+		id := fmt.Sprintf("chat-1:%d", i)
+		_, err := db.SaveTextMessage(ctx, TextMessageInput{
+			ID:          id,
+			ChatID:      "chat-1",
+			ChatName:    "Test Chat",
+			SenderID:    "sender-1",
+			Text:        id,
+			Timestamp:   time.Unix(int64(i*100), 0),
+			Direction:   DirectionIncoming,
+			Status:      StatusDelivered,
+			CountUnread: true,
+		})
+		if err != nil {
+			t.Fatalf("save %s: %v", id, err)
+		}
+	}
+
+	messages, err := db.ListMessagesAround(ctx, "chat-1", 5, "chat-1:4")
+	if err != nil {
+		t.Fatalf("list around: %v", err)
+	}
+	got := make([]string, 0, len(messages))
+	for _, message := range messages {
+		got = append(got, message.ID)
+	}
+	want := []string{"chat-1:2", "chat-1:3", "chat-1:4", "chat-1:5", "chat-1:6"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("around ids = %+v, want %+v", got, want)
+	}
+}
+
+func TestListMessagesAroundMissingOrWrongChatReturnsNoRows(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	_, err = db.SaveTextMessage(ctx, TextMessageInput{
+		ID:          "chat-1:1",
+		ChatID:      "chat-1",
+		ChatName:    "Test Chat",
+		SenderID:    "sender-1",
+		Text:        "hello",
+		Timestamp:   time.Unix(100, 0),
+		Direction:   DirectionIncoming,
+		Status:      StatusDelivered,
+		CountUnread: true,
+	})
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	if _, err := db.ListMessagesAround(ctx, "chat-1", 5, "missing"); err != sql.ErrNoRows {
+		t.Fatalf("missing target error = %v, want sql.ErrNoRows", err)
+	}
+	if _, err := db.ListMessagesAround(ctx, "other-chat", 5, "chat-1:1"); err != sql.ErrNoRows {
+		t.Fatalf("wrong chat error = %v, want sql.ErrNoRows", err)
 	}
 }
 
