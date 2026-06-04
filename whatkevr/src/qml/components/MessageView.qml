@@ -27,6 +27,8 @@ Item {
     // map to.
     property bool openingChat: false
     property bool followNewest: true
+    property bool atNewest: true
+    property int pendingNewestMessageCount: 0
 
     // How close (in rows) to the newest message we must be to keep following it.
     property int followRowThreshold: 2
@@ -90,13 +92,22 @@ Item {
         if (list.count > 0) {
             list.positionViewAtBeginning()
         }
+        pendingNewestMessageCount = 0
+        followNewest = true
+        atNewest = true
+    }
+
+    function displayedPendingNewestMessageCount() {
+        return pendingNewestMessageCount > 99 ? "99+" : String(pendingNewestMessageCount)
     }
 
     // Recompute followNewest and fire predictive history prefetch. Cheap: two
     // indexAt probes, no allocations, safe to call on every contentY change.
     function updateScrollState() {
         if (list.count === 0) {
+            atNewest = true
             followNewest = true
+            pendingNewestMessageCount = 0
             return
         }
 
@@ -116,7 +127,15 @@ Item {
         }
 
         if (lo >= 0) {
+            atNewest = lo === 0
             followNewest = lo <= followRowThreshold
+        } else {
+            atNewest = list.atYBeginning
+            followNewest = list.atYBeginning
+        }
+
+        if (atNewest) {
+            pendingNewestMessageCount = 0
         }
 
         if (!openingChat
@@ -132,10 +151,14 @@ Item {
         scrollToNewest()
         openingChat = false
         followNewest = true
+        atNewest = true
+        pendingNewestMessageCount = 0
         Qt.callLater(updateScrollState)
     }
 
     onChatIdChanged: {
+        pendingNewestMessageCount = 0
+        atNewest = true
         followNewest = true
         if (chatId.length === 0) {
             openingChat = false
@@ -224,6 +247,7 @@ Item {
         }
 
         onContentYChanged: root.updateScrollState()
+        onContentHeightChanged: root.updateScrollState()
         onMovementEnded: root.updateScrollState()
 
         Connections {
@@ -238,8 +262,12 @@ Item {
                 // first === 0 means a new newest message arrived at the bottom.
                 // Older history is appended at the end (first > 0) and must not
                 // move the viewport.
-                if (first === 0 && root.followNewest) {
-                    Qt.callLater(root.scrollToNewest)
+                if (first === 0) {
+                    if (root.followNewest) {
+                        Qt.callLater(root.scrollToNewest)
+                    } else {
+                        root.pendingNewestMessageCount = Math.min(100, root.pendingNewestMessageCount + last - first + 1)
+                    }
                 }
             }
         }
@@ -257,10 +285,72 @@ Item {
     }
 
     KineticWheelScroller {
+        id: kineticWheelScroller
+
         anchors.fill: list
         target: list
         wheelStep: Kirigami.Units.gridUnit * 4
         maximumVelocity: 16000
+    }
+
+    AbstractButton {
+        id: goToBottomButton
+
+        readonly property bool hasPendingNewestMessages: root.pendingNewestMessageCount > 0
+
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        anchors.margins: Kirigami.Units.largeSpacing
+        width: Kirigami.Units.gridUnit * 2.25
+        height: width
+        visible: list.count > 0 && !root.atNewest
+        z: kineticWheelScroller.z + 1
+        hoverEnabled: true
+        focusPolicy: Qt.NoFocus
+
+        Accessible.name: hasPendingNewestMessages
+                         ? Whatevr.I18n.i18nc("@action:button", "Go to bottom, %1 new messages", root.displayedPendingNewestMessageCount())
+                         : Whatevr.I18n.i18nc("@action:button", "Go to bottom")
+
+        onClicked: {
+            root.pendingNewestMessageCount = 0
+            kineticWheelScroller.stopKinetic()
+            list.cancelFlick()
+            root.scrollToNewest()
+            root.conversationFocusRequested()
+        }
+
+        background: Rectangle {
+            radius: Kirigami.Units.cornerRadius
+            color: goToBottomButton.hasPendingNewestMessages
+                   ? Kirigami.Theme.highlightColor
+                   : Qt.alpha(Kirigami.Theme.backgroundColor, goToBottomButton.hovered || goToBottomButton.pressed ? 0.98 : 0.9)
+            border.color: goToBottomButton.hasPendingNewestMessages
+                          ? Qt.alpha(Kirigami.Theme.highlightColor, 0.6)
+                          : Qt.alpha(Kirigami.Theme.textColor, goToBottomButton.hovered || goToBottomButton.pressed ? 0.2 : 0.12)
+        }
+
+        contentItem: Item {
+            Kirigami.Icon {
+                anchors.centerIn: parent
+                visible: !goToBottomButton.hasPendingNewestMessages
+                source: "go-down"
+                width: Kirigami.Units.iconSizes.smallMedium
+                height: width
+                color: Kirigami.Theme.textColor
+            }
+
+            Label {
+                anchors.fill: parent
+                visible: goToBottomButton.hasPendingNewestMessages
+                text: root.displayedPendingNewestMessageCount()
+                color: Kirigami.Theme.highlightedTextColor
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+                font.weight: Font.Bold
+                font.pointSize: Kirigami.Theme.smallFont.pointSize
+            }
+        }
     }
 
     Rectangle {
