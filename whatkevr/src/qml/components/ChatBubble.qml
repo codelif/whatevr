@@ -111,8 +111,16 @@ Item {
     // ListView is already scrolling. Reserve a frame from message metadata when
     // it is present; otherwise use a stable thumbnail shape for the lifetime of
     // this delegate.
-    readonly property real minImageWidth: Math.min(maxContentWidth, Kirigami.Units.gridUnit * 7)
-    readonly property real fallbackImageWidth: Math.min(maxContentWidth, Kirigami.Units.gridUnit * 18)
+    // Images render edge-to-edge (no inner padding), so they clamp against the
+    // full bubble width rather than the padded content width.
+    readonly property real minImageWidth: Math.min(maxBubbleWidth, Kirigami.Units.gridUnit * 7)
+    readonly property real fallbackImageWidth: Math.min(maxBubbleWidth, Kirigami.Units.gridUnit * 18)
+    // Give an image that carries a caption a comfortable minimum width so the
+    // caption does not wrap into a tall sliver. Aspect ratio is always preserved
+    // (the slot keeps width / aspect), so this only enlarges the slot.
+    readonly property real captionMinImageWidth: hasBody
+        ? Math.min(maxBubbleWidth, Kirigami.Units.gridUnit * 12)
+        : 0
     readonly property real maxImageHeight: Math.max(Kirigami.Units.gridUnit * 8,
                                                     Math.min(Math.max(0, listWidth) * 0.72,
                                                              Kirigami.Units.gridUnit * 24))
@@ -146,11 +154,12 @@ Item {
             return 0
         }
 
-        let width = Math.min(maxContentWidth, Math.max(minImageWidth, reservedImageNaturalWidth))
+        let minW = Math.max(minImageWidth, captionMinImageWidth)
+        let width = Math.min(maxBubbleWidth, Math.max(minW, reservedImageNaturalWidth))
         if (width / reservedImageAspectRatio > maxImageHeight) {
             width = maxImageHeight * reservedImageAspectRatio
         }
-        return Math.max(1, Math.min(maxContentWidth, width))
+        return Math.max(1, Math.min(maxBubbleWidth, width))
     }
 
     readonly property real imageDisplayHeight: {
@@ -199,13 +208,16 @@ Item {
     readonly property bool hasInlineMedia: isImage && !isSticker
     readonly property bool imageOnly: hasInlineMedia && !hasBody
     readonly property string widestBodyLine: widestLine(body)
-    readonly property real naturalTextWidth: Math.min(maxContentWidth, widestBodyLineMetrics.advanceWidth)
+    // Captions inside an image bubble wrap to the (padded) image width; plain
+    // text bubbles wrap to the full available content width.
+    readonly property real textWrapWidth: hasInlineMedia ? innerContentWidth : maxContentWidth
+    readonly property real naturalTextWidth: Math.min(textWrapWidth, widestBodyLineMetrics.advanceWidth)
     readonly property bool bodyHasExplicitLineBreaks: body.indexOf("\n") !== -1
     readonly property bool bodyLongEnoughForInlineTnt: naturalTextWidth >= tntWidth * 1.1
     readonly property bool tntFitsInline: hasBody
                                          && !bodyHasExplicitLineBreaks
                                          && bodyLongEnoughForInlineTnt
-                                         && naturalTextWidth + tntWidth + inlineTntGap <= maxContentWidth
+                                         && naturalTextWidth + tntWidth + inlineTntGap <= textWrapWidth
     readonly property real inlineTntReserve: 0
     readonly property real inlineTntYOffset: Kirigami.Units.smallSpacing / 2
     readonly property real blockTntReserve: tntHeight + tntGap
@@ -242,44 +254,49 @@ Item {
         replyGlowAnimation.restart()
     }
 
+    // Absolute y within contentColumn (which now spans the full bubble at y:0).
+    // The reply preview and caption text are inset by innerPadding; media is
+    // edge-to-edge and sits flush at the top when it is the first region.
     function contentOffsetBeforeMedia() {
-        return replyPreview.visible ? replyPreview.height + Kirigami.Units.smallSpacing : 0
+        return replyPreview.visible
+            ? root.innerPadding + replyPreview.height + Kirigami.Units.smallSpacing
+            : 0
     }
 
     function contentOffsetBeforeBody() {
-        let offset = 0
-        if (replyPreview.visible) {
-            offset += replyPreview.height
-        }
         if (mediaSlot.visible) {
-            if (offset > 0) offset += Kirigami.Units.smallSpacing
-            offset += mediaSlot.height
+            return mediaSlot.y + mediaSlot.height + Kirigami.Units.smallSpacing
         }
-        if (offset > 0) offset += Kirigami.Units.smallSpacing
-        return offset
+        if (replyPreview.visible) {
+            return root.innerPadding + replyPreview.height + Kirigami.Units.smallSpacing
+        }
+        return root.innerPadding
     }
 
     function contentOffsetBeforeFooter() {
-        let offset = 0
-        if (replyPreview.visible) {
-            offset += replyPreview.height
+        if (bodyText.visible) {
+            return bodyText.y + bodyText.height
         }
         if (mediaSlot.visible) {
-            if (offset > 0) offset += Kirigami.Units.smallSpacing
-            offset += mediaSlot.height
+            return mediaSlot.y + mediaSlot.height
         }
-        if (bodyText.visible) {
-            if (offset > 0) offset += Kirigami.Units.smallSpacing
-            offset += bodyText.height
+        if (replyPreview.visible) {
+            return root.innerPadding + replyPreview.height + Kirigami.Units.smallSpacing
         }
-        return offset
+        return root.innerPadding
     }
 
+    // Natural width the reply preview wants for its content, floored so a tiny
+    // quote stays legible but no longer inflates the bubble to a fixed minimum.
+    readonly property real replyPreviewNaturalWidth: hasReplyPreview
+        ? Math.min(maxContentWidth, Math.max(Kirigami.Units.gridUnit * 5,
+                                             replyPreview.naturalContentWidth))
+        : 0
+
+    // Width of the text/reply content for non-image bubbles (image bubbles are
+    // sized by the image instead — see bubbleContentWidth).
     readonly property real contentBlockWidth: {
         let w = 0
-        if (isImage && !isSticker) {
-            w = Math.max(w, imageDisplayWidth)
-        }
         if (body.length > 0) {
             let bodyW = naturalTextWidth
             if (tntFitsInline) {
@@ -288,11 +305,38 @@ Item {
             w = Math.max(w, bodyW)
         }
         if (hasReplyPreview) {
-            w = Math.max(w, Math.min(maxContentWidth, Kirigami.Units.gridUnit * 12))
+            w = Math.max(w, replyPreviewNaturalWidth)
         }
         w = Math.max(w, Math.min(maxContentWidth, tntWidth))
         return Math.max(w, hasBody ? Kirigami.Units.gridUnit * 2 : Kirigami.Units.gridUnit * 4)
     }
+
+    // The image drives the bubble width and spans it edge-to-edge; everything
+    // else (caption, reply preview, footer) wraps/elides within the padded
+    // inner width.
+    readonly property real bubbleContentWidth: hasInlineMedia ? imageDisplayWidth : contentBlockWidth
+    readonly property real innerContentWidth: Math.max(Kirigami.Units.gridUnit * 2,
+                                                       bubbleContentWidth - innerPadding * 2)
+    readonly property real textRegionWidth: hasInlineMedia ? innerContentWidth : contentBlockWidth
+
+    // Footer (time + ticks) colours. Over the image-only vignette they switch to
+    // light tones for contrast; otherwise the muted theme colours are used.
+    readonly property color footerTextColor: imageOnly ? "white" : Kirigami.Theme.disabledTextColor
+    readonly property color statusTickColor: statusIsRead
+        ? (imageOnly ? Qt.lighter(activePalette.highlight, 1.4) : activePalette.highlight)
+        : (imageOnly ? "white" : Kirigami.Theme.disabledTextColor)
+    readonly property color statusSingleColor: statusIsFailed
+        ? Kirigami.Theme.negativeTextColor
+        : (imageOnly ? "white" : Kirigami.Theme.disabledTextColor)
+
+    // Per-corner radii for the edge-to-edge media. Top corners follow the
+    // bubble's top corners; bottom corners are only rounded for image-only
+    // messages (when there is a caption the image meets the text squarely).
+    readonly property real bubbleCornerRadius: Kirigami.Units.cornerRadius
+    readonly property real mediaTopLeftRadius: (!outgoing && !groupStart) ? bubbleCornerRadius * 0.45 : bubbleCornerRadius
+    readonly property real mediaTopRightRadius: (outgoing && !groupStart) ? bubbleCornerRadius * 0.45 : bubbleCornerRadius
+    readonly property real mediaBottomLeftRadius: !imageOnly ? 0 : ((!outgoing && !groupEnd) ? bubbleCornerRadius * 0.45 : bubbleCornerRadius)
+    readonly property real mediaBottomRightRadius: !imageOnly ? 0 : ((outgoing && !groupEnd) ? bubbleCornerRadius * 0.45 : bubbleCornerRadius)
     readonly property real replyGlowLeft: isSticker
         ? Math.min(stickerSlot.x,
                    stickerReplyPreview.visible ? stickerReplyPreview.x : stickerSlot.x,
@@ -402,8 +446,11 @@ Item {
            ? root.width - width - root.outerMargin
            : root.outerMargin + root.senderGutterWidth
         y: root.messageBaseY
-        width: root.contentBlockWidth + root.innerPadding * 2
-        height: contentColumn.height + root.innerPadding * 2
+        // Image bubbles are exactly the image width (edge-to-edge); text bubbles
+        // add inner padding on both sides. Height comes from the self-padding
+        // content region.
+        width: root.bubbleContentWidth + (root.hasInlineMedia ? 0 : root.innerPadding * 2)
+        height: contentColumn.height
 
         corners.topLeftRadius: !root.outgoing && !root.groupStart ? bubbleRadius * 0.45 : bubbleRadius
         corners.topRightRadius: root.outgoing && !root.groupStart ? bubbleRadius * 0.45 : bubbleRadius
@@ -419,41 +466,33 @@ Item {
         Item {
             id: contentColumn
 
-            x: root.innerPadding
-            y: root.innerPadding
-            width: root.contentBlockWidth
+            x: 0
+            y: 0
+            width: bubble.width
             height: {
-                let h = 0
-                if (replyPreview.visible) {
-                    h += replyPreview.height
-                }
-                if (mediaSlot.visible) {
-                    if (h > 0) h += Kirigami.Units.smallSpacing
-                    h += mediaSlot.height
-                }
-                if (bodyText.visible) {
-                    if (h > 0) h += Kirigami.Units.smallSpacing
-                    h += bodyText.height
-                }
+                // Image-only: media is flush to the bubble bottom (footer is
+                // overlaid on it), so the height ends at the media bottom.
                 if (root.imageOnly) {
-                    h += root.blockTntReserve
-                } else if (bodyText.visible) {
-                    h += root.tntFitsInline ? root.inlineTntReserve : root.blockTntReserve
-                } else if (h > 0) {
-                    h += root.blockTntReserve
-                } else {
-                    h += footerSlot.height
+                    return mediaSlot.y + mediaSlot.height
                 }
-                return h
+                let bottom = 0
+                if (bodyText.visible) {
+                    bottom = root.tntFitsInline
+                        ? bodyText.y + bodyText.height
+                        : footerSlot.y + footerSlot.height
+                } else {
+                    bottom = footerSlot.y + footerSlot.height
+                }
+                return bottom + root.innerPadding
             }
 
             ReplyPreview {
                 id: replyPreview
 
                 visible: root.hasReplyPreview
-                x: 0
-                y: 0
-                width: root.contentBlockWidth
+                x: root.innerPadding
+                y: root.innerPadding
+                width: root.textRegionWidth
                 senderName: root.replyToSenderName
                 body: root.replyToText
                 mediaKind: root.replyToMediaKind
@@ -469,19 +508,23 @@ Item {
                 id: mediaSlot
 
                 visible: root.isImage && !root.isSticker
-                x: (root.contentBlockWidth - width) / 2
+                x: 0
                 y: root.contentOffsetBeforeMedia()
                 width: root.imageDisplayWidth
                 height: visible ? root.imageDisplayHeight : 0
                 clip: true
 
-                Rectangle {
+                Kirigami.ShadowedRectangle {
                     id: mediaBackground
 
                     anchors.fill: parent
-                    radius: Kirigami.Units.cornerRadius
+                    corners.topLeftRadius: root.mediaTopLeftRadius
+                    corners.topRightRadius: root.mediaTopRightRadius
+                    corners.bottomLeftRadius: root.mediaBottomLeftRadius
+                    corners.bottomRightRadius: root.mediaBottomRightRadius
                     color: Qt.alpha(Kirigami.Theme.textColor, 0.06)
                     border.color: Qt.alpha(Kirigami.Theme.textColor, 0.12)
+                    border.width: 1
                 }
 
                 Image {
@@ -544,13 +587,36 @@ Item {
                     }
                 }
 
-                Rectangle {
+                Kirigami.ShadowedRectangle {
                     id: imageMask
 
                     anchors.fill: parent
-                    radius: Kirigami.Units.cornerRadius
+                    corners.topLeftRadius: root.mediaTopLeftRadius
+                    corners.topRightRadius: root.mediaTopRightRadius
+                    corners.bottomLeftRadius: root.mediaBottomLeftRadius
+                    corners.bottomRightRadius: root.mediaBottomRightRadius
+                    color: "black"
                     visible: false
                     layer.enabled: root.activeInViewport && mediaSlot.visible
+                }
+
+                // Dark scrim behind the time+ticks overlaid on image-only
+                // messages. A uniform radius is fine here: the top corners sit in
+                // the transparent part of the gradient, so only the rounded
+                // bottom corners are visible and they line up with the image.
+                Rectangle {
+                    id: mediaScrim
+
+                    visible: root.imageOnly
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    height: Math.min(parent.height, Kirigami.Units.gridUnit * 2.4)
+                    radius: Math.max(root.mediaBottomLeftRadius, root.mediaBottomRightRadius)
+                    gradient: Gradient {
+                        GradientStop { position: 0.0; color: "transparent" }
+                        GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, 0.5) }
+                    }
                 }
 
                 Item {
@@ -564,9 +630,12 @@ Item {
                              || img.status === Image.Error
                              || root.mediaDownloadError.length > 0
 
-                    Rectangle {
+                    Kirigami.ShadowedRectangle {
                         anchors.fill: parent
-                        radius: mediaBackground.radius
+                        corners.topLeftRadius: root.mediaTopLeftRadius
+                        corners.topRightRadius: root.mediaTopRightRadius
+                        corners.bottomLeftRadius: root.mediaBottomLeftRadius
+                        corners.bottomRightRadius: root.mediaBottomRightRadius
                         color: Qt.alpha(Kirigami.Theme.backgroundColor, root.hasLocalImage || root.hasThumbnailImage ? 0.34 : 0.0)
                     }
 
@@ -626,9 +695,9 @@ Item {
                 id: bodyText
 
                 visible: root.body.length > 0
-                x: 0
+                x: root.innerPadding
                 y: root.contentOffsetBeforeBody()
-                width: root.contentBlockWidth
+                width: root.textRegionWidth
                 text: root.body
                 readOnly: true
                 selectByMouse: true
@@ -660,12 +729,17 @@ Item {
             Item {
                 id: footerSlot
 
-                x: Math.max(0, parent.width - width)
+                // Image-only: overlay on the media bottom-right (over the
+                // vignette). Otherwise sit at the right inner edge, inline with
+                // the last text line or on its own row.
+                x: root.imageOnly
+                   ? mediaSlot.x + mediaSlot.width - width - Kirigami.Units.smallSpacing
+                   : Math.max(0, parent.width - root.innerPadding - width)
                 y: {
-                    const off = root.contentOffsetBeforeFooter()
                     if (root.imageOnly) {
-                        return mediaSlot.y + mediaSlot.height + root.tntGap
+                        return mediaSlot.y + mediaSlot.height - height - Kirigami.Units.smallSpacing
                     }
+                    const off = root.contentOffsetBeforeFooter()
                     if (bodyText.visible) {
                         return root.tntFitsInline ? off - height + root.inlineTntReserve + root.inlineTntYOffset : off + root.tntGap
                     }
@@ -692,9 +766,7 @@ Item {
                         source: root.statusSingleIcon
                         implicitWidth: root.statusIconSize
                         implicitHeight: root.statusIconSize
-                        color: root.statusIsFailed
-                               ? Kirigami.Theme.negativeTextColor
-                               : Kirigami.Theme.disabledTextColor
+                        color: root.statusSingleColor
                         isMask: true
                     }
                     Kirigami.Icon {
@@ -722,9 +794,7 @@ Item {
                             source: "checkmark"
                             implicitWidth: root.statusIconSize
                             implicitHeight: root.statusIconSize
-                            color: root.statusIsRead
-                                   ? activePalette.highlight
-                                   : Kirigami.Theme.disabledTextColor
+                            color: root.statusTickColor
                             isMask: true
                         }
                         Kirigami.Icon {
@@ -744,9 +814,7 @@ Item {
                             source: "checkmark"
                             implicitWidth: root.statusIconSize
                             implicitHeight: root.statusIconSize
-                            color: root.statusIsRead
-                                   ? activePalette.highlight
-                                   : Kirigami.Theme.disabledTextColor
+                            color: root.statusTickColor
                             isMask: true
                         }
                         Kirigami.Icon {
@@ -767,7 +835,7 @@ Item {
                     anchors.rightMargin: statusArea.visible ? root.tntSpacing : 0
                     anchors.verticalCenter: parent.verticalCenter
                     text: root.timeText
-                    color: Kirigami.Theme.disabledTextColor
+                    color: root.footerTextColor
                     font.pointSize: Kirigami.Theme.smallFont.pointSize * 0.72
                 }
             }
@@ -783,7 +851,7 @@ Item {
            : root.outerMargin + root.senderGutterWidth
         y: root.messageBaseY
         width: Math.min(Math.max(0, root.width - root.outerMargin * 2 - root.senderGutterWidth),
-                        Math.max(root.stickerDisplayWidth, Kirigami.Units.gridUnit * 12))
+                        Math.max(Kirigami.Units.gridUnit * 5, stickerReplyPreview.naturalContentWidth))
         senderName: root.replyToSenderName
         body: root.replyToText
         mediaKind: root.replyToMediaKind

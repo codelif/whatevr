@@ -46,6 +46,14 @@ Control {
         return trimmed.length > 0 ? trimmed : Whatevr.I18n.i18nc("@label quoted unknown sender", "Message")
     }
 
+    // Natural width the preview wants for its (single-line, elided) labels.
+    // Reads label implicitWidth, which is the unwrapped text width and is
+    // independent of the assigned/anchored width, so the parent can use this to
+    // size the bubble without creating a binding loop.
+    readonly property real naturalContentWidth: Math.max(senderLabel.implicitWidth,
+                                                         previewLabel.implicitWidth)
+                                                + leftPadding + rightPadding
+
     leftPadding: Kirigami.Units.smallSpacing + Kirigami.Units.smallSpacing / 2 + Kirigami.Units.smallSpacing
     rightPadding: showCloseButton ? Kirigami.Units.smallSpacing / 2 : Kirigami.Units.smallSpacing
     topPadding: Kirigami.Units.smallSpacing
