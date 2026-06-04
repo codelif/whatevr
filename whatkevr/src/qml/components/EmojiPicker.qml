@@ -481,19 +481,31 @@ Popup {
                     }
                 }
 
-                TapHandler {
-                    acceptedButtons: Qt.LeftButton
-                    onTapped: {
-                        emojiGrid.currentIndex = emojiTile.index
-                        root.selectEmoji(emojiTile.emoji, searchField.activeFocus ? searchField : emojiGrid)
-                    }
-                }
+                MouseArea {
+                    anchors.fill: parent
+                    acceptedButtons: Qt.LeftButton | Qt.RightButton
+                    hoverEnabled: false
+                    preventStealing: false
 
-                TapHandler {
-                    acceptedButtons: Qt.RightButton
-                    onTapped: {
+                    function activate(button) {
                         emojiGrid.currentIndex = emojiTile.index
-                        root.showAlternates(emojiTile.emoji, emojiTile.alternates, emojiTile)
+                        if (button === Qt.RightButton) {
+                            root.showAlternates(emojiTile.emoji, emojiTile.alternates, emojiTile)
+                        } else {
+                            root.selectEmoji(emojiTile.emoji, searchField.activeFocus ? searchField : emojiGrid)
+                        }
+                    }
+
+                    onPressed: mouse => {
+                        mouse.accepted = true
+                    }
+                    onClicked: mouse => {
+                        activate(mouse.button)
+                        mouse.accepted = true
+                    }
+                    onDoubleClicked: mouse => {
+                        activate(mouse.button)
+                        mouse.accepted = true
                     }
                 }
             }
@@ -571,10 +583,27 @@ Popup {
                             id: alternateHover
                         }
 
-                        TapHandler {
-                            onTapped: {
+                        MouseArea {
+                            anchors.fill: parent
+                            acceptedButtons: Qt.LeftButton
+                            hoverEnabled: false
+                            preventStealing: false
+
+                            function activate() {
                                 alternatesPopup.close()
                                 root.selectEmoji(alternateTile.modelData, searchField.activeFocus ? searchField : emojiGrid)
+                            }
+
+                            onPressed: mouse => {
+                                mouse.accepted = true
+                            }
+                            onClicked: mouse => {
+                                activate()
+                                mouse.accepted = true
+                            }
+                            onDoubleClicked: mouse => {
+                                activate()
+                                mouse.accepted = true
                             }
                         }
                     }
