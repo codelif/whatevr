@@ -15,6 +15,7 @@ Item {
     property string messageId: ""
     property string body: ""
     property string timeText: ""
+    property string dateSeparatorText: ""
     property int status: 0
     property bool outgoing: false
     property string senderName: ""
@@ -50,6 +51,10 @@ Item {
     }
 
     property real listWidth: 0
+    readonly property bool showDateSeparator: dateSeparatorText.length > 0
+    readonly property real dateSeparatorHeight: showDateSeparator
+        ? dateSeparator.implicitHeight + Kirigami.Units.largeSpacing
+        : 0
     readonly property real outerMargin: Kirigami.Units.largeSpacing
     readonly property real innerPadding: Kirigami.Units.largeSpacing
     readonly property real senderAvatarSize: Kirigami.Units.gridUnit * 1.65
@@ -224,9 +229,9 @@ Item {
     }
 
     width: listWidth
-    height: isSticker
-        ? stickerFooter.y + stickerFooter.height + (groupEnd ? Kirigami.Units.smallSpacing : Kirigami.Units.smallSpacing / 4)
-        : bubble.y + bubble.height + (groupEnd ? Kirigami.Units.smallSpacing : Kirigami.Units.smallSpacing / 4)
+    height: (isSticker
+        ? stickerFooter.y + stickerFooter.height
+        : bubble.y + bubble.height) + (groupEnd ? Kirigami.Units.smallSpacing : Kirigami.Units.smallSpacing / 4)
 
     SystemPalette {
         id: activePalette
@@ -266,7 +271,7 @@ Item {
         x: root.outgoing
            ? root.width - width - root.outerMargin
            : root.outerMargin + root.senderGutterWidth
-        y: root.senderHeaderHeight > 0 ? root.senderHeaderHeight + Kirigami.Units.smallSpacing / 2 : 0
+        y: root.dateSeparatorHeight + (root.senderHeaderHeight > 0 ? root.senderHeaderHeight + Kirigami.Units.smallSpacing / 2 : 0)
         width: root.contentBlockWidth + root.innerPadding * 2
         height: contentColumn.height + root.innerPadding * 2
 
@@ -629,7 +634,7 @@ Item {
         x: root.outgoing
            ? root.width - width - root.outerMargin
            : root.outerMargin + root.senderGutterWidth
-        y: root.senderHeaderHeight > 0 ? root.senderHeaderHeight + Kirigami.Units.smallSpacing / 2 : 0
+        y: root.dateSeparatorHeight + (root.senderHeaderHeight > 0 ? root.senderHeaderHeight + Kirigami.Units.smallSpacing / 2 : 0)
         width: root.stickerDisplayWidth
         height: root.stickerDisplayHeight
 
@@ -876,7 +881,7 @@ Item {
 
         visible: root.showSenderHeader && root.senderName.length > 0
         x: bubble.x + root.innerPadding / 2
-        y: Math.max(0, (root.senderHeaderHeight - height) / 2)
+        y: root.dateSeparatorHeight + Math.max(0, (root.senderHeaderHeight - height) / 2)
         width: Math.max(0, root.width - x - root.outerMargin)
         text: root.senderName
         elide: Text.ElideRight
@@ -891,12 +896,21 @@ Item {
 
         visible: root.showSenderHeader
         x: root.outerMargin + Math.max(0, root.senderGutterWidth - width) / 2
-        y: Math.max(0, (root.senderHeaderHeight - height) / 2)
+        y: root.dateSeparatorHeight + Math.max(0, (root.senderHeaderHeight - height) / 2)
         width: root.senderAvatarSize
         height: root.senderAvatarSize
         avatarLocalPath: root.senderAvatarLocalPath
         initials: root.senderInitials
         backgroundColor: Qt.alpha(foregroundColor, 0.12)
+    }
+
+    DateSeparatorPill {
+        id: dateSeparator
+
+        visible: root.showDateSeparator
+        text: root.dateSeparatorText
+        x: Math.round((root.width - width) / 2)
+        y: Kirigami.Units.largeSpacing / 2
     }
 
 }

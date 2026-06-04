@@ -84,6 +84,7 @@ qt_add_qml_module(whatkevr
         src/qml/I18n.qml
         src/qml/components/AvatarImage.qml
         src/qml/components/StatusChip.qml
+        src/qml/components/DateSeparatorPill.qml
         src/qml/components/ChatListDelegate.qml
         src/qml/components/ChatListPane.qml
         src/qml/components/ConversationPane.qml

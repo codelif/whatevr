@@ -53,6 +53,8 @@ QVariant MessageListModel::data(const QModelIndex &index, int role) const
         return message.timestampUnix;
     case TimeTextRole:
         return message.timeText;
+    case DateSeparatorTextRole:
+        return startsDayGroup(index.row()) ? formatRelativeDate(message.timestampUnix) : QString();
     case DirectionRole:
         return message.direction;
     case StatusRole:
@@ -106,6 +108,7 @@ QHash<int, QByteArray> MessageListModel::roleNames() const
         {TextRole, "text"},
         {TimestampUnixRole, "timestampUnix"},
         {TimeTextRole, "timeText"},
+        {DateSeparatorTextRole, "dateSeparatorText"},
         {DirectionRole, "direction"},
         {StatusRole, "status"},
         {StatusTextRole, "statusText"},
@@ -393,6 +396,9 @@ MessageListModel::MessageItem MessageListModel::fromProto(const whatevr::v1::Mes
     item.senderDisplayName = displaySenderName(item);
     item.senderInitials = initialsForName(item.senderDisplayName);
     item.timeText = formatTime(item.timestampUnix);
+    item.dayNumber = item.timestampUnix > 0
+        ? static_cast<int>(QDateTime::fromSecsSinceEpoch(item.timestampUnix, QTimeZone::LocalTime).date().toJulianDay())
+        : 0;
     item.statusText = statusText(item.status);
     return item;
 }
@@ -429,6 +435,39 @@ QString MessageListModel::formatTime(qint64 timestampUnix)
     }
 
     return QDateTime::fromSecsSinceEpoch(timestampUnix, QTimeZone::LocalTime).time().toString(QStringLiteral("HH:mm"));
+}
+
+QString MessageListModel::formatRelativeDate(qint64 timestampUnix)
+{
+    if (timestampUnix <= 0) {
+        return {};
+    }
+
+    const QDate date = QDateTime::fromSecsSinceEpoch(timestampUnix, QTimeZone::LocalTime).date();
+    const QDate today = QDate::currentDate();
+    const qint64 daysAgo = date.daysTo(today);
+
+    if (daysAgo == 0) {
+        return i18nc("@title:row date separator for messages from today", "Today");
+    }
+    if (daysAgo == 1) {
+        return i18nc("@title:row date separator for messages from yesterday", "Yesterday");
+    }
+    if (daysAgo >= 2 && daysAgo <= 6) {
+        return QLocale().dayName(date.dayOfWeek(), QLocale::LongFormat);
+    }
+    if (date.year() == today.year()) {
+        return QLocale().toString(date, i18nc("date separator without year, e.g. 14 August", "d MMMM"));
+    }
+    return QLocale().toString(date, i18nc("date separator with year, e.g. 14 August 2023", "d MMMM yyyy"));
+}
+
+QString MessageListModel::dateTextForRow(int row) const
+{
+    if (row < 0 || row >= static_cast<int>(m_messages.size())) {
+        return {};
+    }
+    return formatRelativeDate(m_messages.at(row).timestampUnix);
 }
 
 QString MessageListModel::statusText(int status)
@@ -544,6 +583,18 @@ bool MessageListModel::endsSenderGroup(int row) const
     return next.timestampUnix - message.timestampUnix > kSenderGroupGapSeconds;
 }
 
+bool MessageListModel::startsDayGroup(int row) const
+{
+    // Newest-first storage: the chronologically previous (older) message is at
+    // row + 1, and the oldest message (last index) always starts a day. A row
+    // begins a new day when its local calendar day differs from the older
+    // neighbour's. Comparison is a plain int (precomputed Julian day number).
+    if (row < 0 || row >= static_cast<int>(m_messages.size()) - 1) {
+        return true;
+    }
+    return m_messages.at(row).dayNumber != m_messages.at(row + 1).dayNumber;
+}
+
 int MessageListModel::indexOf(const QString &messageId) const
 {
     if (messageId.isEmpty()) {
@@ -578,5 +629,5 @@ void MessageListModel::emitGroupingRolesChanged(int firstRow, int lastRow)
 
     Q_EMIT dataChanged(index(first, 0),
                        index(last, 0),
-                       {ShowSenderHeaderRole, ShowSenderAvatarRole, ShowSenderGutterRole, GroupStartRole, GroupEndRole});
+                       {ShowSenderHeaderRole, ShowSenderAvatarRole, ShowSenderGutterRole, GroupStartRole, GroupEndRole, DateSeparatorTextRole});
 }

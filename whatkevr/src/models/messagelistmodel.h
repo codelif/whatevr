@@ -27,6 +27,7 @@ public:
         TextRole,
         TimestampUnixRole,
         TimeTextRole,
+        DateSeparatorTextRole,
         DirectionRole,
         StatusRole,
         StatusTextRole,
@@ -69,6 +70,7 @@ public:
     [[nodiscard]] bool isEmpty() const;
     [[nodiscard]] int messageCount() const;
     [[nodiscard]] QString oldestMessageId() const;
+    [[nodiscard]] Q_INVOKABLE QString dateTextForRow(int row) const;
 
 private:
     struct MessageItem {
@@ -81,6 +83,7 @@ private:
         QString senderAvatarLocalPath;
         QString text;
         qint64 timestampUnix = 0;
+        int dayNumber = 0;
         QString timeText;
         int direction = 0;
         int status = 0;
@@ -98,6 +101,7 @@ private:
 
     static MessageItem fromProto(const whatevr::v1::Message &message);
     static QString formatTime(qint64 timestampUnix);
+    static QString formatRelativeDate(qint64 timestampUnix);
     static QString statusText(int status);
     static QString displaySenderName(const MessageItem &message);
     static QString initialsForName(const QString &name);
@@ -107,6 +111,7 @@ private:
     [[nodiscard]] bool isOutgoing(const MessageItem &message) const;
     [[nodiscard]] bool startsSenderGroup(int row) const;
     [[nodiscard]] bool endsSenderGroup(int row) const;
+    [[nodiscard]] bool startsDayGroup(int row) const;
     [[nodiscard]] int indexOf(const QString &messageId) const;
     void rebuildIndex();
     void emitGroupingRolesChanged(int firstRow, int lastRow);

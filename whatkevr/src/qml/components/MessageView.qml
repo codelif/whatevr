@@ -40,6 +40,18 @@ Item {
     property int clearSelectionGeneration: 0
     property string activeSelectionMessageId: ""
 
+    // Floating date indicator shown at the top while scrolling. It mirrors the
+    // inline day separators (same pill) and fades out shortly after motion
+    // stops; it also hides when an inline separator reaches the top, so the two
+    // appear to be the same pill (WhatsApp hand-off).
+    property string floatingDateText: ""
+    property bool floatingDateActive: false
+    property bool floatingDateHandoff: false
+    // Set while we move the viewport ourselves (chat open, scroll-to-newest) so
+    // those programmatic jumps don't flash the floating date pill.
+    property bool programmaticScroll: false
+    property real lastScrollY: 0
+
     signal loadOlderMessagesRequested()
     signal conversationFocusRequested()
     signal typeIntoComposerRequested(string text)
@@ -66,6 +78,14 @@ Item {
         }
     }
 
+    Timer {
+        id: floatingDateIdleTimer
+
+        interval: 1200
+        repeat: false
+        onTriggered: root.floatingDateActive = false
+    }
+
     DragHandler {
         target: null
         acceptedButtons: Qt.LeftButton
@@ -90,7 +110,11 @@ Item {
 
     function scrollToNewest() {
         if (list.count > 0) {
+            programmaticScroll = true
             list.positionViewAtBeginning()
+            floatingDateActive = false
+            floatingDateIdleTimer.stop()
+            Qt.callLater(() => { root.programmaticScroll = false })
         }
         pendingNewestMessageCount = 0
         followNewest = true
@@ -114,6 +138,14 @@ Item {
         const cx = list.width / 2
         const topIndex = list.indexAt(cx, list.contentY + 1)
         const bottomIndex = list.indexAt(cx, list.contentY + Math.max(1, list.height - 1))
+
+        if (topIndex >= 0) {
+            floatingDateText = list.model ? list.model.dateTextForRow(topIndex) : ""
+            const topItem = list.itemAtIndex(topIndex)
+            floatingDateHandoff = topItem !== null
+                                  && topItem.showDateSeparator
+                                  && (topItem.y - list.contentY) < topItem.dateSeparatorHeight
+        }
 
         let lo = -1
         let hi = -1
@@ -147,8 +179,28 @@ Item {
         }
     }
 
+    // Reveal the floating date pill on genuine user scrolling (the kinetic
+    // scroller and scrollbar drive contentY directly, so list.moving is never
+    // set). Suppress our own programmatic jumps and contentHeight-only changes.
+    function noteScroll() {
+        if (programmaticScroll || openingChat) {
+            lastScrollY = list.contentY
+            return
+        }
+        if (Math.abs(list.contentY - lastScrollY) < 1) {
+            return
+        }
+        lastScrollY = list.contentY
+        if (floatingDateText.length > 0) {
+            floatingDateActive = true
+            floatingDateIdleTimer.restart()
+        }
+    }
+
     function afterModelReset() {
         scrollToNewest()
+        floatingDateActive = false
+        floatingDateIdleTimer.stop()
         openingChat = false
         followNewest = true
         atNewest = true
@@ -210,6 +262,7 @@ Item {
             messageId: String(model.messageId || "")
             body: String(model.text || "")
             timeText: String(model.timeText || "")
+            dateSeparatorText: String(model.dateSeparatorText || "")
             status: Number(model.status || 0)
             outgoing: Boolean(model.isOutgoing)
             senderName: String(model.senderName || "")
@@ -246,7 +299,10 @@ Item {
             }
         }
 
-        onContentYChanged: root.updateScrollState()
+        onContentYChanged: {
+            root.updateScrollState()
+            root.noteScroll()
+        }
         onContentHeightChanged: root.updateScrollState()
         onMovementEnded: root.updateScrollState()
 
@@ -380,6 +436,28 @@ Item {
                 text: Whatevr.I18n.i18nc("@info", "Loading older messages")
                 font.pointSize: Kirigami.Theme.smallFont.pointSize
                 color: Kirigami.Theme.disabledTextColor
+            }
+        }
+    }
+
+    DateSeparatorPill {
+        id: floatingDatePill
+
+        anchors.top: parent.top
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.topMargin: Kirigami.Units.smallSpacing
+        z: 9
+        text: root.floatingDateText
+        visible: opacity > 0
+        opacity: (root.floatingDateActive
+                  && !root.floatingDateHandoff
+                  && root.floatingDateText.length > 0
+                  && !root.showLoadingOlderMessages) ? 1 : 0
+
+        Behavior on opacity {
+            NumberAnimation {
+                duration: Kirigami.Units.longDuration
+                easing.type: Easing.OutCubic
             }
         }
     }
