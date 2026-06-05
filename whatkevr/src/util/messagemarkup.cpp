@@ -6,6 +6,8 @@
 #include <QTextBoundaryFinder>
 #include <QVector>
 
+#include "tlds.h"
+
 namespace whatevr::util {
 namespace {
 
@@ -204,6 +206,212 @@ struct HtmlBuildContext {
     QString emojiSpanOpen;
 };
 
+struct UrlMatch {
+    int end = -1;
+    QString href;
+};
+
+bool isAsciiLetter(QChar ch)
+{
+    const ushort code = ch.unicode();
+    return (code >= 'a' && code <= 'z') || (code >= 'A' && code <= 'Z');
+}
+
+bool isAsciiDigit(QChar ch)
+{
+    const ushort code = ch.unicode();
+    return code >= '0' && code <= '9';
+}
+
+bool isAsciiAlphaNumeric(QChar ch)
+{
+    return isAsciiLetter(ch) || isAsciiDigit(ch);
+}
+
+bool isDomainLabelChar(QChar ch)
+{
+    return isAsciiAlphaNumeric(ch) || ch == QLatin1Char('-');
+}
+
+bool startsWithAtCaseInsensitive(const QString &text, int index, QStringView marker)
+{
+    return index >= 0
+        && index + marker.size() <= text.size()
+        && QStringView{text}.mid(index, marker.size()).compare(marker, Qt::CaseInsensitive) == 0;
+}
+
+bool hasUrlBoundaryBefore(const QString &text, int index)
+{
+    if (index <= 0) {
+        return true;
+    }
+
+    const QChar prev = text.at(index - 1);
+    return !prev.isLetterOrNumber()
+        && prev != QLatin1Char('-')
+        && prev != QLatin1Char('_')
+        && prev != QLatin1Char('.')
+        && prev != QLatin1Char('@');
+}
+
+bool isUrlStopChar(QChar ch)
+{
+    return ch.isSpace()
+        || ch == QLatin1Char('<')
+        || ch == QLatin1Char('>')
+        || ch == QLatin1Char('"')
+        || ch == QLatin1Char('\'');
+}
+
+bool isUrlTailStarter(QChar ch)
+{
+    return ch == QLatin1Char('/') || ch == QLatin1Char('?') || ch == QLatin1Char('#');
+}
+
+bool isTrailingUrlPunctuation(QChar ch)
+{
+    switch (ch.unicode()) {
+    case '.':
+    case ',':
+    case '!':
+    case '?':
+    case ';':
+    case ':':
+    case ')':
+    case ']':
+    case '}':
+        return true;
+    default:
+        return false;
+    }
+}
+
+int trimmedUrlEnd(const QString &text, int start, int rawEnd)
+{
+    int end = rawEnd;
+    while (end > start && isTrailingUrlPunctuation(text.at(end - 1))) {
+        --end;
+    }
+    return end;
+}
+
+bool isValidTopLevelDomain(const QString &text, int start, int end)
+{
+    const int length = end - start;
+    if (length < 2 || length > 63) {
+        return false;
+    }
+    return isKnownIanaTld(QStringView{text}.mid(start, length));
+}
+
+int parseDomainEnd(const QString &text, int start, int end)
+{
+    int pos = start;
+    int labelCount = 0;
+    int lastLabelStart = -1;
+    int lastLabelEnd = -1;
+
+    while (pos < end) {
+        const int labelStart = pos;
+        if (!isAsciiAlphaNumeric(text.at(pos))) {
+            return -1;
+        }
+
+        while (pos < end && isDomainLabelChar(text.at(pos))) {
+            ++pos;
+        }
+        if (text.at(pos - 1) == QLatin1Char('-')) {
+            return -1;
+        }
+
+        ++labelCount;
+        lastLabelStart = labelStart;
+        lastLabelEnd = pos;
+
+        if (pos < end && text.at(pos) == QLatin1Char('.') && pos + 1 < end && isAsciiAlphaNumeric(text.at(pos + 1))) {
+            ++pos;
+            continue;
+        }
+        break;
+    }
+
+    if (labelCount < 2 || !isValidTopLevelDomain(text, lastLabelStart, lastLabelEnd)) {
+        return -1;
+    }
+    return lastLabelEnd;
+}
+
+int scanDomainUrlEnd(const QString &text, int domainEnd, int end)
+{
+    int urlEnd = domainEnd;
+
+    if (urlEnd < end && text.at(urlEnd) == QLatin1Char(':') && urlEnd + 1 < end && isAsciiDigit(text.at(urlEnd + 1))) {
+        urlEnd += 2;
+        while (urlEnd < end && isAsciiDigit(text.at(urlEnd))) {
+            ++urlEnd;
+        }
+    }
+
+    if (urlEnd < end && isUrlTailStarter(text.at(urlEnd))) {
+        ++urlEnd;
+        while (urlEnd < end && !isUrlStopChar(text.at(urlEnd))) {
+            ++urlEnd;
+        }
+    }
+
+    return urlEnd;
+}
+
+UrlMatch findUrlAt(const QString &text, int index, int end)
+{
+    UrlMatch match;
+    if (index < 0 || index >= end || !hasUrlBoundaryBefore(text, index)) {
+        return match;
+    }
+
+    int schemeLength = 0;
+    if (startsWithAtCaseInsensitive(text, index, QStringLiteral("https://"))) {
+        schemeLength = 8;
+    } else if (startsWithAtCaseInsensitive(text, index, QStringLiteral("http://"))) {
+        schemeLength = 7;
+    }
+
+    if (schemeLength > 0) {
+        int rawEnd = index + schemeLength;
+        while (rawEnd < end && !isUrlStopChar(text.at(rawEnd))) {
+            ++rawEnd;
+        }
+
+        const int urlEnd = trimmedUrlEnd(text, index + schemeLength, rawEnd);
+        if (urlEnd > index + schemeLength) {
+            match.end = urlEnd;
+            match.href = text.mid(index, urlEnd - index);
+        }
+        return match;
+    }
+
+    const int domainEnd = parseDomainEnd(text, index, end);
+    if (domainEnd < 0) {
+        return match;
+    }
+
+    const int rawEnd = scanDomainUrlEnd(text, domainEnd, end);
+    const int urlEnd = trimmedUrlEnd(text, index, rawEnd);
+    match.end = urlEnd;
+    match.href = QStringLiteral("https://") + text.mid(index, urlEnd - index);
+    return match;
+}
+
+bool textMayContainUrl(const QString &text)
+{
+    for (int i = 0; i < text.size(); ++i) {
+        if (findUrlAt(text, i, text.size()).end > i) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void appendEscapedChar(QChar ch, QString &html, bool preserveSpaces)
 {
     switch (ch.unicode()) {
@@ -232,6 +440,16 @@ void appendEscapedChar(QChar ch, QString &html, bool preserveSpaces)
         html += ch;
         break;
     }
+}
+
+QString escapedHtmlAttribute(const QString &text)
+{
+    QString html;
+    html.reserve(text.size());
+    for (QChar ch : text) {
+        appendEscapedChar(ch, html, false);
+    }
+    return html;
 }
 
 void appendEscapedWithEmoji(const QString &text, int start, int end, QString &html, HtmlBuildContext &context, bool preserveSpaces = false)
@@ -326,6 +544,16 @@ void appendDelimited(const QString &text, int open, int close, QChar marker, QSt
     }
 }
 
+void appendUrlAnchor(const QString &text, int start, const UrlMatch &url, QString &html, HtmlBuildContext &context)
+{
+    context.hasFormatting = true;
+    html += QStringLiteral("<a href=\"");
+    html += escapedHtmlAttribute(url.href);
+    html += QStringLiteral("\">");
+    appendEscapedWithEmoji(text, start, url.end, html, context);
+    html += QStringLiteral("</a>");
+}
+
 void appendInline(const QString &text, int start, int end, QString &html, HtmlBuildContext &context)
 {
     int i = start;
@@ -354,6 +582,14 @@ void appendInline(const QString &text, int start, int end, QString &html, HtmlBu
                 continue;
             }
         }
+
+        const UrlMatch url = findUrlAt(text, i, end);
+        if (url.end > i) {
+            appendUrlAnchor(text, i, url, html, context);
+            i = url.end;
+            continue;
+        }
+
         if (ch == QLatin1Char('*') || ch == QLatin1Char('_') || ch == QLatin1Char('~')) {
             const int close = findClosingDelimiter(text, i, end, ch);
             if (close >= 0) {
@@ -365,6 +601,9 @@ void appendInline(const QString &text, int start, int end, QString &html, HtmlBu
 
         int runEnd = i + 1;
         while (runEnd < end) {
+            if (findUrlAt(text, runEnd, end).end > runEnd) {
+                break;
+            }
             const QChar next = text.at(runEnd);
             if (next == QLatin1Char('`') || next == QLatin1Char('*') || next == QLatin1Char('_') || next == QLatin1Char('~')) {
                 break;
@@ -434,7 +673,7 @@ MessageMarkup parseWhatsAppMessageMarkup(const QString &text)
     result.emojiOnlyCount = emojiOnlyClusterCount(text);
 
     const bool hasEmoji = textContainsEmojiCluster(text);
-    if (!hasEmoji && !textMayContainWhatsAppMarkup(text)) {
+    if (!hasEmoji && !textMayContainWhatsAppMarkup(text) && !textMayContainUrl(text)) {
         return result;
     }
 

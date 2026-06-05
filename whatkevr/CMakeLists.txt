@@ -55,6 +55,8 @@ qt_add_executable(whatkevr
     src/util/messagemarkup.h
     src/util/richtext.cpp
     src/util/richtext.h
+    src/util/tlds.cpp
+    src/util/tlds.h
 )
 
 set(WHATEVR_PROTO_FILE "${CMAKE_CURRENT_SOURCE_DIR}/../whatevrd/proto/whatevr.proto")

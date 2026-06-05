@@ -795,6 +795,8 @@ Item {
             TextEdit {
                 id: bodyText
 
+                property string currentHoveredLink: ""
+
                 // Formatted WhatsApp markdown and inline-enlarged emoji use RichText;
                 // plain messages stay on the cheaper PlainText path. Apply format and
                 // text together, clearing the old document first, so pooled delegates
@@ -823,6 +825,12 @@ Item {
                 font.family: Kirigami.Theme.defaultFont.family
                 font.pointSize: root.bodyPointSize
                 font.weight: Font.Normal
+                onLinkActivated: link => Qt.openUrlExternally(link)
+                onLinkHovered: link => currentHoveredLink = link
+
+                HoverHandler {
+                    cursorShape: bodyText.currentHoveredLink.length > 0 ? Qt.PointingHandCursor : Qt.IBeamCursor
+                }
 
                 Component.onCompleted: syncContent()
 
