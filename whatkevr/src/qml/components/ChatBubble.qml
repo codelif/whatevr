@@ -250,6 +250,7 @@ Item {
     readonly property real inlineTntGap: Kirigami.Units.smallSpacing
     readonly property real framelessFooterHPadding: Math.max(1, Math.round(Kirigami.Units.smallSpacing / 2))
     readonly property real framelessFooterVPadding: Math.max(1, Math.round(Kirigami.Units.smallSpacing / 4))
+    readonly property real bodyTopInsetCorrection: Math.max(1, Math.round(Kirigami.Units.smallSpacing / 2))
     // Shared tight footer inset; matches the image-overlay footer the design
     // follows, so text/sticker footers hug their corner the same way.
     readonly property real footerInset: Kirigami.Units.smallSpacing
@@ -335,9 +336,9 @@ Item {
             return mediaSlot.y + mediaSlot.height + Kirigami.Units.smallSpacing
         }
         if (replyPreview.visible) {
-            return root.innerPadding + replyPreview.height + Kirigami.Units.smallSpacing
+            return root.innerPadding + replyPreview.height + Kirigami.Units.smallSpacing - root.bodyTopInsetCorrection
         }
-        return root.innerPadding
+        return root.innerPadding - root.bodyTopInsetCorrection
     }
 
     function contentOffsetBeforeFooter() {
