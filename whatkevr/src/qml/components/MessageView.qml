@@ -39,6 +39,7 @@ Item {
 
     property int clearSelectionGeneration: 0
     property string activeSelectionMessageId: ""
+    property var expandedMessageTextIds: ({})
 
     // Floating date indicator shown at the top while scrolling. It mirrors the
     // inline day separators (same pill) and fades out shortly after motion
@@ -128,6 +129,23 @@ Item {
 
         activeSelectionMessageId = messageId
         clearSelectionGeneration += 1
+    }
+
+    function messageTextExpanded(messageId) {
+        return messageId.length > 0 && expandedMessageTextIds[messageId] === true
+    }
+
+    function expandMessageText(messageId) {
+        if (messageId.length === 0) {
+            return
+        }
+        if (list.model && typeof list.model.expandMessageText === "function") {
+            list.model.expandMessageText(messageId)
+        }
+        const next = Object.assign({}, expandedMessageTextIds)
+        next[messageId] = true
+        expandedMessageTextIds = next
+        Qt.callLater(updateScrollState)
     }
 
     function scrollToNewest() {
@@ -365,6 +383,7 @@ Item {
         if (pendingJumpMessageId.length > 0) {
             finishPendingJump()
         }
+        expandedMessageTextIds = ({})
         pendingNewestMessageCount = 0
         atNewest = true
         followNewest = true
@@ -435,11 +454,16 @@ Item {
 
             listWidth: list.width
             messageId: String(model.messageId || "")
-            body: String(model.text || "")
-            layoutBody: String(model.layoutText || "")
-            emojiOnlyCount: Number(model.emojiOnlyCount || 0)
-            hasRichText: Boolean(model.hasRichText)
-            richText: String(model.richText || "")
+            readonly property bool messageTextTruncated: Boolean(model.textTruncated)
+            readonly property bool messageTextExpanded: root.messageTextExpanded(messageId)
+            body: messageTextExpanded ? String(model.text || "") : String(model.textPreview || model.text || "")
+            layoutBody: messageTextExpanded ? String(model.layoutText || "") : String(model.layoutTextPreview || model.layoutText || "")
+            emojiOnlyCount: messageTextExpanded || !messageTextTruncated ? Number(model.emojiOnlyCount || 0) : 0
+            hasRichText: messageTextExpanded ? Boolean(model.hasRichText) : Boolean(model.previewHasRichText)
+            richText: messageTextExpanded ? String(model.richText || "") : String(model.previewRichText || "")
+            replyPreviewBody: String(model.textPreview || model.text || "")
+            textTruncated: messageTextTruncated
+            textExpanded: messageTextExpanded
             timeText: String(model.timeText || "")
             dateSeparatorText: String(model.dateSeparatorText || "")
             status: Number(model.status || 0)
@@ -477,6 +501,7 @@ Item {
             onTypeIntoComposerRequested: text => root.typeIntoComposerRequested(text)
             onReplyRequested: (messageId, senderName, text, mediaKind, mediaMimeType, outgoing) => root.replyToMessageRequested(messageId, senderName, text, mediaKind, mediaMimeType, outgoing)
             onReplyPreviewActivated: messageId => root.jumpToReplyTarget(messageId)
+            onReadMoreRequested: messageId => root.expandMessageText(messageId)
 
             ListView.onPooled: {
                 pooledByListView = true

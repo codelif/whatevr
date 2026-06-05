@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	maxSendTextRunes = 4096
+	maxSendTextRunes = 65536
 	maxCaptionRunes  = 1024
 )
 

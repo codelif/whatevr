@@ -2,6 +2,7 @@
 
 #include <QDateTime>
 #include <QSet>
+#include <QTextBoundaryFinder>
 #include <QTimeZone>
 
 #include <KLocalizedString>
@@ -15,9 +16,62 @@
 
 namespace {
 constexpr qint64 kSenderGroupGapSeconds = 5LL * 60;
+constexpr int kCollapsedTextMaxGraphemes = 900;
+constexpr int kCollapsedTextMaxLines = 12;
 
 using whatevr::util::plainTextFromQtRichText;
 using whatevr::util::parseWhatsAppMessageMarkup;
+
+int graphemeBoundaryAfter(const QString &text, int maxGraphemes)
+{
+    QTextBoundaryFinder finder(QTextBoundaryFinder::Grapheme, text);
+    int boundary = 0;
+    for (int count = 0; count < maxGraphemes; ++count) {
+        const int next = finder.toNextBoundary();
+        if (next < 0) {
+            return text.size();
+        }
+        boundary = next;
+    }
+    return boundary;
+}
+
+int lineBoundaryAfter(const QString &text, int maxLines)
+{
+    int lines = 1;
+    for (int i = 0; i < text.size(); ++i) {
+        if (text.at(i) != QLatin1Char('\n')) {
+            continue;
+        }
+        ++lines;
+        if (lines > maxLines) {
+            return i;
+        }
+    }
+    return text.size();
+}
+
+QString collapsedMessageText(const QString &text)
+{
+    const int lineBoundary = lineBoundaryAfter(text, kCollapsedTextMaxLines);
+    if (text.size() <= kCollapsedTextMaxGraphemes && lineBoundary >= text.size()) {
+        return text;
+    }
+
+    int boundary = lineBoundary;
+    if (text.size() > kCollapsedTextMaxGraphemes) {
+        boundary = std::min(boundary, graphemeBoundaryAfter(text, kCollapsedTextMaxGraphemes));
+    }
+    if (boundary >= text.size()) {
+        return text;
+    }
+
+    QString preview = text.left(boundary).trimmed();
+    if (preview.isEmpty()) {
+        preview = text.left(boundary);
+    }
+    return preview + QStringLiteral("...");
+}
 }
 
 MessageListModel::MessageListModel(QObject *parent)
@@ -63,6 +117,16 @@ QVariant MessageListModel::data(const QModelIndex &index, int role) const
         return message.hasRichText;
     case RichTextRole:
         return message.richText;
+    case TextPreviewRole:
+        return message.textPreview;
+    case LayoutTextPreviewRole:
+        return message.layoutTextPreview;
+    case PreviewHasRichTextRole:
+        return message.previewHasRichText;
+    case PreviewRichTextRole:
+        return message.previewRichText;
+    case TextTruncatedRole:
+        return message.textTruncated;
     case TimestampUnixRole:
         return message.timestampUnix;
     case TimeTextRole:
@@ -136,6 +200,11 @@ QHash<int, QByteArray> MessageListModel::roleNames() const
         {EmojiOnlyCountRole, "emojiOnlyCount"},
         {HasRichTextRole, "hasRichText"},
         {RichTextRole, "richText"},
+        {TextPreviewRole, "textPreview"},
+        {LayoutTextPreviewRole, "layoutTextPreview"},
+        {PreviewHasRichTextRole, "previewHasRichText"},
+        {PreviewRichTextRole, "previewRichText"},
+        {TextTruncatedRole, "textTruncated"},
         {TimestampUnixRole, "timestampUnix"},
         {TimeTextRole, "timeText"},
         {DateSeparatorTextRole, "dateSeparatorText"},
@@ -174,8 +243,16 @@ void MessageListModel::replaceMessages(const QList<whatevr::v1::Message> &messag
         MessageItem item = fromProto(message);
         const int existingIndex = indexOf(item.id);
         if (existingIndex >= 0) {
-            item.mediaDownloading = m_messages.at(existingIndex).mediaDownloading;
-            item.mediaDownloadError = m_messages.at(existingIndex).mediaDownloadError;
+            const auto &existing = m_messages.at(existingIndex);
+            item.mediaDownloading = existing.mediaDownloading;
+            item.mediaDownloadError = existing.mediaDownloadError;
+            if (item.text == existing.text && existing.fullMarkupParsed) {
+                item.layoutText = existing.layoutText;
+                item.emojiOnlyCount = existing.emojiOnlyCount;
+                item.hasRichText = existing.hasRichText;
+                item.richText = existing.richText;
+                item.fullMarkupParsed = true;
+            }
         }
         next.append(std::move(item));
     }
@@ -236,8 +313,16 @@ void MessageListModel::appendOlderMessages(const QList<whatevr::v1::Message> &me
         if (existingIndex >= 0) {
             if (!sameMessageData(m_messages.at(existingIndex), item)) {
                 MessageItem updated = item;
-                updated.mediaDownloading = m_messages.at(existingIndex).mediaDownloading;
-                updated.mediaDownloadError = m_messages.at(existingIndex).mediaDownloadError;
+                const auto &existing = m_messages.at(existingIndex);
+                updated.mediaDownloading = existing.mediaDownloading;
+                updated.mediaDownloadError = existing.mediaDownloadError;
+                if (updated.text == existing.text && existing.fullMarkupParsed) {
+                    updated.layoutText = existing.layoutText;
+                    updated.emojiOnlyCount = existing.emojiOnlyCount;
+                    updated.hasRichText = existing.hasRichText;
+                    updated.richText = existing.richText;
+                    updated.fullMarkupParsed = true;
+                }
                 m_messages[existingIndex] = std::move(updated);
                 const QModelIndex changedIndex = index(existingIndex, 0);
                 Q_EMIT dataChanged(changedIndex, changedIndex);
@@ -293,8 +378,16 @@ void MessageListModel::upsertMessage(const whatevr::v1::Message &message)
 
     if (existingIndex >= 0) {
         MessageItem updated = item;
-        updated.mediaDownloading = m_messages.at(existingIndex).mediaDownloading;
-        updated.mediaDownloadError = m_messages.at(existingIndex).mediaDownloadError;
+        const auto &existing = m_messages.at(existingIndex);
+        updated.mediaDownloading = existing.mediaDownloading;
+        updated.mediaDownloadError = existing.mediaDownloadError;
+        if (updated.text == existing.text && existing.fullMarkupParsed) {
+            updated.layoutText = existing.layoutText;
+            updated.emojiOnlyCount = existing.emojiOnlyCount;
+            updated.hasRichText = existing.hasRichText;
+            updated.richText = existing.richText;
+            updated.fullMarkupParsed = true;
+        }
         m_messages[existingIndex] = std::move(updated);
         const QModelIndex changedIndex = index(existingIndex, 0);
         Q_EMIT dataChanged(changedIndex, changedIndex);
@@ -403,10 +496,38 @@ QString MessageListModel::oldestMessageId() const
     return m_messages.isEmpty() ? QString() : m_messages.last().id;
 }
 
+bool MessageListModel::expandMessageText(const QString &messageId)
+{
+    const int messageIndex = indexOf(messageId);
+    if (messageIndex < 0) {
+        return false;
+    }
+
+    auto &message = m_messages[messageIndex];
+    if (!message.textTruncated || message.fullMarkupParsed) {
+        return true;
+    }
+
+    const auto markup = parseWhatsAppMessageMarkup(message.text);
+    message.layoutText = markup.layoutText;
+    message.emojiOnlyCount = markup.emojiOnlyCount;
+    message.hasRichText = markup.hasRichText;
+    message.richText = markup.richText;
+    message.fullMarkupParsed = true;
+
+    const QModelIndex changedIndex = index(messageIndex, 0);
+    Q_EMIT dataChanged(changedIndex,
+                       changedIndex,
+                       {LayoutTextRole, EmojiOnlyCountRole, HasRichTextRole, RichTextRole});
+    return true;
+}
+
 MessageListModel::MessageItem MessageListModel::fromProto(const whatevr::v1::Message &message)
 {
     const QString text = plainTextFromQtRichText(message.text());
-    const auto markup = parseWhatsAppMessageMarkup(text);
+    const QString previewText = collapsedMessageText(text);
+    const bool textTruncated = previewText != text;
+    const auto previewMarkup = parseWhatsAppMessageMarkup(previewText);
     MessageItem item {
         .id = message.id_proto(),
         .chatId = message.chatId(),
@@ -416,10 +537,16 @@ MessageListModel::MessageItem MessageListModel::fromProto(const whatevr::v1::Mes
         .senderInitials = {},
         .senderAvatarLocalPath = message.senderAvatarLocalPath(),
         .text = text,
-        .layoutText = markup.layoutText,
-        .emojiOnlyCount = markup.emojiOnlyCount,
-        .hasRichText = markup.hasRichText,
-        .richText = markup.richText,
+        .layoutText = textTruncated ? text : previewMarkup.layoutText,
+        .emojiOnlyCount = textTruncated ? 0 : previewMarkup.emojiOnlyCount,
+        .hasRichText = textTruncated ? false : previewMarkup.hasRichText,
+        .richText = textTruncated ? QString() : previewMarkup.richText,
+        .fullMarkupParsed = !textTruncated,
+        .textPreview = previewText,
+        .layoutTextPreview = previewMarkup.layoutText,
+        .previewHasRichText = previewMarkup.hasRichText,
+        .previewRichText = previewMarkup.richText,
+        .textTruncated = textTruncated,
         .timestampUnix = message.timestampUnix(),
         .timeText = {},
         .direction = static_cast<int>(message.direction()),
@@ -593,6 +720,12 @@ bool MessageListModel::sameMessageData(const MessageItem &left, const MessageIte
         && left.emojiOnlyCount == right.emojiOnlyCount
         && left.hasRichText == right.hasRichText
         && left.richText == right.richText
+        && left.fullMarkupParsed == right.fullMarkupParsed
+        && left.textPreview == right.textPreview
+        && left.layoutTextPreview == right.layoutTextPreview
+        && left.previewHasRichText == right.previewHasRichText
+        && left.previewRichText == right.previewRichText
+        && left.textTruncated == right.textTruncated
         && left.timestampUnix == right.timestampUnix
         && left.timeText == right.timeText
         && left.direction == right.direction

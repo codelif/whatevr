@@ -29,6 +29,11 @@ public:
         EmojiOnlyCountRole,
         HasRichTextRole,
         RichTextRole,
+        TextPreviewRole,
+        LayoutTextPreviewRole,
+        PreviewHasRichTextRole,
+        PreviewRichTextRole,
+        TextTruncatedRole,
         TimestampUnixRole,
         TimeTextRole,
         DateSeparatorTextRole,
@@ -82,6 +87,7 @@ public:
     [[nodiscard]] QString oldestMessageId() const;
     [[nodiscard]] Q_INVOKABLE int indexOf(const QString &messageId) const;
     [[nodiscard]] Q_INVOKABLE QString dateTextForRow(int row) const;
+    Q_INVOKABLE bool expandMessageText(const QString &messageId);
 
 private:
     struct MessageItem {
@@ -97,6 +103,12 @@ private:
         int emojiOnlyCount = 0;
         bool hasRichText = false;
         QString richText;
+        bool fullMarkupParsed = false;
+        QString textPreview;
+        QString layoutTextPreview;
+        bool previewHasRichText = false;
+        QString previewRichText;
+        bool textTruncated = false;
         qint64 timestampUnix = 0;
         int dayNumber = 0;
         QString timeText;

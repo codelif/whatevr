@@ -14,9 +14,12 @@ Item {
     property string messageId: ""
     property string body: ""
     property string layoutBody: ""
+    property string replyPreviewBody: ""
     property int emojiOnlyCount: 0
     property bool hasRichText: false
     property string richText: ""
+    property bool textTruncated: false
+    property bool textExpanded: false
     property string timeText: ""
     property string dateSeparatorText: ""
     property int status: 0
@@ -58,6 +61,7 @@ Item {
     signal typeIntoComposerRequested(string text)
     signal replyRequested(string messageId, string senderName, string text, string mediaKind, string mediaMimeType, bool outgoing)
     signal replyPreviewActivated(string messageId)
+    signal readMoreRequested(string messageId)
 
     onClearSelectionGenerationChanged: {
         if (bodyText.visible && (activeSelectionMessageId.length === 0 || activeSelectionMessageId !== messageId)) {
@@ -261,6 +265,8 @@ Item {
                                                + (showStatusIcon ? statusAreaWidth + tntSpacing : 0))
     readonly property real tntHeight: Math.ceil(Math.max(footerMetrics.height, showStatusIcon ? statusIconSize : 0))
     readonly property bool hasBody: body.length > 0
+    readonly property bool showReadMore: textTruncated && !textExpanded && hasBody
+    readonly property string readMoreLabelText: Whatevr.I18n.i18nc("@action:button expand long message", "Read more")
     readonly property bool hasInlineMedia: isImage && !isSticker
     readonly property bool imageOnly: hasInlineMedia && !hasBody
     readonly property string metricBody: layoutBody.length > 0 ? layoutBody : body
@@ -281,7 +287,8 @@ Item {
             ? bodyText.positionToRectangle(bodyLength)
             : Qt.rect(0, 0, 0, 0)
     }
-    readonly property bool tntFitsInline: bodyText.visible
+    readonly property bool tntFitsInline: !showReadMore
+                                         && bodyText.visible
                                          && bodyEndCursorRect.x + inlineTntGap + tntWidth <= bodyText.width
     readonly property real inlineTntReserve: 0
     readonly property real inlineTntYOffset: Kirigami.Units.smallSpacing / 2
@@ -316,7 +323,7 @@ Item {
         }
         root.triggerReplyGlow()
         root.messageSelectionClaimed(root.messageId)
-        root.replyRequested(root.messageId, root.currentSenderNameForReply(), root.body, root.mediaKind, root.mediaMimeType, root.outgoing)
+        root.replyRequested(root.messageId, root.currentSenderNameForReply(), root.replyPreviewBody.length > 0 ? root.replyPreviewBody : root.body, root.mediaKind, root.mediaMimeType, root.outgoing)
         root.conversationFocusRequested()
     }
 
@@ -344,6 +351,9 @@ Item {
     }
 
     function contentOffsetBeforeFooter() {
+        if (readMoreButton.visible) {
+            return readMoreButton.y + readMoreButton.height
+        }
         if (bodyText.visible) {
             return bodyText.y + bodyText.height
         }
@@ -378,6 +388,9 @@ Item {
         }
         if (hasReplyPreview) {
             w = Math.max(w, replyPreviewNaturalWidth)
+        }
+        if (showReadMore) {
+            w = Math.max(w, Math.min(maxContentWidth, readMoreMetrics.advanceWidth + Kirigami.Units.smallSpacing * 2))
         }
         w = Math.max(w, Math.min(maxContentWidth, tntWidth))
         return Math.max(w, hasBody ? Kirigami.Units.gridUnit * 2 : Kirigami.Units.gridUnit * 4)
@@ -518,6 +531,12 @@ Item {
         id: footerMetrics
         text: root.timeText
         font: timeLabel.font
+    }
+
+    TextMetrics {
+        id: readMoreMetrics
+        text: root.readMoreLabelText
+        font: readMoreLabel.font
     }
 
     Kirigami.ShadowedRectangle {
@@ -859,6 +878,39 @@ Item {
 
                     root.typeIntoComposerRequested(event.text)
                     event.accepted = true
+                }
+            }
+
+            AbstractButton {
+                id: readMoreButton
+
+                visible: root.showReadMore
+                x: root.innerPadding
+                y: bodyText.visible ? bodyText.y + bodyText.height + Kirigami.Units.smallSpacing / 2 : root.contentOffsetBeforeBody()
+                width: Math.ceil(readMoreMetrics.advanceWidth + Kirigami.Units.smallSpacing * 2)
+                height: readMoreLabel.implicitHeight + Kirigami.Units.smallSpacing
+                text: root.readMoreLabelText
+                hoverEnabled: true
+                focusPolicy: Qt.NoFocus
+                onClicked: {
+                    root.readMoreRequested(root.messageId)
+                    root.conversationFocusRequested()
+                }
+
+                contentItem: Label {
+                    id: readMoreLabel
+
+                    text: readMoreButton.text
+                    color: readMoreButton.hovered || readMoreButton.pressed ? Kirigami.Theme.highlightColor : Kirigami.Theme.linkColor
+                    font.pointSize: Kirigami.Theme.smallFont.pointSize
+                    font.weight: Font.DemiBold
+                    verticalAlignment: Text.AlignVCenter
+                    horizontalAlignment: Text.AlignLeft
+                }
+
+                background: Rectangle {
+                    color: readMoreButton.hovered || readMoreButton.pressed ? Qt.alpha(Kirigami.Theme.highlightColor, 0.08) : "transparent"
+                    radius: Kirigami.Units.cornerRadius
                 }
             }
 
