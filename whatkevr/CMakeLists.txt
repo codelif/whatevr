@@ -124,6 +124,7 @@ qt_add_resources(whatkevr emoji_metadata
     FILES
         data/emoji/emoji_17_0_ordering.json
         data/emoji/LICENSE.googlefonts-emoji-metadata
+        data/icons/checkmark-bold.svg
 )
 
 target_link_libraries(whatkevr PRIVATE

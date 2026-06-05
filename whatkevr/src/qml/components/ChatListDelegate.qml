@@ -23,10 +23,11 @@ ItemDelegate {
     readonly property real deliveryDoubleTickOffset: deliveryIconSize * 0.4
     readonly property bool deliveryStatusIsDoubleTick: lastMessageStatus === 3 || lastMessageStatus === 4
     readonly property bool deliveryStatusIsRead: lastMessageStatus === 4
+    readonly property url tickSource: "qrc:/data/icons/checkmark-bold.svg"
     readonly property string deliveryStatusSingleIcon: {
         switch (lastMessageStatus) {
         case 1: return "clock"
-        case 2: return "checkmark"
+        case 2: return root.tickSource
         case 5: return "dialog-error-symbolic"
         default: return ""
         }
@@ -186,15 +187,7 @@ ItemDelegate {
                         color: root.lastMessageStatus === 5
                                ? Kirigami.Theme.negativeTextColor
                                : Kirigami.Theme.disabledTextColor
-                    }
-                    Kirigami.Icon {
-                        anchors.centerIn: parent
-                        anchors.horizontalCenterOffset: 0.75
-                        visible: singleDeliveryIcon.visible && root.deliveryStatusSingleIcon === "checkmark"
-                        source: singleDeliveryIcon.source
-                        implicitWidth: singleDeliveryIcon.implicitWidth
-                        implicitHeight: singleDeliveryIcon.implicitHeight
-                        color: singleDeliveryIcon.color
+                        isMask: true
                     }
 
                     Item {
@@ -208,20 +201,13 @@ ItemDelegate {
 
                             x: 0
                             anchors.verticalCenter: parent.verticalCenter
-                            source: "checkmark"
+                            source: root.tickSource
                             implicitWidth: root.deliveryIconSize
                             implicitHeight: root.deliveryIconSize
                             color: root.deliveryStatusIsRead
                                    ? activePalette.highlight
                                    : Kirigami.Theme.disabledTextColor
-                        }
-                        Kirigami.Icon {
-                            x: firstDeliveryTick.x + 0.75
-                            anchors.verticalCenter: parent.verticalCenter
-                            source: firstDeliveryTick.source
-                            implicitWidth: firstDeliveryTick.implicitWidth
-                            implicitHeight: firstDeliveryTick.implicitHeight
-                            color: firstDeliveryTick.color
+                            isMask: true
                         }
 
                         Kirigami.Icon {
@@ -229,20 +215,13 @@ ItemDelegate {
 
                             x: root.deliveryDoubleTickOffset
                             anchors.verticalCenter: parent.verticalCenter
-                            source: "checkmark"
+                            source: root.tickSource
                             implicitWidth: root.deliveryIconSize
                             implicitHeight: root.deliveryIconSize
                             color: root.deliveryStatusIsRead
                                    ? activePalette.highlight
                                    : Kirigami.Theme.disabledTextColor
-                        }
-                        Kirigami.Icon {
-                            x: secondDeliveryTick.x + 0.75
-                            anchors.verticalCenter: parent.verticalCenter
-                            source: secondDeliveryTick.source
-                            implicitWidth: secondDeliveryTick.implicitWidth
-                            implicitHeight: secondDeliveryTick.implicitHeight
-                            color: secondDeliveryTick.color
+                            isMask: true
                         }
                     }
                 }

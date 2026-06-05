@@ -232,7 +232,7 @@ Item {
     readonly property string statusSingleIcon: {
         switch (status) {
         case 1: return "clock"                    // pending / sending
-        case 2: return "checkmark"                 // sent (single tick)
+        case 2: return root.tickSource             // sent (single tick)
         case 5: return "dialog-error-symbolic"      // failed
         default: return ""
         }
@@ -250,6 +250,11 @@ Item {
     readonly property real inlineTntGap: Kirigami.Units.smallSpacing
     readonly property real framelessFooterHPadding: Math.max(1, Math.round(Kirigami.Units.smallSpacing / 2))
     readonly property real framelessFooterVPadding: Math.max(1, Math.round(Kirigami.Units.smallSpacing / 4))
+    // Shared tight footer inset; matches the image-overlay footer the design
+    // follows, so text/sticker footers hug their corner the same way.
+    readonly property real footerInset: Kirigami.Units.smallSpacing
+    // Bold filled checkmark bundled with the app (Breeze's is too thin).
+    readonly property url tickSource: "qrc:/data/icons/checkmark-bold.svg"
     readonly property real tntWidth: Math.ceil(footerMetrics.advanceWidth
                                                + (showStatusIcon ? statusAreaWidth + tntSpacing : 0))
     readonly property real tntHeight: Math.ceil(Math.max(footerMetrics.height, showStatusIcon ? statusIconSize : 0))
@@ -560,7 +565,7 @@ Item {
                 } else {
                     bottom = footerSlot.y + footerSlot.height
                 }
-                return bottom + root.innerPadding
+                return bottom + root.footerInset
             }
 
             ReplyPreview {
@@ -853,11 +858,11 @@ Item {
                 // vignette). Otherwise sit at the right inner edge, inline with
                 // the last text line or on its own row.
                 x: root.imageOnly
-                   ? mediaSlot.x + mediaSlot.width - width - Kirigami.Units.smallSpacing
-                   : Math.max(0, parent.width - root.innerPadding - width)
+                   ? mediaSlot.x + mediaSlot.width - width - root.footerInset
+                   : Math.max(0, parent.width - root.footerInset - width)
                 y: {
                     if (root.imageOnly) {
-                        return mediaSlot.y + mediaSlot.height - height - Kirigami.Units.smallSpacing
+                        return mediaSlot.y + mediaSlot.height - height - root.footerInset
                     }
                     const off = root.contentOffsetBeforeFooter()
                     if (bodyText.visible) {
@@ -904,7 +909,7 @@ Item {
 
                             x: 0
                             anchors.verticalCenter: parent.verticalCenter
-                            source: "checkmark"
+                            source: root.tickSource
                             width: root.statusIconSize
                             height: root.statusIconSize
                             color: root.statusTickColor
@@ -915,7 +920,7 @@ Item {
 
                             x: root.statusDoubleTickOffset
                             anchors.verticalCenter: parent.verticalCenter
-                            source: "checkmark"
+                            source: root.tickSource
                             width: root.statusIconSize
                             height: root.statusIconSize
                             color: root.statusTickColor
@@ -1165,7 +1170,7 @@ Item {
                                         stickerSlot.x + stickerSlot.width - width)))
         y: Math.round(stickerSlot.y + stickerSlot.height + Kirigami.Units.smallSpacing / 2)
         width: root.tntWidth + root.framelessFooterHPadding * 2
-        height: Math.max(root.tntHeight + root.framelessFooterVPadding * 2, Math.round(Kirigami.Units.gridUnit * 1.15))
+        height: root.tntHeight + root.framelessFooterVPadding * 2
         radius: Kirigami.Units.cornerRadius
         color: root.outgoing
                ? Qt.alpha(activePalette.highlight, 0.30)
@@ -1209,7 +1214,7 @@ Item {
                         id: firstStickerTick
                         x: 0
                         anchors.verticalCenter: parent.verticalCenter
-                        source: "checkmark"
+                        source: root.tickSource
                         width: root.statusIconSize
                         height: root.statusIconSize
                         color: root.statusTickColor
@@ -1220,7 +1225,7 @@ Item {
                         id: secondStickerTick
                         x: root.statusDoubleTickOffset
                         anchors.verticalCenter: parent.verticalCenter
-                        source: "checkmark"
+                        source: root.tickSource
                         width: root.statusIconSize
                         height: root.statusIconSize
                         color: root.statusTickColor
