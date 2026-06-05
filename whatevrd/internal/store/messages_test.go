@@ -217,6 +217,47 @@ func TestRecordUndecryptableMessageTimestampKeepsEarliest(t *testing.T) {
 	}
 }
 
+func TestUpdateMessageMediaLocalPathWithDimensionsPersistsDimensions(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	if _, err := db.SaveMediaMessage(ctx, MediaMessageInput{
+		TextMessageInput: TextMessageInput{
+			ID:        "chat-1:image-1",
+			ChatID:    "chat-1",
+			ChatName:  "Test Chat",
+			SenderID:  "sender-1",
+			Timestamp: time.Unix(100, 0),
+		},
+		MediaKind:     MediaKindImage,
+		MediaMimeType: "image/jpeg",
+		MediaWidth:    4,
+		MediaHeight:   3,
+	}); err != nil {
+		t.Fatalf("save image message: %v", err)
+	}
+
+	updated, err := db.UpdateMessageMediaLocalPathWithDimensions(ctx, "chat-1:image-1", "/tmp/image.jpg", 1200, 240)
+	if err != nil {
+		t.Fatalf("UpdateMessageMediaLocalPathWithDimensions() error = %v", err)
+	}
+	if updated.MediaLocalPath != "/tmp/image.jpg" || updated.MediaWidth != 1200 || updated.MediaHeight != 240 {
+		t.Fatalf("updated media = path %q dimensions %dx%d, want path and 1200x240", updated.MediaLocalPath, updated.MediaWidth, updated.MediaHeight)
+	}
+
+	loaded, err := db.GetMessage(ctx, "chat-1:image-1")
+	if err != nil {
+		t.Fatalf("GetMessage() error = %v", err)
+	}
+	if loaded.MediaLocalPath != "/tmp/image.jpg" || loaded.MediaWidth != 1200 || loaded.MediaHeight != 240 {
+		t.Fatalf("stored media = path %q dimensions %dx%d, want path and 1200x240", loaded.MediaLocalPath, loaded.MediaWidth, loaded.MediaHeight)
+	}
+}
+
 func TestRecordUndecryptableMessageTimestampCorrectsExistingMessageAndChatSummary(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))

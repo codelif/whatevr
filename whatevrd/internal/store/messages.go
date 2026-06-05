@@ -776,18 +776,32 @@ func (db *DB) updateMessageStatus(ctx context.Context, id, status string, nextSt
 }
 
 func (db *DB) UpdateMessageMediaLocalPath(ctx context.Context, id, localPath string) (Message, error) {
+	return db.UpdateMessageMediaLocalPathWithDimensions(ctx, id, localPath, 0, 0)
+}
+
+func (db *DB) UpdateMessageMediaLocalPathWithDimensions(ctx context.Context, id, localPath string, mediaWidth, mediaHeight int32) (Message, error) {
 	tx, err := db.conn.BeginTx(ctx, nil)
 	if err != nil {
 		return Message{}, err
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE messages
-		SET media_local_path = ?
-		WHERE id = ?
-	`, localPath, id); err != nil {
-		return Message{}, err
+	if mediaWidth > 0 && mediaHeight > 0 {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE messages
+			SET media_local_path = ?, media_width = ?, media_height = ?
+			WHERE id = ?
+		`, localPath, mediaWidth, mediaHeight, id); err != nil {
+			return Message{}, err
+		}
+	} else {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE messages
+			SET media_local_path = ?
+			WHERE id = ?
+		`, localPath, id); err != nil {
+			return Message{}, err
+		}
 	}
 
 	message, err := getMessageTx(ctx, tx, id)

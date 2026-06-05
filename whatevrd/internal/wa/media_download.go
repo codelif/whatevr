@@ -2,10 +2,12 @@ package wa
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"image"
 	"io"
 	"os"
 	"path/filepath"
@@ -25,7 +27,10 @@ import (
 	appstore "whatevrd/internal/store"
 )
 
-const mediaRetryTimeout = 30 * time.Second
+const (
+	mediaRetryTimeout = 30 * time.Second
+	maxInt32          = 1<<31 - 1
+)
 
 type downloadableMedia interface {
 	GetDirectPath() string
@@ -143,6 +148,10 @@ func (c *Client) DownloadMessageMedia(ctx context.Context, messageID string) (ap
 		state.err = grpcstatus.Errorf(codes.ResourceExhausted, "media size must be between 1 byte and %d MiB", maxOutboundMediaBytes/(1024*1024))
 		return appstore.Message{}, state.err
 	}
+	var mediaWidth, mediaHeight int32
+	if message.MediaKind == appstore.MediaKindImage {
+		mediaWidth, mediaHeight = decodedImageDimensions(data)
+	}
 
 	mediaDir := filepath.Join(c.paths.MediaCacheDir, "messages", message.ChatID)
 	stickerKey, _ := stickerCacheKey(message)
@@ -171,7 +180,7 @@ func (c *Client) DownloadMessageMedia(ctx context.Context, messageID string) (ap
 		}
 	}
 
-	updated, err := c.store.UpdateMessageMediaLocalPath(ctx, message.ID, localPath)
+	updated, err := c.store.UpdateMessageMediaLocalPathWithDimensions(ctx, message.ID, localPath, mediaWidth, mediaHeight)
 	if err != nil {
 		state.err = err
 		return appstore.Message{}, err
@@ -179,6 +188,14 @@ func (c *Client) DownloadMessageMedia(ctx context.Context, messageID string) (ap
 	state.message = updated
 	c.daemon.PublishMessageUpdated(toDaemonMessage(updated))
 	return updated, nil
+}
+
+func decodedImageDimensions(data []byte) (int32, int32) {
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil || cfg.Width <= 0 || cfg.Height <= 0 || cfg.Width > maxInt32 || cfg.Height > maxInt32 {
+		return 0, 0
+	}
+	return int32(cfg.Width), int32(cfg.Height)
 }
 
 func staleMediaDownloadError(err error) bool {

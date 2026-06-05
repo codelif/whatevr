@@ -3,6 +3,8 @@ package wa
 import (
 	"bytes"
 	"context"
+	"image"
+	"image/png"
 	"os"
 	"path/filepath"
 	"testing"
@@ -23,6 +25,23 @@ func TestStaleMediaDownloadErrorIncludesForbidden(t *testing.T) {
 	}
 	if staleMediaDownloadError(context.Canceled) {
 		t.Fatal("context cancellation should not request media retry")
+	}
+}
+
+func TestDecodedImageDimensionsReadsImageConfig(t *testing.T) {
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 12, 3))); err != nil {
+		t.Fatalf("encode png: %v", err)
+	}
+
+	width, height := decodedImageDimensions(buf.Bytes())
+	if width != 12 || height != 3 {
+		t.Fatalf("decoded dimensions = %dx%d, want 12x3", width, height)
+	}
+
+	width, height = decodedImageDimensions([]byte("not an image"))
+	if width != 0 || height != 0 {
+		t.Fatalf("invalid image dimensions = %dx%d, want 0x0", width, height)
 	}
 }
 
