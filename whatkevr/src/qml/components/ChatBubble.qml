@@ -14,6 +14,9 @@ Item {
 
     property string messageId: ""
     property string body: ""
+    property int emojiOnlyCount: 0
+    property bool hasInlineEmoji: false
+    property string richText: ""
     property string timeText: ""
     property string dateSeparatorText: ""
     property int status: 0
@@ -85,6 +88,12 @@ Item {
                                           && (mediaLocalPath.endsWith(".webp")
                                               || mediaThumbnailLocalPath.endsWith(".thumb.png")))
     readonly property bool isImage: mediaMimeType.startsWith("image/")
+    // 1-3 emoji-only messages render large and frameless, like stickers. The single
+    // emoji case is biggest; size steps down as the count rises.
+    readonly property bool isJumboEmoji: emojiOnlyCount > 0 && emojiOnlyCount <= 3
+    readonly property bool frameless: isSticker || isJumboEmoji
+    readonly property real jumboEmojiPixelSize: Kirigami.Units.gridUnit
+        * (emojiOnlyCount === 1 ? 2.8 : emojiOnlyCount === 2 ? 2.2 : 1.8)
     readonly property bool isAnimatedSticker: isSticker && (mediaAnimated || mediaMimeType === "image/gif")
     readonly property bool isLottieSticker: isSticker && mediaMimeType === "application/was"
     readonly property bool isRenderableStickerImage: isSticker && isImage && !isLottieSticker
@@ -212,12 +221,20 @@ Item {
     // text bubbles wrap to the full available content width.
     readonly property real textWrapWidth: hasInlineMedia ? innerContentWidth : maxContentWidth
     readonly property real naturalTextWidth: Math.min(textWrapWidth, widestBodyLineMetrics.advanceWidth)
-    readonly property bool bodyHasExplicitLineBreaks: body.indexOf("\n") !== -1
-    readonly property bool bodyLongEnoughForInlineTnt: naturalTextWidth >= tntWidth * 1.1
-    readonly property bool tntFitsInline: hasBody
-                                         && !bodyHasExplicitLineBreaks
-                                         && bodyLongEnoughForInlineTnt
-                                         && naturalTextWidth + tntWidth + inlineTntGap <= textWrapWidth
+    readonly property string lastBodyLine: lastLine(body)
+    readonly property real naturalLastLineWidth: Math.min(textWrapWidth, lastBodyLineMetrics.advanceWidth)
+    readonly property bool canReserveInlineTntWidth: hasBody
+                                                   && naturalLastLineWidth + inlineTntGap + tntWidth <= textWrapWidth
+    readonly property rect bodyEndCursorRect: {
+        const bodyWidth = bodyText.width
+        const bodyHeight = bodyText.height
+        const bodyLength = bodyText.length
+        return bodyText.visible && bodyWidth > 0 && bodyHeight > 0
+            ? bodyText.positionToRectangle(bodyLength)
+            : Qt.rect(0, 0, 0, 0)
+    }
+    readonly property bool tntFitsInline: bodyText.visible
+                                         && bodyEndCursorRect.x + inlineTntGap + tntWidth <= bodyText.width
     readonly property real inlineTntReserve: 0
     readonly property real inlineTntYOffset: Kirigami.Units.smallSpacing / 2
     readonly property real blockTntReserve: tntHeight + tntGap
@@ -234,6 +251,11 @@ Item {
             }
         }
         return best
+    }
+
+    function lastLine(text) {
+        const lines = String(text || "").split("\n")
+        return lines.length > 0 ? lines[lines.length - 1] : ""
     }
 
     function currentSenderNameForReply() {
@@ -299,8 +321,10 @@ Item {
         let w = 0
         if (body.length > 0) {
             let bodyW = naturalTextWidth
-            if (tntFitsInline) {
-                bodyW = Math.min(maxContentWidth, naturalTextWidth + tntWidth + inlineTntGap)
+            if (canReserveInlineTntWidth) {
+                bodyW = Math.min(maxContentWidth,
+                                 Math.max(naturalTextWidth,
+                                          naturalLastLineWidth + inlineTntGap + tntWidth))
             }
             w = Math.max(w, bodyW)
         }
@@ -337,29 +361,29 @@ Item {
     readonly property real mediaTopRightRadius: (outgoing && !groupStart) ? bubbleCornerRadius * 0.45 : bubbleCornerRadius
     readonly property real mediaBottomLeftRadius: !imageOnly ? 0 : ((!outgoing && !groupEnd) ? bubbleCornerRadius * 0.45 : bubbleCornerRadius)
     readonly property real mediaBottomRightRadius: !imageOnly ? 0 : ((outgoing && !groupEnd) ? bubbleCornerRadius * 0.45 : bubbleCornerRadius)
-    readonly property real replyGlowLeft: isSticker
+    readonly property real replyGlowLeft: frameless
         ? Math.min(stickerSlot.x,
                    stickerReplyPreview.visible ? stickerReplyPreview.x : stickerSlot.x,
                    stickerFooter.x)
         : bubble.x
-    readonly property real replyGlowTop: isSticker
+    readonly property real replyGlowTop: frameless
         ? Math.min(stickerSlot.y,
                    stickerReplyPreview.visible ? stickerReplyPreview.y : stickerSlot.y,
                    stickerFooter.y)
         : bubble.y
-    readonly property real replyGlowRight: isSticker
+    readonly property real replyGlowRight: frameless
         ? Math.max(stickerSlot.x + stickerSlot.width,
                    stickerReplyPreview.visible ? stickerReplyPreview.x + stickerReplyPreview.width : stickerSlot.x + stickerSlot.width,
                    stickerFooter.x + stickerFooter.width)
         : bubble.x + bubble.width
-    readonly property real replyGlowBottom: isSticker
+    readonly property real replyGlowBottom: frameless
         ? Math.max(stickerSlot.y + stickerSlot.height,
                    stickerReplyPreview.visible ? stickerReplyPreview.y + stickerReplyPreview.height : stickerSlot.y + stickerSlot.height,
                    stickerFooter.y + stickerFooter.height)
         : bubble.y + bubble.height
 
     width: listWidth
-    height: (isSticker
+    height: (frameless
         ? stickerFooter.y + stickerFooter.height
         : bubble.y + bubble.height) + (groupEnd ? Kirigami.Units.smallSpacing : Kirigami.Units.smallSpacing / 4)
 
@@ -424,6 +448,12 @@ Item {
         font: bodyText.font
     }
 
+    TextMetrics {
+        id: lastBodyLineMetrics
+        text: root.lastBodyLine
+        font: bodyText.font
+    }
+
     FontMetrics {
         id: bodyFontMetrics
         font: bodyText.font
@@ -438,7 +468,7 @@ Item {
     Kirigami.ShadowedRectangle {
         id: bubble
 
-        visible: !root.isSticker
+        visible: !root.frameless
 
         readonly property real bubbleRadius: Kirigami.Units.cornerRadius
 
@@ -698,13 +728,15 @@ Item {
                 x: root.innerPadding
                 y: root.contentOffsetBeforeBody()
                 width: root.textRegionWidth
-                text: root.body
+                // Mixed messages that contain emoji render as rich text so the emoji
+                // can be enlarged inline; everything else keeps the fast PlainText path.
+                text: root.hasInlineEmoji ? root.richText : root.body
                 readOnly: true
                 selectByMouse: true
                 selectByKeyboard: true
                 persistentSelection: true
                 wrapMode: TextEdit.Wrap
-                textFormat: TextEdit.PlainText
+                textFormat: root.hasInlineEmoji ? TextEdit.RichText : TextEdit.PlainText
                 color: Kirigami.Theme.textColor
 
                 onSelectedTextChanged: {
@@ -741,7 +773,9 @@ Item {
                     }
                     const off = root.contentOffsetBeforeFooter()
                     if (bodyText.visible) {
-                        return root.tntFitsInline ? off - height + root.inlineTntReserve + root.inlineTntYOffset : off + root.tntGap
+                        return root.tntFitsInline
+                            ? bodyText.y + root.bodyEndCursorRect.y + root.bodyEndCursorRect.height - height + root.inlineTntYOffset
+                            : off + root.tntGap
                     }
                     return Math.max(0, off)
                 }
@@ -845,7 +879,7 @@ Item {
     ReplyPreview {
         id: stickerReplyPreview
 
-        visible: root.isSticker && root.hasReplyPreview
+        visible: root.frameless && root.hasReplyPreview
         x: root.outgoing
            ? root.width - width - root.outerMargin
            : root.outerMargin + root.senderGutterWidth
@@ -866,13 +900,25 @@ Item {
     Item {
         id: stickerSlot
 
-        visible: root.isSticker
+        visible: root.frameless
         x: root.outgoing
            ? root.width - width - root.outerMargin
            : root.outerMargin + root.senderGutterWidth
         y: root.messageBaseY + (stickerReplyPreview.visible ? stickerReplyPreview.height + Kirigami.Units.smallSpacing : 0)
-        width: root.stickerDisplayWidth
-        height: root.stickerDisplayHeight
+        width: root.isJumboEmoji ? jumboEmoji.implicitWidth : root.stickerDisplayWidth
+        height: root.isJumboEmoji ? jumboEmoji.implicitHeight : root.stickerDisplayHeight
+
+        Text {
+            id: jumboEmoji
+
+            anchors.centerIn: parent
+            visible: root.isJumboEmoji
+            text: root.body
+            font.family: Whatevr.AppController.emojiModel.emojiFontFamily
+            font.pixelSize: root.jumboEmojiPixelSize
+            horizontalAlignment: Text.AlignHCenter
+            textFormat: Text.PlainText
+        }
 
         Image {
             id: stickerThumb
@@ -933,7 +979,8 @@ Item {
             id: stickerOverlay
 
             anchors.fill: parent
-            visible: !root.hasLocalSticker
+            visible: root.isSticker
+                     && (!root.hasLocalSticker
                      || root.mediaDownloading
                      || stickerThumb.status === Image.Loading
                      || staticSticker.status === Image.Loading
@@ -942,7 +989,7 @@ Item {
                      || staticSticker.status === Image.Error
                      || animatedSticker.status === AnimatedImage.Error
                      || lottieSticker.status === Whatevr.RlottieSticker.Error
-                     || root.mediaDownloadError.length > 0
+                     || root.mediaDownloadError.length > 0)
 
             Rectangle {
                 anchors.centerIn: parent
@@ -1016,7 +1063,7 @@ Item {
     Rectangle {
         id: stickerFooter
 
-        visible: root.isSticker
+        visible: root.frameless
         x: root.outgoing ? stickerSlot.x + stickerSlot.width - width : stickerSlot.x
         y: stickerSlot.y + stickerSlot.height + Kirigami.Units.smallSpacing / 2
         width: stickerFooterRow.implicitWidth + Kirigami.Units.smallSpacing
@@ -1148,10 +1195,10 @@ Item {
     ToolButton {
         id: replyButton
 
-        readonly property real visualX: root.isSticker ? stickerSlot.x : bubble.x
-        readonly property real visualY: root.isSticker ? stickerSlot.y : bubble.y
-        readonly property real visualWidth: root.isSticker ? stickerSlot.width : bubble.width
-        readonly property real visualHeight: root.isSticker ? stickerSlot.height : bubble.height
+        readonly property real visualX: root.frameless ? stickerSlot.x : bubble.x
+        readonly property real visualY: root.frameless ? stickerSlot.y : bubble.y
+        readonly property real visualWidth: root.frameless ? stickerSlot.width : bubble.width
+        readonly property real visualHeight: root.frameless ? stickerSlot.height : bubble.height
         readonly property real desiredX: root.outgoing
                                          ? visualX - width - Kirigami.Units.smallSpacing
                                          : visualX + visualWidth + Kirigami.Units.smallSpacing

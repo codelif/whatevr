@@ -406,6 +406,9 @@ Item {
             listWidth: list.width
             messageId: String(model.messageId || "")
             body: String(model.text || "")
+            emojiOnlyCount: Number(model.emojiOnlyCount || 0)
+            hasInlineEmoji: Boolean(model.hasInlineEmoji)
+            richText: String(model.richText || "")
             timeText: String(model.timeText || "")
             dateSeparatorText: String(model.dateSeparatorText || "")
             status: Number(model.status || 0)

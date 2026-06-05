@@ -31,6 +31,10 @@ Frame {
 
     padding: Kirigami.Units.smallSpacing
 
+    function inputPlainText() {
+        return input.getText(0, input.length).trim()
+    }
+
     Kirigami.Theme.colorSet: Kirigami.Theme.View
 
     background: Rectangle {
@@ -48,7 +52,7 @@ Frame {
     }
 
     function submitText() {
-        const text = input.text.trim()
+        const text = root.inputPlainText()
         if (!root.enabledForChat || text.length === 0 || root.sending) {
             return
         }
@@ -246,6 +250,7 @@ Frame {
                     placeholderText: root.enabledForChat
                                      ? Whatevr.I18n.i18nc("@info:placeholder", "Message")
                                      : Whatevr.I18n.i18nc("@info:placeholder", "Select a chat to message")
+                    textFormat: TextEdit.PlainText
                     wrapMode: TextArea.Wrap
                     background: null
                     selectByMouse: true
@@ -264,7 +269,7 @@ Frame {
 
                     Keys.onPressed: event => {
                         if (event.matches(StandardKey.Paste)) {
-                            if (Whatevr.AppController.sendClipboardImage(input.text.trim(), root.replyToMessageId)) {
+                            if (Whatevr.AppController.sendClipboardImage(root.inputPlainText(), root.replyToMessageId)) {
                                 event.accepted = true
                                 root.setComposing(false)
                                 root.replyConsumed()
@@ -434,7 +439,7 @@ Frame {
         fileMode: Platform.FileDialog.OpenFile
         onAccepted: {
             root.setComposing(false)
-            root.sendImageRequested(file, input.text.trim(), root.replyToMessageId)
+            root.sendImageRequested(file, root.inputPlainText(), root.replyToMessageId)
             root.replyConsumed()
         }
     }

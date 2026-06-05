@@ -2,7 +2,10 @@
 
 #include <QDateTime>
 #include <QSet>
+#include <QTextBoundaryFinder>
+#include <QTextDocument>
 #include <QTimeZone>
+#include <QVector>
 
 #include <KLocalizedString>
 
@@ -12,6 +15,167 @@
 
 namespace {
 constexpr qint64 kSenderGroupGapSeconds = 5LL * 60;
+
+// Inline emoji in mixed text render at this multiple of the surrounding text size,
+// matching WhatsApp's slightly-enlarged inline emoji.
+constexpr double kInlineEmojiScale = 1.3;
+// Base body point size that the QML bubble renders text at. Used only to compute the
+// absolute span size for enlarged inline emoji; the exact value need not match QML
+// pixel-perfectly since rich text reflows.
+constexpr double kBodyBasePointSize = 10.0;
+
+QString plainTextFromQtRichText(const QString &text)
+{
+    const QString trimmed = text.trimmed();
+    if (!trimmed.contains(QStringLiteral("qrichtext"), Qt::CaseInsensitive)
+        || (!trimmed.startsWith(QStringLiteral("<!DOCTYPE HTML"), Qt::CaseInsensitive)
+            && !trimmed.startsWith(QStringLiteral("<html"), Qt::CaseInsensitive))) {
+        return text;
+    }
+
+    QTextDocument document;
+    document.setHtml(trimmed);
+    return document.toPlainText();
+}
+
+// True for codepoints that can stand alone as an emoji. Modifier/joiner codepoints
+// (ZWJ, VS16, skin tones, keycap combiner) are handled separately by isEmojiCluster.
+bool isEmojiCodepoint(char32_t cp)
+{
+    return (cp >= 0x1F000 && cp <= 0x1FAFF)   // pictographs, symbols, faces, etc.
+        || (cp >= 0x2600 && cp <= 0x27BF)     // misc symbols + dingbats
+        || (cp >= 0x2B00 && cp <= 0x2BFF)     // stars, arrows
+        || (cp >= 0x1F1E6 && cp <= 0x1F1FF)   // regional indicators (flags)
+        || (cp >= 0x2300 && cp <= 0x23FF)     // watches, hourglasses, media controls
+        || cp == 0x303D || cp == 0x3030       // part alternation mark, wavy dash
+        || cp == 0x2122 || cp == 0x2139       // trade mark, information
+        || (cp >= 0x2194 && cp <= 0x21AA);    // arrows with emoji presentation
+}
+
+bool isEmojiModifierCodepoint(char32_t cp)
+{
+    return cp == 0x200D                       // zero-width joiner
+        || cp == 0xFE0F || cp == 0xFE0E       // variation selectors
+        || (cp >= 0x1F3FB && cp <= 0x1F3FF)   // skin tone modifiers
+        || cp == 0x20E3;                      // combining enclosing keycap
+}
+
+// A grapheme cluster is treated as emoji when it carries at least one standalone emoji
+// codepoint (or a keycap sequence) and contains no ordinary letters. Keycap emoji such
+// as 1️⃣ start with a digit/#/* followed by an enclosing keycap combiner.
+bool isEmojiCluster(const QString &cluster)
+{
+    const QVector<char32_t> cps = [&cluster] {
+        QVector<char32_t> out;
+        for (const auto ucs4 : cluster.toUcs4()) {
+            out.append(static_cast<char32_t>(ucs4));
+        }
+        return out;
+    }();
+    if (cps.isEmpty()) {
+        return false;
+    }
+
+    const bool hasKeycap = std::any_of(cps.cbegin(), cps.cend(), [](char32_t cp) {
+        return cp == 0x20E3;
+    });
+
+    bool hasStandaloneEmoji = false;
+    for (const char32_t cp : cps) {
+        if (isEmojiCodepoint(cp) || isEmojiModifierCodepoint(cp)) {
+            hasStandaloneEmoji = hasStandaloneEmoji || isEmojiCodepoint(cp);
+            continue;
+        }
+        // A bare digit / # / * is only allowed as the base of a keycap emoji.
+        if (hasKeycap && (QChar(cp).isDigit() || cp == '#' || cp == '*')) {
+            hasStandaloneEmoji = true;
+            continue;
+        }
+        return false;
+    }
+    return hasStandaloneEmoji;
+}
+
+// Returns the number of emoji grapheme clusters when text is emoji-only (whitespace
+// between emoji is allowed), otherwise 0.
+int emojiOnlyClusterCount(const QString &text)
+{
+    const QString trimmed = text.trimmed();
+    if (trimmed.isEmpty()) {
+        return 0;
+    }
+
+    QTextBoundaryFinder finder(QTextBoundaryFinder::Grapheme, trimmed);
+    int count = 0;
+    int start = 0;
+    finder.toStart();
+    while (true) {
+        const int end = finder.toNextBoundary();
+        if (end < 0) {
+            break;
+        }
+        const QString cluster = trimmed.mid(start, end - start);
+        start = end;
+        if (cluster.trimmed().isEmpty()) {
+            continue;
+        }
+        if (!isEmojiCluster(cluster)) {
+            return 0;
+        }
+        ++count;
+    }
+    return count;
+}
+
+bool textHasEmoji(const QString &text)
+{
+    for (const auto ucs4 : text.toUcs4()) {
+        if (isEmojiCodepoint(static_cast<char32_t>(ucs4))) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// HTML for the body with emoji grapheme clusters wrapped in an enlarged span. Built
+// only for mixed (non-emoji-only) messages that contain emoji.
+QString buildRichText(const QString &text)
+{
+    const int spanPointSize = qRound(kBodyBasePointSize * kInlineEmojiScale);
+    const QString spanOpen = QStringLiteral("<span style=\"font-size:%1pt\">").arg(spanPointSize);
+
+    QString html;
+    html.reserve(text.size() + text.size() / 2);
+
+    QTextBoundaryFinder finder(QTextBoundaryFinder::Grapheme, text);
+    int start = 0;
+    finder.toStart();
+    while (true) {
+        const int end = finder.toNextBoundary();
+        if (end < 0) {
+            break;
+        }
+        const QString cluster = text.mid(start, end - start);
+        start = end;
+
+        if (isEmojiCluster(cluster)) {
+            html += spanOpen;
+            html += cluster.toHtmlEscaped();
+            html += QStringLiteral("</span>");
+            continue;
+        }
+
+        // Preserve hard line breaks; everything else is escaped plain text.
+        for (const QChar ch : cluster) {
+            if (ch == QLatin1Char('\n')) {
+                html += QStringLiteral("<br/>");
+            } else {
+                html += QString(ch).toHtmlEscaped();
+            }
+        }
+    }
+    return html;
+}
 }
 
 MessageListModel::MessageListModel(QObject *parent)
@@ -49,6 +213,12 @@ QVariant MessageListModel::data(const QModelIndex &index, int role) const
         return message.senderInitials;
     case TextRole:
         return message.text;
+    case EmojiOnlyCountRole:
+        return message.emojiOnlyCount;
+    case HasInlineEmojiRole:
+        return message.hasInlineEmoji;
+    case RichTextRole:
+        return message.richText;
     case TimestampUnixRole:
         return message.timestampUnix;
     case TimeTextRole:
@@ -118,6 +288,9 @@ QHash<int, QByteArray> MessageListModel::roleNames() const
         {SenderAvatarLocalPathRole, "senderAvatarLocalPath"},
         {SenderInitialsRole, "senderInitials"},
         {TextRole, "text"},
+        {EmojiOnlyCountRole, "emojiOnlyCount"},
+        {HasInlineEmojiRole, "hasInlineEmoji"},
+        {RichTextRole, "richText"},
         {TimestampUnixRole, "timestampUnix"},
         {TimeTextRole, "timeText"},
         {DateSeparatorTextRole, "dateSeparatorText"},
@@ -395,7 +568,10 @@ MessageListModel::MessageItem MessageListModel::fromProto(const whatevr::v1::Mes
         .senderDisplayName = {},
         .senderInitials = {},
         .senderAvatarLocalPath = message.senderAvatarLocalPath(),
-        .text = message.text(),
+        .text = plainTextFromQtRichText(message.text()),
+        .emojiOnlyCount = 0,
+        .hasInlineEmoji = false,
+        .richText = {},
         .timestampUnix = message.timestampUnix(),
         .timeText = {},
         .direction = static_cast<int>(message.direction()),
@@ -422,7 +598,7 @@ MessageListModel::MessageItem MessageListModel::fromProto(const whatevr::v1::Mes
     item.replyToMessageId = replyTo.messageId();
     item.replyToSenderId = replyTo.senderId();
     item.replyToSenderName = replyTo.senderName();
-    item.replyToText = replyTo.text();
+    item.replyToText = plainTextFromQtRichText(replyTo.text());
     item.replyToMediaKind = replyTo.mediaKind();
     item.replyToMediaMimeType = replyTo.mediaMimeType();
     item.replyToDirection = static_cast<int>(replyTo.direction());
@@ -433,6 +609,15 @@ MessageListModel::MessageItem MessageListModel::fromProto(const whatevr::v1::Mes
         ? static_cast<int>(QDateTime::fromSecsSinceEpoch(item.timestampUnix, QTimeZone::LocalTime).date().toJulianDay())
         : 0;
     item.statusText = statusText(item.status);
+    item.emojiOnlyCount = emojiOnlyClusterCount(item.text);
+    // Build enlarged inline-emoji rich text for any message that contains emoji. The
+    // jumbo (1-3 emoji) path renders the plain body in a large Text instead and hides
+    // the rich-text body, so there is no conflict; this also covers 4+ emoji-only
+    // messages, which fall back to a normal bubble with enlarged inline emoji.
+    if (textHasEmoji(item.text)) {
+        item.hasInlineEmoji = true;
+        item.richText = buildRichText(item.text);
+    }
     return item;
 }
 

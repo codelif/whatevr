@@ -11,6 +11,7 @@
 #include <QLocale>
 #include <QStandardPaths>
 #include <QTextBoundaryFinder>
+#include <QTextDocument>
 #include <QTimer>
 #include <QUrl>
 #include <QUuid>
@@ -77,6 +78,20 @@ bool isSupportedOutboundImageFile(const QString &filePath)
         || suffix == QStringLiteral("jpeg")
         || suffix == QStringLiteral("webp")
         || suffix == QStringLiteral("gif");
+}
+
+QString plainTextFromQtRichText(const QString &text)
+{
+    const QString trimmed = text.trimmed();
+    if (!trimmed.contains(QStringLiteral("qrichtext"), Qt::CaseInsensitive)
+        || (!trimmed.startsWith(QStringLiteral("<!DOCTYPE HTML"), Qt::CaseInsensitive)
+            && !trimmed.startsWith(QStringLiteral("<html"), Qt::CaseInsensitive))) {
+        return text;
+    }
+
+    QTextDocument document;
+    document.setHtml(trimmed);
+    return document.toPlainText();
 }
 
 QList<whatevr::v1::Message> mergeMessages(const QList<whatevr::v1::Message> &base,
@@ -743,7 +758,7 @@ void AppController::jumpToMessage(const QString &messageId)
 
 void AppController::sendText(const QString &text, const QString &replyToMessageId)
 {
-    const QString trimmed = text.trimmed();
+    const QString trimmed = plainTextFromQtRichText(text).trimmed();
     if (!m_sendClient || m_sendTextReply || m_selectedChatId.isEmpty() || trimmed.isEmpty()) {
         return;
     }
@@ -806,7 +821,7 @@ void AppController::sendImage(const QString &fileUrl, const QString &caption, co
     SendMediaRequest request;
     request.setChatId(m_selectedChatId);
     request.setFilePath(filePath);
-    request.setCaption(caption.trimmed());
+    request.setCaption(plainTextFromQtRichText(caption).trimmed());
     request.setReplyToMessageId(replyToMessageId.trimmed());
 
     m_sendInFlight = true;

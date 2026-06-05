@@ -25,6 +25,9 @@ public:
         SenderAvatarLocalPathRole,
         SenderInitialsRole,
         TextRole,
+        EmojiOnlyCountRole,
+        HasInlineEmojiRole,
+        RichTextRole,
         TimestampUnixRole,
         TimeTextRole,
         DateSeparatorTextRole,
@@ -89,6 +92,9 @@ private:
         QString senderInitials;
         QString senderAvatarLocalPath;
         QString text;
+        int emojiOnlyCount = 0;
+        bool hasInlineEmoji = false;
+        QString richText;
         qint64 timestampUnix = 0;
         int dayNumber = 0;
         QString timeText;
