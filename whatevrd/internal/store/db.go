@@ -3,31 +3,40 @@ package store
 import (
 	"context"
 	"database/sql"
-	"database/sql/driver"
 	"fmt"
 	"path/filepath"
 
-	"modernc.org/sqlite"
+	"github.com/mattn/go-sqlite3"
 )
 
 const schemaVersion = 3
+const SQLiteDriverName = "whatevrd-sqlite"
 
 type DB struct {
 	conn *sql.DB
 }
 
 func init() {
-	sqlite.MustRegisterScalarFunction("chat_name_source_priority", 1, func(ctx *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
-		if len(args) == 0 {
-			return int64(chatNameSourcePriority("")), nil
-		}
-		value, _ := args[0].(string)
-		return int64(chatNameSourcePriority(value)), nil
+	sql.Register(SQLiteDriverName, &sqlite3.SQLiteDriver{
+		ConnectHook: func(conn *sqlite3.SQLiteConn) error {
+			return conn.RegisterFunc("chat_name_source_priority", sqliteChatNameSourcePriority, true)
+		},
 	})
 }
 
+func sqliteChatNameSourcePriority(value any) int64 {
+	switch value := value.(type) {
+	case string:
+		return int64(chatNameSourcePriority(value))
+	case []byte:
+		return int64(chatNameSourcePriority(string(value)))
+	default:
+		return int64(chatNameSourcePriority(""))
+	}
+}
+
 func Open(ctx context.Context, path string) (*DB, error) {
-	conn, err := sql.Open("sqlite", path)
+	conn, err := sql.Open(SQLiteDriverName, path)
 	if err != nil {
 		return nil, err
 	}

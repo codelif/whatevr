@@ -11,8 +11,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	_ "modernc.org/sqlite"
-
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
@@ -398,11 +396,11 @@ func (c *Client) migrateLIDChats(ctx context.Context) {
 }
 
 func sqliteDSN(path string) string {
-	return fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)", filepath.ToSlash(path))
+	return fmt.Sprintf("file:%s?_foreign_keys=on&_busy_timeout=5000&_journal_mode=WAL", filepath.ToSlash(path))
 }
 
 func openSessionStore(ctx context.Context, path string, log waLog.Logger) (*sqlstore.Container, error) {
-	db, err := sql.Open("sqlite", sqliteDSN(path))
+	db, err := sql.Open(appstore.SQLiteDriverName, sqliteDSN(path))
 	if err != nil {
 		return nil, err
 	}
@@ -412,7 +410,7 @@ func openSessionStore(ctx context.Context, path string, log waLog.Logger) (*sqls
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 
-	container := sqlstore.NewWithDB(db, "sqlite", log)
+	container := sqlstore.NewWithDB(db, "sqlite3", log)
 	if err := container.Upgrade(ctx); err != nil {
 		db.Close()
 		return nil, err
