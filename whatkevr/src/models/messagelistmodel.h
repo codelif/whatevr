@@ -26,7 +26,7 @@ public:
         SenderInitialsRole,
         TextRole,
         EmojiOnlyCountRole,
-        HasInlineEmojiRole,
+        HasRichTextRole,
         RichTextRole,
         TimestampUnixRole,
         TimeTextRole,
@@ -93,7 +93,7 @@ private:
         QString senderAvatarLocalPath;
         QString text;
         int emojiOnlyCount = 0;
-        bool hasInlineEmoji = false;
+        bool hasRichText = false;
         QString richText;
         qint64 timestampUnix = 0;
         int dayNumber = 0;

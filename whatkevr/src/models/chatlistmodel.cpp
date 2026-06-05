@@ -5,6 +5,8 @@
 
 #include "whatevr/v1/whatevr.qpb.h"
 
+#include "richtext.h"
+
 ChatListModel::ChatListModel(QObject *parent)
     : QAbstractListModel(parent)
 {
@@ -205,7 +207,7 @@ ChatListModel::ChatItem ChatListModel::fromProto(const whatevr::v1::Chat &chat)
         .name = chat.name(),
         .displayName = {},
         .initials = {},
-        .lastMessage = chat.lastMessage(),
+        .lastMessage = whatevr::util::plainTextFromQtRichText(chat.lastMessage()),
         .lastMessageTimeUnix = chat.lastMessageTimeUnix(),
         .lastMessageDirection = static_cast<int>(chat.lastMessageDirection()),
         .lastMessageStatus = static_cast<int>(chat.lastMessageStatus()),

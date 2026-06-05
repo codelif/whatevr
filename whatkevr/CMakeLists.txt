@@ -2,6 +2,13 @@ cmake_minimum_required(VERSION 3.16)
 
 project(whatkevr VERSION 0.1.0 LANGUAGES CXX)
 
+# Without an explicit build type the compiler runs with no optimisation, which
+# makes the QML/scene-graph paths noticeably slower. Default to an optimised
+# build (with debug info) when the user has not chosen one.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
+endif()
+
 set(QT_MIN_VERSION "6.11.0")
 set(KF_MIN_VERSION "6.25.0")
 
@@ -16,7 +23,7 @@ include(KDECMakeSettings)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Qt6 ${QT_MIN_VERSION} REQUIRED COMPONENTS Core Gui Network Protobuf Grpc Qml Quick QuickControls2 Widgets)
+find_package(Qt6 ${QT_MIN_VERSION} REQUIRED COMPONENTS Core Gui Network Protobuf Grpc Qml Quick QuickControls2 ShaderTools Widgets)
 find_package(KF6 ${KF_MIN_VERSION} REQUIRED COMPONENTS CoreAddons I18n Kirigami Prison)
 find_package(KF6KirigamiAddons REQUIRED)
 find_package(rlottie REQUIRED)
@@ -44,6 +51,10 @@ qt_add_executable(whatkevr
     src/models/messagelistmodel.h
     src/ui/rlottiestickeritem.cpp
     src/ui/rlottiestickeritem.h
+    src/util/messagemarkup.cpp
+    src/util/messagemarkup.h
+    src/util/richtext.cpp
+    src/util/richtext.h
 )
 
 set(WHATEVR_PROTO_FILE "${CMAKE_CURRENT_SOURCE_DIR}/../whatevrd/proto/whatevr.proto")
@@ -73,6 +84,7 @@ set_target_properties(whatkevr PROPERTIES
 target_include_directories(whatkevr PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/util
 )
 
 qt_add_qml_module(whatkevr
@@ -92,12 +104,19 @@ qt_add_qml_module(whatkevr
         src/qml/components/KineticWheelScroller.qml
         src/qml/components/DiscreetScrollBar.qml
         src/qml/components/ReplyPreview.qml
+        src/qml/components/RoundedImage.qml
         src/qml/components/ChatBubble.qml
         src/qml/components/EmojiPicker.qml
         src/qml/components/MessageView.qml
         src/qml/components/MessageComposer.qml
         src/qml/pages/LoginPage.qml
         src/qml/pages/StatusPage.qml
+)
+
+qt6_add_shaders(whatkevr "roundedimage_shaders"
+    PREFIX "/qt/qml/Whatevr"
+    BASE "src/qml"
+    FILES src/qml/shaders/roundedimage.frag
 )
 
 qt_add_resources(whatkevr emoji_metadata

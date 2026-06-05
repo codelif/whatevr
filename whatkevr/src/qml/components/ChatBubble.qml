@@ -2,7 +2,6 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Controls
-import QtQuick.Effects
 import org.kde.kirigami as Kirigami
 import Whatevr as Whatevr
 
@@ -15,7 +14,7 @@ Item {
     property string messageId: ""
     property string body: ""
     property int emojiOnlyCount: 0
-    property bool hasInlineEmoji: false
+    property bool hasRichText: false
     property string richText: ""
     property string timeText: ""
     property string dateSeparatorText: ""
@@ -38,6 +37,10 @@ Item {
     property bool mediaAnimated: false
     property bool pooled: false
     property bool activeInViewport: true
+    // True while the list is being flung fast. Full-resolution media decoding is
+    // held off during a fling so the cheap, already-cached thumbnail carries the
+    // scroll; it upgrades to full-res the instant scrolling settles.
+    property bool fastFlicking: false
     property bool mediaDownloading: false
     property string mediaDownloadError: ""
     property int clearSelectionGeneration: 0
@@ -78,6 +81,9 @@ Item {
                                                     Math.min(Math.max(0, listWidth - outerMargin * 2 - senderGutterWidth),
                                                               Kirigami.Units.gridUnit * 28))
     readonly property real maxContentWidth: Math.max(Kirigami.Units.gridUnit * 4, maxBubbleWidth - innerPadding * 2)
+    readonly property real bodyPointSize: Kirigami.Theme.defaultFont.pointSize > 0
+        ? Kirigami.Theme.defaultFont.pointSize
+        : 10
     readonly property real messageBaseY: dateSeparatorHeight + (senderHeaderHeight > 0 ? senderHeaderHeight + Kirigami.Units.smallSpacing / 2 : 0)
     readonly property real replyGlowPadding: Kirigami.Units.smallSpacing
     property real replyGlowOpacity: 0
@@ -113,6 +119,9 @@ Item {
     // already-decoded pixmap instead of reloading it.
     readonly property int imageDecodeWidthCap: Math.max(1, Math.ceil(Kirigami.Units.gridUnit * 28 * imageSourceScale))
     readonly property int imageDecodeHeightCap: Math.max(1, Math.ceil(Kirigami.Units.gridUnit * 24 * imageSourceScale))
+    // The placeholder thumbnail is decoded tiny on purpose: bilinear upscaling of
+    // a low-resolution pixmap is the blur-up effect, so no blur shader is needed.
+    readonly property int thumbnailDecodeCap: Math.max(16, Math.ceil(Kirigami.Units.gridUnit * 1.5))
     readonly property int stickerDecodeCap: Math.max(1, Math.ceil(Kirigami.Units.gridUnit * 9 * imageSourceScale))
 
     // Image geometry must not depend on Image.implicitWidth/implicitHeight.
@@ -142,15 +151,43 @@ Item {
             return fallbackImageAspectRatio
         }
 
-        // Keep broken metadata usable without flattening normal portrait,
-        // landscape, screenshot, or panorama images into the same shape.
-        return Math.max(0.25, Math.min(width / height, 4.0))
+        // Keep the slot aspect identical to the source aspect. Size caps below
+        // bound the rendered area; clamping here would stretch panoramas.
+        return width / height
+    }
+
+    function decodeWidthForAspect(maxWidth, maxHeight, aspectRatio) {
+        if (aspectRatio <= 0) {
+            return Math.max(1, maxWidth)
+        }
+
+        let width = maxWidth
+        if (width / aspectRatio > maxHeight) {
+            width = maxHeight * aspectRatio
+        }
+        return Math.max(1, Math.ceil(width))
+    }
+
+    function decodeHeightForAspect(maxWidth, maxHeight, aspectRatio) {
+        if (aspectRatio <= 0) {
+            return Math.max(1, maxHeight)
+        }
+
+        if (maxWidth / aspectRatio > maxHeight) {
+            return Math.max(1, Math.ceil(maxHeight))
+        }
+        return Math.max(1, Math.ceil(maxWidth / aspectRatio))
     }
 
     function resetReservedImageGeometry() {
         reservedImageAspectRatio = normalisedImageAspectRatio(mediaIntrinsicWidth, mediaIntrinsicHeight)
         reservedImageNaturalWidth = mediaIntrinsicWidth > 0 ? mediaIntrinsicWidth : fallbackImageWidth
     }
+
+    readonly property int imageDecodeWidth: decodeWidthForAspect(imageDecodeWidthCap, imageDecodeHeightCap, reservedImageAspectRatio)
+    readonly property int imageDecodeHeight: decodeHeightForAspect(imageDecodeWidthCap, imageDecodeHeightCap, reservedImageAspectRatio)
+    readonly property int thumbnailDecodeWidth: decodeWidthForAspect(thumbnailDecodeCap, thumbnailDecodeCap, reservedImageAspectRatio)
+    readonly property int thumbnailDecodeHeight: decodeHeightForAspect(thumbnailDecodeCap, thumbnailDecodeCap, reservedImageAspectRatio)
 
     onMessageIdChanged: resetReservedImageGeometry()
     onMediaMimeTypeChanged: resetReservedImageGeometry()
@@ -202,17 +239,20 @@ Item {
     }
     readonly property bool showStatusIcon: outgoing && (statusIsDoubleTick || statusSingleIcon.length > 0)
 
-    readonly property real statusIconSize: Kirigami.Units.iconSizes.small * 0.82
-    readonly property real statusDoubleTickOffset: statusIconSize * 0.36
+    readonly property real footerTimePointSize: Kirigami.Theme.smallFont.pointSize * 0.72
+    readonly property real statusIconSize: Math.max(1, Math.round(Kirigami.Units.iconSizes.small * 0.82))
+    readonly property real statusDoubleTickOffset: Math.max(1, Math.round(statusIconSize * 0.36))
     // Reserve the widest receipt footprint so delivery/read updates do not
     // resize the bubble and change ListView spacing.
-    readonly property real statusAreaWidth: statusIconSize * 1.32
-    readonly property real tntSpacing: Kirigami.Units.smallSpacing / 2
-    readonly property real tntGap: Kirigami.Units.smallSpacing / 2
+    readonly property real statusAreaWidth: statusIconSize + statusDoubleTickOffset
+    readonly property real tntSpacing: Math.max(1, Math.round(Kirigami.Units.smallSpacing / 2))
+    readonly property real tntGap: Math.max(1, Math.round(Kirigami.Units.smallSpacing / 2))
     readonly property real inlineTntGap: Kirigami.Units.smallSpacing
-    readonly property real tntWidth: footerMetrics.advanceWidth
-                                     + (showStatusIcon ? statusAreaWidth + tntSpacing : 0)
-    readonly property real tntHeight: Math.max(footerMetrics.height, showStatusIcon ? statusIconSize : 0)
+    readonly property real framelessFooterHPadding: Math.max(1, Math.round(Kirigami.Units.smallSpacing / 2))
+    readonly property real framelessFooterVPadding: Math.max(1, Math.round(Kirigami.Units.smallSpacing / 4))
+    readonly property real tntWidth: Math.ceil(footerMetrics.advanceWidth
+                                               + (showStatusIcon ? statusAreaWidth + tntSpacing : 0))
+    readonly property real tntHeight: Math.ceil(Math.max(footerMetrics.height, showStatusIcon ? statusIconSize : 0))
     readonly property bool hasBody: body.length > 0
     readonly property bool hasInlineMedia: isImage && !isSticker
     readonly property bool imageOnly: hasInlineMedia && !hasBody
@@ -339,8 +379,15 @@ Item {
     // else (caption, reply preview, footer) wraps/elides within the padded
     // inner width.
     readonly property real bubbleContentWidth: hasInlineMedia ? imageDisplayWidth : contentBlockWidth
+    // Padded inner width for caption/reply content inside an image bubble. Derived
+    // straight from imageDisplayWidth rather than bubbleContentWidth so it never
+    // reaches back into contentBlockWidth → naturalTextWidth → textWrapWidth. That
+    // chain, combined with textWrapWidth reading this value, closes a binding loop
+    // while hasInlineMedia flips on delegate reuse. Image bubbles are the only
+    // consumers (textWrapWidth/textRegionWidth media branches), and there
+    // bubbleContentWidth === imageDisplayWidth, so the value is unchanged.
     readonly property real innerContentWidth: Math.max(Kirigami.Units.gridUnit * 2,
-                                                       bubbleContentWidth - innerPadding * 2)
+                                                       imageDisplayWidth - innerPadding * 2)
     readonly property real textRegionWidth: hasInlineMedia ? innerContentWidth : contentBlockWidth
 
     // Footer (time + ticks) colours. Over the image-only vignette they switch to
@@ -544,6 +591,17 @@ Item {
                 height: visible ? root.imageDisplayHeight : 0
                 clip: true
 
+                // Lazily instantiate the image stack (shader-effect images,
+                // backdrop, loading overlay) only for image messages. Text and
+                // sticker delegates skip it entirely — this is the bulk of the
+                // per-delegate node cost behind scroll-time instantiation spikes.
+                Loader {
+                    anchors.fill: parent
+                    active: mediaSlot.visible
+                    sourceComponent: Component {
+                      Item {
+                        anchors.fill: parent
+
                 Kirigami.ShadowedRectangle {
                     id: mediaBackground
 
@@ -557,28 +615,34 @@ Item {
                     border.width: 1
                 }
 
-                Image {
-                    id: thumb
+                // Low-resolution placeholder, drawn with rounded corners in a
+                // single shader pass. The tiny decode cap upscales into the
+                // blur-up look without a blur shader.
+                RoundedImage {
+                    id: roundedThumb
 
                     anchors.fill: parent
-                    visible: !root.hasLocalImage && root.hasThumbnailImage
-                    opacity: status === Image.Ready ? 0.78 : 0
-                    source: root.mediaSourceActive && mediaSlot.visible && visible ? Qt.resolvedUrl("file://" + root.mediaThumbnailLocalPath) : ""
-                    fillMode: Image.PreserveAspectCrop
-                    asynchronous: true
-                    cache: true
-                    smooth: true
-                    sourceSize.width: root.imageDecodeWidthCap
-                    sourceSize.height: root.imageDecodeHeightCap
+                    // Stay up as the blur-up placeholder until the full image has
+                    // decoded, so a fast fling (which holds off the full-res
+                    // decode) always has the cheap thumbnail to show.
+                    visible: root.hasThumbnailImage && (!root.hasLocalImage || img.status !== Image.Ready)
+                    opacity: thumb.status === Image.Ready ? 0.78 : 0
+                    source: thumb
+                    topLeftRadius: root.mediaTopLeftRadius
+                    topRightRadius: root.mediaTopRightRadius
+                    bottomRightRadius: root.mediaBottomRightRadius
+                    bottomLeftRadius: root.mediaBottomLeftRadius
 
-                    layer.enabled: root.activeInViewport && visible && status === Image.Ready
-                    layer.effect: MultiEffect {
-                        blurEnabled: true
-                        blurMax: 12
-                        blur: 0.35
-                        saturation: 0.75
-                        maskEnabled: true
-                        maskSource: imageMask
+                    Image {
+                        id: thumb
+
+                        anchors.fill: parent
+                        visible: false
+                        source: root.mediaSourceActive && mediaSlot.visible && roundedThumb.visible ? Qt.resolvedUrl("file://" + root.mediaThumbnailLocalPath) : ""
+                        asynchronous: true
+                        cache: true
+                        sourceSize.width: root.thumbnailDecodeWidth
+                        sourceSize.height: root.thumbnailDecodeHeight
                     }
 
                     Behavior on opacity {
@@ -589,24 +653,35 @@ Item {
                     }
                 }
 
-                Image {
-                    id: img
+                // Full-resolution image. Sampled straight from the (hidden) Image
+                // texture provider, so there is no layer/mask/FBO to allocate or
+                // tear down as the delegate scrolls through the viewport.
+                RoundedImage {
+                    id: roundedImg
 
                     anchors.fill: parent
                     visible: root.hasLocalImage
-                    opacity: status === Image.Ready ? 1 : 0
-                    source: root.mediaSourceActive && mediaSlot.visible && root.hasLocalImage ? Qt.resolvedUrl("file://" + root.mediaLocalPath) : ""
-                    fillMode: Image.PreserveAspectFit
-                    asynchronous: true
-                    cache: false
-                    smooth: true
-                    sourceSize.width: root.imageDecodeWidthCap
-                    sourceSize.height: root.imageDecodeHeightCap
+                    opacity: img.status === Image.Ready ? 1 : 0
+                    source: img
+                    topLeftRadius: root.mediaTopLeftRadius
+                    topRightRadius: root.mediaTopRightRadius
+                    bottomRightRadius: root.mediaBottomRightRadius
+                    bottomLeftRadius: root.mediaBottomLeftRadius
 
-                    layer.enabled: root.activeInViewport && visible && status === Image.Ready
-                    layer.effect: MultiEffect {
-                        maskEnabled: true
-                        maskSource: imageMask
+                    Image {
+                        id: img
+
+                        anchors.fill: parent
+                        visible: false
+                        // Hold the full-res decode while flinging (unless it is
+                        // already decoded), letting the thumbnail carry the scroll.
+                        source: root.mediaSourceActive && mediaSlot.visible && root.hasLocalImage
+                                && (!root.fastFlicking || status === Image.Ready)
+                                ? Qt.resolvedUrl("file://" + root.mediaLocalPath) : ""
+                        asynchronous: true
+                        cache: true
+                        sourceSize.width: root.imageDecodeWidth
+                        sourceSize.height: root.imageDecodeHeight
                     }
 
                     Behavior on opacity {
@@ -615,19 +690,6 @@ Item {
                             easing.type: Easing.OutCubic
                         }
                     }
-                }
-
-                Kirigami.ShadowedRectangle {
-                    id: imageMask
-
-                    anchors.fill: parent
-                    corners.topLeftRadius: root.mediaTopLeftRadius
-                    corners.topRightRadius: root.mediaTopRightRadius
-                    corners.bottomLeftRadius: root.mediaBottomLeftRadius
-                    corners.bottomRightRadius: root.mediaBottomRightRadius
-                    color: "black"
-                    visible: false
-                    layer.enabled: root.activeInViewport && mediaSlot.visible
                 }
 
                 // Dark scrim behind the time+ticks overlaid on image-only
@@ -719,25 +781,51 @@ Item {
                         }
                     }
                 }
+                      }
+                    }
+                }
             }
 
             TextEdit {
                 id: bodyText
 
+                // Formatted WhatsApp markdown and inline-enlarged emoji use RichText;
+                // plain messages stay on the cheaper PlainText path. Apply format and
+                // text together, clearing the old document first, so pooled delegates
+                // cannot carry rich-document font state into normal messages.
+                function syncContent() {
+                    text = ""
+                    if (root.hasRichText) {
+                        textFormat = TextEdit.RichText
+                        text = root.richText
+                    } else {
+                        textFormat = TextEdit.PlainText
+                        text = root.body
+                    }
+                }
+
                 visible: root.body.length > 0
                 x: root.innerPadding
                 y: root.contentOffsetBeforeBody()
                 width: root.textRegionWidth
-                // Mixed messages that contain emoji render as rich text so the emoji
-                // can be enlarged inline; everything else keeps the fast PlainText path.
-                text: root.hasInlineEmoji ? root.richText : root.body
                 readOnly: true
                 selectByMouse: true
                 selectByKeyboard: true
                 persistentSelection: true
                 wrapMode: TextEdit.Wrap
-                textFormat: root.hasInlineEmoji ? TextEdit.RichText : TextEdit.PlainText
                 color: Kirigami.Theme.textColor
+                font.family: Kirigami.Theme.defaultFont.family
+                font.pointSize: root.bodyPointSize
+                font.weight: Font.Normal
+
+                Component.onCompleted: syncContent()
+
+                Connections {
+                    target: root
+                    function onHasRichTextChanged() { bodyText.syncContent() }
+                    function onRichTextChanged() { bodyText.syncContent() }
+                    function onBodyChanged() { bodyText.syncContent() }
+                }
 
                 onSelectedTextChanged: {
                     if (selectedText.length > 0) {
@@ -795,22 +883,13 @@ Item {
                     // Single icon (clock, single checkmark, error)
                     Kirigami.Icon {
                         id: singleIcon
-                        anchors.centerIn: parent
+                        x: Math.round((parent.width - width) / 2)
+                        anchors.verticalCenter: parent.verticalCenter
                         visible: !root.statusIsDoubleTick
                         source: root.statusSingleIcon
-                        implicitWidth: root.statusIconSize
-                        implicitHeight: root.statusIconSize
+                        width: root.statusIconSize
+                        height: root.statusIconSize
                         color: root.statusSingleColor
-                        isMask: true
-                    }
-                    Kirigami.Icon {
-                        anchors.centerIn: parent
-                        anchors.horizontalCenterOffset: 0.75
-                        visible: singleIcon.visible && root.statusSingleIcon === "checkmark"
-                        source: singleIcon.source
-                        implicitWidth: singleIcon.implicitWidth
-                        implicitHeight: singleIcon.implicitHeight
-                        color: singleIcon.color
                         isMask: true
                     }
 
@@ -826,18 +905,9 @@ Item {
                             x: 0
                             anchors.verticalCenter: parent.verticalCenter
                             source: "checkmark"
-                            implicitWidth: root.statusIconSize
-                            implicitHeight: root.statusIconSize
+                            width: root.statusIconSize
+                            height: root.statusIconSize
                             color: root.statusTickColor
-                            isMask: true
-                        }
-                        Kirigami.Icon {
-                            x: firstStatusTick.x + 0.75
-                            anchors.verticalCenter: parent.verticalCenter
-                            source: firstStatusTick.source
-                            implicitWidth: firstStatusTick.implicitWidth
-                            implicitHeight: firstStatusTick.implicitHeight
-                            color: firstStatusTick.color
                             isMask: true
                         }
                         Kirigami.Icon {
@@ -846,18 +916,9 @@ Item {
                             x: root.statusDoubleTickOffset
                             anchors.verticalCenter: parent.verticalCenter
                             source: "checkmark"
-                            implicitWidth: root.statusIconSize
-                            implicitHeight: root.statusIconSize
+                            width: root.statusIconSize
+                            height: root.statusIconSize
                             color: root.statusTickColor
-                            isMask: true
-                        }
-                        Kirigami.Icon {
-                            x: secondStatusTick.x + 0.75
-                            anchors.verticalCenter: parent.verticalCenter
-                            source: secondStatusTick.source
-                            implicitWidth: secondStatusTick.implicitWidth
-                            implicitHeight: secondStatusTick.implicitHeight
-                            color: secondStatusTick.color
                             isMask: true
                         }
                     }
@@ -870,7 +931,9 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
                     text: root.timeText
                     color: root.footerTextColor
-                    font.pointSize: Kirigami.Theme.smallFont.pointSize * 0.72
+                    width: Math.ceil(footerMetrics.advanceWidth)
+                    horizontalAlignment: Text.AlignRight
+                    font.pointSize: root.footerTimePointSize
                 }
             }
         }
@@ -920,16 +983,37 @@ Item {
             textFormat: Text.PlainText
         }
 
+        // The sticker renderers — an AnimatedImage and a custom Lottie paint
+        // item are the heaviest — are built only for sticker messages. Text,
+        // image and jumbo-emoji delegates never instantiate them. jumboEmoji
+        // stays outside so the slot can size to it.
+        Loader {
+            anchors.fill: parent
+            active: root.isSticker
+            sourceComponent: Component {
+              Item {
+                anchors.fill: parent
+
+                // Whether the actual sticker (whichever renderer applies) is on
+                // screen. Drives the thumbnail placeholder during a fast fling.
+                readonly property bool stickerContentReady: root.isLottieSticker
+                    ? lottieSticker.status === Whatevr.RlottieSticker.Ready
+                    : root.isAnimatedSticker
+                        ? animatedSticker.status === AnimatedImage.Ready
+                        : staticSticker.status === Image.Ready
+
         Image {
             id: stickerThumb
 
             anchors.fill: parent
-            visible: root.isSticker && !root.hasLocalSticker && root.hasThumbnailImage
+            // Hold the thumbnail until the real sticker is showing, so a fling
+            // (which defers the full sticker decode) still has a placeholder.
+            visible: root.isSticker && root.hasThumbnailImage && !parent.stickerContentReady
             opacity: status === Image.Ready ? 0.7 : 0
             source: root.mediaSourceActive && stickerSlot.visible && visible ? Qt.resolvedUrl("file://" + root.mediaThumbnailLocalPath) : ""
             fillMode: Image.PreserveAspectFit
             asynchronous: true
-            cache: false
+            cache: true
             smooth: true
             sourceSize.width: root.stickerDecodeCap
             sourceSize.height: root.stickerDecodeCap
@@ -941,10 +1025,13 @@ Item {
             anchors.fill: parent
             visible: root.isRenderableStickerImage && root.hasLocalSticker && !root.isAnimatedSticker
             opacity: status === Image.Ready ? 1 : 0
-            source: root.mediaSourceActive && stickerSlot.visible && visible ? Qt.resolvedUrl("file://" + root.mediaLocalPath) : ""
+            // Defer the decode while flinging unless it is already decoded.
+            source: root.mediaSourceActive && stickerSlot.visible && visible
+                    && (!root.fastFlicking || status === Image.Ready)
+                    ? Qt.resolvedUrl("file://" + root.mediaLocalPath) : ""
             fillMode: Image.PreserveAspectFit
             asynchronous: true
-            cache: false
+            cache: true
             smooth: true
             sourceSize.width: root.stickerDecodeCap
             sourceSize.height: root.stickerDecodeCap
@@ -956,7 +1043,10 @@ Item {
             anchors.fill: parent
             visible: root.isRenderableStickerImage && root.hasLocalSticker && root.isAnimatedSticker
             playing: root.animationActive && visible && status === AnimatedImage.Ready
-            source: root.mediaSourceActive && stickerSlot.visible && visible ? Qt.resolvedUrl("file://" + root.mediaLocalPath) : ""
+            // Defer the (heavy, multi-frame) decode while flinging unless ready.
+            source: root.mediaSourceActive && stickerSlot.visible && visible
+                    && (!root.fastFlicking || status === AnimatedImage.Ready)
+                    ? Qt.resolvedUrl("file://" + root.mediaLocalPath) : ""
             fillMode: Image.PreserveAspectFit
             asynchronous: true
             cache: false
@@ -972,7 +1062,10 @@ Item {
             visible: root.isLottieSticker && root.hasLocalSticker
             source: root.mediaSourceActive && stickerSlot.visible && visible ? Qt.resolvedUrl("file://" + root.mediaLocalPath) : ""
             playing: root.animationActive && visible
-            renderScale: 2.5
+            // Rasterise at device resolution (capped) rather than a fixed 2.5×;
+            // the sticker is ~144 px so 2× is already crisp and halves the
+            // per-frame raster cost on 1× displays.
+            renderScale: Math.max(1, Math.min(2, Screen.devicePixelRatio))
         }
 
         Item {
@@ -1058,57 +1151,53 @@ Item {
                 }
             }
         }
+              }
+            }
+        }
     }
 
     Rectangle {
         id: stickerFooter
 
         visible: root.frameless
-        x: root.outgoing ? stickerSlot.x + stickerSlot.width - width : stickerSlot.x
-        y: stickerSlot.y + stickerSlot.height + Kirigami.Units.smallSpacing / 2
-        width: stickerFooterRow.implicitWidth + Kirigami.Units.smallSpacing
-        height: Math.max(stickerFooterRow.implicitHeight + Kirigami.Units.smallSpacing / 2, Kirigami.Units.gridUnit * 1.15)
+        x: Math.round(Math.max(root.outerMargin + root.senderGutterWidth,
+                               Math.min(root.width - root.outerMargin - width,
+                                        stickerSlot.x + stickerSlot.width - width)))
+        y: Math.round(stickerSlot.y + stickerSlot.height + Kirigami.Units.smallSpacing / 2)
+        width: root.tntWidth + root.framelessFooterHPadding * 2
+        height: Math.max(root.tntHeight + root.framelessFooterVPadding * 2, Math.round(Kirigami.Units.gridUnit * 1.15))
         radius: Kirigami.Units.cornerRadius
         color: root.outgoing
                ? Qt.alpha(activePalette.highlight, 0.30)
                : Qt.alpha(Kirigami.Theme.backgroundColor, 0.76)
         border.color: Qt.alpha(Kirigami.Theme.textColor, root.outgoing ? 0.05 : 0.12)
 
-        Row {
-            id: stickerFooterRow
+        Item {
+            id: stickerFooterContent
 
-            anchors.centerIn: parent
-            spacing: Kirigami.Units.smallSpacing / 2
-
-            Label {
-                text: root.timeText
-                color: Kirigami.Theme.disabledTextColor
-                font.pointSize: Kirigami.Theme.smallFont.pointSize * 0.8
-            }
+            x: root.framelessFooterHPadding
+            y: Math.round((parent.height - height) / 2)
+            width: root.tntWidth
+            height: root.tntHeight
 
             Item {
+                id: stickerStatusArea
+
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
                 visible: root.showStatusIcon
                 width: root.statusAreaWidth
                 height: root.statusIconSize
 
                 Kirigami.Icon {
                     id: stickerSingleIcon
-                    anchors.centerIn: parent
+                    x: Math.round((parent.width - width) / 2)
+                    anchors.verticalCenter: parent.verticalCenter
                     visible: !root.statusIsDoubleTick
                     source: root.statusSingleIcon
-                    implicitWidth: root.statusIconSize
-                    implicitHeight: root.statusIconSize
-                    color: root.statusIsFailed ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.disabledTextColor
-                    isMask: true
-                }
-                Kirigami.Icon {
-                    anchors.centerIn: parent
-                    anchors.horizontalCenterOffset: 0.75
-                    visible: stickerSingleIcon.visible && root.statusSingleIcon === "checkmark"
-                    source: stickerSingleIcon.source
-                    implicitWidth: stickerSingleIcon.implicitWidth
-                    implicitHeight: stickerSingleIcon.implicitHeight
-                    color: stickerSingleIcon.color
+                    width: root.statusIconSize
+                    height: root.statusIconSize
+                    color: root.statusSingleColor
                     isMask: true
                 }
 
@@ -1121,40 +1210,34 @@ Item {
                         x: 0
                         anchors.verticalCenter: parent.verticalCenter
                         source: "checkmark"
-                        implicitWidth: root.statusIconSize
-                        implicitHeight: root.statusIconSize
-                        color: root.statusIsRead ? activePalette.highlight : Kirigami.Theme.disabledTextColor
+                        width: root.statusIconSize
+                        height: root.statusIconSize
+                        color: root.statusTickColor
                         isMask: true
                     }
-                    Kirigami.Icon {
-                        x: firstStickerTick.x + 0.75
-                        anchors.verticalCenter: parent.verticalCenter
-                        source: firstStickerTick.source
-                        implicitWidth: firstStickerTick.implicitWidth
-                        implicitHeight: firstStickerTick.implicitHeight
-                        color: firstStickerTick.color
-                        isMask: true
-                    }
+
                     Kirigami.Icon {
                         id: secondStickerTick
                         x: root.statusDoubleTickOffset
                         anchors.verticalCenter: parent.verticalCenter
                         source: "checkmark"
-                        implicitWidth: root.statusIconSize
-                        implicitHeight: root.statusIconSize
-                        color: root.statusIsRead ? activePalette.highlight : Kirigami.Theme.disabledTextColor
-                        isMask: true
-                    }
-                    Kirigami.Icon {
-                        x: secondStickerTick.x + 0.75
-                        anchors.verticalCenter: parent.verticalCenter
-                        source: secondStickerTick.source
-                        implicitWidth: secondStickerTick.implicitWidth
-                        implicitHeight: secondStickerTick.implicitHeight
-                        color: secondStickerTick.color
+                        width: root.statusIconSize
+                        height: root.statusIconSize
+                        color: root.statusTickColor
                         isMask: true
                     }
                 }
+            }
+
+            Label {
+                anchors.right: stickerStatusArea.visible ? stickerStatusArea.left : parent.right
+                anchors.rightMargin: stickerStatusArea.visible ? root.tntSpacing : 0
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.timeText
+                color: Kirigami.Theme.disabledTextColor
+                width: Math.ceil(footerMetrics.advanceWidth)
+                horizontalAlignment: Text.AlignRight
+                font.pointSize: root.footerTimePointSize
             }
         }
     }
@@ -1215,8 +1298,10 @@ Item {
                                             visualHeight - Kirigami.Units.smallSpacing)))
         height: width
         icon.name: "edit-undo"
+        // Set both dimensions to the constant directly; binding icon.height to
+        // icon.width loops through the control's implicit-size machinery.
         icon.width: Kirigami.Units.iconSizes.smallMedium
-        icon.height: icon.width
+        icon.height: Kirigami.Units.iconSizes.smallMedium
         text: Whatevr.I18n.i18nc("@action:button", "Reply")
         display: AbstractButton.IconOnly
         focusPolicy: Qt.NoFocus

@@ -1,4 +1,5 @@
 #include <QApplication>
+#include <QPixmapCache>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickStyle>
@@ -15,6 +16,10 @@ int main(int argc, char *argv[])
     QQuickStyle::setStyle(QStringLiteral("org.kde.desktop"));
 
     QApplication app(argc, argv);
+    // The default 10 MB pixmap cache is easily exhausted by a screenful of
+    // stickers and image thumbnails, which would evict and force re-decodes
+    // while scrolling. Give the on-screen media working set room to stay warm.
+    QPixmapCache::setCacheLimit(128 * 1024);
     app.setApplicationName(QStringLiteral("Whatevr"));
     app.setDesktopFileName(QStringLiteral("in.codelif.Whatevr"));
     app.setOrganizationDomain(QStringLiteral("codelif.in"));

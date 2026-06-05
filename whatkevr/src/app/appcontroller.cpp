@@ -31,6 +31,8 @@
 #include "whatevr/v1/whatevr.qpb.h"
 #include "whatevr/v1/whatevr_client.grpc.qpb.h"
 
+#include "richtext.h"
+
 using whatevr::v1::ChatUpdated;
 using whatevr::v1::AvatarSubjectKindGadget::AvatarSubjectKind;
 using whatevr::v1::AvatarUpdated;
@@ -80,19 +82,7 @@ bool isSupportedOutboundImageFile(const QString &filePath)
         || suffix == QStringLiteral("gif");
 }
 
-QString plainTextFromQtRichText(const QString &text)
-{
-    const QString trimmed = text.trimmed();
-    if (!trimmed.contains(QStringLiteral("qrichtext"), Qt::CaseInsensitive)
-        || (!trimmed.startsWith(QStringLiteral("<!DOCTYPE HTML"), Qt::CaseInsensitive)
-            && !trimmed.startsWith(QStringLiteral("<html"), Qt::CaseInsensitive))) {
-        return text;
-    }
-
-    QTextDocument document;
-    document.setHtml(trimmed);
-    return document.toPlainText();
-}
+using whatevr::util::plainTextFromQtRichText;
 
 QList<whatevr::v1::Message> mergeMessages(const QList<whatevr::v1::Message> &base,
                                            const QList<whatevr::v1::Message> &updates)

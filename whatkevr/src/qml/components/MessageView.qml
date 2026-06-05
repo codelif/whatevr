@@ -47,6 +47,9 @@ Item {
     property string floatingDateText: ""
     property bool floatingDateActive: false
     property bool floatingDateHandoff: false
+    // Index whose date the floating pill currently shows. The date for a given
+    // row never changes, so the model lookup is skipped while it stays put.
+    property int lastTopIndex: -1
     // Set while we move the viewport ourselves (chat open, scroll-to-newest) so
     // those programmatic jumps don't flash the floating date pill.
     property bool programmaticScroll: false
@@ -273,11 +276,18 @@ Item {
         const bottomIndex = list.indexAt(cx, list.contentY + Math.max(1, list.height - 1))
 
         if (topIndex >= 0) {
-            floatingDateText = list.model ? list.model.dateTextForRow(topIndex) : ""
+            // The date string only changes when the top row changes; caching it
+            // avoids a model call (and its string allocation) on every frame.
+            if (topIndex !== lastTopIndex) {
+                lastTopIndex = topIndex
+                floatingDateText = list.model ? list.model.dateTextForRow(topIndex) : ""
+            }
             const topItem = list.itemAtIndex(topIndex)
             floatingDateHandoff = topItem !== null
                                   && topItem.showDateSeparator
                                   && (topItem.y - list.contentY) < topItem.dateSeparatorHeight
+        } else {
+            lastTopIndex = -1
         }
 
         let lo = -1
@@ -332,6 +342,7 @@ Item {
     }
 
     function afterModelReset() {
+        lastTopIndex = -1
         if (pendingJumpMessageId.length === 0) {
             scrollToNewest()
         } else {
@@ -385,6 +396,25 @@ Item {
         cacheBuffer: Math.max(height * 0.6, Kirigami.Units.gridUnit * 40)
         reuseItems: true
 
+        // True while flinging faster than ~1.25 viewport-heights per second.
+        // Delegates use this to hold off full-resolution media decoding so the
+        // scroll stays smooth; it drops back to false shortly after the fling
+        // slows, at which point media upgrades to full-res.
+        property bool fastFlicking: false
+        readonly property real fastFlickThreshold: Math.max(Kirigami.Units.gridUnit * 60, height * 1.25)
+        onVerticalVelocityChanged: {
+            if (Math.abs(verticalVelocity) > fastFlickThreshold) {
+                fastFlicking = true
+                flickSettleTimer.restart()
+            }
+        }
+
+        Timer {
+            id: flickSettleTimer
+            interval: 90
+            onTriggered: list.fastFlicking = false
+        }
+
         flickableDirection: Flickable.VerticalFlick
         boundsBehavior: Flickable.StopAtBounds
         boundsMovement: Flickable.StopAtBounds
@@ -407,7 +437,7 @@ Item {
             messageId: String(model.messageId || "")
             body: String(model.text || "")
             emojiOnlyCount: Number(model.emojiOnlyCount || 0)
-            hasInlineEmoji: Boolean(model.hasInlineEmoji)
+            hasRichText: Boolean(model.hasRichText)
             richText: String(model.richText || "")
             timeText: String(model.timeText || "")
             dateSeparatorText: String(model.dateSeparatorText || "")
@@ -430,6 +460,7 @@ Item {
             mediaAnimated: Boolean(model.mediaAnimated)
             pooled: pooledByListView
             activeInViewport: insideViewport
+            fastFlicking: list.fastFlicking
             mediaDownloading: Boolean(model.mediaDownloading)
             mediaDownloadError: String(model.mediaDownloadError || "")
             replyToMessageId: String(model.replyToMessageId || "")
