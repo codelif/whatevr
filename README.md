@@ -1,103 +1,65 @@
-# whatevr
+> _This project is not affiliated with WhatsApp or Meta._
+# Whatevr
 
-Native WhatsApp client for Linux.
+A native Linux client for WhatsApp
 
-`whatevrd` is the background daemon. `whatevr` is the official GTK frontend.
+## Introduction
+Whatevr is a Linux-first native client for WhatsApp. It uses [whatsmeow](https://github.com/tulir/whatsmeow) to access the WhatsApp web multidevice API.
 
-## Architecture
+## Frontends
 
-```txt
-Linux user session
-`-- systemd --user
-    `-- whatevrd
-        |-- WhatsApp session/client
-        |-- SQLite local store
-        |-- sync/reconnect engine
-        |-- notification worker
-        `-- gRPC server over Unix socket
-            $XDG_RUNTIME_DIR/whatevrd/whatevrd.sock
+### WhatKevr
+![whatkevr2](https://github.com/user-attachments/assets/be7e52a0-491c-4f96-972c-b264fa66887b)
+![whatkevr](https://github.com/user-attachments/assets/46f96ee9-32a7-4e1d-8cae-1d0e82371f8f)
 
-whatevr
-`-- Rust GTK4/libadwaita GUI
-    |-- QR login screen
-    |-- chat list
-    |-- message view
-    `-- composer
+
+<details>
+    <summary>Other Frontends</summary>
+    
+### WhatGevr
+![whatgevr](https://github.com/user-attachments/assets/785ed14e-77e5-48c2-a7da-ba2f61b1f951)
+</details>
+
+## Getting it
+Currently you can only get Whatevr by building it
+
+## Building
+<details>
+    <summary>Build Instructions</summary>
+    
+Build and run the daemon first. Frontends expect `whatevrd` to be running.
+
+### Base: daemon
+
+Dependencies:
+
+- Go 1.25+
+- C compiler
+- SQLite development files
+- pkg-config
+
+Arch/Fedora/Debian examples:
+
+```sh
+sudo pacman -S --needed base-devel go sqlite pkgconf
+sudo dnf install go gcc sqlite-devel pkgconf-pkg-config
+sudo apt install golang gcc libsqlite3-dev pkg-config
 ```
 
-## Repository Layout
-
-```txt
-whatevr/
-|-- whatevrd/   # Go daemon source
-|-- whatevr/    # Rust GTK/libadwaita GUI source
-`-- packaging/  # systemd and packaging assets
-```
-
-## Runtime Paths
-
-```txt
-Socket:     $XDG_RUNTIME_DIR/whatevrd/whatevrd.sock
-Lock:       $XDG_RUNTIME_DIR/whatevrd/whatevrd.lock
-App DB:     $XDG_DATA_HOME/whatevrd/whatevrd.db
-Session DB: $XDG_DATA_HOME/whatevrd/session/whatsmeow.db
-Session:    $XDG_DATA_HOME/whatevrd/session/
-Cache:      $XDG_CACHE_HOME/whatevrd/media/
-```
-
-If `XDG_DATA_HOME` or `XDG_CACHE_HOME` is unset, the daemon uses
-`~/.local/share/whatevrd` and `~/.cache/whatevrd`.
-
-## Current Status
-
-The current implementation establishes the daemon/GUI foundation, QR login,
-daemon-side text message ingestion, and a native chat UI with text sending:
-
-```txt
-- whatevrd starts
-- whatevrd creates runtime/data/cache directories
-- whatevrd holds a runtime process lock to prevent duplicate daemon instances
-- whatevrd initializes SQLite MVP tables
-- whatevrd exposes GetStatus over gRPC on a Unix socket
-- whatevrd initializes whatsmeow with a persisted SQLite session store
-- whatevrd exposes LoginService.SubscribeLoginEvents
-- whatevrd emits QR login codes and login state changes
-- whatevrd receives WhatsApp text messages from whatsmeow
-- whatevrd stores text messages and chat summaries in SQLite
-- whatevrd tracks active frontend sessions separately from background sync
-- whatevrd marks the account online only while a frontend session is attached
-- whatevrd forces visible delivery receipts even when the GUI is closed
-- whatevrd exposes ChatService for listing chats, reading messages, and marking chats read
-- whatevrd exposes SendService for sending text messages through whatsmeow
-- whatevrd sends real WhatsApp read receipts when chats are opened
-- whatevrd updates outgoing message status from WhatsApp receipts
-- whatevrd emits NewMessage and ChatUpdated daemon events
-- whatevr opens as a libadwaita app with ID in.codelif.Whatevr
-- whatevr renders QR login as a native libadwaita sign-in page
-- whatevr shows an adaptive sidebar/conversation layout with empty states and offline banners
-- whatevr lists chats, opens the latest 50 local messages, and provides a native multiline composer
-- packaging/systemd/whatevrd.service provides a user service template
-```
-
-## Run Daemon
+Build:
 
 ```sh
 cd whatevrd
-go run ./cmd/whatevrd
+go build -o ~/.local/bin/whatevrd ./cmd/whatevrd
 ```
 
-## Run GUI
-
-In another terminal inside the user session:
+Run:
 
 ```sh
-cd whatevr
-cargo run
+~/.local/bin/whatevrd
 ```
 
-## Install User Service
-
-After building/installing `whatevrd` to `~/.local/bin/whatevrd`:
+Optional systemd user service:
 
 ```sh
 mkdir -p ~/.config/systemd/user
@@ -106,65 +68,141 @@ systemctl --user daemon-reload
 systemctl --user enable --now whatevrd.service
 ```
 
-## QR Login
+### Qt frontend: whatkevr
 
-When no WhatsApp session exists, start the daemon and then open the GUI. The GUI
-subscribes to `LoginService.SubscribeLoginEvents` and renders the QR code from
-the daemon. After pairing succeeds, the whatsmeow session is persisted in
-`$XDG_DATA_HOME/whatevrd/session/whatsmeow.db`.
+Dependencies:
 
-## Message Ingestion
+- C++20 compiler
+- CMake 3.16+
+- Ninja
+- Qt 6.11+
+- KDE Frameworks 6.25+
+- Kirigami Addons
+- rlottie
 
-For MVP 1, `whatevrd` stores only text messages from `events.Message`. Plain
-conversation text and extended text are supported. Media, stickers, reactions,
-quoted replies, and edits are ignored for now.
+Arch/Fedora/Debian examples:
 
-Stored messages update the `chats` summary row in the same SQLite transaction.
-Duplicate WhatsApp message IDs are ignored so reconnects/history replays do not
-double-count unread messages. History-sync messages are stored but do not
-increment unread counts.
-
-## Read-Only Chat UI
-
-The GTK frontend now stays native to libadwaita:
-
-```txt
-- responsive split navigation on wide layouts
-- stacked sidebar/conversation flow on narrow layouts
-- QR login, loading, empty, and offline states use AdwStatusPage/AdwBanner
-- chat list reads from local SQLite via ChatService.ListChats
-- conversation view reads the latest 50 local messages via ChatService.GetMessages
-- selecting a chat clears unread count via ChatService.MarkChatRead
-- composer remains hidden until sending is implemented
+```sh
+sudo pacman -S --needed base-devel cmake ninja extra-cmake-modules qt6-base qt6-declarative qt6-shadertools qt6-grpc kcoreaddons ki18n kirigami kirigami-addons prison rlottie
+sudo dnf install gcc-c++ cmake ninja-build extra-cmake-modules qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtshadertools-devel qt6-qtgrpc-devel kf6-kcoreaddons-devel kf6-ki18n-devel kf6-kirigami-devel kf6-prison-devel kf6-kirigami-addons-devel rlottie-devel
+sudo apt install g++ cmake ninja-build extra-cmake-modules
 ```
 
-## Presence And Read State
+Debian/Ubuntu may not ship new enough Qt/KDE packages.
 
-`whatevrd` stays connected in the background for sync, but WhatsApp presence is
-now tied to real GUI attachment state:
+Build:
 
-```txt
-- when at least one whatevr frontend session is connected, the daemon sends PresenceAvailable
-- when no frontend sessions are connected, the daemon sends PresenceUnavailable
-- active delivery receipts are forced so senders still see visible delivered ticks even while the GUI is closed
-- opening a chat clears local unread state and also sends real WhatsApp MarkRead receipts
+```sh
+cd whatkevr
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX="$HOME/.local"
+cmake --build build
+cmake --install build
 ```
 
-## Text Sending
+Run:
 
-The GTK frontend now exposes a multiline composer when a chat is selected and
-the daemon is online:
-
-```txt
-- Enter sends
-- Shift+Enter inserts a newline
-- immediate send failures are shown inline near the composer
-- outgoing messages are stored locally as pending before WhatsApp send attempts
-- whatevrd sends queued outgoing messages in the background without blocking the composer on network delivery
-- delivery/read status updates arrive later from daemon events driven by WhatsApp receipts
+```sh
+whatkevr
 ```
 
-## MVP 1 Scope
+### GTK frontend: whatgevr
 
-MVP 1 will add notification-click-to-open-chat. Media, stickers, reactions,
-search, calls, status, channels, CLI, and TUI are out of scope for MVP 1.
+Dependencies:
+
+- Rust
+- GTK4 development files
+- libadwaita development files
+- pkg-config
+
+Arch/Fedora/Debian examples:
+
+```sh
+sudo pacman -S --needed rust gtk4 libadwaita pkgconf
+sudo dnf install rust cargo gtk4-devel libadwaita-devel pkgconf-pkg-config
+sudo apt install rustc cargo libgtk-4-dev libadwaita-1-dev pkg-config
+```
+
+Build:
+
+```sh
+cd whatgevr
+cargo build --release
+install -Dm755 target/release/whatevr ~/.local/bin/whatevr
+```
+
+Run:
+
+```sh
+whatevr
+```
+
+</details>
+
+
+## Status
+Whatevr is very early-stage software. It is usable for development and testing, but the should be treated as **EXPERIMENTAL**. 
+There is lots of missing functionality that is considered essential, and there WILL be bugs.
+
+Now with that, here is the current feature map, this is for whatevrd+whatkevr.
+<details>
+  <summary>Feature Map</summary>
+  
+| Feature | Status | Notes |
+| --- | --- | --- |
+| WhatsApp login with QR code | ✅ | |
+| Persistent login session | ✅ | |
+| Logout | ✅ | |
+| Local message database | ✅ | SQLite |
+| Older message loading | ✅ | |
+| Incoming messages | ✅ | |
+| Send text messages | ✅ | |
+| Send image messages | ✅ | |
+| Reply to messages | ✅ | |
+| Message delivery/read status | ✅ | |
+| Pin and unpin chats | ✅ | |
+| Group chats | ✅ | Basic chat/message support |
+| Chat avatars | ✅ | |
+| Media preview/display | ✅ | Images and cached media |
+| Paste image from clipboard | ✅ | |
+| Typing indicator | ✅ | Send/receive composing state |
+| Online/last-seen presence | ✅ | |
+| Offline/history sync progress | ✅ | |
+| Desktop notifications | ✅ | Handled by daemon |
+| Emoji picker | ✅ | Frontend-local |
+| Message search | ❌ | |
+| Chat search | ❌ | |
+| Contact search/new chat | ❌ | |
+| Voice messages | ❌ | |
+| Audio playback | ❌ | |
+| Video playback | ❌ | |
+| Document/file sending | ❌ | Images/media path exists, general file UX missing |
+| Stickers | ⚠️ | Can receive any type of sticker. Sending yet to be implmented |
+| Message reactions | ❌ | |
+| Edit sent messages | ❌ | Even received messages are not edited |
+| Delete messages | ❌ | |
+| Forward messages | ❌ | |
+| Star/bookmark messages | ❌ | |
+| Group management | ❌ | No create/invite/admin UI |
+| Community management | ❌ |  |
+| Calls | ❌ | Voice/video calls unsupported |
+| Status/stories | ❌ | |
+| Settings UI | ❌ | |
+| Account/profile editing | ❌ | |
+| Import/export backups | ❌ | |
+  
+</details>
+
+## Architecture
+Whatevr is built around a single background daemon, `whatevrd`. The daemon owns WhatsApp connection, login session, local SQLite store, media cache, notifications, and local RPC API. Frontends connect to that daemon instead of speaking to WhatsApp directly.
+
+This approach lets multiple frontends share the same backend. Currently frontend is mainly focused on the Qt/Kirigami frontend, `whatkevr`. There is a primitive GTK4/libadwaita frontend, `whatgevr`, but I will not be working on that for a while (see for my reasons).\
+I also have a TUI frontend and a scriptable CLI in mind, though they are far into the future, feel free to take up the task if you feel qualified.
+
+Whatevr will be Linux-first for now until its stable. I am open to contributions for porting functionality to other platforms as long as they don't affect existing performance and Linux functionality significantly. 
+
+## Acknowledgements
+Whatevr uses [whatsmeow](https://github.com/tulir/whatsmeow) to access WhatsApp web multidevice API\
+...
+
+## License
+This program is licensed under the BSD-3-Clause License
