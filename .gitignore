@@ -58,6 +58,7 @@ Cargo.lock
 
 # End of https://www.toptal.com/developers/gitignore/api/go,rust,linux
 
+/whatevrd/whatevrd
 /whatkevr/build/
 *.log
 .mcpcode/
