@@ -436,6 +436,7 @@ Item {
             listWidth: list.width
             messageId: String(model.messageId || "")
             body: String(model.text || "")
+            layoutBody: String(model.layoutText || "")
             emojiOnlyCount: Number(model.emojiOnlyCount || 0)
             hasRichText: Boolean(model.hasRichText)
             richText: String(model.richText || "")

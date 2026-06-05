@@ -517,34 +517,42 @@ int findClosingDelimiter(const QString &text, int open, int end, QChar marker)
     return -1;
 }
 
-void appendInline(const QString &text, int start, int end, QString &html, HtmlBuildContext &context);
+void appendInline(const QString &text, int start, int end, QString &html, QString &layoutText, HtmlBuildContext &context);
 
-void appendDelimited(const QString &text, int open, int close, QChar marker, QString &html, HtmlBuildContext &context)
+void appendLayoutText(const QString &text, int start, int end, QString &layoutText)
+{
+    if (start < end) {
+        layoutText += QStringView{text}.mid(start, end - start);
+    }
+}
+
+void appendDelimited(const QString &text, int open, int close, QChar marker, QString &html, QString &layoutText, HtmlBuildContext &context)
 {
     context.hasFormatting = true;
     switch (marker.unicode()) {
     case '*':
         html += QStringLiteral("<b>");
-        appendInline(text, open + 1, close, html, context);
+        appendInline(text, open + 1, close, html, layoutText, context);
         html += QStringLiteral("</b>");
         break;
     case '_':
         html += QStringLiteral("<i>");
-        appendInline(text, open + 1, close, html, context);
+        appendInline(text, open + 1, close, html, layoutText, context);
         html += QStringLiteral("</i>");
         break;
     case '~':
         html += QStringLiteral("<s>");
-        appendInline(text, open + 1, close, html, context);
+        appendInline(text, open + 1, close, html, layoutText, context);
         html += QStringLiteral("</s>");
         break;
     default:
         appendEscapedWithEmoji(text, open, close + 1, html, context);
+        appendLayoutText(text, open, close + 1, layoutText);
         break;
     }
 }
 
-void appendUrlAnchor(const QString &text, int start, const UrlMatch &url, QString &html, HtmlBuildContext &context)
+void appendUrlAnchor(const QString &text, int start, const UrlMatch &url, QString &html, QString &layoutText, HtmlBuildContext &context)
 {
     context.hasFormatting = true;
     html += QStringLiteral("<a href=\"");
@@ -552,9 +560,10 @@ void appendUrlAnchor(const QString &text, int start, const UrlMatch &url, QStrin
     html += QStringLiteral("\">");
     appendEscapedWithEmoji(text, start, url.end, html, context);
     html += QStringLiteral("</a>");
+    appendLayoutText(text, start, url.end, layoutText);
 }
 
-void appendInline(const QString &text, int start, int end, QString &html, HtmlBuildContext &context)
+void appendInline(const QString &text, int start, int end, QString &html, QString &layoutText, HtmlBuildContext &context)
 {
     int i = start;
     while (i < end) {
@@ -565,9 +574,14 @@ void appendInline(const QString &text, int start, int end, QString &html, HtmlBu
                 html += QStringLiteral("<code>");
                 appendEscapedWithEmoji(text, i + 3, close, html, context, true);
                 html += QStringLiteral("</code>");
+                appendLayoutText(text, i + 3, close, layoutText);
                 i = close + 3;
                 continue;
             }
+            appendEscapedWithEmoji(text, i, i + 3, html, context);
+            appendLayoutText(text, i, i + 3, layoutText);
+            i += 3;
+            continue;
         }
 
         const QChar ch = text.at(i);
@@ -578,6 +592,7 @@ void appendInline(const QString &text, int start, int end, QString &html, HtmlBu
                 html += QStringLiteral("<code>");
                 appendEscapedWithEmoji(text, i + 1, close, html, context, true);
                 html += QStringLiteral("</code>");
+                appendLayoutText(text, i + 1, close, layoutText);
                 i = close + 1;
                 continue;
             }
@@ -585,7 +600,7 @@ void appendInline(const QString &text, int start, int end, QString &html, HtmlBu
 
         const UrlMatch url = findUrlAt(text, i, end);
         if (url.end > i) {
-            appendUrlAnchor(text, i, url, html, context);
+            appendUrlAnchor(text, i, url, html, layoutText, context);
             i = url.end;
             continue;
         }
@@ -593,7 +608,7 @@ void appendInline(const QString &text, int start, int end, QString &html, HtmlBu
         if (ch == QLatin1Char('*') || ch == QLatin1Char('_') || ch == QLatin1Char('~')) {
             const int close = findClosingDelimiter(text, i, end, ch);
             if (close >= 0) {
-                appendDelimited(text, i, close, ch, html, context);
+                appendDelimited(text, i, close, ch, html, layoutText, context);
                 i = close + 1;
                 continue;
             }
@@ -611,22 +626,26 @@ void appendInline(const QString &text, int start, int end, QString &html, HtmlBu
             ++runEnd;
         }
         appendEscapedWithEmoji(text, i, runEnd, html, context);
+        appendLayoutText(text, i, runEnd, layoutText);
         i = runEnd;
     }
 }
 
-void appendLine(const QString &text, int start, int end, QString &html, HtmlBuildContext &context)
+void appendLine(const QString &text, int start, int end, QString &html, QString &layoutText, HtmlBuildContext &context)
 {
     if (startsWithAt(text, start, QStringLiteral("> "))) {
         context.hasFormatting = true;
         html += QStringLiteral("&#9474;&nbsp;");
-        appendInline(text, start + 2, end, html, context);
+        layoutText += QStringLiteral("| ");
+        appendInline(text, start + 2, end, html, layoutText, context);
         return;
     }
     if (startsWithAt(text, start, QStringLiteral("* ")) || startsWithAt(text, start, QStringLiteral("- "))) {
         context.hasFormatting = true;
         html += QStringLiteral("&#8226;&nbsp;");
-        appendInline(text, start + 2, end, html, context);
+        layoutText += QChar(0x2022);
+        layoutText += QLatin1Char(' ');
+        appendInline(text, start + 2, end, html, layoutText, context);
         return;
     }
 
@@ -634,33 +653,147 @@ void appendLine(const QString &text, int start, int end, QString &html, HtmlBuil
     if (lineStartsNumberedList(text, start, end, &numberedContentStart)) {
         context.hasFormatting = true;
         appendEscapedWithEmoji(text, start, numberedContentStart, html, context);
-        appendInline(text, numberedContentStart, end, html, context);
+        appendLayoutText(text, start, numberedContentStart, layoutText);
+        appendInline(text, numberedContentStart, end, html, layoutText, context);
         return;
     }
 
-    appendInline(text, start, end, html, context);
+    appendInline(text, start, end, html, layoutText, context);
 }
 
-QString buildRichText(const QString &text, HtmlBuildContext &context)
+void appendOutputLineBreak(QString &html, QString &layoutText, bool &firstLine)
 {
-    QString html;
-    html.reserve(text.size() + text.size() / 2);
+    if (!firstLine) {
+        html += QStringLiteral("<br/>");
+        layoutText += QLatin1Char('\n');
+    }
+    firstLine = false;
+}
 
-    int lineStart = 0;
-    bool firstLine = true;
-    while (lineStart <= text.size()) {
-        const int lineEnd = text.indexOf(QLatin1Char('\n'), lineStart);
-        const int end = lineEnd < 0 ? text.size() : lineEnd;
-        if (!firstLine) {
-            html += QStringLiteral("<br/>");
+void appendRichTextSegment(const QString &text, int start, int end, QString &html, QString &layoutText, HtmlBuildContext &context, bool &firstLine)
+{
+    int lineStart = start;
+    bool lineBreakAlreadyEmitted = false;
+    if (lineStart < end && !firstLine && text.at(lineStart) == QLatin1Char('\n')) {
+        html += QStringLiteral("<br/>");
+        layoutText += QLatin1Char('\n');
+        ++lineStart;
+        lineBreakAlreadyEmitted = true;
+    }
+
+    while (lineStart < end) {
+        const int newline = text.indexOf(QLatin1Char('\n'), lineStart);
+        const int lineEnd = (newline < 0 || newline >= end) ? end : newline;
+        if (lineBreakAlreadyEmitted) {
+            firstLine = false;
+            lineBreakAlreadyEmitted = false;
+        } else {
+            appendOutputLineBreak(html, layoutText, firstLine);
         }
-        appendLine(text, lineStart, end, html, context);
-        if (lineEnd < 0) {
+        appendLine(text, lineStart, lineEnd, html, layoutText, context);
+        if (lineEnd >= end) {
             break;
         }
         lineStart = lineEnd + 1;
-        firstLine = false;
     }
+}
+
+int firstCodeContentChar(const QString &text, int start, int end)
+{
+    if (start < end && text.at(start) == QLatin1Char('\r')) {
+        if (start + 1 < end && text.at(start + 1) == QLatin1Char('\n')) {
+            return start + 2;
+        }
+        return start + 1;
+    }
+    if (start < end && text.at(start) == QLatin1Char('\n')) {
+        return start + 1;
+    }
+    return start;
+}
+
+int lastCodeContentChar(const QString &text, int start, int end)
+{
+    if (end > start && text.at(end - 1) == QLatin1Char('\n')) {
+        --end;
+        if (end > start && text.at(end - 1) == QLatin1Char('\r')) {
+            --end;
+        }
+        return end;
+    }
+    if (end > start && text.at(end - 1) == QLatin1Char('\r')) {
+        return end - 1;
+    }
+    return end;
+}
+
+void appendCodeText(const QString &text, int start, int end, bool forceLineBreakBefore, QString &html, QString &layoutText, HtmlBuildContext &context, bool &firstLine)
+{
+    context.hasFormatting = true;
+
+    start = firstCodeContentChar(text, start, end);
+    end = lastCodeContentChar(text, start, end);
+
+    if (firstLine) {
+        firstLine = false;
+    } else if (forceLineBreakBefore) {
+        html += QStringLiteral("<br/>");
+        layoutText += QLatin1Char('\n');
+    }
+    html += QStringLiteral("<code>");
+    int lineStart = start;
+    while (lineStart <= end) {
+        const int newline = text.indexOf(QLatin1Char('\n'), lineStart);
+        const int lineEnd = (newline < 0 || newline >= end) ? end : newline;
+        if (lineStart > start) {
+            html += QStringLiteral("<br/>");
+            layoutText += QLatin1Char('\n');
+        }
+        appendEscapedWithEmoji(text, lineStart, lineEnd, html, context, true);
+        appendLayoutText(text, lineStart, lineEnd, layoutText);
+        if (lineEnd >= end) {
+            break;
+        }
+        lineStart = lineEnd + 1;
+    }
+    html += QStringLiteral("</code>");
+}
+
+int findNextClosedTripleBacktick(const QString &text, int start, int end, int *close)
+{
+    for (int i = start; i + 2 < end; ++i) {
+        if (!startsWithAt(text, i, QStringLiteral("```"))) {
+            continue;
+        }
+        const int candidateClose = findClosingTripleBacktick(text, i, end);
+        if (candidateClose >= 0) {
+            *close = candidateClose;
+            return i;
+        }
+        i += 2;
+    }
+    return -1;
+}
+
+QString buildRichText(const QString &text, QString &layoutText, HtmlBuildContext &context)
+{
+    QString html;
+    html.reserve(text.size() + text.size() / 2);
+    layoutText.reserve(text.size());
+
+    int segmentStart = 0;
+    bool firstLine = true;
+    while (segmentStart < text.size()) {
+        int close = -1;
+        const int open = findNextClosedTripleBacktick(text, segmentStart, text.size(), &close);
+        if (open < 0) {
+            break;
+        }
+        appendRichTextSegment(text, segmentStart, open, html, layoutText, context, firstLine);
+        appendCodeText(text, open + 3, close, open > 0 && text.at(open - 1) == QLatin1Char('\n'), html, layoutText, context, firstLine);
+        segmentStart = close + 3;
+    }
+    appendRichTextSegment(text, segmentStart, text.size(), html, layoutText, context, firstLine);
 
     return html;
 }
@@ -679,10 +812,13 @@ MessageMarkup parseWhatsAppMessageMarkup(const QString &text)
 
     HtmlBuildContext context;
     context.emojiSpanOpen = emojiSpanOpenTag();
-    result.richText = buildRichText(text, context);
+    result.richText = buildRichText(text, result.layoutText, context);
     result.hasRichText = context.hasFormatting || context.hasEmoji;
     if (!result.hasRichText) {
         result.richText.clear();
+        result.layoutText.clear();
+    } else if (!context.hasFormatting || result.layoutText == text) {
+        result.layoutText.clear();
     }
     return result;
 }

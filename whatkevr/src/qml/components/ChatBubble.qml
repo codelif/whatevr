@@ -13,6 +13,7 @@ Item {
 
     property string messageId: ""
     property string body: ""
+    property string layoutBody: ""
     property int emojiOnlyCount: 0
     property bool hasRichText: false
     property string richText: ""
@@ -262,12 +263,13 @@ Item {
     readonly property bool hasBody: body.length > 0
     readonly property bool hasInlineMedia: isImage && !isSticker
     readonly property bool imageOnly: hasInlineMedia && !hasBody
-    readonly property string widestBodyLine: widestLine(body)
+    readonly property string metricBody: layoutBody.length > 0 ? layoutBody : body
+    readonly property string widestBodyLine: widestLine(metricBody)
     // Captions inside an image bubble wrap to the (padded) image width; plain
     // text bubbles wrap to the full available content width.
     readonly property real textWrapWidth: hasInlineMedia ? innerContentWidth : maxContentWidth
     readonly property real naturalTextWidth: Math.min(textWrapWidth, widestBodyLineMetrics.advanceWidth)
-    readonly property string lastBodyLine: lastLine(body)
+    readonly property string lastBodyLine: lastLine(metricBody)
     readonly property real naturalLastLineWidth: Math.min(textWrapWidth, lastBodyLineMetrics.advanceWidth)
     readonly property bool canReserveInlineTntWidth: hasBody
                                                    && naturalLastLineWidth + inlineTntGap + tntWidth <= textWrapWidth

@@ -8,6 +8,7 @@ struct MessageMarkup {
     int emojiOnlyCount = 0;
     bool hasRichText = false;
     QString richText;
+    QString layoutText;
 };
 
 // Parse WhatsApp's small markdown subset into Qt rich text. Plain messages stay

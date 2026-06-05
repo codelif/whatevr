@@ -55,6 +55,8 @@ QVariant MessageListModel::data(const QModelIndex &index, int role) const
         return message.senderInitials;
     case TextRole:
         return message.text;
+    case LayoutTextRole:
+        return message.layoutText;
     case EmojiOnlyCountRole:
         return message.emojiOnlyCount;
     case HasRichTextRole:
@@ -130,6 +132,7 @@ QHash<int, QByteArray> MessageListModel::roleNames() const
         {SenderAvatarLocalPathRole, "senderAvatarLocalPath"},
         {SenderInitialsRole, "senderInitials"},
         {TextRole, "text"},
+        {LayoutTextRole, "layoutText"},
         {EmojiOnlyCountRole, "emojiOnlyCount"},
         {HasRichTextRole, "hasRichText"},
         {RichTextRole, "richText"},
@@ -413,6 +416,7 @@ MessageListModel::MessageItem MessageListModel::fromProto(const whatevr::v1::Mes
         .senderInitials = {},
         .senderAvatarLocalPath = message.senderAvatarLocalPath(),
         .text = text,
+        .layoutText = markup.layoutText,
         .emojiOnlyCount = markup.emojiOnlyCount,
         .hasRichText = markup.hasRichText,
         .richText = markup.richText,
@@ -585,6 +589,7 @@ bool MessageListModel::sameMessageData(const MessageItem &left, const MessageIte
         && left.senderInitials == right.senderInitials
         && left.senderAvatarLocalPath == right.senderAvatarLocalPath
         && left.text == right.text
+        && left.layoutText == right.layoutText
         && left.emojiOnlyCount == right.emojiOnlyCount
         && left.hasRichText == right.hasRichText
         && left.richText == right.richText

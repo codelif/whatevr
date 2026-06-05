@@ -25,6 +25,7 @@ public:
         SenderAvatarLocalPathRole,
         SenderInitialsRole,
         TextRole,
+        LayoutTextRole,
         EmojiOnlyCountRole,
         HasRichTextRole,
         RichTextRole,
@@ -92,6 +93,7 @@ private:
         QString senderInitials;
         QString senderAvatarLocalPath;
         QString text;
+        QString layoutText;
         int emojiOnlyCount = 0;
         bool hasRichText = false;
         QString richText;
