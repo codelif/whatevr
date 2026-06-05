@@ -1,10 +1,6 @@
 > _This project is not affiliated with WhatsApp or Meta._
 # Whatevr
-
-A native Linux client for WhatsApp
-
-## Introduction
-Whatevr is a Linux-first native client for WhatsApp. It uses [whatsmeow](https://github.com/tulir/whatsmeow) to access the WhatsApp web multidevice API.
+A Linux-first native client for WhatsApp. It uses [whatsmeow](https://github.com/tulir/whatsmeow) to access the WhatsApp web multidevice API.
 
 ## Frontends
 
