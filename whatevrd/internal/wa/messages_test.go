@@ -1,7 +1,12 @@
 package wa
 
 import (
+	"bytes"
 	"context"
+	"image"
+	"image/color"
+	"image/jpeg"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -260,6 +265,26 @@ func TestQuotedReplyPreviewExtractsImageCaption(t *testing.T) {
 }
 
 func TestOutgoingReplyContextInfoUsesExternalIDAndParticipant(t *testing.T) {
+	ctx := context.Background()
+	db, err := appstore.Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	if _, err := db.SaveTextMessage(ctx, appstore.TextMessageInput{
+		ID:        "chat-1:quoted",
+		ChatID:    "chat-1",
+		SenderID:  "111@s.whatsapp.net",
+		Text:      "quoted",
+		Timestamp: time.Unix(100, 0),
+		Direction: appstore.DirectionIncoming,
+		Status:    appstore.StatusDelivered,
+	}); err != nil {
+		t.Fatalf("save quoted message: %v", err)
+	}
+
+	client := &Client{store: db}
 	message := appstore.Message{
 		ID:     "chat-1:new",
 		ChatID: "chat-1",
@@ -270,7 +295,7 @@ func TestOutgoingReplyContextInfoUsesExternalIDAndParticipant(t *testing.T) {
 			Text:      "quoted",
 		},
 	}
-	contextInfo := outgoingReplyContextInfo(nil, message)
+	contextInfo := client.outgoingReplyContextInfo(ctx, nil, message)
 	if contextInfo == nil {
 		t.Fatal("expected context info")
 	}
@@ -280,8 +305,115 @@ func TestOutgoingReplyContextInfoUsesExternalIDAndParticipant(t *testing.T) {
 	if contextInfo.GetParticipant() != "111@s.whatsapp.net" {
 		t.Fatalf("participant = %q", contextInfo.GetParticipant())
 	}
+	if contextInfo.RemoteJID != nil {
+		t.Fatalf("remote JID = %q, want unset for same-chat reply", contextInfo.GetRemoteJID())
+	}
 	if contextInfo.GetQuotedMessage().GetConversation() != "quoted" {
 		t.Fatalf("quoted message = %+v", contextInfo.GetQuotedMessage())
+	}
+}
+
+func TestQuotedMessageFromStoredPreservesStickerPayload(t *testing.T) {
+	original := &waE2E.StickerMessage{
+		Mimetype:      proto.String("image/webp"),
+		PngThumbnail:  []byte{0x89, 0x50, 0x4e, 0x47},
+		URL:           proto.String("https://example/sticker.enc"),
+		FileEncSHA256: []byte{0x01, 0x02, 0x03},
+	}
+	payload, err := proto.Marshal(original)
+	if err != nil {
+		t.Fatalf("marshal sticker: %v", err)
+	}
+
+	quoted := quotedMessageFromStored(appstore.Message{
+		MediaKind:     appstore.MediaKindSticker,
+		MediaMimeType: "image/webp",
+		MediaPayload:  payload,
+	})
+	sticker := quoted.GetStickerMessage()
+	if sticker == nil {
+		t.Fatal("expected sticker message in quote")
+	}
+	if string(sticker.GetPngThumbnail()) != string(original.GetPngThumbnail()) {
+		t.Fatalf("thumbnail not preserved: %x", sticker.GetPngThumbnail())
+	}
+	if sticker.GetURL() != original.GetURL() || string(sticker.GetFileEncSHA256()) != string(original.GetFileEncSHA256()) {
+		t.Fatalf("media keys not preserved: %+v", sticker)
+	}
+}
+
+func TestQuotedMessageFromStoredPreservesImageThumbnail(t *testing.T) {
+	original := &waE2E.ImageMessage{
+		Mimetype:      proto.String("image/jpeg"),
+		Caption:       proto.String("hi"),
+		JPEGThumbnail: []byte{0xff, 0xd8, 0xff},
+		MediaKey:      []byte{0x09, 0x08},
+	}
+	payload, err := proto.Marshal(original)
+	if err != nil {
+		t.Fatalf("marshal image: %v", err)
+	}
+
+	quoted := quotedMessageFromStored(appstore.Message{
+		MediaKind:     appstore.MediaKindImage,
+		MediaMimeType: "image/jpeg",
+		Text:          "hi",
+		MediaPayload:  payload,
+	})
+	img := quoted.GetImageMessage()
+	if img == nil {
+		t.Fatal("expected image message in quote")
+	}
+	if string(img.GetJPEGThumbnail()) != string(original.GetJPEGThumbnail()) {
+		t.Fatalf("thumbnail not preserved: %x", img.GetJPEGThumbnail())
+	}
+	if img.GetCaption() != "hi" {
+		t.Fatalf("caption = %q", img.GetCaption())
+	}
+}
+
+func TestOutgoingReplyParticipantNormalizesLIDToPNForDM(t *testing.T) {
+	ctx := context.Background()
+	client := &Client{}
+
+	// No live whatsmeow client, so a LID can't be resolved; it should be left
+	// as-is rather than crash. A PN sender in a DM is returned unchanged.
+	pn := "111@s.whatsapp.net"
+	if got := client.outgoingReplyParticipant(ctx, nil, "111@s.whatsapp.net", pn); got != pn {
+		t.Fatalf("participant = %q, want %q", got, pn)
+	}
+
+	lid := "55555@lid"
+	if got := client.outgoingReplyParticipant(ctx, nil, "111@s.whatsapp.net", lid); got != lid {
+		t.Fatalf("unresolvable LID participant = %q, want %q", got, lid)
+	}
+}
+
+func TestOutgoingImageThumbnailDownscales(t *testing.T) {
+	src := image.NewRGBA(image.Rect(0, 0, 400, 200))
+	for y := 0; y < 200; y++ {
+		for x := 0; x < 400; x++ {
+			src.SetRGBA(x, y, color.RGBA{R: uint8(x % 256), G: uint8(y % 256), B: 0x40, A: 0xFF})
+		}
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, src, &jpeg.Options{Quality: 90}); err != nil {
+		t.Fatalf("encode source: %v", err)
+	}
+
+	thumb := outgoingImageThumbnail(buf.Bytes())
+	if len(thumb) == 0 {
+		t.Fatal("expected a thumbnail")
+	}
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(thumb))
+	if err != nil {
+		t.Fatalf("decode thumbnail: %v", err)
+	}
+	if cfg.Width > outgoingThumbnailMaxDimension || cfg.Height > outgoingThumbnailMaxDimension {
+		t.Fatalf("thumbnail %dx%d exceeds max %d", cfg.Width, cfg.Height, outgoingThumbnailMaxDimension)
+	}
+	if cfg.Width != outgoingThumbnailMaxDimension {
+		t.Fatalf("expected longest side %d, got width %d", outgoingThumbnailMaxDimension, cfg.Width)
 	}
 }
 

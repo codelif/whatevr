@@ -7,8 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"image/color"
 	_ "image/gif"
-	_ "image/jpeg"
+	"image/jpeg"
 	_ "image/png"
 	"io"
 	"net/http"
@@ -301,6 +302,87 @@ func outboundImageExtension(mimeType string) (string, bool) {
 	}
 }
 
+const outgoingThumbnailMaxDimension = 100
+
+// outgoingImageThumbnail produces a small inline JPEG thumbnail for an outgoing
+// image, matching official-client behaviour. It returns nil when the image
+// can't be decoded. A simple box-average downscale is used to avoid pulling in
+// a resize dependency; thumbnails are tiny so quality is sufficient.
+func outgoingImageThumbnail(data []byte) []byte {
+	src, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil
+	}
+	bounds := src.Bounds()
+	srcW := bounds.Dx()
+	srcH := bounds.Dy()
+	if srcW <= 0 || srcH <= 0 {
+		return nil
+	}
+
+	dstW, dstH := thumbnailDimensions(srcW, srcH, outgoingThumbnailMaxDimension)
+	thumb := image.NewRGBA(image.Rect(0, 0, dstW, dstH))
+	for dy := 0; dy < dstH; dy++ {
+		y0 := bounds.Min.Y + dy*srcH/dstH
+		y1 := bounds.Min.Y + (dy+1)*srcH/dstH
+		if y1 <= y0 {
+			y1 = y0 + 1
+		}
+		for dx := 0; dx < dstW; dx++ {
+			x0 := bounds.Min.X + dx*srcW/dstW
+			x1 := bounds.Min.X + (dx+1)*srcW/dstW
+			if x1 <= x0 {
+				x1 = x0 + 1
+			}
+			var rSum, gSum, bSum, count uint64
+			for y := y0; y < y1; y++ {
+				for x := x0; x < x1; x++ {
+					r, g, b, _ := src.At(x, y).RGBA()
+					rSum += uint64(r)
+					gSum += uint64(g)
+					bSum += uint64(b)
+					count++
+				}
+			}
+			if count == 0 {
+				count = 1
+			}
+			thumb.SetRGBA(dx, dy, color.RGBA{
+				R: uint8((rSum / count) >> 8),
+				G: uint8((gSum / count) >> 8),
+				B: uint8((bSum / count) >> 8),
+				A: 0xFF,
+			})
+		}
+	}
+
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, thumb, &jpeg.Options{Quality: 70}); err != nil {
+		return nil
+	}
+	return buf.Bytes()
+}
+
+// thumbnailDimensions scales (srcW, srcH) so the longest side is at most max,
+// preserving aspect ratio. Images already within bounds are returned unchanged.
+func thumbnailDimensions(srcW, srcH, max int) (int, int) {
+	if srcW <= max && srcH <= max {
+		return srcW, srcH
+	}
+	if srcW >= srcH {
+		h := srcH * max / srcW
+		if h < 1 {
+			h = 1
+		}
+		return max, h
+	}
+	w := srcW * max / srcH
+	if w < 1 {
+		w = 1
+	}
+	return w, max
+}
+
 func safeFilenamePart(input string) string {
 	replacer := strings.NewReplacer("/", "_", "\\", "_", ":", "_", "@", "_")
 	return replacer.Replace(input)
@@ -401,7 +483,7 @@ func (c *Client) sendPendingMessage(ctx context.Context, client *whatsmeow.Clien
 	}
 
 	outgoingMessage := &waE2E.Message{Conversation: proto.String(message.Text)}
-	if contextInfo := outgoingReplyContextInfo(client, message); contextInfo != nil {
+	if contextInfo := c.outgoingReplyContextInfo(ctx, client, message); contextInfo != nil {
 		outgoingMessage = &waE2E.Message{
 			ExtendedTextMessage: &waE2E.ExtendedTextMessage{
 				Text:        proto.String(message.Text),
@@ -452,7 +534,13 @@ func (c *Client) sendPendingMediaMessage(ctx context.Context, client *whatsmeow.
 		FileSHA256:    resp.FileSHA256,
 		FileLength:    &resp.FileLength,
 	}
-	if contextInfo := outgoingReplyContextInfo(client, message); contextInfo != nil {
+	// Embed a small inline thumbnail like official clients do, so recipients
+	// have a preview while the full image downloads and so quotes of this
+	// image (here or on the other side) render a thumbnail.
+	if thumb := outgoingImageThumbnail(data); len(thumb) > 0 {
+		imgMsg.JPEGThumbnail = thumb
+	}
+	if contextInfo := c.outgoingReplyContextInfo(ctx, client, message); contextInfo != nil {
 		imgMsg.ContextInfo = contextInfo
 	}
 
@@ -466,38 +554,110 @@ func (c *Client) sendPendingMediaMessage(ctx context.Context, client *whatsmeow.
 		return fmt.Errorf("send media %s: %w", message.ID, err)
 	}
 
+	// Persist the sent image proto (including thumbnail/media keys) so a later
+	// reply quoting our own image can be reconstructed losslessly.
+	if payload, marshalErr := proto.Marshal(imgMsg); marshalErr == nil {
+		if _, dbErr := c.store.UpdateMessageMediaPayload(ctx, message.ID, payload); dbErr != nil {
+			c.log.Warnf("Failed to persist sent image payload for %s: %v", message.ID, dbErr)
+		}
+	}
+
 	c.markPendingMessageSent(ctx, message.ID)
 	return nil
 }
 
-func outgoingReplyContextInfo(client *whatsmeow.Client, message appstore.Message) *waE2E.ContextInfo {
+func (c *Client) outgoingReplyContextInfo(ctx context.Context, client *whatsmeow.Client, message appstore.Message) *waE2E.ContextInfo {
 	if message.ReplyTo.MessageID == "" {
 		return nil
 	}
-	stanzaID := appstore.ExternalMessageID(message.ChatID, message.ReplyTo.MessageID)
-	contextInfo := &waE2E.ContextInfo{
-		StanzaID:      proto.String(stanzaID),
-		RemoteJID:     proto.String(message.ChatID),
-		QuotedMessage: quotedMessageForReply(message.ReplyTo),
+
+	// Prefer the original stored message so the quote carries the full media
+	// proto (thumbnail, media keys, URL) recipients render the preview from.
+	// Fall back to the thin reply summary only if the original is gone.
+	stanzaSource := message.ReplyTo.MessageID
+	senderID := message.ReplyTo.SenderID
+	var quoted *waE2E.Message
+	if original, err := c.store.GetMessage(ctx, message.ReplyTo.MessageID); err == nil {
+		quoted = quotedMessageFromStored(original)
+		stanzaSource = original.ID
+		senderID = original.SenderID
+	} else {
+		quoted = quotedMessageForReply(message.ReplyTo)
 	}
-	if participant := outgoingReplyParticipant(client, message.ReplyTo.SenderID); participant != "" {
+
+	contextInfo := &waE2E.ContextInfo{
+		// RemoteJID is intentionally omitted for same-chat replies; setting it
+		// can break jump-to on official clients.
+		StanzaID:      proto.String(appstore.ExternalMessageID(message.ChatID, stanzaSource)),
+		QuotedMessage: quoted,
+	}
+	if participant := c.outgoingReplyParticipant(ctx, client, message.ChatID, senderID); participant != "" {
 		contextInfo.Participant = proto.String(participant)
 	}
 	return contextInfo
 }
 
-func outgoingReplyParticipant(client *whatsmeow.Client, senderID string) string {
+func (c *Client) outgoingReplyParticipant(ctx context.Context, client *whatsmeow.Client, chatID, senderID string) string {
 	senderID = strings.TrimSpace(senderID)
 	if senderID == "" {
 		return ""
 	}
-	if senderID != "me" {
+	if senderID == "me" {
+		if client == nil || client.Store.ID == nil {
+			return ""
+		}
+		return client.Store.ID.ToNonAD().String()
+	}
+	jid, err := types.ParseJID(senderID)
+	if err != nil {
 		return senderID
 	}
-	if client == nil || client.Store.ID == nil {
-		return ""
+	// DMs are sent PN-addressed, so a LID participant won't match on the
+	// recipient (breaks name resolution and jump-to). Normalize to the chat's
+	// addressing mode; groups keep the stored member JID.
+	if chatJID, err := types.ParseJID(chatID); err == nil && chatJID.Server != types.GroupServer && chatJID.Server != types.BroadcastServer {
+		jid = c.normalizeJIDForChat(ctx, jid)
 	}
-	return client.Store.ID.ToNonAD().String()
+	return jid.String()
+}
+
+// quotedMessageFromStored rebuilds the WhatsApp message proto to embed as the
+// quoted message in a reply, reusing the full media sub-proto persisted in
+// media_payload so stickers and photos render their thumbnails on the
+// recipient's side.
+func quotedMessageFromStored(message appstore.Message) *waE2E.Message {
+	switch message.MediaKind {
+	case appstore.MediaKindSticker:
+		sticker := &waE2E.StickerMessage{}
+		if len(message.MediaPayload) > 0 {
+			if err := proto.Unmarshal(message.MediaPayload, sticker); err != nil {
+				sticker = &waE2E.StickerMessage{}
+			}
+		}
+		if sticker.Mimetype == nil && message.MediaMimeType != "" {
+			sticker.Mimetype = proto.String(message.MediaMimeType)
+		}
+		return &waE2E.Message{StickerMessage: sticker}
+	case appstore.MediaKindImage:
+		img := &waE2E.ImageMessage{}
+		if len(message.MediaPayload) > 0 {
+			if err := proto.Unmarshal(message.MediaPayload, img); err != nil {
+				img = &waE2E.ImageMessage{}
+			}
+		}
+		if img.Mimetype == nil && message.MediaMimeType != "" {
+			img.Mimetype = proto.String(message.MediaMimeType)
+		}
+		if img.Caption == nil && message.Text != "" {
+			img.Caption = proto.String(message.Text)
+		}
+		return &waE2E.Message{ImageMessage: img}
+	default:
+		if message.Text != "" {
+			return &waE2E.Message{Conversation: proto.String(message.Text)}
+		}
+		return &waE2E.Message{Conversation: proto.String(replyMediaSummary(message.MediaKind, message.MediaMimeType))}
+	}
 }
 
 func quotedMessageForReply(reply appstore.MessageReply) *waE2E.Message {
