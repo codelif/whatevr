@@ -1,0 +1,140 @@
+use gtk::{gdk, pango, prelude::*};
+
+use crate::proto;
+use crate::ui::render::avatar::{cached_texture, schedule_async_image_load};
+use crate::ui::{commands::request_download_media, context::UiSender};
+use crate::util::time::format_message_meta;
+
+pub fn build_message_row(message: &proto::Message, sender: &UiSender) -> (gtk::Box, gtk::Label) {
+    let outgoing = message.direction == proto::MessageDirection::Outgoing as i32;
+
+    let bubble = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    bubble.add_css_class("message-bubble");
+
+    if outgoing {
+        bubble.add_css_class("outgoing");
+    } else {
+        bubble.add_css_class("incoming");
+    }
+
+    let has_image = message.media_mime_type.starts_with("image/");
+
+    if has_image {
+        let (display_w, display_h) = image_display_size(message);
+
+        if !message.media_local_path.is_empty() {
+            let picture = gtk::Picture::new();
+            picture.set_size_request(display_w, display_h);
+            picture.set_can_shrink(false);
+            picture.set_content_fit(gtk::ContentFit::Fill);
+            picture.add_css_class("image-placeholder");
+
+            set_accessible_label(&picture, "Attached image preview");
+
+            if let Some(texture) = cached_texture(&message.media_local_path) {
+                picture.set_paintable(Some(&texture));
+            } else {
+                schedule_async_image_load(
+                    picture.clone(),
+                    message.media_local_path.clone(),
+                    display_w,
+                    display_h,
+                );
+            }
+
+            bubble.append(&picture);
+        } else {
+            let button = gtk::Button::with_label("Load image");
+            button.set_size_request(display_w, display_h);
+            button.add_css_class("media-load-button");
+            button.set_tooltip_text(Some("Download this image from WhatsApp"));
+            set_accessible_label(&button, "Load attached image");
+
+            let sender = sender.clone();
+            let message_id = message.id.clone();
+            button.connect_clicked(move |_| {
+                request_download_media(sender.clone(), message_id.clone());
+            });
+
+            bubble.append(&button);
+        }
+    }
+
+    if !message.text.is_empty() {
+        let message_label = gtk::Label::new(Some(message.text.as_str()));
+        message_label.set_xalign(0.0);
+        message_label.set_wrap(true);
+        message_label.set_wrap_mode(pango::WrapMode::WordChar);
+        message_label.set_max_width_chars(62);
+        message_label.set_selectable(true);
+        message_label.add_css_class("message-text");
+        bubble.append(&message_label);
+    } else if !has_image {
+        let message_label = gtk::Label::new(Some(""));
+        message_label.add_css_class("message-text");
+        bubble.append(&message_label);
+    }
+
+    let meta = gtk::Label::builder()
+        .label(format_message_meta(message))
+        .xalign(if outgoing { 1.0 } else { 0.0 })
+        .css_classes(["caption", "dim-label"])
+        .build();
+
+    let column = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(4)
+        .build();
+
+    column.append(&bubble);
+    column.append(&meta);
+
+    let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    spacer.set_hexpand(true);
+
+    let row = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .hexpand(true)
+        .build();
+
+    if outgoing {
+        row.append(&spacer);
+        row.append(&column);
+    } else {
+        row.append(&column);
+        row.append(&spacer);
+    }
+
+    (row, meta)
+}
+
+fn set_accessible_label(widget: &impl IsA<gtk::Accessible>, label: &str) {
+    widget.update_property(&[gtk::accessible::Property::Label(label)]);
+}
+
+fn image_display_size(message: &proto::Message) -> (i32, i32) {
+    const MAX_IMG_W: i32 = 280;
+    const MAX_IMG_H: i32 = 360;
+
+    let raw_dims = if message.media_width > 0 && message.media_height > 0 {
+        Some((message.media_width, message.media_height))
+    } else if !message.media_local_path.is_empty() {
+        gdk::gdk_pixbuf::Pixbuf::file_info(&message.media_local_path).map(|(_, w, h)| (w, h))
+    } else {
+        None
+    };
+
+    let Some((raw_w, raw_h)) = raw_dims else {
+        return (MAX_IMG_W, 180);
+    };
+
+    let scale_w = MAX_IMG_W as f64 / raw_w.max(1) as f64;
+    let tentative_h = (raw_h as f64 * scale_w).round() as i32;
+
+    if tentative_h <= MAX_IMG_H {
+        (MAX_IMG_W, tentative_h.max(1))
+    } else {
+        let scale_h = MAX_IMG_H as f64 / raw_h.max(1) as f64;
+        (((raw_w as f64 * scale_h).round() as i32).max(1), MAX_IMG_H)
+    }
+}
