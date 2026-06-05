@@ -332,7 +332,9 @@ Popup {
             cellHeight: root.cellSize
             keyNavigationWraps: true
             highlightMoveDuration: 60
-            currentIndex: count > 0 ? Math.max(0, Math.min(currentIndex, count - 1)) : -1
+            // Clamp on count changes instead of binding currentIndex to itself
+            // (a self-referential binding loop).
+            onCountChanged: currentIndex = count > 0 ? Math.max(0, Math.min(currentIndex, count - 1)) : -1
 
             SequentialAnimation {
                 id: gridFadeOut
@@ -441,33 +443,24 @@ Popup {
                     renderType: Text.QtRendering
                 }
 
-                Canvas {
+                // Bottom-right corner triangle marking emoji with skin-tone
+                // variants. A cached glyph is far cheaper than a per-tile Canvas
+                // (which is an FBO-backed item repainted from JS on every hover).
+                Text {
                     id: variantMarker
-
-                    readonly property color markerColor: emojiHover.hovered || emojiGrid.currentIndex === emojiTile.index
-                                                         ? Kirigami.Theme.highlightColor
-                                                         : Kirigami.Theme.disabledTextColor
 
                     anchors.right: parent.right
                     anchors.bottom: parent.bottom
                     anchors.rightMargin: Kirigami.Units.smallSpacing * 0.65
                     anchors.bottomMargin: Kirigami.Units.smallSpacing * 0.65
-                    width: Kirigami.Units.smallSpacing
-                    height: width
+                    text: "◢" // ◢ black lower-right triangle
+                    font.pixelSize: Math.round(Kirigami.Units.smallSpacing * 1.3)
+                    color: emojiHover.hovered || emojiGrid.currentIndex === emojiTile.index
+                           ? Kirigami.Theme.highlightColor
+                           : Kirigami.Theme.disabledTextColor
                     visible: emojiTile.alternates && emojiTile.alternates.length > 0
                     opacity: visible ? 0.9 : 0
-                    onMarkerColorChanged: requestPaint()
-                    onPaint: {
-                        const ctx = getContext("2d")
-                        ctx.reset()
-                        ctx.fillStyle = markerColor
-                        ctx.beginPath()
-                        ctx.moveTo(width, 0)
-                        ctx.lineTo(width, height)
-                        ctx.lineTo(0, height)
-                        ctx.closePath()
-                        ctx.fill()
-                    }
+                    renderType: Text.QtRendering
                 }
 
                 HoverHandler {
