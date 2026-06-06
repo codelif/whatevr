@@ -42,7 +42,9 @@ rlottie.
 # Arch
 sudo pacman -S --needed base-devel go sqlite pkgconf cmake ninja \
   extra-cmake-modules qt6-base qt6-declarative qt6-shadertools qt6-grpc \
-  kcoreaddons kdbusaddons ki18n kirigami kirigami-addons prison rlottie
+  kcoreaddons kdbusaddons ki18n kirigami kirigami-addons prison rlottie 
+
+# Note: rlottie is not available on the official Arch repos, you can install it from the AUR 
 
 # Fedora
 sudo dnf install go gcc gcc-c++ sqlite-devel pkgconf-pkg-config cmake ninja-build \
