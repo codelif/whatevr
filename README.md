@@ -17,119 +17,123 @@ A Linux-first native client for WhatsApp. It uses [whatsmeow](https://github.com
 </details>
 
 ## Getting it
-Currently you can only get Whatevr by building it
+Currently you can only get Whatevr by building it (see Building below). Packaging
+recipes for Flatpak, Arch, Debian and RPM live under [`packaging/`](packaging/);
+
 
 ## Building
 <details>
     <summary>Build Instructions</summary>
     
-Build and run the daemon first. Frontends expect `whatevrd` to be running.
+whatevr builds through a single top-level `Makefile` that compiles **both** the
+daemon (`whatevrd`) and the Qt/Kirigami frontend (`whatkevr`). The daemon must be
+running for any frontend to work. Before building, check the
+[Platform support](#platform-support) floors above — on distros that are too old
+(e.g. Ubuntu LTS) use Flatpak instead of a source build.
 
-### daemon
+#### 1. Install dependencies
 
-Dependencies:
-
-- Go 1.25+
-- C compiler
-- SQLite development files
-- pkg-config
-
-Arch/Fedora/Debian examples:
+**Daemon:** Go 1.25+, a C compiler, SQLite dev files, pkg-config.
+**Frontend:** C++20 compiler, CMake 3.21+, Ninja, Qt 6.8+, KDE Frameworks 6.5+
+(KCoreAddons, KDBusAddons, KI18n, Kirigami, Prison), Kirigami Addons 1.0+,
+rlottie.
 
 ```sh
-sudo pacman -S --needed base-devel go sqlite pkgconf
-sudo dnf install go gcc sqlite-devel pkgconf-pkg-config
-sudo apt install golang gcc libsqlite3-dev pkg-config
+# Arch
+sudo pacman -S --needed base-devel go sqlite pkgconf cmake ninja \
+  extra-cmake-modules qt6-base qt6-declarative qt6-shadertools qt6-grpc \
+  kcoreaddons kdbusaddons ki18n kirigami kirigami-addons prison rlottie
+
+# Fedora
+sudo dnf install go gcc gcc-c++ sqlite-devel pkgconf-pkg-config cmake ninja-build \
+  extra-cmake-modules qt6-qtbase-devel qt6-qtdeclarative-devel \
+  qt6-qtshadertools-devel qt6-qtgrpc-devel kf6-kcoreaddons-devel \
+  kf6-kdbusaddons-devel kf6-ki18n-devel kf6-kirigami-devel kf6-prison-devel \
+  kf6-kirigami-addons-devel rlottie-devel
+
+# Debian 13 "trixie" (needs Go >= 1.25 — see Platform support)
+sudo apt install golang gcc g++ libsqlite3-dev pkg-config cmake ninja-build \
+  extra-cmake-modules qt6-base-dev qt6-declarative-dev qt6-shadertools-dev \
+  qt6-grpc-dev libkf6coreaddons-dev libkf6dbusaddons-dev libkf6i18n-dev \
+  libkf6kirigami-dev libkf6prison-dev kirigami-addons-dev librlottie-dev
 ```
 
-Build:
+#### 2. Build and install
 
 ```sh
-cd whatevrd
-go build -o ~/.local/bin/whatevrd ./cmd/whatevrd
+make build                            # build daemon + frontend
+make install PREFIX="$HOME/.local"    # user-local install
+# or system-wide:
+sudo make install PREFIX=/usr
 ```
 
-Run:
+`make install` places the `whatevrd` and `whatkevr` binaries, desktop entry,
+icon, AppStream metainfo and the systemd user units under `PREFIX`. Make sure the
+chosen `bin` directory is on your `PATH` (e.g. `~/.local/bin`).
+
+Other handy targets: `make version`, `make validate`, `make clean`, and the
+packaging targets `make package-{flatpak,arch,deb,rpm}`.
+
+#### 3. Run
+
+Start the daemon, then the frontend:
 
 ```sh
-~/.local/bin/whatevrd
-```
-
-Optional systemd user service:
-
-```sh
-mkdir -p ~/.config/systemd/user
-cp packaging/systemd/whatevrd.service ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now whatevrd.service
-```
-
-### Qt frontend: whatkevr
-
-Dependencies:
-
-- C++20 compiler
-- CMake 3.16+
-- Ninja
-- Qt 6.11+
-- KDE Frameworks 6.25+
-- Kirigami Addons
-- rlottie
-
-Arch/Fedora/Debian examples:
-
-```sh
-sudo pacman -S --needed base-devel cmake ninja extra-cmake-modules qt6-base qt6-declarative qt6-shadertools qt6-grpc kcoreaddons ki18n kirigami kirigami-addons prison rlottie
-sudo dnf install gcc-c++ cmake ninja-build extra-cmake-modules qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtshadertools-devel qt6-qtgrpc-devel kf6-kcoreaddons-devel kf6-ki18n-devel kf6-kirigami-devel kf6-prison-devel kf6-kirigami-addons-devel rlottie-devel
-sudo apt install g++ cmake ninja-build extra-cmake-modules
-```
-
-Debian/Ubuntu may not ship new enough Qt/KDE packages.
-
-Build:
-
-```sh
-cd whatkevr
-cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX="$HOME/.local"
-cmake --build build
-cmake --install build
-```
-
-Run:
-
-```sh
+whatevrd      # or run it via systemd (below)
 whatkevr
 ```
 
-### GTK frontend: whatgevr
+#### Run the daemon via systemd (optional)
 
-Dependencies:
+`make install` ships two **mutually exclusive** user units — enable **one**,
+never both (they share the same socket path):
 
-- Rust
-- GTK4 development files
-- libadwaita development files
-- pkg-config
-
-Arch/Fedora/Debian examples:
+- **Socket activation (recommended):** the daemon starts on demand the moment a
+  frontend connects, and keeps running afterwards.
+- **Always-on service:** the daemon starts at login.
 
 ```sh
-sudo pacman -S --needed rust gtk4 libadwaita pkgconf
-sudo dnf install rust cargo gtk4-devel libadwaita-devel pkgconf-pkg-config
-sudo apt install rustc cargo libgtk-4-dev libadwaita-1-dev pkg-config
+systemctl --user daemon-reload
+systemctl --user enable --now whatevrd.socket     # socket activation (recommended)
+# or
+systemctl --user enable --now whatevrd.service    # always-on
 ```
 
-Build:
+A **user-local** install puts the units under `~/.local/lib/systemd/user`, which
+systemd does not search. Copy them into a searched path first (the templated
+service needs the binary path substituted):
 
 ```sh
+mkdir -p ~/.config/systemd/user
+sed "s|@BINDIR@|$HOME/.local/bin|g" packaging/systemd/whatevrd.service.in \
+  > ~/.config/systemd/user/whatevrd.service
+cp packaging/systemd/whatevrd.socket ~/.config/systemd/user/
+systemctl --user daemon-reload
+```
+
+Distro packages install both units to `/usr/lib/systemd/user/` (shipped disabled).
+
+#### Notification deep links
+
+Clicking a message notification opens that chat directly via the
+`whatevr://chat/<id>` URL scheme. Distro packages register the handler
+automatically; for a manual install, register it once:
+
+```sh
+update-desktop-database ~/.local/share/applications
+xdg-mime default in.codelif.Whatevr.desktop x-scheme-handler/whatevr
+```
+
+#### Other frontends: whatgevr (unmaintained)
+
+The GTK4/libadwaita frontend is not actively maintained and is excluded from the
+Makefile and packaging. Build it manually if you want to hack on it:
+
+```sh
+# deps: rust, gtk4, libadwaita, pkg-config
 cd whatgevr
 cargo build --release
 install -Dm755 target/release/whatevr ~/.local/bin/whatevr
-```
-
-Run:
-
-```sh
-whatevr
 ```
 
 </details>
