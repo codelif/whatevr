@@ -192,6 +192,7 @@ Now with that, here is the current feature map, this is for whatevrd+whatkevr.
 | Account/profile editing | ❌ | |
 | Import/export backups | ❌ | |
 | DB encryption and keyring integration | ❌ | |
+| Daemon SNI (Tray) | ❌ | |
   
 </details>
 
