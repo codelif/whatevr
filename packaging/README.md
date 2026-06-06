@@ -52,4 +52,3 @@ Build/runtime dependencies of `whatkevr` + `whatevrd`, by ecosystem:
   [`systemd/whatevrd.service.in`](systemd/) and installed to
   `/usr/lib/systemd/user/whatevrd.service`, shipped **disabled** (per distro
   policy). Users enable it with `systemctl --user enable --now whatevrd.service`.
-- The application icon (`in.codelif.Whatevr.svg`) is currently a placeholder —
