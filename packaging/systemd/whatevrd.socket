@@ -1,0 +1,13 @@
+[Unit]
+Description=whatevr daemon socket
+
+[Socket]
+# Must match the path the daemon and frontends use:
+#   $XDG_RUNTIME_DIR/whatevrd/whatevrd.sock   (%t = runtime dir for user units)
+# systemd creates the parent directory and owns the socket; the daemon adopts
+# the inherited fd via socket activation and never unlinks it.
+ListenStream=%t/whatevrd/whatevrd.sock
+SocketMode=0600
+
+[Install]
+WantedBy=sockets.target

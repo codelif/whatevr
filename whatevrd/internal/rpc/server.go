@@ -26,25 +26,39 @@ type Server struct {
 	grpcServer *grpc.Server
 	listener   net.Listener
 	socketPath string
+	ownsSocket bool
 	errCh      chan error
 }
 
-func Start(ctx context.Context, socketPath string, daemon *app.Daemon, login LoginController, frontend FrontendSessionController, chatStore ChatStore, chatActions ChatActionController, sendController SendController, reconnector ReconnectController) (*Server, error) {
-	if err := validateSocketDir(socketPath); err != nil {
-		return nil, err
-	}
-	if err := removeStaleSocket(socketPath); err != nil {
-		return nil, err
-	}
+// Start serves the gRPC API on socketPath. When activated is non-nil (systemd
+// socket activation), that inherited listener is used and systemd owns the
+// socket file; otherwise the daemon creates and owns the socket itself.
+func Start(ctx context.Context, socketPath string, activated net.Listener, daemon *app.Daemon, login LoginController, frontend FrontendSessionController, chatStore ChatStore, chatActions ChatActionController, sendController SendController, reconnector ReconnectController) (*Server, error) {
+	var (
+		listener   net.Listener
+		ownsSocket bool
+	)
+	if activated != nil {
+		// systemd created, secured (SocketMode=) and owns the socket file.
+		listener = activated
+	} else {
+		if err := validateSocketDir(socketPath); err != nil {
+			return nil, err
+		}
+		if err := removeStaleSocket(socketPath); err != nil {
+			return nil, err
+		}
 
-	listener, err := net.Listen("unix", socketPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := os.Chmod(socketPath, 0o600); err != nil {
-		listener.Close()
-		return nil, err
+		ln, err := net.Listen("unix", socketPath)
+		if err != nil {
+			return nil, err
+		}
+		if err := os.Chmod(socketPath, 0o600); err != nil {
+			ln.Close()
+			return nil, err
+		}
+		listener = ln
+		ownsSocket = true
 	}
 
 	grpcServer := grpc.NewServer(
@@ -62,6 +76,7 @@ func Start(ctx context.Context, socketPath string, daemon *app.Daemon, login Log
 		grpcServer: grpcServer,
 		listener:   sameUIDListener{Listener: listener},
 		socketPath: socketPath,
+		ownsSocket: ownsSocket,
 		errCh:      make(chan error, 1),
 	}
 
@@ -173,7 +188,11 @@ func (s *Server) serve(ctx context.Context) {
 			s.grpcServer.Stop()
 		}
 		s.listener.Close()
-		_ = os.Remove(s.socketPath)
+		// Only remove the socket file if we created it. Under systemd socket
+		// activation systemd owns the socket and reuses it for the next start.
+		if s.ownsSocket {
+			_ = os.Remove(s.socketPath)
+		}
 	}()
 
 	if err := s.grpcServer.Serve(s.listener); err != nil && ctx.Err() == nil {

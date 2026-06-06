@@ -1,0 +1,37 @@
+Source: whatevr
+Section: net
+Priority: optional
+Maintainer: Harsh Sharma <saatwiksingh2404@gmail.com>
+# NOTE: golang-go must be >= 1.25 (required by whatsmeow). Debian trixie ships
+# 1.24, so a backported golang-1.25 or GOTOOLCHAIN=auto is needed there.
+Build-Depends:
+ debhelper-compat (= 13),
+ golang-go (>= 2:1.25~),
+ gcc,
+ libsqlite3-dev,
+ cmake (>= 3.21),
+ ninja-build,
+ extra-cmake-modules (>= 6.5),
+ qt6-base-dev (>= 6.8),
+ qt6-declarative-dev (>= 6.8),
+ qt6-grpc-dev (>= 6.8),
+ qt6-shadertools-dev (>= 6.8),
+ libkf6coreaddons-dev (>= 6.5),
+ libkf6dbusaddons-dev (>= 6.5),
+ libkf6i18n-dev (>= 6.5),
+ libkf6kirigami-dev (>= 6.5),
+ libkf6prison-dev (>= 6.5),
+ kirigami-addons-dev (>= 1.0),
+ librlottie-dev,
+Standards-Version: 4.6.2
+Homepage: https://github.com/codelif/whatevr
+Rules-Requires-Root: no
+
+Package: whatevr
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Native WhatsApp client for Linux
+ Whatevr is a Linux-first native client for WhatsApp built around the whatevrd
+ background daemon, which owns the WhatsApp connection, local store, media
+ cache and notifications, and exposes a local gRPC API. This package ships the
+ daemon together with the Qt/Kirigami frontend, whatkevr.

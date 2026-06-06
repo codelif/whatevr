@@ -2128,9 +2128,69 @@ void AppController::clearBanner()
     emitStateChanged();
 }
 
+void AppController::handleCommandLine(const QStringList &arguments)
+{
+    QString uri;
+    for (const QString &arg : arguments) {
+        if (arg.startsWith(QStringLiteral("whatevr:"), Qt::CaseInsensitive)) {
+            uri = arg;
+            break;
+        }
+    }
+    if (uri.isEmpty()) {
+        Q_EMIT activateWindowRequested();
+        return;
+    }
+    openChatFromUri(uri);
+}
+
+void AppController::openChatFromUri(const QString &uri)
+{
+    // Expected form: whatevr://chat/<percent-encoded-chat-id> (emitted by the
+    // daemon's notification handler).
+    const QUrl url(uri);
+    if (url.scheme().compare(QStringLiteral("whatevr"), Qt::CaseInsensitive) != 0
+        || url.host() != QStringLiteral("chat")) {
+        Q_EMIT activateWindowRequested();
+        return;
+    }
+
+    QString chatId = url.path(QUrl::FullyDecoded);
+    if (chatId.startsWith(QLatin1Char('/'))) {
+        chatId = chatId.mid(1);
+    }
+    if (chatId.isEmpty()) {
+        Q_EMIT activateWindowRequested();
+        return;
+    }
+
+    m_pendingDeepLinkChatId = chatId;
+    Q_EMIT activateWindowRequested();
+    tryApplyPendingDeepLink();
+}
+
+void AppController::tryApplyPendingDeepLink()
+{
+    if (m_pendingDeepLinkChatId.isEmpty()) {
+        return;
+    }
+    // A chat can only be opened once the chat shell is up; otherwise keep the
+    // request pending and retry on the next state change (e.g. after the daemon
+    // connects or login completes following a cold start from a notification).
+    if (!shellVisible()) {
+        return;
+    }
+
+    const QString chatId = m_pendingDeepLinkChatId;
+    m_pendingDeepLinkChatId.clear();
+    selectChat(chatId);
+    Q_EMIT openChatRequested(chatId);
+}
+
 void AppController::emitStateChanged()
 {
     Q_EMIT stateChanged();
+    tryApplyPendingDeepLink();
 }
 
 void AppController::updateSelectedChatData()

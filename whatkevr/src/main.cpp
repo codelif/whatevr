@@ -5,10 +5,12 @@
 #include <QQuickStyle>
 
 #include <KAboutData>
+#include <KDBusService>
 #include <KLocalizedContext>
 #include <KLocalizedString>
 
 #include "app/appcontroller.h"
+#include "version.h"
 
 int main(int argc, char *argv[])
 {
@@ -26,7 +28,7 @@ int main(int argc, char *argv[])
 
     KAboutData aboutData(QStringLiteral("in.codelif.Whatevr"),
                          i18nc("@title", "Whatevr"),
-                         QStringLiteral("0.1.0"));
+                         QStringLiteral(WHATEVR_VERSION_STRING));
     aboutData.setDesktopFileName(QStringLiteral("in.codelif.Whatevr"));
     aboutData.setShortDescription(
         i18nc("@info", "Kirigami frontend bootstrap for the whatevrd background daemon."));
@@ -43,6 +45,18 @@ int main(int argc, char *argv[])
     AppController appController;
     AppController::setInstance(&appController);
 
+    // Single-instance: a second launch (e.g. clicking a notification, which runs
+    // `whatkevr whatevr://chat/<id>` via the desktop scheme handler) forwards its
+    // command line to the running instance through activateRequested instead of
+    // starting a new window.
+    KDBusService service(KDBusService::Unique);
+    QObject::connect(&service,
+                     &KDBusService::activateRequested,
+                     &appController,
+                     [&appController](const QStringList &arguments, const QString &) {
+                         appController.handleCommandLine(arguments);
+                     });
+
     QObject::connect(
         &engine,
         &QQmlApplicationEngine::objectCreationFailed,
@@ -53,6 +67,9 @@ int main(int argc, char *argv[])
         Qt::QueuedConnection);
 
     engine.loadFromModule(QStringLiteral("Whatevr"), QStringLiteral("Main"));
+
+    // Process the URL this instance was launched with, if any.
+    appController.handleCommandLine(app.arguments());
 
     return app.exec();
 }

@@ -18,6 +18,9 @@ Kirigami.ApplicationWindow {
     property var conversationPageItem: null
     property var transientPageItem: null
     property bool pendingSelectionClear: false
+    // Set when a deep link (e.g. notification click) selected a chat; consumed
+    // by syncChatLayout once the chat pages exist so we navigate to it.
+    property bool pendingShowConversation: false
 
     width: 1180
     height: 760
@@ -186,6 +189,17 @@ Kirigami.ApplicationWindow {
         // this only sets which one is focused.
         pageStack.currentIndex = Whatevr.AppController.hasSelectedChat ? 1 : 0
         updateCloseChatActionVisibility()
+
+        if (pendingShowConversation && Whatevr.AppController.hasSelectedChat) {
+            pendingShowConversation = false
+            showConversation()
+        }
+    }
+
+    function activateWindow() {
+        root.show()
+        root.raise()
+        root.requestActivate()
     }
 
     function updateCloseChatActionVisibility() {
@@ -278,6 +292,16 @@ Kirigami.ApplicationWindow {
 
         function onSelectionChanged() {
             root.updateCloseChatActionVisibility()
+        }
+
+        function onActivateWindowRequested() {
+            root.activateWindow()
+        }
+
+        function onOpenChatRequested(chatId) {
+            root.pendingShowConversation = true
+            root.activateWindow()
+            root.scheduleRebuildPageStack()
         }
     }
 }

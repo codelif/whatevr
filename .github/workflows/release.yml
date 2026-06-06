@@ -1,0 +1,25 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  dist:
+    name: Source tarball
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history + tags for `make version`/`make dist`
+      - name: Build source tarball
+        run: make dist
+      - name: Publish release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/whatevr-*.tar.gz
+          generate_release_notes: true

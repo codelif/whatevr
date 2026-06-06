@@ -60,5 +60,7 @@ Cargo.lock
 
 /whatevrd/whatevrd
 /whatkevr/build/
+# Top-level Makefile build/staging output.
+/build/
 *.log
 .mcpcode/

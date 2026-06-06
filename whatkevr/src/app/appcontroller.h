@@ -170,8 +170,16 @@ public:
     Q_INVOKABLE [[nodiscard]] bool isMessageMediaDownloading(const QString &messageId) const;
     Q_INVOKABLE void logout();
 
+    // Entry points for single-instance activation / deep links. handleCommandLine
+    // is fed the argv of this or a forwarded secondary instance (KDBusService);
+    // it raises the window and, if a whatevr:// URL is present, opens that chat.
+    void handleCommandLine(const QStringList &arguments);
+    void openChatFromUri(const QString &uri);
+
 Q_SIGNALS:
     void stateChanged();
+    void activateWindowRequested();
+    void openChatRequested(const QString &chatId);
     void chatsChanged();
     void messagesChanged();
     void composerChanged();
@@ -221,6 +229,7 @@ private:
     void cacheMessages(const QString &chatId, const QList<whatevr::v1::Message> &messages, bool canLoadOlderMessages);
     bool restoreCachedMessages(const QString &chatId);
     void scheduleSelectedChatMessageReload(const QString &chatId);
+    void tryApplyPendingDeepLink();
 
     bool m_loading = true;
     bool m_loginRequired = false;
@@ -303,4 +312,5 @@ private:
     QString m_localComposingChatId;
     QString m_markChatReadChatId;
     QString m_pendingMarkChatReadId;
+    QString m_pendingDeepLinkChatId;
 };

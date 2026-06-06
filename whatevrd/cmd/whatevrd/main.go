@@ -26,6 +26,13 @@ func main() {
 		log.Fatalf("create runtime/data directories: %v", err)
 	}
 
+	// Adopt a systemd-activated socket if present (and clear LISTEN_* so it is
+	// never inherited by child processes). nil means run standalone.
+	activatedListener, err := app.SystemdListener()
+	if err != nil {
+		log.Fatalf("adopt systemd socket: %v", err)
+	}
+
 	processLock, err := app.AcquireProcessLock(paths.LockPath)
 	if err != nil {
 		log.Fatalf("acquire process lock: %v", err)
@@ -53,7 +60,7 @@ func main() {
 	}
 	defer waClient.Close()
 
-	server, err := daemonrpc.Start(ctx, paths.SocketPath, daemon, waClient, waClient, db, waClient, waClient, waClient)
+	server, err := daemonrpc.Start(ctx, paths.SocketPath, activatedListener, daemon, waClient, waClient, db, waClient, waClient, waClient)
 	if err != nil {
 		log.Fatalf("start rpc server: %v", err)
 	}

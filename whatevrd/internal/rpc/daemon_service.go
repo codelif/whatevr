@@ -11,7 +11,10 @@ import (
 	"whatevrd/internal/rpc/pb"
 )
 
-const Version = "dev"
+// Version is the daemon's reported version. It defaults to "dev" and is
+// overridden at build time via -ldflags "-X whatevrd/internal/rpc.Version=...".
+// It must remain a var (not a const) for the linker override to take effect.
+var Version = "dev"
 
 type ReconnectController interface {
 	Reconnect(context.Context) error

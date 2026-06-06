@@ -6,7 +6,7 @@ PartOf=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/whatevrd
+ExecStart=@BINDIR@/whatevrd
 Restart=on-failure
 RestartSec=5s
 

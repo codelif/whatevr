@@ -1,0 +1,23 @@
+name: Flatpak
+
+# Manual-only until the manifest's offline Go build + runtime/Go-version
+# pinning are finalized (see packaging/flatpak/in.codelif.Whatevr.yaml).
+on:
+  workflow_dispatch:
+
+jobs:
+  flatpak:
+    name: Build Flatpak bundle
+    runs-on: ubuntu-latest
+    container:
+      image: bilelmoussaoui/flatpak-github-actions:kde-6.10
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: whatevr.flatpak
+          manifest-path: packaging/flatpak/in.codelif.Whatevr.yaml
+          cache-key: flatpak-builder-${{ github.sha }}

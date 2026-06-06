@@ -1,6 +1,26 @@
-cmake_minimum_required(VERSION 3.16)
+# 3.21 is required by Qt 6.8's qt_add_grpc/qt_add_protobuf CMake API and by the
+# ECM/KDEInstallDirs modules used below.
+cmake_minimum_required(VERSION 3.21)
 
-project(whatkevr VERSION 0.1.0 LANGUAGES CXX)
+# Version is supplied by the top-level Makefile (-DWHATEVR_VERSION numeric,
+# -DWHATEVR_VERSION_FULL descriptive). When CMake is invoked standalone (e.g. by
+# distro packagers) fall back to the repo-root VERSION file so there is still a
+# single source of truth.
+if(NOT DEFINED WHATEVR_VERSION)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../VERSION")
+        file(READ "${CMAKE_CURRENT_SOURCE_DIR}/../VERSION" WHATEVR_VERSION)
+        string(STRIP "${WHATEVR_VERSION}" WHATEVR_VERSION)
+        string(REGEX MATCH "^[0-9]+\\.[0-9]+\\.[0-9]+" WHATEVR_VERSION "${WHATEVR_VERSION}")
+    endif()
+    if(NOT WHATEVR_VERSION)
+        set(WHATEVR_VERSION "0.0.0")
+    endif()
+endif()
+if(NOT DEFINED WHATEVR_VERSION_FULL)
+    set(WHATEVR_VERSION_FULL "${WHATEVR_VERSION}")
+endif()
+
+project(whatkevr VERSION ${WHATEVR_VERSION} LANGUAGES CXX)
 
 # Without an explicit build type the compiler runs with no optimisation, which
 # makes the QML/scene-graph paths noticeably slower. Default to an optimised
@@ -9,8 +29,13 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
 endif()
 
-set(QT_MIN_VERSION "6.11.0")
-set(KF_MIN_VERSION "6.25.0")
+# Floors are chosen against the APIs actually used, not the dev's installed
+# versions. Qt 6.8 is the HARD floor: Qt GRPC/Protobuf only became stable in
+# 6.8 LTS, and the code relies on 6.8 signatures (QGrpcCallReply::finished(
+# QGrpcStatus), shared_ptr channels). KF 6.5 is the current target floor for
+# Kirigami/Prison/KI18n-QML; validated per-distro in CI (see packaging/README).
+set(QT_MIN_VERSION "6.8.0")
+set(KF_MIN_VERSION "6.5.0")
 
 find_package(ECM ${KF_MIN_VERSION} REQUIRED NO_MODULE)
 set(CMAKE_MODULE_PATH ${ECM_MODULE_PATH})
@@ -24,8 +49,8 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(Qt6 ${QT_MIN_VERSION} REQUIRED COMPONENTS Core Gui Network Protobuf Grpc Qml Quick QuickControls2 ShaderTools Widgets)
-find_package(KF6 ${KF_MIN_VERSION} REQUIRED COMPONENTS CoreAddons I18n Kirigami Prison)
-find_package(KF6KirigamiAddons REQUIRED)
+find_package(KF6 ${KF_MIN_VERSION} REQUIRED COMPONENTS CoreAddons DBusAddons I18n Kirigami Prison)
+find_package(KF6KirigamiAddons 1.0.0 REQUIRED)
 find_package(rlottie REQUIRED)
 
 if(QT_KNOWN_POLICY_QTP0004)
@@ -83,7 +108,14 @@ set_target_properties(whatkevr PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/version.h.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/version.h"
+    @ONLY
+)
+
 target_include_directories(whatkevr PRIVATE
+    ${CMAKE_CURRENT_BINARY_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
     ${CMAKE_CURRENT_SOURCE_DIR}/src/util
@@ -140,6 +172,7 @@ target_link_libraries(whatkevr PRIVATE
     Qt6::QuickControls2
     Qt6::Widgets
     KF6::CoreAddons
+    KF6::DBusAddons
     KF6::I18n
     KF6::Kirigami
     KF6::Prison
@@ -151,6 +184,10 @@ install(TARGETS whatkevr RUNTIME DESTINATION ${KDE_INSTALL_BINDIR})
 install(FILES
     data/in.codelif.Whatevr.desktop
     DESTINATION ${KDE_INSTALL_APPDIR}
+)
+install(FILES
+    data/icons/in.codelif.Whatevr.svg
+    DESTINATION ${KDE_INSTALL_ICONDIR}/hicolor/scalable/apps
 )
 install(FILES
     data/in.codelif.Whatevr.metainfo.xml
