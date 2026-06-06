@@ -1,7 +1,7 @@
 Source: whatevr
 Section: net
 Priority: optional
-Maintainer: Harsh Sharma <saatwiksingh2404@gmail.com>
+Maintainer: Harsh Sharma <harsh@codelif.in>
 # NOTE: golang-go must be >= 1.25 (required by whatsmeow). Debian trixie ships
 # 1.24, so a backported golang-1.25 or GOTOOLCHAIN=auto is needed there.
 Build-Depends:

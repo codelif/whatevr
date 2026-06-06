@@ -63,5 +63,5 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/in.codelif.Whatevr.me
 %{_userunitdir}/whatevrd.service
 
 %changelog
-* Sat Jun 06 2026 Harsh Sharma <saatwiksingh2404@gmail.com> - 0.1.0-1
+* Sat Jun 06 2026 Harsh Sharma <harsh@codelif.in> - 0.1.0-1
 - Initial packaging.

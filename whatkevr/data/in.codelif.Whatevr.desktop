@@ -8,6 +8,4 @@ Terminal=false
 Categories=Network;Chat;InstantMessaging;Qt;KDE;
 Keywords=WhatsApp;Messaging;Chat;
 StartupNotify=true
-# whatevr://chat/<id> deep links (used by notification clicks) are handled by
-# whatkevr; single-instance routing is done via KDBusService.
 MimeType=x-scheme-handler/whatevr;

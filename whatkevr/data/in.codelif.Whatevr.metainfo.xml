@@ -10,7 +10,6 @@
   <project_license>BSD-3-Clause</project_license>
   <description>
     <p>Whatevr is a native Linux WhatsApp client backed by the whatevrd background daemon.</p>
-    <p>This Kirigami remake starts with a KDE-native bootstrap shell and will grow feature-by-feature around the existing daemon contract.</p>
   </description>
   <launchable type="desktop-id">in.codelif.Whatevr.desktop</launchable>
   <url type="homepage">https://github.com/codelif/whatevr</url>
@@ -20,9 +19,9 @@
   </provides>
   <content_rating type="oars-1.1" />
   <releases>
-    <release version="0.1.0" date="2026-05-09">
+    <release version="0.1.0" date="2026-06-07">
       <description>
-        <p>Initial Kirigami bootstrap with a compiled QML module and adaptive shell preview.</p>
+        <p>Initial Release</p>
       </description>
     </release>
   </releases>

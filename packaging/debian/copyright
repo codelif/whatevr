@@ -1,6 +1,6 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: whatevr
-Upstream-Contact: Harsh Sharma <saatwiksingh2404@gmail.com>
+Upstream-Contact: Harsh Sharma <harsh@codelif.in>
 Source: https://github.com/codelif/whatevr
 
 Files: *
