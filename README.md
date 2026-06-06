@@ -171,9 +171,11 @@ Now with that, here is the current feature map, this is for whatevrd+whatkevr.
 | Voice messages | ❌ | |
 | Audio playback | ❌ | |
 | Video playback | ❌ | |
+| View-once messages sending | ❌ | |
 | Document/file sending | ❌ | Images/media path exists, general file UX missing |
 | Stickers | ⚠️ | Can receive any type of sticker. Sending yet to be implmented |
 | Message reactions | ❌ | |
+| Composer emoji inline search | ❌ | |
 | Edit sent messages | ❌ | Even received messages are not edited |
 | Delete messages | ❌ | |
 | Forward messages | ❌ | |
@@ -185,6 +187,7 @@ Now with that, here is the current feature map, this is for whatevrd+whatkevr.
 | Settings UI | ❌ | |
 | Account/profile editing | ❌ | |
 | Import/export backups | ❌ | |
+| DB encryption and keyring integration | ❌ | |
   
 </details>
 
