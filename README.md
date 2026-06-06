@@ -25,7 +25,7 @@ Currently you can only get Whatevr by building it
     
 Build and run the daemon first. Frontends expect `whatevrd` to be running.
 
-### Base: daemon
+### daemon
 
 Dependencies:
 
