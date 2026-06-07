@@ -230,6 +230,14 @@ message HoldSessionRequest {
 
 message FrontendSessionEvent {
   string detail = 1;
+  // Set when the daemon asks this frontend to surface a chat (e.g. the user
+  // clicked a notification). The frontend should raise its window and open the
+  // chat, switching if a different one is currently shown.
+  OpenChat open_chat = 2;
+}
+
+message OpenChat {
+  string chat_id = 1;
 }
 
 message UpdateSessionStateRequest {

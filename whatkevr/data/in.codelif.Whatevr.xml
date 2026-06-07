@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  shared-mime-info package for whatevr.
+
+  The functional desktop integration is the whatevr:// URL scheme handler, which
+  lives in the *desktop* database (registered via the .desktop file's MimeType=
+  line and refreshed by update-desktop-database). shared-mime-info only carries
+  real data/file types, so this package reserves a single app-owned type as a
+  placeholder/anchor and gives update-mime-database a target to process at
+  install time. Add globs/magic here if whatevr ever reads its own file format.
+-->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/vnd.codelif.whatevr">
+    <comment>Whatevr data file</comment>
+    <glob pattern="*.whatevr"/>
+  </mime-type>
+</mime-info>

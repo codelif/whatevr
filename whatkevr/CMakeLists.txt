@@ -193,6 +193,10 @@ install(FILES
     data/in.codelif.Whatevr.metainfo.xml
     DESTINATION ${KDE_INSTALL_METAINFODIR}
 )
+install(FILES
+    data/in.codelif.Whatevr.xml
+    DESTINATION ${KDE_INSTALL_MIMEDIR}
+)
 
 qt_finalize_executable(whatkevr)
 

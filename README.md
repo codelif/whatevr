@@ -17,8 +17,8 @@ A Linux-first native client for WhatsApp. It uses [whatsmeow](https://github.com
 </details>
 
 ## Getting it
-Currently you can only get Whatevr by building it (see Building below). Packaging
-recipes for Flatpak, Arch, Debian and RPM live under [`packaging/`](packaging/);
+Currently you can only get Whatevr by building it (see Building below). An Arch
+packaging recipe lives under [`packaging/`](packaging/);
 
 
 ## Building
@@ -28,8 +28,8 @@ recipes for Flatpak, Arch, Debian and RPM live under [`packaging/`](packaging/);
 whatevr builds through a single top-level `Makefile` that compiles **both** the
 daemon (`whatevrd`) and the Qt/Kirigami frontend (`whatkevr`). The daemon must be
 running for any frontend to work. Before building, check the
-[Platform support](#platform-support) floors above — on distros that are too old
-(e.g. Ubuntu LTS) use Flatpak instead of a source build.
+[Platform support](#platform-support) floors above — distros that are too old
+(e.g. Ubuntu LTS) won't satisfy the Qt/KF/Go version requirements.
 
 #### 1. Install dependencies
 
@@ -74,7 +74,7 @@ icon, AppStream metainfo and the systemd user units under `PREFIX`. Make sure th
 chosen `bin` directory is on your `PATH` (e.g. `~/.local/bin`).
 
 Other handy targets: `make version`, `make validate`, `make clean`, and the
-packaging targets `make package-{flatpak,arch,deb,rpm}`.
+packaging target `make package-arch`.
 
 #### 3. Run
 

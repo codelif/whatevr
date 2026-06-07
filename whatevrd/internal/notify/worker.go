@@ -21,10 +21,19 @@ const (
 	defaultTimeoutMS = int32(-1)
 )
 
+// ChatOpener delivers an "open this chat" request to a running frontend. It
+// reports whether at least one frontend received it, so the worker knows
+// whether it still needs to cold-start one. The daemon's SessionBus implements
+// this over the live HoldSession streams.
+type ChatOpener interface {
+	OpenChat(chatID string) bool
+}
+
 type Worker struct {
-	conn *dbus.Conn
-	obj  dbus.BusObject
-	caps Capabilities
+	conn   *dbus.Conn
+	obj    dbus.BusObject
+	caps   Capabilities
+	opener ChatOpener
 
 	mu     sync.Mutex
 	active map[uint32]string
@@ -36,7 +45,7 @@ type queuedMessage struct {
 	chat    app.Chat
 }
 
-func NewWorker() (*Worker, error) {
+func NewWorker(opener ChatOpener) (*Worker, error) {
 	conn, err := dbus.SessionBus()
 	if err != nil {
 		return nil, err
@@ -44,6 +53,7 @@ func NewWorker() (*Worker, error) {
 	w := &Worker{
 		conn:   conn,
 		obj:    conn.Object(busName, objectPath),
+		opener: opener,
 		active: make(map[uint32]string),
 		queue:  make(chan queuedMessage, 64),
 	}
@@ -166,8 +176,14 @@ func (w *Worker) activeChat(id uint32) (string, bool) {
 }
 
 func (w *Worker) openChat(ctx context.Context, chatID string) {
+	// Prefer a running frontend: pushing over the live session stream focuses
+	// the existing window and switches chats without spawning a second
+	// instance. Only when no frontend is connected do we cold-start one.
+	if w.opener != nil && w.opener.OpenChat(chatID) {
+		return
+	}
 	uri := "whatevr://chat/" + url.PathEscape(chatID)
-	if err := exec.CommandContext(ctx, "gio", "open", uri).Start(); err != nil {
+	if err := exec.CommandContext(ctx, "xdg-open", uri).Start(); err != nil {
 		log.Printf("open notification chat %s: %v", chatID, err)
 	}
 }

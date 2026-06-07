@@ -47,8 +47,7 @@ VERSION_NUMERIC := $(shell \
 GO_LDFLAGS := -X 'whatevrd/internal/rpc.Version=$(VERSION)'
 
 .PHONY: all build build-daemon build-frontend install uninstall \
-        proto version dist clean validate \
-        package-flatpak package-arch package-deb package-rpm
+        proto version dist clean validate release package-arch
 
 all: build
 
@@ -85,6 +84,7 @@ uninstall:
 	rm -f $(DESTDIR)$(USERUNITDIR)/whatevrd.socket
 	rm -f $(DESTDIR)$(PREFIX)/share/applications/in.codelif.Whatevr.desktop
 	rm -f $(DESTDIR)$(PREFIX)/share/metainfo/in.codelif.Whatevr.metainfo.xml
+	rm -f $(DESTDIR)$(PREFIX)/share/mime/packages/in.codelif.Whatevr.xml
 	rm -f $(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/in.codelif.Whatevr.svg
 
 # Developer convenience: regenerate the checked-in Go protobuf/gRPC stubs.
@@ -98,6 +98,15 @@ proto:
 
 version:
 	@echo $(VERSION)
+
+# Single-point release: author the version + notes once, propagate them to all
+# package metadata, then commit and tag. Refuses to run on a dirty tree; never
+# pushes (run `git push --follow-tags` after reviewing).
+#   make release VERSION=x.y.z              # opens $EDITOR for the notes
+#   make release VERSION=x.y.z NOTES="..."  # scripted, one bullet per line
+release:
+	@test -n "$(VERSION)" || { echo "usage: make release VERSION=x.y.z [NOTES=\"...\"]"; exit 2; }
+	python3 scripts/release.py "$(VERSION)" $(if $(NOTES),--notes "$(NOTES)")
 
 # Self-describing source tarball: HEAD archive + an injected VERSION file so a
 # .git-less tarball still resolves its version.
@@ -114,20 +123,10 @@ dist:
 validate:
 	desktop-file-validate whatkevr/data/in.codelif.Whatevr.desktop
 	appstreamcli validate --no-net whatkevr/data/in.codelif.Whatevr.metainfo.xml
-
-package-flatpak:
-	flatpak-builder --force-clean $(BUILD_DIR)/flatpak \
-		packaging/flatpak/in.codelif.Whatevr.yaml
+	xmllint --noout whatkevr/data/in.codelif.Whatevr.xml
 
 package-arch:
 	cd packaging/arch && makepkg -f
-
-package-deb: dist
-	dpkg-buildpackage -us -uc -b
-
-package-rpm: dist
-	rpmbuild -ba packaging/rpm/whatevr.spec \
-		--define "_sourcedir $(CURDIR)/$(BUILD_DIR)"
 
 clean:
 	rm -rf $(BUILD_DIR)

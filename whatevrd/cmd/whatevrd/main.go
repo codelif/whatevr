@@ -46,7 +46,12 @@ func main() {
 	defer db.Close()
 
 	daemon := app.NewDaemon(paths)
-	notificationWorker, err := notify.NewWorker()
+	// The session bus carries daemon→frontend pushes (e.g. open-chat on
+	// notification click). It is shared between the notification worker (which
+	// targets connected frontends) and the RPC server (whose HoldSession
+	// streams register on it).
+	sessionBus := daemonrpc.NewSessionBus()
+	notificationWorker, err := notify.NewWorker(sessionBus)
 	if err != nil {
 		log.Printf("notifications disabled: %v", err)
 	}
@@ -60,7 +65,7 @@ func main() {
 	}
 	defer waClient.Close()
 
-	server, err := daemonrpc.Start(ctx, paths.SocketPath, activatedListener, daemon, waClient, waClient, db, waClient, waClient, waClient)
+	server, err := daemonrpc.Start(ctx, paths.SocketPath, activatedListener, daemon, waClient, waClient, sessionBus, db, waClient, waClient, waClient)
 	if err != nil {
 		log.Fatalf("start rpc server: %v", err)
 	}

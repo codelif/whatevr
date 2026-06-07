@@ -1528,6 +1528,29 @@ void AppController::ensureFrontendSession()
     auto *stream = m_frontendSessionStream.get();
     updateFrontendSessionState();
 
+    connect(stream, &QGrpcServerStream::messageReceived, this, [this, stream] {
+        if (m_frontendSessionStream.get() != stream) {
+            return;
+        }
+
+        const auto event = stream->read<whatevr::v1::FrontendSessionEvent>();
+        if (!event || !event->hasOpenChat()) {
+            return;
+        }
+
+        const QString chatId = event->openChat().chatId();
+        if (chatId.isEmpty()) {
+            return;
+        }
+
+        // The daemon (e.g. a clicked notification) asked us to surface this
+        // chat. Reuse the deep-link path so a running instance just raises its
+        // window and switches chats (only if different) — no second instance.
+        m_pendingDeepLinkChatId = chatId;
+        Q_EMIT activateWindowRequested();
+        tryApplyPendingDeepLink();
+    });
+
     connect(stream, &QGrpcServerStream::finished, this, [this, stream](const QGrpcStatus &status) {
         if (m_frontendSessionStream.get() != stream) {
             return;

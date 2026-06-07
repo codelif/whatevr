@@ -17,10 +17,11 @@ type FrontendSessionController interface {
 type FrontendService struct {
 	pb.UnimplementedFrontendServiceServer
 	sessions FrontendSessionController
+	bus      *SessionBus
 }
 
-func NewFrontendService(sessions FrontendSessionController) *FrontendService {
-	return &FrontendService{sessions: sessions}
+func NewFrontendService(sessions FrontendSessionController, bus *SessionBus) *FrontendService {
+	return &FrontendService{sessions: sessions, bus: bus}
 }
 
 func (s *FrontendService) HoldSession(req *pb.HoldSessionRequest, stream pb.FrontendService_HoldSessionServer) error {
@@ -32,6 +33,12 @@ func (s *FrontendService) HoldSession(req *pb.HoldSessionRequest, stream pb.Fron
 	if s.sessions != nil {
 		s.sessions.FrontendSessionStarted(sessionID)
 		defer s.sessions.FrontendSessionEnded(sessionID)
+	}
+
+	var pushes <-chan *pb.FrontendSessionEvent
+	if s.bus != nil {
+		pushes = s.bus.Register(sessionID)
+		defer s.bus.Unregister(sessionID)
 	}
 
 	clientName := req.GetClientName()
@@ -52,6 +59,13 @@ func (s *FrontendService) HoldSession(req *pb.HoldSessionRequest, stream pb.Fron
 			return nil
 		case <-ticker.C:
 			if err := stream.Send(&pb.FrontendSessionEvent{Detail: "keepalive"}); err != nil {
+				return err
+			}
+		case event := <-pushes:
+			if event == nil {
+				continue
+			}
+			if err := stream.Send(event); err != nil {
 				return err
 			}
 		}
