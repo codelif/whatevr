@@ -85,8 +85,8 @@ jobs:
             cp "$GITHUB_WORKSPACE/packaging/aur/$pkg/whatevr.install" "$aur_dir/whatevr.install"
             cd "$aur_dir"
             makepkg --printsrcinfo > .SRCINFO
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git config user.name 'Harsh Sharma'
+            git config user.email 'harsh@codelif.in'
             git add PKGBUILD .SRCINFO whatevr.install
             if git diff --cached --quiet; then
               continue
