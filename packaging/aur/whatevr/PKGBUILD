@@ -1,6 +1,6 @@
 # Maintainer: Harsh Sharma <harsh@codelif.in>
 pkgname=whatevr
-pkgver=0.1.3
+pkgver=0.1.4
 pkgrel=1
 pkgdesc="Native WhatsApp client for Linux (whatevrd daemon + whatkevr Qt/Kirigami frontend)"
 arch=('x86_64' 'aarch64')
