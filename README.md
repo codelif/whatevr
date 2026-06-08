@@ -36,26 +36,26 @@ running for any frontend to work. Before building, check the
 **Daemon:** Go 1.25+, a C compiler, SQLite dev files, pkg-config.
 **Frontend:** C++20 compiler, CMake 3.21+, Ninja, Qt 6.8+, KDE Frameworks 6.5+
 (KCoreAddons, KDBusAddons, KI18n, Kirigami, Prison), Kirigami Addons 1.0+,
-rlottie.
+rlottie, Vulkan headers.
 
 ```sh
 # Arch
 sudo pacman -S --needed base-devel go sqlite pkgconf cmake ninja \
-  extra-cmake-modules qt6-base qt6-declarative qt6-shadertools qt6-grpc \
+  extra-cmake-modules vulkan-headers qt6-base qt6-declarative qt6-shadertools qt6-grpc \
   kcoreaddons kdbusaddons ki18n kirigami kirigami-addons prison rlottie 
 
 # Note: rlottie is not available on the official Arch repos, you can install it from the AUR 
 
 # Fedora
 sudo dnf install go gcc gcc-c++ sqlite-devel pkgconf-pkg-config cmake ninja-build \
-  extra-cmake-modules qt6-qtbase-devel qt6-qtdeclarative-devel \
+  extra-cmake-modules vulkan-headers qt6-qtbase-devel qt6-qtdeclarative-devel \
   qt6-qtshadertools-devel qt6-qtgrpc-devel kf6-kcoreaddons-devel \
   kf6-kdbusaddons-devel kf6-ki18n-devel kf6-kirigami-devel kf6-prison-devel \
   kf6-kirigami-addons-devel rlottie-devel
 
 # Debian 13 "trixie" (needs Go >= 1.25 — see Platform support)
 sudo apt install golang gcc g++ libsqlite3-dev pkg-config cmake ninja-build \
-  extra-cmake-modules qt6-base-dev qt6-declarative-dev qt6-shadertools-dev \
+  extra-cmake-modules vulkan-headers qt6-base-dev qt6-declarative-dev qt6-shadertools-dev \
   qt6-grpc-dev libkf6coreaddons-dev libkf6dbusaddons-dev libkf6i18n-dev \
   libkf6kirigami-dev libkf6prison-dev kirigami-addons-dev librlottie-dev
 ```

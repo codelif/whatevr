@@ -141,7 +141,7 @@ jobs:
       - name: Install dependencies
         run: |
           pacman -Syu --noconfirm --needed \
-            git sudo base-devel go cmake ninja extra-cmake-modules zstd \
+            git sudo base-devel go cmake ninja extra-cmake-modules zstd vulkan-headers \
             qt6-base qt6-declarative qt6-shadertools qt6-grpc \
             kcoreaddons kdbusaddons ki18n kirigami kirigami-addons prison sqlite
           useradd -m -G wheel builduser

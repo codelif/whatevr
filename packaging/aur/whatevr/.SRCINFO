@@ -12,6 +12,7 @@ pkgbase = whatevr
 	makedepends = cmake
 	makedepends = ninja
 	makedepends = extra-cmake-modules
+	makedepends = vulkan-headers
 	depends = qt6-base
 	depends = qt6-declarative
 	depends = qt6-grpc

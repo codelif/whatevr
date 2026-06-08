@@ -11,7 +11,7 @@ depends=('qt6-base' 'qt6-declarative' 'qt6-grpc' 'qt6-shadertools'
          'kcoreaddons' 'kdbusaddons' 'ki18n' 'kirigami' 'prison' 'kirigami-addons'
          'rlottie' 'sqlite' 'glibc'
          'desktop-file-utils' 'shared-mime-info' 'xdg-utils')
-makedepends=('git' 'go' 'gcc' 'cmake' 'ninja' 'extra-cmake-modules')
+makedepends=('git' 'go' 'gcc' 'cmake' 'ninja' 'extra-cmake-modules' 'vulkan-headers')
 provides=('whatevr' 'whatevrd' 'whatkevr')
 conflicts=('whatevr' 'whatevr-bin')
 install="$_pkgname.install"
