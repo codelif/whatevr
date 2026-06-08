@@ -4,12 +4,18 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish, for example v0.1.5
+        required: true
+        type: string
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.tag || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -20,6 +26,7 @@ jobs:
     timeout-minutes: 90
     env:
       AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - name: Install dependencies
         run: |
@@ -36,6 +43,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+          ref: ${{ inputs.tag || github.ref }}
 
       - name: Mark workspace as safe for git
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -78,14 +86,19 @@ jobs:
         id: release-notes
         run: |
           notes="$RUNNER_TEMP/release-notes.md"
-          if [ "$(git cat-file -t "$GITHUB_REF_NAME")" != tag ]; then
-            printf 'release tag %s is not annotated\n' "$GITHUB_REF_NAME" >&2
+          case "$RELEASE_TAG" in
+            v*) ;;
+            *) printf 'release tag %s does not start with v\n' "$RELEASE_TAG" >&2; exit 1 ;;
+          esac
+
+          if [ "$(git cat-file -t "$RELEASE_TAG")" != tag ]; then
+            printf 'release tag %s is not annotated\n' "$RELEASE_TAG" >&2
             exit 1
           fi
 
-          body="$(git for-each-ref "refs/tags/$GITHUB_REF_NAME" --format='%(contents:body)')"
+          body="$(git for-each-ref "refs/tags/$RELEASE_TAG" --format='%(contents:body)')"
           if [ -z "${body//[[:space:]]/}" ]; then
-            printf 'release tag %s has no annotated body\n' "$GITHUB_REF_NAME" >&2
+            printf 'release tag %s has no annotated body\n' "$RELEASE_TAG" >&2
             exit 1
           fi
           printf '%s\n' "$body" > "$notes"
@@ -97,6 +110,7 @@ jobs:
           body_path: ${{ steps.release-notes.outputs.path }}
           fail_on_unmatched_files: true
           generate_release_notes: true
+          tag_name: ${{ env.RELEASE_TAG }}
           files: |
             build/whatevr-*.tar.gz
             build/whatevr-*.tar.zst
@@ -105,7 +119,7 @@ jobs:
       - name: Render release AUR packages
         if: env.AUR_SSH_PRIVATE_KEY != ''
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_TAG#v}"
           SOURCE_SHA="$(awk '/\.tar\.gz$/ { print $1; exit }' build/SHA256SUMS)"
           BIN_SHA_X86_64="$(awk '/linux-x86_64\.tar\.zst$/ { print $1; exit }' build/SHA256SUMS)"
           python3 scripts/render_aur_release.py \
@@ -116,42 +130,46 @@ jobs:
       - name: Configure AUR SSH
         if: env.AUR_SSH_PRIVATE_KEY != ''
         run: |
-          install -d -m 700 ~/.ssh
-          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > ~/.ssh/aur
-          chmod 600 ~/.ssh/aur
-          ssh-keyscan -H aur.archlinux.org >> ~/.ssh/known_hosts
-          cat > ~/.ssh/config <<'EOF'
+          install -d -m 700 -o builduser -g builduser /home/builduser/.ssh
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" | tr -d '\r' > /home/builduser/.ssh/aur
+          chown builduser:builduser /home/builduser/.ssh/aur
+          chmod 600 /home/builduser/.ssh/aur
+          ssh-keyscan -H aur.archlinux.org > /home/builduser/.ssh/known_hosts
+          cat > /home/builduser/.ssh/config <<'EOF'
           Host aur.archlinux.org
-            IdentityFile ~/.ssh/aur
             User aur
+            IdentityFile /home/builduser/.ssh/aur
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+            UserKnownHostsFile /home/builduser/.ssh/known_hosts
+            BatchMode yes
           EOF
+          chown builduser:builduser /home/builduser/.ssh/config /home/builduser/.ssh/known_hosts
+          chmod 600 /home/builduser/.ssh/config /home/builduser/.ssh/known_hosts
+          sudo -H -u builduser ssh aur@aur.archlinux.org help >/dev/null
 
       - name: Push AUR packages
         if: env.AUR_SSH_PRIVATE_KEY != ''
         run: |
-          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/aur -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$HOME/.ssh/known_hosts"
           mkdir -p "$RUNNER_TEMP/aur"
+          chown builduser:builduser "$RUNNER_TEMP/aur"
           for pkg in whatevr whatevr-git whatevr-bin; do
             aur_dir="$RUNNER_TEMP/aur/$pkg"
-            if ! git clone "ssh://aur@aur.archlinux.org/$pkg.git" "$aur_dir"; then
-              mkdir -p "$aur_dir"
-              git -C "$aur_dir" init
-              git -C "$aur_dir" remote add origin "ssh://aur@aur.archlinux.org/$pkg.git"
-            fi
+            sudo -H -u builduser git -c init.defaultBranch=master clone "ssh://aur@aur.archlinux.org/$pkg.git" "$aur_dir"
+            sudo -H -u builduser git -C "$aur_dir" checkout -B master
+            install -Dm644 -o builduser -g builduser \
+              "$GITHUB_WORKSPACE/packaging/aur/$pkg/PKGBUILD" "$aur_dir/PKGBUILD"
+            install -Dm644 -o builduser -g builduser \
+              "$GITHUB_WORKSPACE/packaging/aur/$pkg/whatevr.install" "$aur_dir/whatevr.install"
+            sudo -H -u builduser sh -c 'cd "$1" && makepkg --printsrcinfo > .SRCINFO' sh "$aur_dir"
 
-            git -C "$aur_dir" checkout -B master
-            cp "$GITHUB_WORKSPACE/packaging/aur/$pkg/PKGBUILD" "$aur_dir/PKGBUILD"
-            cp "$GITHUB_WORKSPACE/packaging/aur/$pkg/whatevr.install" "$aur_dir/whatevr.install"
-            chown -R builduser:builduser "$aur_dir"
-            sudo -u builduser sh -c 'cd "$1" && makepkg --printsrcinfo > .SRCINFO' sh "$aur_dir"
-
-            git -C "$aur_dir" config user.name 'Harsh Sharma'
-            git -C "$aur_dir" config user.email 'harsh@codelif.in'
-            git -C "$aur_dir" add PKGBUILD .SRCINFO whatevr.install
-            if git -C "$aur_dir" diff --cached --quiet; then
+            sudo -H -u builduser git -C "$aur_dir" config user.name 'Harsh Sharma'
+            sudo -H -u builduser git -C "$aur_dir" config user.email 'harsh@codelif.in'
+            sudo -H -u builduser git -C "$aur_dir" add PKGBUILD .SRCINFO whatevr.install
+            if sudo -H -u builduser git -C "$aur_dir" diff --cached --quiet; then
               continue
             fi
 
-            git -C "$aur_dir" commit -m "Update to $GITHUB_REF_NAME"
-            git -C "$aur_dir" push origin HEAD:master
+            sudo -H -u builduser git -C "$aur_dir" commit -m "Update to $RELEASE_TAG"
+            sudo -H -u builduser git -C "$aur_dir" push origin HEAD:master
           done
