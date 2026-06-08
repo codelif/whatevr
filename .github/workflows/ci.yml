@@ -4,35 +4,29 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 4 * * 1'
 
 jobs:
-  build:
-    name: Build (Arch)
+  go:
+    name: Go daemon
     runs-on: ubuntu-latest
-    container: archlinux:latest
     steps:
-      - name: Install dependencies
-        run: |
-          pacman -Syu --noconfirm --needed \
-            git base-devel go cmake ninja extra-cmake-modules \
-            qt6-base qt6-declarative qt6-shadertools qt6-grpc \
-            kcoreaddons kdbusaddons ki18n kirigami kirigami-addons prison sqlite
-          useradd -m -G wheel builduser
-          echo "builduser ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
-          git clone https://aur.archlinux.org/rlottie.git
-          chown -R builduser:builduser rlottie
-          cd rlottie
-          sudo -u builduser makepkg -sri --noconfirm
-          cd ..
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
         with:
-          fetch-depth: 0  # tags needed for `make version`
-      - name: Mark workspace safe for git
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - name: Build
-        run: make build
-      - name: Show resolved version
-        run: make version
+          go-version-file: whatevrd/go.mod
+          cache-dependency-path: whatevrd/go.sum
+      - name: Check formatting
+        working-directory: whatevrd
+        run: test -z "$(gofmt -l .)"
+      - name: Vet
+        working-directory: whatevrd
+        run: go vet ./...
+      - name: Test
+        working-directory: whatevrd
+        run: go test ./...
 
   validate:
     name: Validate metadata
@@ -40,6 +34,52 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install validators
-        run: sudo apt-get update && sudo apt-get install -y desktop-file-utils appstream
+        run: sudo apt-get update && sudo apt-get install -y desktop-file-utils appstream libxml2-utils
       - name: Validate desktop entry + metainfo
         run: make validate
+
+  build-arch:
+    name: Build and install (Arch)
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm --needed \
+            git sudo base-devel go cmake ninja extra-cmake-modules \
+            qt6-base qt6-declarative qt6-shadertools qt6-grpc \
+            kcoreaddons kdbusaddons ki18n kirigami kirigami-addons prison sqlite
+          useradd -m -G wheel builduser
+          printf 'builduser ALL=(ALL) NOPASSWD: ALL\n' >> /etc/sudoers
+          git clone https://aur.archlinux.org/rlottie.git
+          chown -R builduser:builduser rlottie
+          cd rlottie
+          sudo -u builduser makepkg -sri --noconfirm
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Mark workspace safe for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: Build
+        run: make build
+      - name: Install smoke test
+        run: make install PREFIX=/usr DESTDIR="$RUNNER_TEMP/pkgroot"
+      - name: Show resolved version
+        run: make version
+
+  aur:
+    name: AUR metadata
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Install packaging tools
+        run: pacman -Syu --noconfirm --needed git base-devel namcap
+      - uses: actions/checkout@v4
+      - name: Check package metadata
+        run: |
+          for dir in packaging/aur/*; do
+            cd "$GITHUB_WORKSPACE/$dir"
+            makepkg --printsrcinfo > .SRCINFO.generated
+            diff -u .SRCINFO .SRCINFO.generated
+            namcap PKGBUILD
+          done

@@ -33,7 +33,7 @@ endif()
 # versions. Qt 6.8 is the HARD floor: Qt GRPC/Protobuf only became stable in
 # 6.8 LTS, and the code relies on 6.8 signatures (QGrpcCallReply::finished(
 # QGrpcStatus), shared_ptr channels). KF 6.5 is the current target floor for
-# Kirigami/Prison/KI18n-QML; validated per-distro in CI (see packaging/README).
+# Kirigami/Prison/KI18n-QML; validated per-distro in CI.
 set(QT_MIN_VERSION "6.8.0")
 set(KF_MIN_VERSION "6.5.0")
 
@@ -84,8 +84,8 @@ qt_add_executable(whatkevr
     src/util/tlds.h
 )
 
-set(WHATEVR_PROTO_FILE "${CMAKE_CURRENT_SOURCE_DIR}/../whatevrd/proto/whatevr.proto")
-set(WHATEVR_PROTO_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../whatevrd/proto")
+set(WHATEVR_PROTO_FILE "${CMAKE_CURRENT_SOURCE_DIR}/../proto/whatevr.proto")
+set(WHATEVR_PROTO_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../proto")
 
 qt_add_protobuf(whatkevr
     GENERATE_PACKAGE_SUBFOLDERS

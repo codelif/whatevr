@@ -9,6 +9,13 @@ _update_databases() {
 
 post_install() {
     _update_databases
+    cat <<'EOF'
+==> whatevr installed whatevrd systemd user units.
+==> Enable one startup mode:
+==>   systemctl --user enable --now whatevrd.socket
+==> or:
+==>   systemctl --user enable --now whatevrd.service
+EOF
 }
 
 post_upgrade() {

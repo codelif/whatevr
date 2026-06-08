@@ -5,9 +5,9 @@ fn main() {
     }
 
     let proto_file = std::env::var("WHATEVR_PROTO_FILE")
-        .unwrap_or_else(|_| "../whatevrd/proto/whatevr.proto".to_string());
+        .unwrap_or_else(|_| "../proto/whatevr.proto".to_string());
     let proto_include =
-        std::env::var("WHATEVR_PROTO_INCLUDE").unwrap_or_else(|_| "../whatevrd/proto".to_string());
+        std::env::var("WHATEVR_PROTO_INCLUDE").unwrap_or_else(|_| "../proto".to_string());
 
     tonic_build::configure()
         .build_server(false)

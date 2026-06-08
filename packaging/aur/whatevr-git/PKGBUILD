@@ -13,7 +13,7 @@ depends=('qt6-base' 'qt6-declarative' 'qt6-grpc' 'qt6-shadertools'
          'desktop-file-utils' 'shared-mime-info' 'xdg-utils')
 makedepends=('git' 'go' 'gcc' 'cmake' 'ninja' 'extra-cmake-modules')
 provides=('whatevr' 'whatevrd' 'whatkevr')
-conflicts=('whatevr')
+conflicts=('whatevr' 'whatevr-bin')
 install="$_pkgname.install"
 source=("$_pkgname::git+https://github.com/codelif/whatevr.git")
 sha256sums=('SKIP')

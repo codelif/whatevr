@@ -33,6 +33,7 @@ pkgbase = whatevr-git
 	provides = whatevrd
 	provides = whatkevr
 	conflicts = whatevr
+	conflicts = whatevr-bin
 	source = whatevr::git+https://github.com/codelif/whatevr.git
 	sha256sums = SKIP
 

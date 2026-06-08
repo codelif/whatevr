@@ -9,17 +9,88 @@ permissions:
   contents: write
 
 jobs:
-  dist:
-    name: Source tarball
+  release:
+    name: Release artifacts and AUR
     runs-on: ubuntu-latest
+    container: archlinux:latest
+    env:
+      AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
     steps:
+      - name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm --needed \
+            git openssh sudo base-devel go cmake ninja extra-cmake-modules \
+            qt6-base qt6-declarative qt6-shadertools qt6-grpc \
+            kcoreaddons kdbusaddons ki18n kirigami kirigami-addons prison sqlite \
+            desktop-file-utils appstream libxml2 zstd
+          useradd -m -G wheel builduser
+          printf 'builduser ALL=(ALL) NOPASSWD: ALL\n' >> /etc/sudoers
+          git clone https://aur.archlinux.org/rlottie.git
+          chown -R builduser:builduser rlottie
+          cd rlottie
+          sudo -u builduser makepkg -sri --noconfirm
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # full history + tags for `make version`/`make dist`
-      - name: Build source tarball
-        run: make dist
-      - name: Publish release asset
+          fetch-depth: 0
+      - name: Mark workspace safe for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: Validate metadata
+        run: make validate
+      - name: Build release artifacts
+        run: make checksums PREFIX=/usr ARCH=x86_64
+      - name: Publish release assets
         uses: softprops/action-gh-release@v2
         with:
-          files: build/whatevr-*.tar.gz
+          files: |
+            build/whatevr-*.tar.gz
+            build/whatevr-*.tar.zst
+            build/SHA256SUMS
           generate_release_notes: true
+      - name: Render release AUR packages
+        id: aur-render
+        if: env.AUR_SSH_PRIVATE_KEY != ''
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          SOURCE_SHA="$(awk '/\.tar\.gz$/ { print $1; exit }' build/SHA256SUMS)"
+          BIN_SHA_X86_64="$(awk '/linux-x86_64\.tar\.zst$/ { print $1; exit }' build/SHA256SUMS)"
+          python3 scripts/render_aur_release.py \
+            --version "$VERSION" \
+            --source-sha "$SOURCE_SHA" \
+            --bin-sha-x86_64 "$BIN_SHA_X86_64"
+      - name: Configure AUR SSH
+        if: env.AUR_SSH_PRIVATE_KEY != ''
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          ssh-keyscan aur.archlinux.org >> ~/.ssh/known_hosts
+          cat > ~/.ssh/config <<'EOF'
+          Host aur.archlinux.org
+            IdentityFile ~/.ssh/aur
+            User aur
+          EOF
+      - name: Push AUR packages
+        if: env.AUR_SSH_PRIVATE_KEY != ''
+        run: |
+          mkdir -p "$RUNNER_TEMP/aur"
+          for pkg in whatevr whatevr-git whatevr-bin; do
+            aur_dir="$RUNNER_TEMP/aur/$pkg"
+            if ! git clone "ssh://aur@aur.archlinux.org/$pkg.git" "$aur_dir"; then
+              mkdir -p "$aur_dir"
+              git -C "$aur_dir" init
+              git -C "$aur_dir" remote add origin "ssh://aur@aur.archlinux.org/$pkg.git"
+            fi
+            git -C "$aur_dir" checkout -B master
+            cp "$GITHUB_WORKSPACE/packaging/aur/$pkg/PKGBUILD" "$aur_dir/PKGBUILD"
+            cp "$GITHUB_WORKSPACE/packaging/aur/$pkg/whatevr.install" "$aur_dir/whatevr.install"
+            cd "$aur_dir"
+            makepkg --printsrcinfo > .SRCINFO
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add PKGBUILD .SRCINFO whatevr.install
+            if git diff --cached --quiet; then
+              continue
+            fi
+            git commit -m "Update to $GITHUB_REF_NAME"
+            git push origin HEAD:master
+          done

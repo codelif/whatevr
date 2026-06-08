@@ -47,7 +47,8 @@ VERSION_NUMERIC := $(shell \
 GO_LDFLAGS := -X 'whatevrd/internal/rpc.Version=$(VERSION)'
 
 .PHONY: all build build-daemon build-frontend install uninstall \
-        proto version dist clean validate release package-arch
+        proto version dist dist-bin checksums clean validate release \
+        package-arch package-aur-git package-aur-source package-aur-bin
 
 all: build
 
@@ -91,10 +92,10 @@ uninstall:
 # Requires protoc, protoc-gen-go (v1.36.x) and protoc-gen-go-grpc (v1.6.x).
 proto:
 	protoc \
-		--proto_path=whatevrd/proto \
+		--proto_path=proto \
 		--go_out=whatevrd --go_opt=module=whatevrd \
 		--go-grpc_out=whatevrd --go-grpc_opt=module=whatevrd \
-		whatevrd/proto/whatevr.proto
+		proto/whatevr.proto
 
 version:
 	@echo $(VERSION)
@@ -120,13 +121,41 @@ dist:
 	gzip -f $(BUILD_DIR)/whatevr-$(VERSION).tar
 	@echo "wrote $(BUILD_DIR)/whatevr-$(VERSION).tar.gz"
 
+ARCH ?= $(shell uname -m)
+BINARY_DIST_NAME = whatevr-$(VERSION)-linux-$(ARCH)
+BINARY_DIST_ROOT = $(BUILD_DIR)/dist-bin-root
+BINARY_DIST_DIR  = $(BUILD_DIR)/$(BINARY_DIST_NAME)
+
+dist-bin:
+	rm -rf $(BINARY_DIST_ROOT) $(BINARY_DIST_DIR) \
+		$(BUILD_DIR)/$(BINARY_DIST_NAME).tar.zst
+	$(MAKE) install PREFIX=/usr DESTDIR=$(abspath $(BINARY_DIST_ROOT))
+	install -Dm644 LICENSE \
+		$(BINARY_DIST_ROOT)/usr/share/licenses/whatevr/LICENSE
+	mkdir -p $(BINARY_DIST_DIR)
+	cp -a $(BINARY_DIST_ROOT)/usr $(BINARY_DIST_DIR)/
+	tar -C $(BUILD_DIR) -caf $(abspath $(BUILD_DIR))/$(BINARY_DIST_NAME).tar.zst $(BINARY_DIST_NAME)
+	@echo "wrote $(BUILD_DIR)/$(BINARY_DIST_NAME).tar.zst"
+
+checksums: dist dist-bin
+	cd $(BUILD_DIR) && sha256sum whatevr-*.tar.gz whatevr-*.tar.zst > SHA256SUMS
+	@echo "wrote $(BUILD_DIR)/SHA256SUMS"
+
 validate:
 	desktop-file-validate whatkevr/data/in.codelif.Whatevr.desktop
 	appstreamcli validate --no-net whatkevr/data/in.codelif.Whatevr.metainfo.xml
 	xmllint --noout whatkevr/data/in.codelif.Whatevr.xml
 
-package-arch:
-	cd packaging/arch && makepkg -f
+package-arch: package-aur-git
+
+package-aur-git:
+	cd packaging/aur/whatevr-git && makepkg -f
+
+package-aur-source:
+	cd packaging/aur/whatevr && makepkg -f
+
+package-aur-bin:
+	cd packaging/aur/whatevr-bin && makepkg -f
 
 clean:
 	rm -rf $(BUILD_DIR)
