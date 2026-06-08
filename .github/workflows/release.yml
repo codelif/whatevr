@@ -128,6 +128,7 @@ jobs:
       - name: Push AUR packages
         if: env.AUR_SSH_PRIVATE_KEY != ''
         run: |
+          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/aur -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$HOME/.ssh/known_hosts"
           mkdir -p "$RUNNER_TEMP/aur"
           for pkg in whatevr whatevr-git whatevr-bin; do
             aur_dir="$RUNNER_TEMP/aur/$pkg"
