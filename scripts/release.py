@@ -126,6 +126,73 @@ def update_metainfo(root: Path, version: str, notes: list[str], date: str) -> Pa
     return path
 
 
+def update_aur_packages(root: Path, version: str) -> list[Path]:
+    changed: list[Path] = []
+
+    source_pkgbuild = root / "packaging/aur/whatevr/PKGBUILD"
+    source_srcinfo = root / "packaging/aur/whatevr/.SRCINFO"
+    bin_pkgbuild = root / "packaging/aur/whatevr-bin/PKGBUILD"
+    bin_srcinfo = root / "packaging/aur/whatevr-bin/.SRCINFO"
+
+    update_lines(
+        source_pkgbuild,
+        {
+            r"^pkgver=.*$": f"pkgver={version}",
+            r"^pkgrel=.*$": "pkgrel=1",
+        },
+    )
+    changed.append(source_pkgbuild)
+
+    update_lines(
+        source_srcinfo,
+        {
+            r"^\tpkgver = .*$": f"\tpkgver = {version}",
+            r"^\tpkgrel = .*$": "\tpkgrel = 1",
+            r"^\tsource = .*$": (
+                "\tsource = whatevr-"
+                f"{version}.tar.gz::https://github.com/codelif/whatevr/"
+                f"releases/download/v{version}/whatevr-{version}.tar.gz"
+            ),
+        },
+    )
+    changed.append(source_srcinfo)
+
+    update_lines(
+        bin_pkgbuild,
+        {
+            r"^pkgver=.*$": f"pkgver={version}",
+            r"^pkgrel=.*$": "pkgrel=1",
+        },
+    )
+    changed.append(bin_pkgbuild)
+
+    update_lines(
+        bin_srcinfo,
+        {
+            r"^\tpkgver = .*$": f"\tpkgver = {version}",
+            r"^\tpkgrel = .*$": "\tpkgrel = 1",
+            r"^\tsource_x86_64 = .*$": (
+                "\tsource_x86_64 = whatevr-"
+                f"{version}-linux-x86_64.tar.zst::https://github.com/codelif/"
+                f"whatevr/releases/download/v{version}/"
+                f"whatevr-{version}-linux-x86_64.tar.zst"
+            ),
+        },
+    )
+    changed.append(bin_srcinfo)
+
+    return changed
+
+
+def update_lines(path: Path, replacements: dict[str, str]) -> None:
+    text = path.read_text(encoding="utf-8")
+    for pattern, replacement in replacements.items():
+        text, count = re.subn(pattern, replacement, text, count=1, flags=re.MULTILINE)
+        if count != 1:
+            fail(f"{path}: expected one match for {pattern!r}, got {count}")
+    path.write_text(text, encoding="utf-8")
+
+
 # --- escaping helpers ------------------------------------------------------
 
 
@@ -160,6 +227,7 @@ def main() -> None:
     changed = [
         write_version_file(root, version),
         update_metainfo(root, version, notes, date),
+        *update_aur_packages(root, version),
     ]
 
     print("Validating metadata...")
