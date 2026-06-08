@@ -37,6 +37,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Mark workspace as safe for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - name: Set rlottie cache key
         id: rlottie-cache-key
         run: printf 'week=%s\n' "$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
