@@ -84,6 +84,7 @@ jobs:
             cp "$GITHUB_WORKSPACE/packaging/aur/$pkg/PKGBUILD" "$aur_dir/PKGBUILD"
             cp "$GITHUB_WORKSPACE/packaging/aur/$pkg/whatevr.install" "$aur_dir/whatevr.install"
             cd "$aur_dir"
+            chown -R builduser:builduser .
             sudo -u builduser makepkg --printsrcinfo > .SRCINFO
             git config user.name 'Harsh Sharma'
             git config user.email 'harsh@codelif.in'
