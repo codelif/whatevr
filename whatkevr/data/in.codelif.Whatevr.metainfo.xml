@@ -19,6 +19,13 @@
   </provides>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.1.2" date="2026-06-08">
+      <description>
+        <ul>
+          <li>fix AUR packaging issues</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.1.1" date="2026-06-08">
       <description>
         <ul>
