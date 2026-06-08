@@ -77,9 +77,12 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check package metadata
         run: |
+          useradd -m -G wheel builduser
+          printf 'builduser ALL=(ALL) NOPASSWD: ALL\n' >> /etc/sudoers
+          chown -R builduser:builduser .
           for dir in packaging/aur/*; do
             cd "$GITHUB_WORKSPACE/$dir"
-            makepkg --printsrcinfo > .SRCINFO.generated
+            sudo -u builduser makepkg --printsrcinfo > .SRCINFO.generated
             diff -u .SRCINFO .SRCINFO.generated
             namcap PKGBUILD
           done
