@@ -19,6 +19,14 @@
   </provides>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.1.1" date="2026-06-08">
+      <description>
+        <ul>
+          <li>pipeline streamlining</li>
+          <li>3 AUR packages: whatevr, whatevr-git, whatevr-bin</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-06-07">
       <description>
         <p>Initial Release</p>
