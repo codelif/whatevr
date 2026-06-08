@@ -8,36 +8,45 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   release:
     name: Release artifacts and AUR
     runs-on: ubuntu-latest
     container: archlinux:latest
+    timeout-minutes: 90
     env:
       AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
     steps:
       - name: Install dependencies
         run: |
           pacman -Syu --noconfirm --needed \
-            git openssh sudo base-devel go cmake ninja extra-cmake-modules \
+            git openssh sudo base-devel go cmake ninja extra-cmake-modules zstd \
             qt6-base qt6-declarative qt6-shadertools qt6-grpc \
             kcoreaddons kdbusaddons ki18n kirigami kirigami-addons prison sqlite \
-            desktop-file-utils appstream libxml2 zstd
+            desktop-file-utils appstream libxml2
           useradd -m -G wheel builduser
           printf 'builduser ALL=(ALL) NOPASSWD: ALL\n' >> /etc/sudoers
-      - uses: actions/checkout@v4
+
+      - name: Checkout
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          persist-credentials: false
+
       - name: Set rlottie cache key
         id: rlottie-cache-key
         run: printf 'week=%s\n' "$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+
       - name: Restore rlottie package
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .cache/aur/rlottie
           key: arch-rlottie-${{ steps.rlottie-cache-key.outputs.week }}
-          restore-keys: |
-            arch-rlottie-
+
       - name: Install rlottie
         run: |
           install -d "$GITHUB_WORKSPACE/.cache/aur/rlottie"
@@ -55,22 +64,41 @@ jobs:
           sudo -u builduser makepkg -s --noconfirm
           cp rlottie-*.pkg.tar* "$GITHUB_WORKSPACE/.cache/aur/rlottie/"
           pacman -U --noconfirm "$GITHUB_WORKSPACE"/.cache/aur/rlottie/rlottie-*.pkg.tar*
-      - name: Mark workspace safe for git
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - name: Validate metadata
         run: make validate
+
       - name: Build release artifacts
         run: make checksums PREFIX=/usr ARCH=x86_64
+
+      - name: Write release notes from tag
+        id: release-notes
+        run: |
+          notes="$RUNNER_TEMP/release-notes.md"
+          if [ "$(git cat-file -t "$GITHUB_REF_NAME")" != tag ]; then
+            printf 'release tag %s is not annotated\n' "$GITHUB_REF_NAME" >&2
+            exit 1
+          fi
+
+          body="$(git for-each-ref "refs/tags/$GITHUB_REF_NAME" --format='%(contents:body)')"
+          if [ -z "${body//[[:space:]]/}" ]; then
+            printf 'release tag %s has no annotated body\n' "$GITHUB_REF_NAME" >&2
+            exit 1
+          fi
+          printf '%s\n' "$body" > "$notes"
+          printf 'path=%s\n' "$notes" >> "$GITHUB_OUTPUT"
+
       - name: Publish release assets
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
+          body_path: ${{ steps.release-notes.outputs.path }}
+          fail_on_unmatched_files: true
           files: |
             build/whatevr-*.tar.gz
             build/whatevr-*.tar.zst
             build/SHA256SUMS
-          generate_release_notes: true
+
       - name: Render release AUR packages
-        id: aur-render
         if: env.AUR_SSH_PRIVATE_KEY != ''
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
@@ -80,18 +108,20 @@ jobs:
             --version "$VERSION" \
             --source-sha "$SOURCE_SHA" \
             --bin-sha-x86_64 "$BIN_SHA_X86_64"
+
       - name: Configure AUR SSH
         if: env.AUR_SSH_PRIVATE_KEY != ''
         run: |
           install -d -m 700 ~/.ssh
           printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > ~/.ssh/aur
           chmod 600 ~/.ssh/aur
-          ssh-keyscan aur.archlinux.org >> ~/.ssh/known_hosts
+          ssh-keyscan -H aur.archlinux.org >> ~/.ssh/known_hosts
           cat > ~/.ssh/config <<'EOF'
           Host aur.archlinux.org
             IdentityFile ~/.ssh/aur
             User aur
           EOF
+
       - name: Push AUR packages
         if: env.AUR_SSH_PRIVATE_KEY != ''
         run: |
@@ -103,18 +133,20 @@ jobs:
               git -C "$aur_dir" init
               git -C "$aur_dir" remote add origin "ssh://aur@aur.archlinux.org/$pkg.git"
             fi
+
             git -C "$aur_dir" checkout -B master
             cp "$GITHUB_WORKSPACE/packaging/aur/$pkg/PKGBUILD" "$aur_dir/PKGBUILD"
             cp "$GITHUB_WORKSPACE/packaging/aur/$pkg/whatevr.install" "$aur_dir/whatevr.install"
-            cd "$aur_dir"
-            chown -R builduser:builduser .
-            sudo -u builduser makepkg --printsrcinfo > .SRCINFO
-            git config user.name 'Harsh Sharma'
-            git config user.email 'harsh@codelif.in'
-            git add PKGBUILD .SRCINFO whatevr.install
-            if git diff --cached --quiet; then
+            chown -R builduser:builduser "$aur_dir"
+            sudo -u builduser sh -c 'cd "$1" && makepkg --printsrcinfo > .SRCINFO' sh "$aur_dir"
+
+            git -C "$aur_dir" config user.name 'Harsh Sharma'
+            git -C "$aur_dir" config user.email 'harsh@codelif.in'
+            git -C "$aur_dir" add PKGBUILD .SRCINFO whatevr.install
+            if git -C "$aur_dir" diff --cached --quiet; then
               continue
             fi
-            git commit -m "Update to $GITHUB_REF_NAME"
-            git push origin HEAD:master
+
+            git -C "$aur_dir" commit -m "Update to $GITHUB_REF_NAME"
+            git -C "$aur_dir" push origin HEAD:master
           done

@@ -8,28 +8,44 @@ on:
   schedule:
     - cron: '0 4 * * 1'
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   changes:
     name: Detect changes
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       go: ${{ steps.force.outputs.run == 'true' || steps.filter.outputs.go == 'true' }}
       validate: ${{ steps.force.outputs.run == 'true' || steps.filter.outputs.validate == 'true' }}
       build: ${{ steps.force.outputs.run == 'true' || steps.filter.outputs.build == 'true' }}
       aur: ${{ steps.force.outputs.run == 'true' || steps.filter.outputs.aur == 'true' }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v6
         with:
-          fetch-depth: 0
-      - name: Force scheduled/manual checks
+          fetch-depth: 100
+          persist-credentials: false
+
+      - name: Run all checks for scheduled/manual workflows
         id: force
         run: |
           case "${{ github.event_name }}" in
-            schedule|workflow_dispatch) echo 'run=true' >> "$GITHUB_OUTPUT" ;;
-            *) echo 'run=false' >> "$GITHUB_OUTPUT" ;;
+            schedule|workflow_dispatch) printf 'run=true\n' >> "$GITHUB_OUTPUT" ;;
+            *) printf 'run=false\n' >> "$GITHUB_OUTPUT" ;;
           esac
-      - uses: dorny/paths-filter@v3
+
+      - name: Detect changed paths
         id: filter
+        uses: dorny/paths-filter@v4
         with:
           filters: |
             go:
@@ -41,6 +57,7 @@ jobs:
             validate:
               - 'Makefile'
               - 'VERSION'
+              - 'scripts/release.py'
               - 'whatkevr/data/**'
               - '.github/workflows/**'
             build:
@@ -53,25 +70,41 @@ jobs:
               - '.github/workflows/**'
             aur:
               - 'packaging/aur/**'
+              - 'scripts/release.py'
+              - 'scripts/render_aur_release.py'
               - '.github/workflows/**'
 
   go:
     name: Go daemon
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: changes
-    if: needs.changes.outputs.go == 'true'
+    if: ${{ needs.changes.outputs.go == 'true' }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
         with:
           go-version-file: whatevrd/go.mod
           cache-dependency-path: whatevrd/go.sum
+
       - name: Check formatting
         working-directory: whatevrd
-        run: test -z "$(gofmt -l .)"
+        run: |
+          files="$(gofmt -l .)"
+          if [ -n "$files" ]; then
+            printf '%s\n' "$files"
+            exit 1
+          fi
+
       - name: Vet
         working-directory: whatevrd
         run: go vet ./...
+
       - name: Test
         working-directory: whatevrd
         run: go test ./...
@@ -79,43 +112,57 @@ jobs:
   validate:
     name: Validate metadata
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: changes
-    if: needs.changes.outputs.validate == 'true'
+    if: ${{ needs.changes.outputs.validate == 'true' }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
       - name: Install validators
-        run: sudo apt-get update && sudo apt-get install -y desktop-file-utils appstream libxml2-utils
-      - name: Validate desktop entry + metainfo
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            desktop-file-utils appstream libxml2-utils
+
+      - name: Validate desktop entry and metainfo
         run: make validate
 
   build-arch:
     name: Build and install (Arch)
     runs-on: ubuntu-latest
     container: archlinux:latest
+    timeout-minutes: 60
     needs: changes
-    if: needs.changes.outputs.build == 'true'
+    if: ${{ needs.changes.outputs.build == 'true' }}
     steps:
       - name: Install dependencies
         run: |
           pacman -Syu --noconfirm --needed \
-            git sudo base-devel go cmake ninja extra-cmake-modules \
+            git sudo base-devel go cmake ninja extra-cmake-modules zstd \
             qt6-base qt6-declarative qt6-shadertools qt6-grpc \
             kcoreaddons kdbusaddons ki18n kirigami kirigami-addons prison sqlite
           useradd -m -G wheel builduser
           printf 'builduser ALL=(ALL) NOPASSWD: ALL\n' >> /etc/sudoers
-      - uses: actions/checkout@v4
+
+      - name: Checkout
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          persist-credentials: false
+
       - name: Set rlottie cache key
         id: rlottie-cache-key
         run: printf 'week=%s\n' "$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+
       - name: Restore rlottie package
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .cache/aur/rlottie
           key: arch-rlottie-${{ steps.rlottie-cache-key.outputs.week }}
-          restore-keys: |
-            arch-rlottie-
+
       - name: Install rlottie
         run: |
           install -d "$GITHUB_WORKSPACE/.cache/aur/rlottie"
@@ -133,12 +180,13 @@ jobs:
           sudo -u builduser makepkg -s --noconfirm
           cp rlottie-*.pkg.tar* "$GITHUB_WORKSPACE/.cache/aur/rlottie/"
           pacman -U --noconfirm "$GITHUB_WORKSPACE"/.cache/aur/rlottie/rlottie-*.pkg.tar*
-      - name: Mark workspace safe for git
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - name: Build
         run: make build
+
       - name: Install smoke test
         run: make install PREFIX=/usr DESTDIR="$RUNNER_TEMP/pkgroot"
+
       - name: Show resolved version
         run: make version
 
@@ -146,19 +194,26 @@ jobs:
     name: AUR metadata
     runs-on: ubuntu-latest
     container: archlinux:latest
+    timeout-minutes: 20
     needs: changes
-    if: needs.changes.outputs.aur == 'true'
+    if: ${{ needs.changes.outputs.aur == 'true' }}
     steps:
       - name: Install packaging tools
-        run: pacman -Syu --noconfirm --needed git sudo base-devel namcap
-      - uses: actions/checkout@v4
-      - name: Check package metadata
         run: |
+          pacman -Syu --noconfirm --needed git sudo base-devel namcap
           useradd -m -G wheel builduser
           printf 'builduser ALL=(ALL) NOPASSWD: ALL\n' >> /etc/sudoers
-          chown -R builduser:builduser .
-          for dir in packaging/aur/*; do
-            cd "$GITHUB_WORKSPACE/$dir"
+
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Check package metadata
+        run: |
+          chown -R builduser:builduser "$GITHUB_WORKSPACE"
+          for dir in "$GITHUB_WORKSPACE"/packaging/aur/*; do
+            cd "$dir"
             sudo -u builduser makepkg --printsrcinfo > .SRCINFO.generated
             diff -u .SRCINFO .SRCINFO.generated
             namcap PKGBUILD

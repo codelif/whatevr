@@ -11,6 +11,7 @@ commit and run `git push --follow-tags` yourself.
 from __future__ import annotations
 
 import argparse
+import html
 import os
 import re
 import subprocess
@@ -18,11 +19,12 @@ import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import NoReturn
 
 VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$")
 
 
-def fail(msg: str) -> "NoReturn":  # type: ignore[name-defined]
+def fail(msg: str) -> NoReturn:
     print(f"release: {msg}", file=sys.stderr)
     raise SystemExit(1)
 
@@ -56,7 +58,7 @@ def ensure_tag_absent(version: str) -> None:
         fail(f"tag {tag} already exists")
 
 
-def capture_notes(args: argparse.Namespace) -> list[str]:
+def capture_notes(args: argparse.Namespace) -> str:
     if args.notes is not None:
         raw = args.notes
     elif args.notes_file is not None:
@@ -64,25 +66,22 @@ def capture_notes(args: argparse.Namespace) -> list[str]:
     else:
         raw = open_editor(args.version)
 
-    lines: list[str] = []
-    for line in raw.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        # Normalise a leading bullet marker; we re-emit per-format markers later.
-        stripped = re.sub(r"^[-*]\s+", "", stripped)
-        lines.append(stripped)
-    if not lines:
+    notes = strip_html_comments(raw).strip()
+    if not notes:
         fail("release notes are empty — aborting")
-    return lines
+    return notes
 
 
 def open_editor(version: str) -> str:
     editor = os.environ.get("EDITOR") or os.environ.get("VISUAL") or "vi"
     template = (
-        f"# Release notes for v{version} — one bullet per line.\n"
-        "# Lines starting with '#' are ignored. Save empty to abort.\n"
-        "\n"
+        "<!--\n"
+        f"Release notes for v{version}.\n"
+        "Write Markdown. Supported in AppStream: paragraphs, bullets, "
+        "numbered lists, emphasis, and inline code.\n"
+        "Delete these comments or leave them here; they are ignored.\n"
+        "Save empty notes to abort.\n"
+        "-->\n\n"
     )
     with tempfile.NamedTemporaryFile(
         "w+", suffix=".md", prefix="whatevr-release-", delete=False
@@ -105,20 +104,18 @@ def write_version_file(root: Path, version: str) -> Path:
     return path
 
 
-def update_metainfo(root: Path, version: str, notes: list[str], date: str) -> Path:
+def update_metainfo(root: Path, version: str, notes: str, date: str) -> Path:
     path = root / "whatkevr/data/in.codelif.Whatevr.metainfo.xml"
     text = path.read_text(encoding="utf-8")
     marker = "  <releases>\n"
     if marker not in text:
         fail(f"{path}: could not find <releases> element")
 
-    bullets = "\n".join(f"          <li>{xml_escape(n)}</li>" for n in notes)
+    description = "\n".join(markdown_to_appstream_description(notes))
     block = (
         f'    <release version="{version}" date="{date}">\n'
         "      <description>\n"
-        "        <ul>\n"
-        f"{bullets}\n"
-        "        </ul>\n"
+        f"{description}\n"
         "      </description>\n"
         "    </release>\n"
     )
@@ -193,11 +190,142 @@ def update_lines(path: Path, replacements: dict[str, str]) -> None:
     path.write_text(text, encoding="utf-8")
 
 
-# --- escaping helpers ------------------------------------------------------
+# --- release note formatting ----------------------------------------------
+
+
+HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+BULLET_RE = re.compile(r"^\s*[-*+]\s+(.+)$")
+ORDERED_RE = re.compile(r"^\s*\d+[.)]\s+(.+)$")
+FENCE_RE = re.compile(r"^\s*(```|~~~)")
+INLINE_LINK_RE = re.compile(r"!?\[([^\]]*)\]\([^)]*\)")
+INLINE_MARKUP_RE = re.compile(r"`([^`\n]+)`|\*\*([^*\n]+)\*\*|__([^_\n]+)__")
+
+
+def strip_html_comments(markdown: str) -> str:
+    return HTML_COMMENT_RE.sub("", markdown)
+
+
+def markdown_to_appstream_description(markdown: str) -> list[str]:
+    lines: list[str] = []
+    for kind, items in markdown_blocks(markdown):
+        if kind == "p":
+            lines.append(f"        <p>{render_inline_markdown(items[0])}</p>")
+            continue
+
+        lines.append(f"        <{kind}>")
+        for item in items:
+            lines.append(f"          <li>{render_inline_markdown(item)}</li>")
+        lines.append(f"        </{kind}>")
+
+    if not lines:
+        fail("release notes do not contain AppStream-compatible text")
+    return lines
+
+
+def markdown_blocks(markdown: str) -> list[tuple[str, list[str]]]:
+    blocks: list[tuple[str, list[str]]] = []
+    source = markdown.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    i = 0
+    while i < len(source):
+        line = source[i]
+        if not line.strip():
+            i += 1
+            continue
+
+        if FENCE_RE.match(line):
+            text: list[str] = []
+            fence = line.strip()[:3]
+            i += 1
+            while i < len(source) and not source[i].strip().startswith(fence):
+                if source[i].strip():
+                    text.append(source[i].strip())
+                i += 1
+            if i < len(source):
+                i += 1
+            if text:
+                blocks.append(("p", [" ".join(text)]))
+            continue
+
+        list_match = list_item_match(line)
+        if list_match is not None:
+            kind, text = list_match
+            items = [text]
+            i += 1
+
+            while i < len(source):
+                line = source[i]
+                if not line.strip():
+                    i += 1
+                    break
+
+                next_match = list_item_match(line)
+                if next_match is not None:
+                    next_kind, next_text = next_match
+                    if next_kind != kind:
+                        break
+                    items.append(next_text)
+                    i += 1
+                    continue
+
+                if items and (line.startswith(" ") or line.startswith("\t")):
+                    items[-1] = f"{items[-1]} {line.strip()}"
+                    i += 1
+                    continue
+
+                break
+
+            blocks.append((kind, items))
+            continue
+
+        paragraph: list[str] = []
+        while i < len(source):
+            line = source[i]
+            if (
+                not line.strip()
+                or list_item_match(line) is not None
+                or FENCE_RE.match(line)
+            ):
+                break
+            paragraph.append(line.strip().removeprefix("> ").removeprefix(">"))
+            i += 1
+        blocks.append(("p", [" ".join(paragraph)]))
+
+    return blocks
+
+
+def list_item_match(line: str) -> tuple[str, str] | None:
+    if match := BULLET_RE.match(line):
+        return "ul", clean_block_text(match.group(1))
+    if match := ORDERED_RE.match(line):
+        return "ol", clean_block_text(match.group(1))
+    return None
+
+
+def clean_block_text(text: str) -> str:
+    return re.sub(r"^#{1,6}\s+", "", text.strip())
+
+
+def render_inline_markdown(text: str) -> str:
+    text = clean_block_text(INLINE_LINK_RE.sub(r"\1", text))
+    result: list[str] = []
+    cursor = 0
+
+    for match in INLINE_MARKUP_RE.finditer(text):
+        result.append(xml_escape(text[cursor:match.start()]))
+        code, strong_star, strong_underscore = match.groups()
+        if code is not None:
+            result.append(f"<code>{xml_escape(code)}</code>")
+        else:
+            content = strong_star if strong_star is not None else strong_underscore
+            result.append(f"<em>{xml_escape(content or '')}</em>")
+        cursor = match.end()
+
+    result.append(xml_escape(text[cursor:]))
+    return "".join(result)
 
 
 def xml_escape(s: str) -> str:
-    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return html.escape(s, quote=False)
 
 
 # --- main ------------------------------------------------------------------
@@ -207,7 +335,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="cut a whatevr release")
     parser.add_argument("version", help="semantic version, e.g. 0.2.0")
     group = parser.add_mutually_exclusive_group()
-    group.add_argument("--notes", help="release notes (one bullet per line)")
+    group.add_argument("--notes", help="Markdown release notes")
     group.add_argument("--notes-file", help="read release notes from a file")
     args = parser.parse_args()
 
@@ -240,7 +368,7 @@ def main() -> None:
     git("commit", "-m", f"version: {version}", capture=False)
 
     tag = f"v{version}"
-    tag_message = f"{tag}\n\n" + "\n".join(f"- {n}" for n in notes)
+    tag_message = f"{tag}\n\n{notes}"
     subprocess.run(["git", "tag", "-a", tag, "-m", tag_message], check=True)
 
     print()

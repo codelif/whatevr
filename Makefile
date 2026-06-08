@@ -103,11 +103,16 @@ version:
 # Single-point release: author the version + notes once, propagate them to all
 # package metadata, then commit and tag. Refuses to run on a dirty tree; never
 # pushes (run `git push --follow-tags` after reviewing).
-#   make release VERSION=x.y.z              # opens $EDITOR for the notes
-#   make release VERSION=x.y.z NOTES="..."  # scripted, one bullet per line
+#   make release VERSION=x.y.z                    # opens $EDITOR for notes
+#   make release VERSION=x.y.z NOTES="..."        # inline Markdown notes
+#   make release VERSION=x.y.z NOTES_FILE=rel.md  # Markdown notes file
 release:
-	@test -n "$(VERSION)" || { echo "usage: make release VERSION=x.y.z [NOTES=\"...\"]"; exit 2; }
-	python3 scripts/release.py "$(VERSION)" $(if $(NOTES),--notes "$(NOTES)")
+	@if [ "$(origin VERSION)" = "file" ] || [ -z "$(VERSION)" ]; then \
+		echo "usage: make release VERSION=x.y.z [NOTES=\"...\"|NOTES_FILE=rel.md]"; \
+		exit 2; \
+	fi
+	@test -z "$(NOTES)" || test -z "$(NOTES_FILE)" || { echo "use only one of NOTES or NOTES_FILE"; exit 2; }
+	python3 scripts/release.py "$(VERSION)" $(if $(NOTES),--notes "$(NOTES)") $(if $(NOTES_FILE),--notes-file "$(NOTES_FILE)")
 
 # Self-describing source tarball: HEAD archive + an injected VERSION file so a
 # .git-less tarball still resolves its version.
