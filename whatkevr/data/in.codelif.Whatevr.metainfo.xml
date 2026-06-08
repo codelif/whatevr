@@ -19,6 +19,11 @@
   </provides>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.1.6" date="2026-06-08">
+      <description>
+        <p>Oh wow, looks like someone shouldn't have used copilot and waste 3 hours of his life</p>
+      </description>
+    </release>
     <release version="0.1.5" date="2026-06-08">
       <description>
         <p>Ahh yes! The "copilot fixes all ci bugs" release again.</p>
