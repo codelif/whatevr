@@ -25,13 +25,36 @@ jobs:
             desktop-file-utils appstream libxml2 zstd
           useradd -m -G wheel builduser
           printf 'builduser ALL=(ALL) NOPASSWD: ALL\n' >> /etc/sudoers
-          git clone https://aur.archlinux.org/rlottie.git
-          chown -R builduser:builduser rlottie
-          cd rlottie
-          sudo -u builduser makepkg -sri --noconfirm
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Set rlottie cache key
+        id: rlottie-cache-key
+        run: printf 'week=%s\n' "$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+      - name: Restore rlottie package
+        uses: actions/cache@v4
+        with:
+          path: .cache/aur/rlottie
+          key: arch-rlottie-${{ steps.rlottie-cache-key.outputs.week }}
+          restore-keys: |
+            arch-rlottie-
+      - name: Install rlottie
+        run: |
+          install -d "$GITHUB_WORKSPACE/.cache/aur/rlottie"
+          shopt -s nullglob
+          cached=("$GITHUB_WORKSPACE"/.cache/aur/rlottie/rlottie-*.pkg.tar*)
+          if ((${#cached[@]})) && pacman -U --noconfirm "${cached[@]}"; then
+            exit 0
+          fi
+
+          rm -f "$GITHUB_WORKSPACE"/.cache/aur/rlottie/rlottie-*.pkg.tar*
+          rm -rf "$RUNNER_TEMP/rlottie"
+          git clone https://aur.archlinux.org/rlottie.git "$RUNNER_TEMP/rlottie"
+          chown -R builduser:builduser "$RUNNER_TEMP/rlottie"
+          cd "$RUNNER_TEMP/rlottie"
+          sudo -u builduser makepkg -s --noconfirm
+          cp rlottie-*.pkg.tar* "$GITHUB_WORKSPACE/.cache/aur/rlottie/"
+          pacman -U --noconfirm "$GITHUB_WORKSPACE"/.cache/aur/rlottie/rlottie-*.pkg.tar*
       - name: Mark workspace safe for git
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Validate metadata

@@ -9,9 +9,57 @@ on:
     - cron: '0 4 * * 1'
 
 jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.force.outputs.run == 'true' || steps.filter.outputs.go == 'true' }}
+      validate: ${{ steps.force.outputs.run == 'true' || steps.filter.outputs.validate == 'true' }}
+      build: ${{ steps.force.outputs.run == 'true' || steps.filter.outputs.build == 'true' }}
+      aur: ${{ steps.force.outputs.run == 'true' || steps.filter.outputs.aur == 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Force scheduled/manual checks
+        id: force
+        run: |
+          case "${{ github.event_name }}" in
+            schedule|workflow_dispatch) echo 'run=true' >> "$GITHUB_OUTPUT" ;;
+            *) echo 'run=false' >> "$GITHUB_OUTPUT" ;;
+          esac
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            go:
+              - 'Makefile'
+              - 'VERSION'
+              - 'proto/**'
+              - 'whatevrd/**'
+              - '.github/workflows/**'
+            validate:
+              - 'Makefile'
+              - 'VERSION'
+              - 'whatkevr/data/**'
+              - '.github/workflows/**'
+            build:
+              - 'Makefile'
+              - 'VERSION'
+              - 'proto/**'
+              - 'whatevrd/**'
+              - 'whatkevr/**'
+              - 'packaging/systemd/**'
+              - '.github/workflows/**'
+            aur:
+              - 'packaging/aur/**'
+              - '.github/workflows/**'
+
   go:
     name: Go daemon
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -31,6 +79,8 @@ jobs:
   validate:
     name: Validate metadata
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.validate == 'true'
     steps:
       - uses: actions/checkout@v4
       - name: Install validators
@@ -42,6 +92,8 @@ jobs:
     name: Build and install (Arch)
     runs-on: ubuntu-latest
     container: archlinux:latest
+    needs: changes
+    if: needs.changes.outputs.build == 'true'
     steps:
       - name: Install dependencies
         run: |
@@ -51,13 +103,36 @@ jobs:
             kcoreaddons kdbusaddons ki18n kirigami kirigami-addons prison sqlite
           useradd -m -G wheel builduser
           printf 'builduser ALL=(ALL) NOPASSWD: ALL\n' >> /etc/sudoers
-          git clone https://aur.archlinux.org/rlottie.git
-          chown -R builduser:builduser rlottie
-          cd rlottie
-          sudo -u builduser makepkg -sri --noconfirm
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Set rlottie cache key
+        id: rlottie-cache-key
+        run: printf 'week=%s\n' "$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+      - name: Restore rlottie package
+        uses: actions/cache@v4
+        with:
+          path: .cache/aur/rlottie
+          key: arch-rlottie-${{ steps.rlottie-cache-key.outputs.week }}
+          restore-keys: |
+            arch-rlottie-
+      - name: Install rlottie
+        run: |
+          install -d "$GITHUB_WORKSPACE/.cache/aur/rlottie"
+          shopt -s nullglob
+          cached=("$GITHUB_WORKSPACE"/.cache/aur/rlottie/rlottie-*.pkg.tar*)
+          if ((${#cached[@]})) && pacman -U --noconfirm "${cached[@]}"; then
+            exit 0
+          fi
+
+          rm -f "$GITHUB_WORKSPACE"/.cache/aur/rlottie/rlottie-*.pkg.tar*
+          rm -rf "$RUNNER_TEMP/rlottie"
+          git clone https://aur.archlinux.org/rlottie.git "$RUNNER_TEMP/rlottie"
+          chown -R builduser:builduser "$RUNNER_TEMP/rlottie"
+          cd "$RUNNER_TEMP/rlottie"
+          sudo -u builduser makepkg -s --noconfirm
+          cp rlottie-*.pkg.tar* "$GITHUB_WORKSPACE/.cache/aur/rlottie/"
+          pacman -U --noconfirm "$GITHUB_WORKSPACE"/.cache/aur/rlottie/rlottie-*.pkg.tar*
       - name: Mark workspace safe for git
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Build
@@ -71,9 +146,11 @@ jobs:
     name: AUR metadata
     runs-on: ubuntu-latest
     container: archlinux:latest
+    needs: changes
+    if: needs.changes.outputs.aur == 'true'
     steps:
       - name: Install packaging tools
-        run: pacman -Syu --noconfirm --needed git base-devel namcap
+        run: pacman -Syu --noconfirm --needed git sudo base-devel namcap
       - uses: actions/checkout@v4
       - name: Check package metadata
         run: |
