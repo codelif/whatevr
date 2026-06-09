@@ -57,7 +57,8 @@ build: build-daemon build-frontend
 
 build-daemon:
 	@mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=1 $(GO) -C whatevrd build -buildvcs=false -ldflags "$(GO_LDFLAGS)" \
+	CGO_ENABLED=1 $(GO) -C whatevrd build -trimpath -buildvcs=false \
+		-ldflags "$(GO_LDFLAGS) -s -w" \
 		-o ../$(BUILD_DIR)/whatevrd ./cmd/whatevrd
 
 build-frontend:

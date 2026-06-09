@@ -36,14 +36,19 @@ Item {
     KirigamiAddons.Avatar {
         id: avatarImage
 
+        // Decode size snapped to 32px buckets (capped at 256) so layout jitter
+        // and animated resizes never force a re-decode, and identical avatars
+        // shown at slightly different sizes share one pixmap-cache entry.
+        readonly property int decodeSize: Math.min(256, Math.ceil(Math.max(1, width * Screen.devicePixelRatio) / 32) * 32)
+
         anchors.fill: parent
         visible: root.hasUsableAvatar
         source: root.avatarSource
         imageMode: KirigamiAddons.Avatar.ImageMode.AlwaysShowImage
         asynchronous: true
         cache: true
-        sourceSize.width: Math.ceil(width * Screen.devicePixelRatio)
-        sourceSize.height: Math.ceil(height * Screen.devicePixelRatio)
+        sourceSize.width: decodeSize
+        sourceSize.height: decodeSize
     }
 
     Label {

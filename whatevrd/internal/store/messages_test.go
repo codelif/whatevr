@@ -648,7 +648,7 @@ func TestListChatsFormatsWhatsAppNameForDirectChat(t *testing.T) {
 		t.Fatalf("ensure chat: %v", err)
 	}
 
-	chats, err := db.ListChats(ctx, 10, 0)
+	chats, err := db.ListChats(ctx, 10, 0, "")
 	if err != nil {
 		t.Fatalf("list chats: %v", err)
 	}
@@ -769,7 +769,7 @@ func TestListChatsSortsByMostRecentMessage(t *testing.T) {
 		t.Fatalf("save beta: %v", err)
 	}
 
-	chats, err := db.ListChats(ctx, 10, 0)
+	chats, err := db.ListChats(ctx, 10, 0, "")
 	if err != nil {
 		t.Fatalf("list chats: %v", err)
 	}
@@ -965,7 +965,7 @@ func TestClearSessionDataDeletesChatsMessagesAndAppState(t *testing.T) {
 		t.Fatalf("clear session data: %v", err)
 	}
 
-	chats, err := db.ListChats(ctx, 10, 0)
+	chats, err := db.ListChats(ctx, 10, 0, "")
 	if err != nil {
 		t.Fatalf("list chats: %v", err)
 	}
@@ -1733,5 +1733,78 @@ func TestOverwriteChatUnreadCountSetsNonZeroBadge(t *testing.T) {
 	// based on per-message is_read which we shouldn't have touched.
 	if _, err := db.GetMessage(ctx, chatID+":a"); err == sql.ErrNoRows {
 		t.Fatalf("message disappeared after overwrite")
+	}
+}
+
+func TestSaveMessagesBatchMatchesSingleSaveSemantics(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	text := TextMessageInput{
+		ID:          "chat-1:msg-1",
+		ChatID:      "chat-1",
+		ChatName:    "Test Chat",
+		SenderID:    "sender-1",
+		Text:        "hello",
+		Timestamp:   time.Unix(100, 0),
+		Direction:   DirectionIncoming,
+		Status:      StatusDelivered,
+		CountUnread: true,
+	}
+	media := MediaMessageInput{
+		TextMessageInput: TextMessageInput{
+			ID:          "chat-1:msg-2",
+			ChatID:      "chat-1",
+			ChatName:    "Test Chat",
+			SenderID:    "sender-1",
+			Timestamp:   time.Unix(200, 0),
+			Direction:   DirectionIncoming,
+			Status:      StatusDelivered,
+			CountUnread: true,
+		},
+		MediaKind:     MediaKindImage,
+		MediaMimeType: "image/jpeg",
+		MediaPayload:  []byte{1, 2, 3},
+	}
+
+	saved, err := db.SaveMessages(ctx, []MessageSaveItem{{Text: &text}, {Media: &media}})
+	if err != nil {
+		t.Fatalf("save batch: %v", err)
+	}
+	if len(saved) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(saved))
+	}
+	if !saved[0].Inserted || !saved[1].Inserted {
+		t.Fatalf("expected both inserts, got %+v / %+v", saved[0], saved[1])
+	}
+	if saved[1].Chat.UnreadCount != 2 {
+		t.Fatalf("expected unread=2 after batch, got %+v", saved[1].Chat)
+	}
+	if saved[1].Chat.LastMessage != "[Image]" || saved[1].Chat.LastMessageTime != 200 {
+		t.Fatalf("unexpected chat summary after batch: %+v", saved[1].Chat)
+	}
+
+	// Re-saving the same batch must be a no-op, same as the single-save path.
+	again, err := db.SaveMessages(ctx, []MessageSaveItem{{Text: &text}, {Media: &media}})
+	if err != nil {
+		t.Fatalf("re-save batch: %v", err)
+	}
+	if again[0].Inserted || again[1].Inserted {
+		t.Fatal("expected duplicate batch to be ignored")
+	}
+	if again[1].Chat.UnreadCount != 2 {
+		t.Fatalf("duplicate batch changed unread count: %+v", again[1].Chat)
+	}
+
+	messages, err := db.ListMessages(ctx, "chat-1", 10, "")
+	if err != nil {
+		t.Fatalf("list messages: %v", err)
+	}
+	if len(messages) != 2 {
+		t.Fatalf("expected 2 stored messages, got %d", len(messages))
 	}
 }

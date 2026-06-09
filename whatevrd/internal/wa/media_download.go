@@ -4,7 +4,6 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"image"
@@ -456,34 +455,19 @@ func (c *Client) existingStickerContentPath(message appstore.Message, key string
 	return ""
 }
 
+// findDownloadedStickerPath resolves a sticker's content via the indexed
+// cache-key lookup. Cache keys are populated on insert and backfilled for
+// legacy rows at startup (ensureStickerCacheKeys), so no full-table fallback
+// scan is needed.
 func (c *Client) findDownloadedStickerPath(ctx context.Context, messageID, key string) (string, error) {
 	path, err := c.store.DownloadedStickerPathByCacheKey(ctx, messageID, key)
-	if err != nil || path != "" {
-		if path != "" {
-			if _, statErr := os.Stat(path); statErr != nil {
-				return "", nil
-			}
-		}
-		return path, err
-	}
-
-	messages, err := c.store.ListDownloadedStickerMessages(ctx)
-	if err != nil {
+	if err != nil || path == "" {
 		return "", err
 	}
-	for _, message := range messages {
-		if message.ID == messageID || message.MediaLocalPath == "" {
-			continue
-		}
-		otherKey, err := stickerCacheKey(message)
-		if err != nil || otherKey != key {
-			continue
-		}
-		if _, err := os.Stat(message.MediaLocalPath); err == nil {
-			return message.MediaLocalPath, nil
-		}
+	if _, statErr := os.Stat(path); statErr != nil {
+		return "", nil
 	}
-	return "", nil
+	return path, nil
 }
 
 func stickerCacheKey(message appstore.Message) (string, error) {
@@ -493,17 +477,11 @@ func stickerCacheKey(message appstore.Message) (string, error) {
 	if message.MediaCacheKey != "" {
 		return message.MediaCacheKey, nil
 	}
-	var sticker waE2E.StickerMessage
-	if err := proto.Unmarshal(message.MediaPayload, &sticker); err != nil {
+	key, err := appstore.StickerCacheKeyFromPayload(message.MediaPayload)
+	if err != nil {
 		return "", grpcstatus.Errorf(codes.Internal, "decode sticker metadata: %v", err)
 	}
-	if hash := sticker.GetFileSHA256(); len(hash) > 0 {
-		return hex.EncodeToString(hash), nil
-	}
-	if hash := sticker.GetFileEncSHA256(); len(hash) > 0 {
-		return hex.EncodeToString(hash), nil
-	}
-	return "", nil
+	return key, nil
 }
 
 func mediaExtension(mimeType string) string {

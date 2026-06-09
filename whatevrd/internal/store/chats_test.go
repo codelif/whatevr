@@ -2,8 +2,10 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestPinnedChatCountExcluding(t *testing.T) {
@@ -110,5 +112,58 @@ func TestReconcileChatPinsUpdatesStaleAndChangedPins(t *testing.T) {
 	}
 	if !newPinned.IsPinned || newPinned.PinnedOrder != 400 {
 		t.Fatalf("new chat not pinned: %+v", newPinned)
+	}
+}
+
+func TestListChatsKeysetPagination(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	for i := 1; i <= 5; i++ {
+		if _, err := db.SaveTextMessage(ctx, TextMessageInput{
+			ID:        fmt.Sprintf("chat-%d:msg", i),
+			ChatID:    fmt.Sprintf("chat-%d", i),
+			ChatName:  fmt.Sprintf("Chat %d", i),
+			SenderID:  "sender-1",
+			Text:      "hi",
+			Timestamp: time.Unix(int64(100*i), 0),
+			Direction: DirectionIncoming,
+			Status:    StatusDelivered,
+		}); err != nil {
+			t.Fatalf("save message %d: %v", i, err)
+		}
+	}
+
+	firstPage, err := db.ListChats(ctx, 2, 0, "")
+	if err != nil {
+		t.Fatalf("first page: %v", err)
+	}
+	if len(firstPage) != 2 || firstPage[0].ID != "chat-5" || firstPage[1].ID != "chat-4" {
+		t.Fatalf("unexpected first page: %+v", firstPage)
+	}
+
+	secondPage, err := db.ListChats(ctx, 2, 0, firstPage[1].ID)
+	if err != nil {
+		t.Fatalf("second page: %v", err)
+	}
+	if len(secondPage) != 2 || secondPage[0].ID != "chat-3" || secondPage[1].ID != "chat-2" {
+		t.Fatalf("unexpected second page: %+v", secondPage)
+	}
+
+	// Unknown cursor falls back to the start of the list.
+	fallback, err := db.ListChats(ctx, 1, 0, "missing-chat")
+	if err != nil {
+		t.Fatalf("fallback page: %v", err)
+	}
+	if len(fallback) != 1 || fallback[0].ID != "chat-5" {
+		t.Fatalf("unexpected fallback page: %+v", fallback)
+	}
+
+	if firstPage[0].UpdatedAt <= 0 {
+		t.Fatalf("expected updated_at to be stamped, got %d", firstPage[0].UpdatedAt)
 	}
 }

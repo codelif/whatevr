@@ -250,7 +250,12 @@ message UpdateSessionStateResponse {}
 
 message ListChatsRequest {
   int32 limit = 1;
+  // Deprecated: offset pagination degrades on large chat lists and skips or
+  // repeats rows when the list reorders mid-pagination. Use after_chat_id.
   int32 offset = 2;
+  // Keyset cursor: return chats strictly after this chat in list order
+  // (pinned first, then most recent). Takes precedence over offset.
+  string after_chat_id = 3;
 }
 
 message ListChatsResponse {
@@ -260,8 +265,12 @@ message ListChatsResponse {
 message GetMessagesRequest {
   string chat_id = 1;
   int32 limit = 2;
-  string before_message_id = 3;
-  string around_message_id = 4;
+  // Same field numbers as the original flat fields, so this stays
+  // wire-compatible with clients that set at most one of them.
+  oneof anchor {
+    string before_message_id = 3;
+    string around_message_id = 4;
+  }
 }
 
 message GetMessagesResponse {
@@ -335,6 +344,9 @@ message Chat {
   MessageStatus last_message_status = 9;
   bool is_pinned = 10;
   uint32 pinned_order = 11;
+  // Bumped on every change to this chat row; lets clients skip updates for
+  // chats they already have at this stamp.
+  int64 updated_at_unix = 12;
 }
 
 message Message {

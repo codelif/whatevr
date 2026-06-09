@@ -2099,9 +2099,14 @@ func (*UpdateSessionStateResponse) Descriptor() ([]byte, []int) {
 }
 
 type ListChatsRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Limit         int32                  `protobuf:"varint,1,opt,name=limit,proto3" json:"limit,omitempty"`
-	Offset        int32                  `protobuf:"varint,2,opt,name=offset,proto3" json:"offset,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Limit int32                  `protobuf:"varint,1,opt,name=limit,proto3" json:"limit,omitempty"`
+	// Deprecated: offset pagination degrades on large chat lists and skips or
+	// repeats rows when the list reorders mid-pagination. Use after_chat_id.
+	Offset int32 `protobuf:"varint,2,opt,name=offset,proto3" json:"offset,omitempty"`
+	// Keyset cursor: return chats strictly after this chat in list order
+	// (pinned first, then most recent). Takes precedence over offset.
+	AfterChatId   string `protobuf:"bytes,3,opt,name=after_chat_id,json=afterChatId,proto3" json:"after_chat_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2150,6 +2155,13 @@ func (x *ListChatsRequest) GetOffset() int32 {
 	return 0
 }
 
+func (x *ListChatsRequest) GetAfterChatId() string {
+	if x != nil {
+		return x.AfterChatId
+	}
+	return ""
+}
+
 type ListChatsResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Chats         []*Chat                `protobuf:"bytes,1,rep,name=chats,proto3" json:"chats,omitempty"`
@@ -2195,13 +2207,19 @@ func (x *ListChatsResponse) GetChats() []*Chat {
 }
 
 type GetMessagesRequest struct {
-	state           protoimpl.MessageState `protogen:"open.v1"`
-	ChatId          string                 `protobuf:"bytes,1,opt,name=chat_id,json=chatId,proto3" json:"chat_id,omitempty"`
-	Limit           int32                  `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`
-	BeforeMessageId string                 `protobuf:"bytes,3,opt,name=before_message_id,json=beforeMessageId,proto3" json:"before_message_id,omitempty"`
-	AroundMessageId string                 `protobuf:"bytes,4,opt,name=around_message_id,json=aroundMessageId,proto3" json:"around_message_id,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	ChatId string                 `protobuf:"bytes,1,opt,name=chat_id,json=chatId,proto3" json:"chat_id,omitempty"`
+	Limit  int32                  `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`
+	// Same field numbers as the original flat fields, so this stays
+	// wire-compatible with clients that set at most one of them.
+	//
+	// Types that are valid to be assigned to Anchor:
+	//
+	//	*GetMessagesRequest_BeforeMessageId
+	//	*GetMessagesRequest_AroundMessageId
+	Anchor        isGetMessagesRequest_Anchor `protobuf_oneof:"anchor"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *GetMessagesRequest) Reset() {
@@ -2248,19 +2266,46 @@ func (x *GetMessagesRequest) GetLimit() int32 {
 	return 0
 }
 
+func (x *GetMessagesRequest) GetAnchor() isGetMessagesRequest_Anchor {
+	if x != nil {
+		return x.Anchor
+	}
+	return nil
+}
+
 func (x *GetMessagesRequest) GetBeforeMessageId() string {
 	if x != nil {
-		return x.BeforeMessageId
+		if x, ok := x.Anchor.(*GetMessagesRequest_BeforeMessageId); ok {
+			return x.BeforeMessageId
+		}
 	}
 	return ""
 }
 
 func (x *GetMessagesRequest) GetAroundMessageId() string {
 	if x != nil {
-		return x.AroundMessageId
+		if x, ok := x.Anchor.(*GetMessagesRequest_AroundMessageId); ok {
+			return x.AroundMessageId
+		}
 	}
 	return ""
 }
+
+type isGetMessagesRequest_Anchor interface {
+	isGetMessagesRequest_Anchor()
+}
+
+type GetMessagesRequest_BeforeMessageId struct {
+	BeforeMessageId string `protobuf:"bytes,3,opt,name=before_message_id,json=beforeMessageId,proto3,oneof"`
+}
+
+type GetMessagesRequest_AroundMessageId struct {
+	AroundMessageId string `protobuf:"bytes,4,opt,name=around_message_id,json=aroundMessageId,proto3,oneof"`
+}
+
+func (*GetMessagesRequest_BeforeMessageId) isGetMessagesRequest_Anchor() {}
+
+func (*GetMessagesRequest_AroundMessageId) isGetMessagesRequest_Anchor() {}
 
 type GetMessagesResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -2959,8 +3004,11 @@ type Chat struct {
 	LastMessageStatus    MessageStatus          `protobuf:"varint,9,opt,name=last_message_status,json=lastMessageStatus,proto3,enum=whatevr.v1.MessageStatus" json:"last_message_status,omitempty"`
 	IsPinned             bool                   `protobuf:"varint,10,opt,name=is_pinned,json=isPinned,proto3" json:"is_pinned,omitempty"`
 	PinnedOrder          uint32                 `protobuf:"varint,11,opt,name=pinned_order,json=pinnedOrder,proto3" json:"pinned_order,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	// Bumped on every change to this chat row; lets clients skip updates for
+	// chats they already have at this stamp.
+	UpdatedAtUnix int64 `protobuf:"varint,12,opt,name=updated_at_unix,json=updatedAtUnix,proto3" json:"updated_at_unix,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Chat) Reset() {
@@ -3066,6 +3114,13 @@ func (x *Chat) GetIsPinned() bool {
 func (x *Chat) GetPinnedOrder() uint32 {
 	if x != nil {
 		return x.PinnedOrder
+	}
+	return 0
+}
+
+func (x *Chat) GetUpdatedAtUnix() int64 {
+	if x != nil {
+		return x.UpdatedAtUnix
 	}
 	return 0
 }
@@ -3456,17 +3511,19 @@ const file_whatevr_proto_rawDesc = "" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x18\n" +
 	"\afocused\x18\x02 \x01(\bR\afocused\x12$\n" +
 	"\x0eactive_chat_id\x18\x03 \x01(\tR\factiveChatId\"\x1c\n" +
-	"\x1aUpdateSessionStateResponse\"@\n" +
+	"\x1aUpdateSessionStateResponse\"d\n" +
 	"\x10ListChatsRequest\x12\x14\n" +
 	"\x05limit\x18\x01 \x01(\x05R\x05limit\x12\x16\n" +
-	"\x06offset\x18\x02 \x01(\x05R\x06offset\";\n" +
+	"\x06offset\x18\x02 \x01(\x05R\x06offset\x12\"\n" +
+	"\rafter_chat_id\x18\x03 \x01(\tR\vafterChatId\";\n" +
 	"\x11ListChatsResponse\x12&\n" +
-	"\x05chats\x18\x01 \x03(\v2\x10.whatevr.v1.ChatR\x05chats\"\x9b\x01\n" +
+	"\x05chats\x18\x01 \x03(\v2\x10.whatevr.v1.ChatR\x05chats\"\xa9\x01\n" +
 	"\x12GetMessagesRequest\x12\x17\n" +
 	"\achat_id\x18\x01 \x01(\tR\x06chatId\x12\x14\n" +
-	"\x05limit\x18\x02 \x01(\x05R\x05limit\x12*\n" +
-	"\x11before_message_id\x18\x03 \x01(\tR\x0fbeforeMessageId\x12*\n" +
-	"\x11around_message_id\x18\x04 \x01(\tR\x0faroundMessageId\"F\n" +
+	"\x05limit\x18\x02 \x01(\x05R\x05limit\x12,\n" +
+	"\x11before_message_id\x18\x03 \x01(\tH\x00R\x0fbeforeMessageId\x12,\n" +
+	"\x11around_message_id\x18\x04 \x01(\tH\x00R\x0faroundMessageIdB\b\n" +
+	"\x06anchor\"F\n" +
 	"\x13GetMessagesResponse\x12/\n" +
 	"\bmessages\x18\x01 \x03(\v2\x13.whatevr.v1.MessageR\bmessages\".\n" +
 	"\x13MarkChatReadRequest\x12\x17\n" +
@@ -3500,7 +3557,7 @@ const file_whatevr_proto_rawDesc = "" +
 	"\acaption\x18\x03 \x01(\tR\acaption\x12-\n" +
 	"\x13reply_to_message_id\x18\x04 \x01(\tR\x10replyToMessageId\"B\n" +
 	"\x11SendMediaResponse\x12-\n" +
-	"\amessage\x18\x01 \x01(\v2\x13.whatevr.v1.MessageR\amessage\"\xcb\x03\n" +
+	"\amessage\x18\x01 \x01(\v2\x13.whatevr.v1.MessageR\amessage\"\xf3\x03\n" +
 	"\x04Chat\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12!\n" +
@@ -3513,7 +3570,8 @@ const file_whatevr_proto_rawDesc = "" +
 	"\x13last_message_status\x18\t \x01(\x0e2\x19.whatevr.v1.MessageStatusR\x11lastMessageStatus\x12\x1b\n" +
 	"\tis_pinned\x18\n" +
 	" \x01(\bR\bisPinned\x12!\n" +
-	"\fpinned_order\x18\v \x01(\rR\vpinnedOrder\"\xa1\x05\n" +
+	"\fpinned_order\x18\v \x01(\rR\vpinnedOrder\x12&\n" +
+	"\x0fupdated_at_unix\x18\f \x01(\x03R\rupdatedAtUnix\"\xa1\x05\n" +
 	"\aMessage\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x17\n" +
 	"\achat_id\x18\x02 \x01(\tR\x06chatId\x12\x1b\n" +
@@ -3779,6 +3837,10 @@ func file_whatevr_proto_init() {
 	file_whatevr_proto_msgTypes[18].OneofWrappers = []any{
 		(*LoginEvent_QrCode)(nil),
 		(*LoginEvent_LoginStateChanged)(nil),
+	}
+	file_whatevr_proto_msgTypes[29].OneofWrappers = []any{
+		(*GetMessagesRequest_BeforeMessageId)(nil),
+		(*GetMessagesRequest_AroundMessageId)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
