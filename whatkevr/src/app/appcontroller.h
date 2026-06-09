@@ -22,6 +22,7 @@ class QGrpcServerStream;
 class QTimer;
 class QAbstractGrpcChannel;
 class QFileSystemWatcher;
+class QLocalSocket;
 class QQmlEngine;
 class QJSEngine;
 QT_END_NAMESPACE
@@ -213,6 +214,9 @@ private:
     void launchDaemonBinary();
     bool ensureChannel();
     void resetChannel();
+    void probeAndConnect();
+    void startSession();
+    void enterNotRunning();
     void setupSocketWatcher();
     void refreshSocketWatch();
     void attachClients();
@@ -339,6 +343,7 @@ private:
     std::unique_ptr<QGrpcServerStream> m_daemonStream;
     std::unique_ptr<QGrpcServerStream> m_loginStream;
     QFileSystemWatcher *m_socketWatcher = nullptr;
+    QLocalSocket *m_probeSocket = nullptr;
     QTimer *m_retryTimer = nullptr;
     QTimer *m_qrTimer = nullptr;
     QTimer *m_selectedChatReloadTimer = nullptr;
