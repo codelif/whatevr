@@ -10,5 +10,15 @@ ExecStart=@BINDIR@/whatevrd
 Restart=on-failure
 RestartSec=5s
 
+# Hardening. Conservative set that works for user services: the daemon needs
+# network access and writes under $HOME (XDG data/cache dirs), so options like
+# ProtectHome/ProtectSystem=strict are deliberately not used.
+NoNewPrivileges=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
 [Install]
 WantedBy=default.target

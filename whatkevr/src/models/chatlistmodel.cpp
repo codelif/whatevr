@@ -111,7 +111,8 @@ void ChatListModel::upsertChat(const whatevr::v1::Chat &chat, const QString &pre
             beginRemoveRows(QModelIndex(), previousIndex, previousIndex);
             m_chats.removeAt(previousIndex);
             endRemoveRows();
-            rebuildIndex();
+            m_chatIndexById.remove(previousChatId);
+            reindexRange(previousIndex, static_cast<int>(m_chats.size()) - 1);
         }
     }
 
@@ -122,7 +123,7 @@ void ChatListModel::upsertChat(const whatevr::v1::Chat &chat, const QString &pre
         const int insertIndex = sortedInsertIndex(item);
         beginInsertRows(QModelIndex(), insertIndex, insertIndex);
         m_chats.insert(insertIndex, item);
-        rebuildIndex();
+        reindexRange(insertIndex, static_cast<int>(m_chats.size()) - 1);
         endInsertRows();
         return;
     }
@@ -142,7 +143,7 @@ void ChatListModel::upsertChat(const whatevr::v1::Chat &chat, const QString &pre
     beginMoveRows(QModelIndex(), existingIndex, existingIndex, QModelIndex(), destinationRow);
     m_chats.move(existingIndex, insertIndex);
     endMoveRows();
-    rebuildIndex();
+    reindexRange(std::min(existingIndex, insertIndex), std::max(existingIndex, insertIndex));
 
     if (!sameChatData(m_chats.at(insertIndex), item)) {
         m_chats[insertIndex] = item;
@@ -215,6 +216,7 @@ ChatListModel::ChatItem ChatListModel::fromProto(const whatevr::v1::Chat &chat)
         .isGroup = chat.isGroup(),
         .isPinned = chat.isPinned(),
         .pinnedOrder = chat.pinnedOrder(),
+        .updatedAtUnix = chat.updatedAtUnix(),
         .avatarLocalPath = chat.avatarLocalPath(),
     };
     item.displayName = displayName(item);
@@ -262,6 +264,7 @@ bool ChatListModel::sameSortOrder(const QList<ChatItem> &left, const QList<ChatI
 bool ChatListModel::sameChatData(const ChatItem &left, const ChatItem &right)
 {
     return left.id == right.id
+        && left.updatedAtUnix == right.updatedAtUnix
         && left.name == right.name
         && left.displayName == right.displayName
         && left.initials == right.initials
@@ -292,15 +295,14 @@ bool ChatListModel::sortBefore(const ChatItem &left, const ChatItem &right)
 
 int ChatListModel::sortedInsertIndex(const ChatItem &item, int excludingIndex) const
 {
-    int insertIndex = 0;
-    for (int i = 0; i < m_chats.size(); ++i) {
-        if (i == excludingIndex) {
-            continue;
-        }
-        if (sortBefore(item, m_chats.at(i))) {
-            break;
-        }
-        ++insertIndex;
+    // m_chats stays sorted (the row being upserted still holds its old,
+    // in-order data), so a binary search finds the insertion point. The result
+    // is in the coordinate space of a list without the excluded row, matching
+    // the linear scan this replaces.
+    const auto it = std::upper_bound(m_chats.cbegin(), m_chats.cend(), item, sortBefore);
+    int insertIndex = static_cast<int>(it - m_chats.cbegin());
+    if (excludingIndex >= 0 && excludingIndex < insertIndex) {
+        --insertIndex;
     }
     return insertIndex;
 }
@@ -315,7 +317,16 @@ void ChatListModel::rebuildIndex()
 {
     m_chatIndexById.clear();
     m_chatIndexById.reserve(m_chats.size());
-    for (int i = 0; i < m_chats.size(); ++i) {
+    reindexRange(0, static_cast<int>(m_chats.size()) - 1);
+}
+
+// reindexRange refreshes the id→row map for rows whose positions shifted,
+// avoiding a full rebuild on every single-row insert/remove/move.
+void ChatListModel::reindexRange(int firstRow, int lastRow)
+{
+    firstRow = std::max(firstRow, 0);
+    lastRow = std::min(lastRow, static_cast<int>(m_chats.size()) - 1);
+    for (int i = firstRow; i <= lastRow; ++i) {
         if (!m_chats.at(i).id.isEmpty()) {
             m_chatIndexById.insert(m_chats.at(i).id, i);
         }

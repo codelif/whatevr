@@ -141,7 +141,7 @@ jobs:
       - name: Install dependencies
         run: |
           pacman -Syu --noconfirm --needed \
-            git sudo base-devel go cmake ninja extra-cmake-modules zstd vulkan-headers \
+            git sudo base-devel go cmake ninja ccache extra-cmake-modules zstd vulkan-headers \
             qt6-base qt6-declarative qt6-shadertools qt6-grpc \
             kcoreaddons kdbusaddons ki18n kirigami kirigami-addons prison sqlite
           useradd -m -G wheel builduser
@@ -181,7 +181,27 @@ jobs:
           cp rlottie-*.pkg.tar* "$GITHUB_WORKSPACE/.cache/aur/rlottie/"
           pacman -U --noconfirm "$GITHUB_WORKSPACE"/.cache/aur/rlottie/rlottie-*.pkg.tar*
 
+      - name: Restore Go caches
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: arch-go-${{ hashFiles('whatevrd/go.sum') }}
+          restore-keys: arch-go-
+
+      - name: Restore ccache
+        uses: actions/cache@v5
+        with:
+          path: .cache/ccache
+          key: arch-ccache-${{ github.sha }}
+          restore-keys: arch-ccache-
+
       - name: Build
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.cache/ccache
+          CCACHE_MAXSIZE: 500M
+          CMAKE_CXX_COMPILER_LAUNCHER: ccache
         run: make build
 
       - name: Install smoke test

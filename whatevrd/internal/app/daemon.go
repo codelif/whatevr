@@ -226,6 +226,7 @@ type Chat struct {
 	IsGroup              bool
 	IsPinned             bool
 	PinnedOrder          uint32
+	UpdatedAtUnix        int64
 	AvatarLocalPath      string
 }
 
@@ -463,11 +464,11 @@ func (d *Daemon) ClearChatComposing(chatID, senderID string) bool {
 }
 
 func (d *Daemon) scheduleComposingPresenceExpiry(chatID, senderID string, updatedAt time.Time) {
-	ttl := composingPresenceTTL
-	go func() {
-		<-time.After(ttl)
+	// AfterFunc keeps the expiry off a parked goroutine; firing is idempotent
+	// because expireComposingPresence checks the update timestamp.
+	time.AfterFunc(composingPresenceTTL, func() {
 		d.expireComposingPresence(chatID, senderID, updatedAt)
-	}()
+	})
 }
 
 func (d *Daemon) expireComposingPresence(chatID, senderID string, updatedAt time.Time) {

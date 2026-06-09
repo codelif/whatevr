@@ -22,7 +22,7 @@ const (
 )
 
 type ChatStore interface {
-	ListChats(context.Context, int, int) ([]appstore.Chat, error)
+	ListChats(context.Context, int, int, string) ([]appstore.Chat, error)
 	ListMessages(context.Context, string, int, string) ([]appstore.Message, error)
 	ListMessagesAround(context.Context, string, int, string) ([]appstore.Message, error)
 	MarkChatRead(context.Context, string) (appstore.Chat, error)
@@ -59,7 +59,7 @@ func (s *ChatService) ListChats(ctx context.Context, req *pb.ListChatsRequest) (
 		return nil, err
 	}
 
-	chats, err := s.store.ListChats(ctx, limit, offset)
+	chats, err := s.store.ListChats(ctx, limit, offset, strings.TrimSpace(req.GetAfterChatId()))
 	if err != nil {
 		return nil, err
 	}
@@ -235,6 +235,7 @@ func toAppChat(chat appstore.Chat) app.Chat {
 		IsGroup:              chat.IsGroup,
 		IsPinned:             chat.IsPinned,
 		PinnedOrder:          chat.PinnedOrder,
+		UpdatedAtUnix:        chat.UpdatedAt,
 		AvatarLocalPath:      chat.AvatarLocalPath,
 	}
 }

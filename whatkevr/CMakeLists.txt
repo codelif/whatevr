@@ -29,6 +29,19 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
 endif()
 
+# Link-time optimisation for optimised builds. Distro packagers who inject
+# their own flags can pass -DWHATKEVR_ENABLE_LTO=OFF.
+option(WHATKEVR_ENABLE_LTO "Enable interprocedural optimisation (LTO)" ON)
+if(WHATKEVR_ENABLE_LTO AND NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+    include(CheckIPOSupported)
+    check_ipo_supported(RESULT whatkevr_ipo_supported OUTPUT whatkevr_ipo_error)
+    if(whatkevr_ipo_supported)
+        set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
+    else()
+        message(STATUS "LTO not supported: ${whatkevr_ipo_error}")
+    endif()
+endif()
+
 # Floors are chosen against the APIs actually used, not the dev's installed
 # versions. Qt 6.8 is the HARD floor: Qt GRPC/Protobuf only became stable in
 # 6.8 LTS, and the code relies on 6.8 signatures (QGrpcCallReply::finished(

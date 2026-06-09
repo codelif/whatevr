@@ -63,7 +63,14 @@ func (db *DB) migrate(ctx context.Context) error {
 	for _, statement := range []string{
 		`PRAGMA busy_timeout = 5000`,
 		`PRAGMA journal_mode = WAL`,
+		// NORMAL is durable for the database itself under WAL: a power loss
+		// can only drop the most recent commits, never corrupt the file.
+		// FULL would fsync every commit, which dominates history-sync writes.
+		`PRAGMA synchronous = NORMAL`,
 		`PRAGMA foreign_keys = ON`,
+		`PRAGMA temp_store = MEMORY`,
+		`PRAGMA cache_size = -16000`,
+		`PRAGMA mmap_size = 268435456`,
 	} {
 		if _, err := db.conn.ExecContext(ctx, statement); err != nil {
 			return err
@@ -201,6 +208,10 @@ func (db *DB) migrate(ctx context.Context) error {
 		return err
 	}
 
+	if err := db.ensureChatUpdatedAtColumn(ctx); err != nil {
+		return err
+	}
+
 	if err := db.ensureMediaColumns(ctx); err != nil {
 		return err
 	}
@@ -220,6 +231,9 @@ func (db *DB) migrate(ctx context.Context) error {
 		return err
 	}
 	if err := db.ensureQueryIndexes(ctx); err != nil {
+		return err
+	}
+	if err := db.ensureStickerCacheKeys(ctx); err != nil {
 		return err
 	}
 
@@ -409,6 +423,61 @@ func (db *DB) ensureChatPinColumns(ctx context.Context) error {
 		}
 		if _, err := db.conn.ExecContext(ctx, a.def); err != nil {
 			return fmt.Errorf("add chats.%s: %w", a.col, err)
+		}
+	}
+	return nil
+}
+
+// ensureChatUpdatedAtColumn adds chats.updated_at and keeps it current via
+// triggers, so every existing write path bumps the stamp without changes.
+// Recursive triggers are off by default in SQLite, so the trigger's own
+// UPDATE cannot re-fire it.
+func (db *DB) ensureChatUpdatedAtColumn(ctx context.Context) error {
+	rows, err := db.conn.QueryContext(ctx, `PRAGMA table_info(chats)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	hasUpdatedAt := false
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull, pk int
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			return err
+		}
+		if name == "updated_at" {
+			hasUpdatedAt = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	if !hasUpdatedAt {
+		if _, err := db.conn.ExecContext(ctx, `ALTER TABLE chats ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return fmt.Errorf("add chats.updated_at: %w", err)
+		}
+		if _, err := db.conn.ExecContext(ctx, `UPDATE chats SET updated_at = unixepoch()`); err != nil {
+			return err
+		}
+	}
+
+	for _, statement := range []string{
+		`CREATE TRIGGER IF NOT EXISTS trg_chats_updated_at_insert AFTER INSERT ON chats
+		BEGIN
+			UPDATE chats SET updated_at = unixepoch() WHERE id = NEW.id;
+		END`,
+		`CREATE TRIGGER IF NOT EXISTS trg_chats_updated_at_update AFTER UPDATE ON chats
+		WHEN NEW.updated_at = OLD.updated_at
+		BEGIN
+			UPDATE chats SET updated_at = unixepoch() WHERE id = NEW.id;
+		END`,
+	} {
+		if _, err := db.conn.ExecContext(ctx, statement); err != nil {
+			return err
 		}
 	}
 	return nil

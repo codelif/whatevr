@@ -76,18 +76,6 @@ func (db *DB) GetAvatar(ctx context.Context, subject AvatarSubject) (Avatar, err
 	return avatar, err
 }
 
-func (db *DB) ListAvatars(ctx context.Context, subjects []AvatarSubject) ([]Avatar, error) {
-	avatars := make([]Avatar, 0, len(subjects))
-	for _, subject := range subjects {
-		avatar, err := db.GetAvatar(ctx, subject)
-		if err != nil {
-			return nil, err
-		}
-		avatars = append(avatars, avatar)
-	}
-	return avatars, nil
-}
-
 // ListChatAvatarSubjects returns chat avatar subjects ordered the same way as
 // ListChats (pinned first, then most recent), limited to the given count. It is
 // used to bound the post-history-sync profile-picture prefetch to the chats that

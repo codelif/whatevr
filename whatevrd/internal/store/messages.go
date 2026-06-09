@@ -107,12 +107,12 @@ type MessageTimestampCorrection struct {
 	Changed bool
 }
 
-func (db *DB) SaveTextMessage(ctx context.Context, input TextMessageInput) (SavedTextMessage, error) {
+func normalizeTextMessageInput(input TextMessageInput) (TextMessageInput, error) {
 	if input.ID == "" {
-		return SavedTextMessage{}, errors.New("message id is required")
+		return TextMessageInput{}, errors.New("message id is required")
 	}
 	if input.ChatID == "" {
-		return SavedTextMessage{}, errors.New("chat id is required")
+		return TextMessageInput{}, errors.New("chat id is required")
 	}
 	if input.SenderID == "" {
 		input.SenderID = input.ChatID
@@ -127,6 +127,14 @@ func (db *DB) SaveTextMessage(ctx context.Context, input TextMessageInput) (Save
 	if input.Status == "" {
 		input.Status = StatusDelivered
 	}
+	return input, nil
+}
+
+func (db *DB) SaveTextMessage(ctx context.Context, input TextMessageInput) (SavedTextMessage, error) {
+	input, err := normalizeTextMessageInput(input)
+	if err != nil {
+		return SavedTextMessage{}, err
+	}
 
 	tx, err := db.conn.BeginTx(ctx, nil)
 	if err != nil {
@@ -134,6 +142,20 @@ func (db *DB) SaveTextMessage(ctx context.Context, input TextMessageInput) (Save
 	}
 	defer tx.Rollback()
 
+	saved, err := saveTextMessageTx(ctx, tx, input)
+	if err != nil {
+		return SavedTextMessage{}, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return SavedTextMessage{}, err
+	}
+	return saved, nil
+}
+
+// saveTextMessageTx stores one already-normalized text message inside the
+// caller's transaction.
+func saveTextMessageTx(ctx context.Context, tx *sql.Tx, input TextMessageInput) (SavedTextMessage, error) {
 	if err := upsertChat(ctx, tx, input); err != nil {
 		return SavedTextMessage{}, err
 	}
@@ -158,24 +180,7 @@ func (db *DB) SaveTextMessage(ctx context.Context, input TextMessageInput) (Save
 	inserted := rowsAffected > 0
 
 	if inserted {
-		unreadIncrement := 0
-		if input.CountUnread {
-			unreadIncrement = 1
-		}
-		nameSource := normalizeChatNameSource(input.ChatNameSource)
-
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE chats
-			SET name = CASE WHEN ? != '' AND chat_name_source_priority(?) >= chat_name_source_priority(name_source) THEN ? ELSE name END,
-				name_source = CASE WHEN ? != '' AND chat_name_source_priority(?) >= chat_name_source_priority(name_source) THEN ? ELSE name_source END,
-				last_message = CASE WHEN ? >= last_message_time THEN ? ELSE last_message END,
-				last_message_direction = CASE WHEN ? >= last_message_time THEN ? ELSE last_message_direction END,
-				last_message_status = CASE WHEN ? >= last_message_time THEN ? ELSE last_message_status END,
-				last_message_time = CASE WHEN ? >= last_message_time THEN ? ELSE last_message_time END,
-				unread_count = unread_count + ?,
-				is_group = ?
-			WHERE id = ?
-		`, input.ChatName, nameSource, input.ChatName, input.ChatName, nameSource, nameSource, input.Timestamp.Unix(), input.Text, input.Timestamp.Unix(), input.Direction, input.Timestamp.Unix(), input.Status, input.Timestamp.Unix(), input.Timestamp.Unix(), unreadIncrement, boolToInt(input.IsGroup), input.ChatID); err != nil {
+		if err := bumpChatForInsertedMessage(ctx, tx, input, input.Text); err != nil {
 			return SavedTextMessage{}, err
 		}
 	}
@@ -190,11 +195,31 @@ func (db *DB) SaveTextMessage(ctx context.Context, input TextMessageInput) (Save
 		return SavedTextMessage{}, err
 	}
 
-	if err := tx.Commit(); err != nil {
-		return SavedTextMessage{}, err
-	}
-
 	return SavedTextMessage{Message: message, Chat: chat, Inserted: inserted}, nil
+}
+
+// bumpChatForInsertedMessage refreshes the chat row's name/last-message/unread
+// bookkeeping after a brand-new message row was inserted.
+func bumpChatForInsertedMessage(ctx context.Context, tx *sql.Tx, input TextMessageInput, lastMessage string) error {
+	unreadIncrement := 0
+	if input.CountUnread {
+		unreadIncrement = 1
+	}
+	nameSource := normalizeChatNameSource(input.ChatNameSource)
+
+	_, err := tx.ExecContext(ctx, `
+		UPDATE chats
+		SET name = CASE WHEN ? != '' AND chat_name_source_priority(?) >= chat_name_source_priority(name_source) THEN ? ELSE name END,
+			name_source = CASE WHEN ? != '' AND chat_name_source_priority(?) >= chat_name_source_priority(name_source) THEN ? ELSE name_source END,
+			last_message = CASE WHEN ? >= last_message_time THEN ? ELSE last_message END,
+			last_message_direction = CASE WHEN ? >= last_message_time THEN ? ELSE last_message_direction END,
+			last_message_status = CASE WHEN ? >= last_message_time THEN ? ELSE last_message_status END,
+			last_message_time = CASE WHEN ? >= last_message_time THEN ? ELSE last_message_time END,
+			unread_count = unread_count + ?,
+			is_group = ?
+		WHERE id = ?
+	`, input.ChatName, nameSource, input.ChatName, input.ChatName, nameSource, nameSource, input.Timestamp.Unix(), lastMessage, input.Timestamp.Unix(), input.Direction, input.Timestamp.Unix(), input.Status, input.Timestamp.Unix(), input.Timestamp.Unix(), unreadIncrement, boolToInt(input.IsGroup), input.ChatID)
+	return err
 }
 
 func upsertChat(ctx context.Context, tx *sql.Tx, input TextMessageInput) error {
@@ -240,37 +265,53 @@ func getChatTx(ctx context.Context, tx *sql.Tx, id string) (Chat, error) {
 	return getChatRow(ctx, tx, id)
 }
 
-func (db *DB) SaveMediaMessage(ctx context.Context, input MediaMessageInput) (SavedTextMessage, error) {
-	if input.ID == "" {
-		return SavedTextMessage{}, errors.New("message id is required")
+func normalizeMediaMessageInput(input MediaMessageInput) (MediaMessageInput, error) {
+	normalized, err := normalizeTextMessageInput(input.TextMessageInput)
+	if err != nil {
+		return MediaMessageInput{}, err
 	}
-	if input.ChatID == "" {
-		return SavedTextMessage{}, errors.New("chat id is required")
-	}
-	if input.SenderID == "" {
-		input.SenderID = input.ChatID
-	}
-	input.SenderName = strings.TrimSpace(input.SenderName)
-	if input.Timestamp.IsZero() {
-		input.Timestamp = time.Now()
-	}
-	if input.Direction == "" {
-		input.Direction = DirectionIncoming
-	}
-	if input.Status == "" {
-		input.Status = StatusDelivered
-	}
+	input.TextMessageInput = normalized
 	if input.MediaPayload == nil {
 		input.MediaPayload = []byte{}
 	}
+	// Sticker rows must carry their content cache key so the indexed
+	// DownloadedStickerPathByCacheKey lookup can reuse downloads; derive it
+	// here when the caller didn't. Underivable payloads keep an empty key.
+	if input.MediaKind == MediaKindSticker && input.MediaCacheKey == "" {
+		if key, err := StickerCacheKeyFromPayload(input.MediaPayload); err == nil {
+			input.MediaCacheKey = key
+		}
+	}
+	return input, nil
+}
 
-	lastMessage := messageSummary(input.Text, input.MediaKind, input.MediaMimeType)
+func (db *DB) SaveMediaMessage(ctx context.Context, input MediaMessageInput) (SavedTextMessage, error) {
+	input, err := normalizeMediaMessageInput(input)
+	if err != nil {
+		return SavedTextMessage{}, err
+	}
 
 	tx, err := db.conn.BeginTx(ctx, nil)
 	if err != nil {
 		return SavedTextMessage{}, err
 	}
 	defer tx.Rollback()
+
+	saved, err := saveMediaMessageTx(ctx, tx, input)
+	if err != nil {
+		return SavedTextMessage{}, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return SavedTextMessage{}, err
+	}
+	return saved, nil
+}
+
+// saveMediaMessageTx stores one already-normalized media message inside the
+// caller's transaction.
+func saveMediaMessageTx(ctx context.Context, tx *sql.Tx, input MediaMessageInput) (SavedTextMessage, error) {
+	lastMessage := messageSummary(input.Text, input.MediaKind, input.MediaMimeType)
 
 	if err := upsertChat(ctx, tx, input.TextMessageInput); err != nil {
 		return SavedTextMessage{}, err
@@ -297,24 +338,7 @@ func (db *DB) SaveMediaMessage(ctx context.Context, input MediaMessageInput) (Sa
 	inserted := rowsAffected > 0
 
 	if inserted {
-		unreadIncrement := 0
-		if input.CountUnread {
-			unreadIncrement = 1
-		}
-		nameSource := normalizeChatNameSource(input.ChatNameSource)
-
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE chats
-			SET name = CASE WHEN ? != '' AND chat_name_source_priority(?) >= chat_name_source_priority(name_source) THEN ? ELSE name END,
-				name_source = CASE WHEN ? != '' AND chat_name_source_priority(?) >= chat_name_source_priority(name_source) THEN ? ELSE name_source END,
-				last_message = CASE WHEN ? >= last_message_time THEN ? ELSE last_message END,
-				last_message_direction = CASE WHEN ? >= last_message_time THEN ? ELSE last_message_direction END,
-				last_message_status = CASE WHEN ? >= last_message_time THEN ? ELSE last_message_status END,
-				last_message_time = CASE WHEN ? >= last_message_time THEN ? ELSE last_message_time END,
-				unread_count = unread_count + ?,
-				is_group = ?
-			WHERE id = ?
-		`, input.ChatName, nameSource, input.ChatName, input.ChatName, nameSource, nameSource, input.Timestamp.Unix(), lastMessage, input.Timestamp.Unix(), input.Direction, input.Timestamp.Unix(), input.Status, input.Timestamp.Unix(), input.Timestamp.Unix(), unreadIncrement, boolToInt(input.IsGroup), input.ChatID); err != nil {
+		if err := bumpChatForInsertedMessage(ctx, tx, input.TextMessageInput, lastMessage); err != nil {
 			return SavedTextMessage{}, err
 		}
 	}
@@ -329,11 +353,70 @@ func (db *DB) SaveMediaMessage(ctx context.Context, input MediaMessageInput) (Sa
 		return SavedTextMessage{}, err
 	}
 
-	if err := tx.Commit(); err != nil {
-		return SavedTextMessage{}, err
+	return SavedTextMessage{Message: message, Chat: chat, Inserted: inserted}, nil
+}
+
+// MessageSaveItem is one entry in a SaveMessages batch; exactly one of Text or
+// Media must be set.
+type MessageSaveItem struct {
+	Text  *TextMessageInput
+	Media *MediaMessageInput
+}
+
+// SaveMessages stores a batch of messages inside a single transaction. It
+// exists for history-sync ingestion, where committing (and under
+// synchronous=FULL, fsyncing) once per message dominated sync time. Results
+// are returned in input order. The whole batch commits or rolls back as one;
+// callers should pre-validate inputs so the only failures are real DB errors.
+func (db *DB) SaveMessages(ctx context.Context, items []MessageSaveItem) ([]SavedTextMessage, error) {
+	if len(items) == 0 {
+		return nil, nil
 	}
 
-	return SavedTextMessage{Message: message, Chat: chat, Inserted: inserted}, nil
+	normalized := make([]MessageSaveItem, 0, len(items))
+	for _, item := range items {
+		switch {
+		case item.Text != nil:
+			input, err := normalizeTextMessageInput(*item.Text)
+			if err != nil {
+				return nil, err
+			}
+			normalized = append(normalized, MessageSaveItem{Text: &input})
+		case item.Media != nil:
+			input, err := normalizeMediaMessageInput(*item.Media)
+			if err != nil {
+				return nil, err
+			}
+			normalized = append(normalized, MessageSaveItem{Media: &input})
+		default:
+			return nil, errors.New("message save item has neither text nor media input")
+		}
+	}
+
+	tx, err := db.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	saved := make([]SavedTextMessage, 0, len(normalized))
+	for _, item := range normalized {
+		var result SavedTextMessage
+		if item.Text != nil {
+			result, err = saveTextMessageTx(ctx, tx, *item.Text)
+		} else {
+			result, err = saveMediaMessageTx(ctx, tx, *item.Media)
+		}
+		if err != nil {
+			return nil, err
+		}
+		saved = append(saved, result)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return saved, nil
 }
 
 func messageSummary(text, mediaKind, mediaMimeType string) string {
@@ -846,50 +929,6 @@ func (db *DB) UpdateMessageMediaPayload(ctx context.Context, id string, payload 
 	return message, nil
 }
 
-func (db *DB) ListDownloadedStickerMessages(ctx context.Context) ([]Message, error) {
-	rows, err := db.conn.QueryContext(ctx, `
-		SELECT id, chat_id, sender_id, text, timestamp, direction, is_read, status, media_kind, media_mime_type, media_local_path, media_thumbnail_local_path, media_width, media_height, media_animated, media_payload, media_cache_key,
-		       send_attempts, last_send_error, next_send_attempt
-		FROM messages
-		WHERE media_kind = ? AND media_local_path != ''
-	`, MediaKindSticker)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var messages []Message
-	for rows.Next() {
-		var message Message
-		if err := rows.Scan(
-			&message.ID,
-			&message.ChatID,
-			&message.SenderID,
-			&message.Text,
-			&message.TimestampUnix,
-			&message.Direction,
-			&message.IsRead,
-			&message.Status,
-			&message.MediaKind,
-			&message.MediaMimeType,
-			&message.MediaLocalPath,
-			&message.MediaThumbnailLocalPath,
-			&message.MediaWidth,
-			&message.MediaHeight,
-			&message.MediaAnimated,
-			&message.MediaPayload,
-			&message.MediaCacheKey,
-			&message.SendAttempts,
-			&message.LastSendError,
-			&message.NextSendAttempt,
-		); err != nil {
-			return nil, err
-		}
-		messages = append(messages, message)
-	}
-	return messages, rows.Err()
-}
-
 func (db *DB) DownloadedStickerPathByCacheKey(ctx context.Context, excludedMessageID, cacheKey string) (string, error) {
 	if cacheKey == "" {
 		return "", nil
@@ -998,7 +1037,7 @@ func getChatRow(ctx context.Context, queryer interface {
 	var isGroup int
 	var isPinned int
 	err := queryer.QueryRowContext(ctx, `
-		SELECT c.id, c.name, c.name_source, c.last_message, c.last_message_time, c.last_message_direction, c.last_message_status, c.unread_count, c.is_group, c.is_pinned, c.pinned_order,
+		SELECT c.id, c.name, c.name_source, c.last_message, c.last_message_time, c.last_message_direction, c.last_message_status, c.unread_count, c.is_group, c.is_pinned, c.pinned_order, c.updated_at,
 		       COALESCE(NULLIF(a.local_path, ''), c.avatar_local_path), COALESCE(NULLIF(a.picture_id, ''), c.avatar_picture_id), COALESCE(NULLIF(a.status, ''), c.avatar_status), COALESCE(NULLIF(a.checked_at, 0), c.avatar_checked_at)
 		FROM chats c
 		LEFT JOIN avatars a ON a.subject_kind = 'chat' AND a.subject_id = c.id
@@ -1015,6 +1054,7 @@ func getChatRow(ctx context.Context, queryer interface {
 		&isGroup,
 		&isPinned,
 		&chat.PinnedOrder,
+		&chat.UpdatedAt,
 		&chat.AvatarLocalPath,
 		&chat.AvatarPictureID,
 		&chat.AvatarStatus,
@@ -1098,6 +1138,7 @@ func scanChat(scanner interface{ Scan(...any) error }) (Chat, error) {
 		&isGroup,
 		&isPinned,
 		&chat.PinnedOrder,
+		&chat.UpdatedAt,
 		&chat.AvatarLocalPath,
 		&chat.AvatarPictureID,
 		&chat.AvatarStatus,

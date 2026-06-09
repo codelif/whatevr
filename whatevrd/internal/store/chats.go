@@ -20,6 +20,7 @@ type Chat struct {
 	IsGroup              bool
 	IsPinned             bool
 	PinnedOrder          uint32
+	UpdatedAt            int64
 	AvatarLocalPath      string
 	AvatarPictureID      string
 	AvatarStatus         string
@@ -60,7 +61,11 @@ func chatNameSourcePriority(source string) int {
 	}
 }
 
-func (db *DB) ListChats(ctx context.Context, limit, offset int) ([]Chat, error) {
+// ListChats returns a page of chats in list order (pinned first, then most
+// recent). When afterChatID names an existing chat, the page starts strictly
+// after it (keyset pagination, stable under reordering); otherwise the legacy
+// offset is applied.
+func (db *DB) ListChats(ctx context.Context, limit, offset int, afterChatID string) ([]Chat, error) {
 	if limit <= 0 {
 		limit = 100
 	}
@@ -68,14 +73,58 @@ func (db *DB) ListChats(ctx context.Context, limit, offset int) ([]Chat, error) 
 		offset = 0
 	}
 
-	rows, err := db.conn.QueryContext(ctx, `
-		SELECT c.id, c.name, c.name_source, c.last_message, c.last_message_time, c.last_message_direction, c.last_message_status, c.unread_count, c.is_group, c.is_pinned, c.pinned_order,
+	const selectColumns = `
+		SELECT c.id, c.name, c.name_source, c.last_message, c.last_message_time, c.last_message_direction, c.last_message_status, c.unread_count, c.is_group, c.is_pinned, c.pinned_order, c.updated_at,
 		       COALESCE(NULLIF(a.local_path, ''), c.avatar_local_path), COALESCE(NULLIF(a.picture_id, ''), c.avatar_picture_id), COALESCE(NULLIF(a.status, ''), c.avatar_status), COALESCE(NULLIF(a.checked_at, 0), c.avatar_checked_at)
 		FROM chats c
 		LEFT JOIN avatars a ON a.subject_kind = 'chat' AND a.subject_id = c.id
+	`
+	const orderBy = `
 		ORDER BY CASE WHEN c.is_pinned != 0 THEN 0 ELSE 1 END, c.pinned_order DESC, c.last_message_time DESC, c.id ASC
-		LIMIT ? OFFSET ?
-	`, limit, offset)
+	`
+
+	query := selectColumns
+	args := []any{}
+
+	if afterChatID != "" {
+		var bucket, pinnedOrder int64
+		var lastMessageTime int64
+		err := db.conn.QueryRowContext(ctx, `
+			SELECT CASE WHEN is_pinned != 0 THEN 0 ELSE 1 END, pinned_order, last_message_time
+			FROM chats WHERE id = ?
+		`, afterChatID).Scan(&bucket, &pinnedOrder, &lastMessageTime)
+		switch {
+		case err == sql.ErrNoRows:
+			// Cursor chat disappeared; fall back to the start of the list.
+			afterChatID = ""
+		case err != nil:
+			return nil, err
+		default:
+			// Keyset matching the ORDER BY above (bucket ASC, pinned_order
+			// DESC, last_message_time DESC, id ASC).
+			query += `
+				WHERE (CASE WHEN c.is_pinned != 0 THEN 0 ELSE 1 END) > ?
+				   OR ((CASE WHEN c.is_pinned != 0 THEN 0 ELSE 1 END) = ? AND c.pinned_order < ?)
+				   OR ((CASE WHEN c.is_pinned != 0 THEN 0 ELSE 1 END) = ? AND c.pinned_order = ? AND c.last_message_time < ?)
+				   OR ((CASE WHEN c.is_pinned != 0 THEN 0 ELSE 1 END) = ? AND c.pinned_order = ? AND c.last_message_time = ? AND c.id > ?)
+			`
+			args = append(args,
+				bucket,
+				bucket, pinnedOrder,
+				bucket, pinnedOrder, lastMessageTime,
+				bucket, pinnedOrder, lastMessageTime, afterChatID,
+			)
+		}
+	}
+
+	query += orderBy + ` LIMIT ?`
+	args = append(args, limit)
+	if afterChatID == "" && offset > 0 {
+		query += ` OFFSET ?`
+		args = append(args, offset)
+	}
+
+	rows, err := db.conn.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

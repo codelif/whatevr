@@ -132,7 +132,7 @@ QVariant MessageListModel::data(const QModelIndex &index, int role) const
     case TimeTextRole:
         return message.timeText;
     case DateSeparatorTextRole:
-        return startsDayGroup(index.row()) ? formatRelativeDate(message.timestampUnix) : QString();
+        return startsDayGroup(index.row()) ? cachedRelativeDate(message) : QString();
     case DirectionRole:
         return message.direction;
     case StatusRole:
@@ -291,10 +291,98 @@ void MessageListModel::replaceMessages(const QList<whatevr::v1::Message> &messag
         return;
     }
 
-    beginResetModel();
-    m_messages = std::move(next);
+    // Insertion/removal path: merge by id so delegate state and the scroll
+    // position survive a refetch that gained or lost messages (the common case
+    // after restoring cached messages while new ones arrived). Survivors must
+    // keep their relative order for the merge to be valid; if they reordered
+    // (e.g. server timestamp corrections), fall back to a full reset.
+    QSet<QString> nextIds;
+    nextIds.reserve(next.size());
+    for (const auto &item : next) {
+        nextIds.insert(item.id);
+    }
+
+    QStringList survivorsInCurrent;
+    for (const auto &item : m_messages) {
+        if (nextIds.contains(item.id)) {
+            survivorsInCurrent.append(item.id);
+        }
+    }
+    QStringList survivorsInNext;
+    for (const auto &item : next) {
+        if (m_messageIndexById.contains(item.id)) {
+            survivorsInNext.append(item.id);
+        }
+    }
+
+    if (survivorsInCurrent != survivorsInNext) {
+        beginResetModel();
+        m_messages = std::move(next);
+        rebuildIndex();
+        endResetModel();
+        return;
+    }
+
+    int minTouched = -1;
+    int maxTouched = -1;
+    const auto touch = [&minTouched, &maxTouched](int first, int last) {
+        minTouched = minTouched < 0 ? first : std::min(minTouched, first);
+        maxTouched = std::max(maxTouched, last);
+    };
+
+    // Remove vanished rows in contiguous runs, scanning backwards so row
+    // numbers stay valid while we mutate.
+    for (int row = static_cast<int>(m_messages.size()) - 1; row >= 0;) {
+        if (nextIds.contains(m_messages.at(row).id)) {
+            --row;
+            continue;
+        }
+        const int last = row;
+        while (row > 0 && !nextIds.contains(m_messages.at(row - 1).id)) {
+            --row;
+        }
+        beginRemoveRows(QModelIndex(), row, last);
+        m_messages.remove(row, last - row + 1);
+        endRemoveRows();
+        touch(row, row);
+        --row;
+    }
+
+    // m_messages now holds exactly the survivors in next's order: walk both
+    // lists, inserting runs of new rows and refreshing changed survivors.
+    int row = 0;
+    for (int i = 0; i < next.size();) {
+        if (row < m_messages.size() && m_messages.at(row).id == next.at(i).id) {
+            if (!sameMessageData(m_messages.at(row), next.at(i))) {
+                m_messages[row] = next.at(i);
+                const QModelIndex changedIndex = index(row, 0);
+                Q_EMIT dataChanged(changedIndex, changedIndex);
+                touch(row, row);
+            }
+            ++row;
+            ++i;
+            continue;
+        }
+        int runEnd = i;
+        while (runEnd < next.size()
+               && !(row < m_messages.size() && m_messages.at(row).id == next.at(runEnd).id)) {
+            ++runEnd;
+        }
+        const int count = runEnd - i;
+        beginInsertRows(QModelIndex(), row, row + count - 1);
+        for (int k = 0; k < count; ++k) {
+            m_messages.insert(row + k, next.at(i + k));
+        }
+        endInsertRows();
+        touch(row, row + count - 1);
+        row += count;
+        i = runEnd;
+    }
+
     rebuildIndex();
-    endResetModel();
+    if (maxTouched >= 0) {
+        emitGroupingRolesChanged(minTouched, maxTouched);
+    }
 }
 
 void MessageListModel::appendOlderMessages(const QList<whatevr::v1::Message> &messages)
@@ -651,7 +739,23 @@ QString MessageListModel::dateTextForRow(int row) const
     if (row < 0 || row >= static_cast<int>(m_messages.size())) {
         return {};
     }
-    return formatRelativeDate(m_messages.at(row).timestampUnix);
+    return cachedRelativeDate(m_messages.at(row));
+}
+
+QString MessageListModel::cachedRelativeDate(const MessageItem &message) const
+{
+    const QDate today = QDate::currentDate();
+    if (m_dateTextDay != today) {
+        m_dateTextByDay.clear();
+        m_dateTextDay = today;
+    }
+    const auto it = m_dateTextByDay.constFind(message.dayNumber);
+    if (it != m_dateTextByDay.constEnd()) {
+        return it.value();
+    }
+    const QString text = formatRelativeDate(message.timestampUnix);
+    m_dateTextByDay.insert(message.dayNumber, text);
+    return text;
 }
 
 QString MessageListModel::statusText(int status)
