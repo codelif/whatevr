@@ -19,6 +19,7 @@ BUILD_DIR  ?= build
 GO         ?= go
 CMAKE      ?= cmake
 NINJA      ?= ninja
+STRIP      ?= strip
 
 BINDIR      = $(PREFIX)/bin
 # systemd user units live under <prefix>/lib/systemd/user for system installs.
@@ -135,6 +136,8 @@ dist-bin:
 	rm -rf $(BINARY_DIST_ROOT) $(BINARY_DIST_DIR) \
 		$(BUILD_DIR)/$(BINARY_DIST_NAME).tar.zst
 	$(MAKE) install PREFIX=/usr DESTDIR=$(abspath $(BINARY_DIST_ROOT))
+	$(STRIP) --strip-unneeded $(BINARY_DIST_ROOT)/usr/bin/whatevrd
+	$(STRIP) --strip-unneeded $(BINARY_DIST_ROOT)/usr/bin/whatkevr
 	install -Dm644 LICENSE \
 		$(BINARY_DIST_ROOT)/usr/share/licenses/whatevr/LICENSE
 	mkdir -p $(BINARY_DIST_DIR)
