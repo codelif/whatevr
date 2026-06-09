@@ -14,6 +14,12 @@ const (
 	HistorySyncStatusFailed     = "failed"
 )
 
+// MaxHistorySyncChunkAttempts bounds how many times a chunk is retried before it
+// is dropped from the recoverable set. Without this, a single permanently
+// undownloadable chunk (e.g. media the phone never re-uploads) sorts to the front
+// of the worker queue and is retried forever, blocking every newer chunk.
+const MaxHistorySyncChunkAttempts = 5
+
 type HistorySyncChunk struct {
 	ID            string
 	SyncType      int32
@@ -83,10 +89,11 @@ func (db *DB) ListRecoverableHistorySyncChunks(ctx context.Context, limit int) (
 	rows, err := db.conn.QueryContext(ctx, `
 		SELECT id, sync_type, chunk_order, progress, file_length, direct_path, media_key, file_sha256, file_enc_sha256, enc_handle, inline_payload, status, attempts, last_error
 		FROM history_sync_chunks
-		WHERE status IN (?, ?, ?, ?)
+		WHERE status IN (?, ?, ?)
+			OR (status = ? AND attempts < ?)
 		ORDER BY sync_type ASC, chunk_order ASC, created_at ASC
 		LIMIT ?
-	`, HistorySyncStatusPending, HistorySyncStatusProcessing, HistorySyncStatusProcessed, HistorySyncStatusFailed, limit)
+	`, HistorySyncStatusPending, HistorySyncStatusProcessing, HistorySyncStatusProcessed, HistorySyncStatusFailed, MaxHistorySyncChunkAttempts, limit)
 	if err != nil {
 		return nil, err
 	}
