@@ -12,6 +12,8 @@
 #include <cstdint>
 #include <memory>
 
+#include <QtGrpc/qtgrpcnamespace.h>
+
 #include "whatevr/v1/whatevr.qpb.h"
 
 QT_BEGIN_NAMESPACE
@@ -19,6 +21,7 @@ class QGrpcCallReply;
 class QGrpcServerStream;
 class QTimer;
 class QAbstractGrpcChannel;
+class QFileSystemWatcher;
 class QQmlEngine;
 class QJSEngine;
 QT_END_NAMESPACE
@@ -70,6 +73,9 @@ class AppController final : public QObject
     Q_PROPERTY(QString daemonSocketPath READ daemonSocketPath CONSTANT FINAL)
     Q_PROPERTY(QString daemonSocketUrl READ daemonSocketUrl CONSTANT FINAL)
     Q_PROPERTY(bool loading READ loading NOTIFY stateChanged FINAL)
+    Q_PROPERTY(bool daemonRunning READ daemonRunning NOTIFY stateChanged FINAL)
+    Q_PROPERTY(QString daemonInstructions READ daemonInstructions CONSTANT FINAL)
+    Q_PROPERTY(QString connectionPhase READ connectionPhase NOTIFY stateChanged FINAL)
     Q_PROPERTY(bool loginRequired READ loginRequired NOTIFY stateChanged FINAL)
     Q_PROPERTY(bool shellVisible READ shellVisible NOTIFY stateChanged FINAL)
     Q_PROPERTY(bool qrAvailable READ qrAvailable NOTIFY stateChanged FINAL)
@@ -118,6 +124,9 @@ public:
     [[nodiscard]] QString daemonSocketPath() const;
     [[nodiscard]] QString daemonSocketUrl() const;
     [[nodiscard]] bool loading() const;
+    [[nodiscard]] bool daemonRunning() const;
+    [[nodiscard]] QString daemonInstructions() const;
+    [[nodiscard]] QString connectionPhase() const;
     [[nodiscard]] bool loginRequired() const;
     [[nodiscard]] bool shellVisible() const;
     [[nodiscard]] bool qrAvailable() const;
@@ -154,6 +163,7 @@ public:
     [[nodiscard]] QString historySyncDetail() const;
 
     Q_INVOKABLE void refresh();
+    Q_INVOKABLE void startDaemon();
     Q_INVOKABLE void triggerPrimaryAction();
     Q_INVOKABLE void selectChat(const QString &chatId);
     Q_INVOKABLE void retryMessages();
@@ -194,6 +204,9 @@ Q_SIGNALS:
 private:
     void bootstrap();
     bool ensureChannel();
+    void resetChannel();
+    void setupSocketWatcher();
+    void refreshSocketWatch();
     void attachClients();
     void requestStatus();
     void requestReconnect();
@@ -210,7 +223,8 @@ private:
     void ensureDaemonStream();
     void ensureLoginStream();
     void scheduleRetry(int delayMs = 2000);
-    void handleTransportFailure(const QString &context, const QString &message);
+    void handleTransportFailure(const QString &context, const QString &message, QtGrpc::StatusCode code = QtGrpc::StatusCode::Unknown);
+    [[nodiscard]] bool daemonSocketExists() const;
     void applyStatusResponse(const whatevr::v1::GetStatusResponse &status);
     void applyConnectionChanged(const whatevr::v1::ConnectionChanged &change);
     void applyLoginStateChanged(const whatevr::v1::LoginStateChanged &change);
@@ -231,7 +245,15 @@ private:
     void scheduleSelectedChatMessageReload(const QString &chatId);
     void tryApplyPendingDeepLink();
 
-    bool m_loading = true;
+    // High-level connection lifecycle. Drives every status string the GUI
+    // shows and replaces the old (m_loading && !m_hasStatus) ad-hoc logic.
+    enum class Phase {
+        Connecting, // a socket is present (or assumed) and we are talking to it
+        Connected,  // the daemon answered; daemon state drives the rest
+        NotRunning, // no socket / gRPC Unavailable — daemon isn't up
+        Error,      // reachable but a call failed for another reason
+    };
+    Phase m_phase = Phase::Connecting;
     bool m_loginRequired = false;
     bool m_canReconnect = false;
     bool m_hasStatus = false;
@@ -303,6 +325,7 @@ private:
     std::unique_ptr<QGrpcServerStream> m_frontendSessionStream;
     std::unique_ptr<QGrpcServerStream> m_daemonStream;
     std::unique_ptr<QGrpcServerStream> m_loginStream;
+    QFileSystemWatcher *m_socketWatcher = nullptr;
     QTimer *m_retryTimer = nullptr;
     QTimer *m_qrTimer = nullptr;
     QTimer *m_selectedChatReloadTimer = nullptr;

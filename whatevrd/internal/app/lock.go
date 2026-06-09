@@ -11,6 +11,7 @@ var ErrAlreadyRunning = errors.New("another whatevrd process is already running"
 
 type ProcessLock struct {
 	file *os.File
+	path string
 }
 
 func AcquireProcessLock(path string) (*ProcessLock, error) {
@@ -27,12 +28,22 @@ func AcquireProcessLock(path string) (*ProcessLock, error) {
 		return nil, err
 	}
 
-	return &ProcessLock{file: file}, nil
+	return &ProcessLock{file: file, path: path}, nil
 }
 
 func (l *ProcessLock) Close() error {
 	if l == nil || l.file == nil {
 		return nil
+	}
+
+	// Unlink the lock file before releasing the lock so a concurrent acquirer
+	// never observes a stale, unheld file. We still hold the flock here, so the
+	// path we created is the one being removed.
+	if l.path != "" {
+		if err := os.Remove(l.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			// Best-effort: fall through to unlock/close so the fd is released.
+			_ = err
+		}
 	}
 
 	err := syscall.Flock(int(l.file.Fd()), syscall.LOCK_UN)
