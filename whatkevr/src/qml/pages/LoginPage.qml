@@ -16,23 +16,35 @@ Kirigami.ScrollablePage {
     readonly property bool wideLayout: width >= Kirigami.Units.gridUnit * 52
     readonly property real pageContentWidth: Math.min(width - Kirigami.Units.largeSpacing * 4,
                                                       Kirigami.Units.gridUnit * 76)
-    readonly property real qrSide: Math.max(Kirigami.Units.gridUnit * 12,
-                                            Math.min(wideLayout ? Kirigami.Units.gridUnit * 20
-                                                                : width - Kirigami.Units.largeSpacing * 8,
-                                                     Kirigami.Units.gridUnit * 20))
+
+    // Padding consumed by the QrPanel frame and its inner quiet-zone margin, so
+    // the QR's width budget reflects what's actually free inside the card.
+    readonly property real qrPanelChrome: Kirigami.Units.largeSpacing * 1.5 * 2
+                                          + Kirigami.Units.largeSpacing * 3
+    readonly property real qrWidthBudget: (root.wideLayout ? root.pageContentWidth * 0.40
+                                                           : root.pageContentWidth)
+                                          - root.qrPanelChrome
+    // Vertical room for the code: viewport height minus the QR panel's own
+    // heading/expiry chrome and page margins. The stacked instructions panel
+    // below can scroll, so we don't reserve its full height here — that kept the
+    // QR tiny on short windows.
+    readonly property real qrHeightReserve: Kirigami.Units.gridUnit * 12
+    readonly property real qrHeightBudget: root.height - root.qrHeightReserve
+    // Square, fully on-screen at every window size; floor fits the 420x680
+    // minimum window (Main.qml), cap keeps it sane on large screens.
+    readonly property real qrSide: Math.max(Kirigami.Units.gridUnit * 8,
+                                            Math.min(Kirigami.Units.gridUnit * 26,
+                                                     root.qrWidthBudget,
+                                                     root.qrHeightBudget))
 
     ColumnLayout {
         id: layout
 
         width: root.pageContentWidth
         x: Math.max(0, (parent.width - width) / 2)
-        y: Kirigami.Units.largeSpacing * 2
+        y: Math.max(Kirigami.Units.largeSpacing * 2,
+                    (parent.height - implicitHeight) / 2)
         spacing: Kirigami.Units.largeSpacing * 1.5
-
-        Item {
-            Layout.fillWidth: true
-            implicitHeight: 0
-        }
 
         Kirigami.InlineMessage {
             Layout.fillWidth: true
@@ -53,8 +65,8 @@ Kirigami.ScrollablePage {
                 anchors.fill: parent
                 spacing: Kirigami.Units.largeSpacing * 2
 
-                LeftPanel {}
                 QrPanel {}
+                LeftPanel {}
             }
 
             ColumnLayout {
@@ -77,8 +89,9 @@ Kirigami.ScrollablePage {
 
     component LeftPanel: Frame {
         Layout.fillWidth: true
-        Layout.preferredWidth: root.wideLayout ? root.pageContentWidth * 0.46 : -1
-        padding: Kirigami.Units.largeSpacing * 1.5
+        Layout.preferredWidth: root.wideLayout ? root.pageContentWidth * 0.56 : -1
+        Layout.alignment: Qt.AlignTop
+        padding: Kirigami.Units.largeSpacing * 2
 
         background: Rectangle {
             radius: Kirigami.Units.cornerRadius
@@ -98,34 +111,32 @@ Kirigami.ScrollablePage {
                     spacing: Kirigami.Units.smallSpacing
 
                     Kirigami.Heading {
+                        Layout.fillWidth: true
                         level: 1
-                        text: Whatevr.I18n.i18nc("@title", "Whatevr")
+                        text: Whatevr.AppController.statusTitle
+                        wrapMode: Text.WordWrap
                     }
 
                     Label {
                         Layout.fillWidth: true
-                        text: Whatevr.I18n.i18nc("@info", "Sign in with WhatsApp to bring your daemon-backed session into the KDE-native interface.")
+                        text: Whatevr.AppController.statusText
                         wrapMode: Text.WordWrap
                         color: Kirigami.Theme.disabledTextColor
                     }
                 }
 
                 StatusChip {
-                    text: Whatevr.AppController.statusTitle
-                    foregroundColor: Kirigami.Theme.positiveTextColor
-                    backgroundColor: Qt.alpha(Kirigami.Theme.positiveTextColor, 0.14)
+                    Layout.alignment: Qt.AlignTop
+                    text: Whatevr.I18n.i18n("Sign in")
+                    foregroundColor: Kirigami.Theme.highlightColor
+                    backgroundColor: Qt.alpha(Kirigami.Theme.highlightColor, 0.14)
                 }
-            }
-
-            Label {
-                Layout.fillWidth: true
-                text: Whatevr.AppController.statusText
-                wrapMode: Text.WordWrap
             }
 
             Frame {
                 Layout.fillWidth: true
-                padding: Kirigami.Units.largeSpacing
+                Layout.topMargin: Kirigami.Units.smallSpacing
+                padding: Kirigami.Units.largeSpacing * 1.5
 
                 background: Rectangle {
                     radius: Kirigami.Units.cornerRadius
@@ -139,8 +150,8 @@ Kirigami.ScrollablePage {
                     Repeater {
                         model: [
                             Whatevr.I18n.i18nc("@info", "Open WhatsApp on your phone"),
-                            Whatevr.I18n.i18nc("@info", "Choose Linked Devices"),
-                            Whatevr.I18n.i18nc("@info", "Scan this QR code to pair the daemon session")
+                            Whatevr.I18n.i18nc("@info", "Tap Linked Devices, then Link a device"),
+                            Whatevr.I18n.i18nc("@info", "Point your phone at this QR code to pair the daemon session")
                         ]
 
                         delegate: RowLayout {
@@ -155,6 +166,7 @@ Kirigami.ScrollablePage {
                             Rectangle {
                                 Layout.preferredWidth: Kirigami.Units.gridUnit * 1.6
                                 Layout.preferredHeight: Layout.preferredWidth
+                                Layout.alignment: Qt.AlignTop
                                 radius: width / 2
                                 color: Qt.alpha(Kirigami.Theme.highlightColor, 0.16)
 
@@ -168,6 +180,7 @@ Kirigami.ScrollablePage {
 
                             Label {
                                 Layout.fillWidth: true
+                                Layout.alignment: Qt.AlignVCenter
                                 text: stepDelegate.modelData
                                 wrapMode: Text.WordWrap
                             }
@@ -180,8 +193,9 @@ Kirigami.ScrollablePage {
                 Layout.fillWidth: true
                 visible: Whatevr.AppController.detailText.length > 0
                 text: Whatevr.AppController.detailText
-                wrapMode: Text.WordWrap
+                wrapMode: Text.WrapAnywhere
                 textFormat: Text.PlainText
+                font.pointSize: Kirigami.Theme.smallFont.pointSize
                 color: Kirigami.Theme.disabledTextColor
             }
 
@@ -191,6 +205,7 @@ Kirigami.ScrollablePage {
 
             RowLayout {
                 Layout.fillWidth: true
+                Layout.topMargin: Kirigami.Units.smallSpacing
 
                 Button {
                     text: Whatevr.AppController.primaryActionText
@@ -204,18 +219,12 @@ Kirigami.ScrollablePage {
                 Item {
                     Layout.fillWidth: true
                 }
-
-                Label {
-                    visible: Whatevr.AppController.qrAvailable && Whatevr.AppController.qrExpiryText.length > 0
-                    text: Whatevr.AppController.qrExpiryText
-                    color: Kirigami.Theme.disabledTextColor
-                }
             }
         }
     }
 
     component QrPanel: Frame {
-        Layout.alignment: Qt.AlignHCenter
+        Layout.alignment: Qt.AlignHCenter | Qt.AlignTop
         Layout.preferredWidth: root.wideLayout ? root.pageContentWidth * 0.40 : -1
         Layout.fillWidth: !root.wideLayout
         padding: Kirigami.Units.largeSpacing * 1.5
@@ -224,7 +233,7 @@ Kirigami.ScrollablePage {
             radius: Kirigami.Units.cornerRadius
             gradient: Gradient {
                 GradientStop { position: 0.0; color: Kirigami.Theme.backgroundColor }
-                GradientStop { position: 1.0; color: Qt.alpha(Kirigami.Theme.highlightColor, 0.04) }
+                GradientStop { position: 1.0; color: Qt.alpha(Kirigami.Theme.highlightColor, 0.05) }
             }
             border.color: Qt.alpha(Kirigami.Theme.textColor, 0.08)
         }
@@ -238,23 +247,37 @@ Kirigami.ScrollablePage {
                 text: Whatevr.I18n.i18nc("@title", "Pair your device")
             }
 
-            Item {
+            // White card sized to qrSide. Prison paints the matrix at integer
+            // pixels-per-module and centers it, so letting it size to the card
+            // makes the code jump in module-sized steps and the white margin
+            // vary. Instead we render the barcode at an integer multiple of its
+            // natural module resolution (gap-free, crisp) and apply a continuous
+            // scale transform to a fixed fraction of the card — so the code
+            // scales smoothly and the margin ratio is constant at every size.
+            Rectangle {
                 Layout.alignment: Qt.AlignHCenter
-                implicitWidth: root.qrSide + Kirigami.Units.largeSpacing * 3
-                implicitHeight: implicitWidth
-
-                Rectangle {
-                    anchors.fill: parent
-                    radius: Kirigami.Units.cornerRadius
-                    color: "white"
-                    border.color: Qt.alpha(Kirigami.Theme.textColor, 0.10)
-                }
+                Layout.preferredWidth: root.qrSide
+                Layout.preferredHeight: root.qrSide
+                radius: Kirigami.Units.cornerRadius
+                color: "white"
+                border.color: Qt.alpha(Kirigami.Theme.textColor, 0.10)
 
                 Prison.Barcode {
+                    id: barcode
+
+                    // Displayed code = 92% of the card → a constant 4%-per-side
+                    // white margin regardless of size.
+                    readonly property real targetPx: root.qrSide * 0.92
+                    readonly property real renderSize: implicitWidth
+                        * Math.max(1, Math.ceil(targetPx / Math.max(1, implicitWidth)))
+
                     anchors.centerIn: parent
                     visible: Whatevr.AppController.qrAvailable
-                    width: root.qrSide
-                    height: root.qrSide
+                    width: renderSize
+                    height: renderSize
+                    transformOrigin: Item.Center
+                    scale: targetPx / renderSize
+                    smooth: false
                     barcodeType: Prison.Barcode.QRCode
                     content: Whatevr.AppController.qrCode
                     foregroundColor: "black"
@@ -268,17 +291,18 @@ Kirigami.ScrollablePage {
                 }
             }
 
-            Label {
+            StatusChip {
                 Layout.alignment: Qt.AlignHCenter
-                visible: !Whatevr.AppController.qrAvailable
-                text: Whatevr.I18n.i18nc("@info", "Waiting for a fresh QR code")
-                color: Kirigami.Theme.disabledTextColor
+                visible: Whatevr.AppController.qrAvailable && Whatevr.AppController.qrExpiryText.length > 0
+                text: Whatevr.AppController.qrExpiryText
+                foregroundColor: Kirigami.Theme.neutralTextColor
+                backgroundColor: Qt.alpha(Kirigami.Theme.neutralTextColor, 0.14)
             }
 
             Label {
                 Layout.alignment: Qt.AlignHCenter
-                visible: Whatevr.AppController.qrAvailable && Whatevr.AppController.qrExpiryText.length > 0
-                text: Whatevr.AppController.qrExpiryText
+                visible: !Whatevr.AppController.qrAvailable
+                text: Whatevr.I18n.i18nc("@info", "Waiting for a fresh QR code")
                 color: Kirigami.Theme.disabledTextColor
             }
         }
