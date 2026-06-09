@@ -17,9 +17,13 @@ A Linux-first native client for WhatsApp. It uses [whatsmeow](https://github.com
 </details>
 
 ## Getting it
-Currently you can only get Whatevr by building it (see Building below). An Arch
-packaging recipe lives under [`packaging/`](packaging/);
+On Arch-based systems, Whatevr is available on the AUR:
+```sh
+yay -S whatevr-bin
+```
+Note: You can install the `whatevr` or `whatevr-git` packages also if you want to build yourself
 
+For other systems, for now you can follow the build instructions below:
 
 ## Building
 <details>
@@ -27,9 +31,7 @@ packaging recipe lives under [`packaging/`](packaging/);
     
 whatevr builds through a single top-level `Makefile` that compiles **both** the
 daemon (`whatevrd`) and the Qt/Kirigami frontend (`whatkevr`). The daemon must be
-running for any frontend to work. Before building, check the
-[Platform support](#platform-support) floors above — distros that are too old
-(e.g. Ubuntu LTS) won't satisfy the Qt/KF/Go version requirements.
+running for any frontend to work.
 
 #### 1. Install dependencies
 
