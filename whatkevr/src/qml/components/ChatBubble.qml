@@ -55,6 +55,16 @@ Item {
     property string replyToMediaKind: ""
     property string replyToMediaMimeType: ""
     property bool replyToOutgoing: false
+    // Unwrapped widest/last line widths of the displayed body, measured in C++
+    // (model roles). Replaces per-delegate TextMetrics + JS line splitting.
+    property real widestLineWidth: 0
+    property real lastLineWidth: 0
+    // Advance width of the "Read more" label, measured once in MessageView and
+    // shared by all delegates.
+    property real readMoreTextWidth: 0
+    // Latches true on first hover so the reply button is only ever instantiated
+    // for rows the pointer actually visits; reset when the delegate is reused.
+    property bool hoverLatched: false
 
     signal conversationFocusRequested()
     signal messageSelectionClaimed(string messageId)
@@ -64,8 +74,8 @@ Item {
     signal readMoreRequested(string messageId)
 
     onClearSelectionGenerationChanged: {
-        if (bodyText.visible && (activeSelectionMessageId.length === 0 || activeSelectionMessageId !== messageId)) {
-            bodyText.deselect()
+        if (bodyTextLoader.item && (activeSelectionMessageId.length === 0 || activeSelectionMessageId !== messageId)) {
+            bodyTextLoader.item.deselect()
         }
     }
 
@@ -73,14 +83,14 @@ Item {
     readonly property bool showDateSeparator: dateSeparatorText.length > 0
     readonly property bool hasReplyPreview: replyToMessageId.length > 0
     readonly property real dateSeparatorHeight: showDateSeparator
-        ? dateSeparator.implicitHeight + Kirigami.Units.largeSpacing
+        ? dateSeparatorLoader.height + Kirigami.Units.largeSpacing
         : 0
     readonly property real outerMargin: Kirigami.Units.largeSpacing
     readonly property real innerPadding: Kirigami.Units.largeSpacing
     readonly property real senderAvatarSize: Kirigami.Units.gridUnit * 1.65
     readonly property real senderGutterWidth: showSenderGutter ? senderAvatarSize + Kirigami.Units.smallSpacing : 0
     readonly property real senderHeaderHeight: showSenderHeader
-        ? Math.max(senderAvatarSize, senderHeader.implicitHeight)
+        ? Math.max(senderAvatarSize, senderHeaderLoader.item ? senderHeaderLoader.item.labelImplicitHeight : 0)
         : 0
     readonly property real maxBubbleWidth: Math.max(Kirigami.Units.gridUnit * 4,
                                                     Math.min(Math.max(0, listWidth - outerMargin * 2 - senderGutterWidth),
@@ -194,7 +204,10 @@ Item {
     readonly property int thumbnailDecodeWidth: decodeWidthForAspect(thumbnailDecodeCap, thumbnailDecodeCap, reservedImageAspectRatio)
     readonly property int thumbnailDecodeHeight: decodeHeightForAspect(thumbnailDecodeCap, thumbnailDecodeCap, reservedImageAspectRatio)
 
-    onMessageIdChanged: resetReservedImageGeometry()
+    onMessageIdChanged: {
+        resetReservedImageGeometry()
+        hoverLatched = false
+    }
     onMediaMimeTypeChanged: resetReservedImageGeometry()
     onMediaIntrinsicWidthChanged: resetReservedImageGeometry()
     onMediaIntrinsicHeightChanged: resetReservedImageGeometry()
@@ -269,49 +282,32 @@ Item {
     readonly property string readMoreLabelText: Whatevr.I18n.i18nc("@action:button expand long message", "Read more")
     readonly property bool hasInlineMedia: isImage && !isSticker
     readonly property bool imageOnly: hasInlineMedia && !hasBody
-    readonly property string metricBody: layoutBody.length > 0 ? layoutBody : body
-    readonly property string widestBodyLine: widestLine(metricBody)
     // Captions inside an image bubble wrap to the (padded) image width; plain
     // text bubbles wrap to the full available content width.
     readonly property real textWrapWidth: hasInlineMedia ? innerContentWidth : maxContentWidth
-    readonly property real naturalTextWidth: Math.min(textWrapWidth, widestBodyLineMetrics.advanceWidth)
-    readonly property string lastBodyLine: lastLine(metricBody)
-    readonly property real naturalLastLineWidth: Math.min(textWrapWidth, lastBodyLineMetrics.advanceWidth)
+    readonly property real naturalTextWidth: Math.min(textWrapWidth, widestLineWidth)
+    readonly property real naturalLastLineWidth: Math.min(textWrapWidth, lastLineWidth)
     readonly property bool canReserveInlineTntWidth: hasBody
                                                    && naturalLastLineWidth + inlineTntGap + tntWidth <= textWrapWidth
     readonly property rect bodyEndCursorRect: {
-        const bodyWidth = bodyText.width
-        const bodyHeight = bodyText.height
-        const bodyLength = bodyText.length
-        return bodyText.visible && bodyWidth > 0 && bodyHeight > 0
-            ? bodyText.positionToRectangle(bodyLength)
+        const edit = bodyTextLoader.item
+        if (!edit) {
+            return Qt.rect(0, 0, 0, 0)
+        }
+        const bodyWidth = edit.width
+        const bodyHeight = edit.height
+        const bodyLength = edit.length
+        return bodyWidth > 0 && bodyHeight > 0
+            ? edit.positionToRectangle(bodyLength)
             : Qt.rect(0, 0, 0, 0)
     }
     readonly property bool tntFitsInline: !showReadMore
-                                         && bodyText.visible
-                                         && bodyEndCursorRect.x + inlineTntGap + tntWidth <= bodyText.width
+                                         && hasBody
+                                         && bodyTextLoader.item !== null
+                                         && bodyEndCursorRect.x + inlineTntGap + tntWidth <= bodyTextLoader.width
     readonly property real inlineTntReserve: 0
     readonly property real inlineTntYOffset: Kirigami.Units.smallSpacing / 2
     readonly property real blockTntReserve: tntHeight + tntGap
-
-    function widestLine(text) {
-        let best = ""
-        let bestWidth = 0
-        const lines = String(text || "").split("\n")
-        for (let i = 0; i < lines.length; ++i) {
-            const lineWidth = bodyFontMetrics.advanceWidth(lines[i])
-            if (lineWidth > bestWidth) {
-                best = lines[i]
-                bestWidth = lineWidth
-            }
-        }
-        return best
-    }
-
-    function lastLine(text) {
-        const lines = String(text || "").split("\n")
-        return lines.length > 0 ? lines[lines.length - 1] : ""
-    }
 
     function currentSenderNameForReply() {
         return root.outgoing ? Whatevr.I18n.i18nc("@label quoted own message sender", "You") : root.senderName
@@ -335,8 +331,8 @@ Item {
     // The reply preview and caption text are inset by innerPadding; media is
     // edge-to-edge and sits flush at the top when it is the first region.
     function contentOffsetBeforeMedia() {
-        return replyPreview.visible
-            ? root.innerPadding + replyPreview.height + Kirigami.Units.smallSpacing
+        return root.hasReplyPreview
+            ? root.innerPadding + replyPreviewLoader.height + Kirigami.Units.smallSpacing
             : 0
     }
 
@@ -344,24 +340,24 @@ Item {
         if (mediaSlot.visible) {
             return mediaSlot.y + mediaSlot.height + Kirigami.Units.smallSpacing
         }
-        if (replyPreview.visible) {
-            return root.innerPadding + replyPreview.height + Kirigami.Units.smallSpacing - root.bodyTopInsetCorrection
+        if (root.hasReplyPreview) {
+            return root.innerPadding + replyPreviewLoader.height + Kirigami.Units.smallSpacing - root.bodyTopInsetCorrection
         }
         return root.innerPadding - root.bodyTopInsetCorrection
     }
 
     function contentOffsetBeforeFooter() {
-        if (readMoreButton.visible) {
-            return readMoreButton.y + readMoreButton.height
+        if (root.showReadMore) {
+            return readMoreLoader.y + readMoreLoader.height
         }
-        if (bodyText.visible) {
-            return bodyText.y + bodyText.height
+        if (root.hasBody) {
+            return bodyTextLoader.y + bodyTextLoader.height
         }
         if (mediaSlot.visible) {
             return mediaSlot.y + mediaSlot.height
         }
-        if (replyPreview.visible) {
-            return root.innerPadding + replyPreview.height + Kirigami.Units.smallSpacing
+        if (root.hasReplyPreview) {
+            return root.innerPadding + replyPreviewLoader.height + Kirigami.Units.smallSpacing
         }
         return root.innerPadding
     }
@@ -370,7 +366,7 @@ Item {
     // quote stays legible but no longer inflates the bubble to a fixed minimum.
     readonly property real replyPreviewNaturalWidth: hasReplyPreview
         ? Math.min(maxContentWidth, Math.max(Kirigami.Units.gridUnit * 5,
-                                             replyPreview.naturalContentWidth))
+                                             replyPreviewLoader.item ? replyPreviewLoader.item.naturalContentWidth : 0))
         : 0
 
     // Width of the text/reply content for non-image bubbles (image bubbles are
@@ -390,7 +386,7 @@ Item {
             w = Math.max(w, replyPreviewNaturalWidth)
         }
         if (showReadMore) {
-            w = Math.max(w, Math.min(maxContentWidth, readMoreMetrics.advanceWidth + Kirigami.Units.smallSpacing * 2))
+            w = Math.max(w, Math.min(maxContentWidth, readMoreTextWidth + Kirigami.Units.smallSpacing * 2))
         }
         w = Math.max(w, Math.min(maxContentWidth, tntWidth))
         return Math.max(w, hasBody ? Kirigami.Units.gridUnit * 2 : Kirigami.Units.gridUnit * 4)
@@ -415,7 +411,7 @@ Item {
     // light tones for contrast; otherwise the muted theme colours are used.
     readonly property color footerTextColor: imageOnly ? "white" : Kirigami.Theme.disabledTextColor
     readonly property color statusTickColor: statusIsRead
-        ? (imageOnly ? Qt.lighter(activePalette.highlight, 1.4) : activePalette.highlight)
+        ? (imageOnly ? Qt.lighter(Kirigami.Theme.highlightColor, 1.4) : Kirigami.Theme.highlightColor)
         : (imageOnly ? "white" : Kirigami.Theme.disabledTextColor)
     readonly property color statusSingleColor: statusIsFailed
         ? Kirigami.Theme.negativeTextColor
@@ -431,22 +427,22 @@ Item {
     readonly property real mediaBottomRightRadius: !imageOnly ? 0 : ((outgoing && !groupEnd) ? bubbleCornerRadius * 0.45 : bubbleCornerRadius)
     readonly property real replyGlowLeft: frameless
         ? Math.min(stickerSlot.x,
-                   stickerReplyPreview.visible ? stickerReplyPreview.x : stickerSlot.x,
+                   stickerReplyPreviewLoader.active ? stickerReplyPreviewLoader.x : stickerSlot.x,
                    stickerFooter.x)
         : bubble.x
     readonly property real replyGlowTop: frameless
         ? Math.min(stickerSlot.y,
-                   stickerReplyPreview.visible ? stickerReplyPreview.y : stickerSlot.y,
+                   stickerReplyPreviewLoader.active ? stickerReplyPreviewLoader.y : stickerSlot.y,
                    stickerFooter.y)
         : bubble.y
     readonly property real replyGlowRight: frameless
         ? Math.max(stickerSlot.x + stickerSlot.width,
-                   stickerReplyPreview.visible ? stickerReplyPreview.x + stickerReplyPreview.width : stickerSlot.x + stickerSlot.width,
+                   stickerReplyPreviewLoader.active ? stickerReplyPreviewLoader.x + stickerReplyPreviewLoader.width : stickerSlot.x + stickerSlot.width,
                    stickerFooter.x + stickerFooter.width)
         : bubble.x + bubble.width
     readonly property real replyGlowBottom: frameless
         ? Math.max(stickerSlot.y + stickerSlot.height,
-                   stickerReplyPreview.visible ? stickerReplyPreview.y + stickerReplyPreview.height : stickerSlot.y + stickerSlot.height,
+                   stickerReplyPreviewLoader.active ? stickerReplyPreviewLoader.y + stickerReplyPreviewLoader.height : stickerSlot.y + stickerSlot.height,
                    stickerFooter.y + stickerFooter.height)
         : bubble.y + bubble.height
 
@@ -455,15 +451,15 @@ Item {
         ? stickerFooter.y + stickerFooter.height
         : bubble.y + bubble.height) + (groupEnd ? Kirigami.Units.smallSpacing : Kirigami.Units.smallSpacing / 4)
 
-    SystemPalette {
-        id: activePalette
-        colorGroup: SystemPalette.Active
-    }
-
     HoverHandler {
         id: rowHoverHandler
 
         acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+        onHoveredChanged: {
+            if (hovered) {
+                root.hoverLatched = true
+            }
+        }
     }
 
     TapHandler {
@@ -505,38 +501,9 @@ Item {
     }
 
     TextMetrics {
-        id: bodyMetrics
-        text: root.body
-        font: bodyText.font
-    }
-
-    TextMetrics {
-        id: widestBodyLineMetrics
-        text: root.widestBodyLine
-        font: bodyText.font
-    }
-
-    TextMetrics {
-        id: lastBodyLineMetrics
-        text: root.lastBodyLine
-        font: bodyText.font
-    }
-
-    FontMetrics {
-        id: bodyFontMetrics
-        font: bodyText.font
-    }
-
-    TextMetrics {
         id: footerMetrics
         text: root.timeText
-        font: timeLabel.font
-    }
-
-    TextMetrics {
-        id: readMoreMetrics
-        text: root.readMoreLabelText
-        font: readMoreLabel.font
+        font.pointSize: root.footerTimePointSize
     }
 
     Kirigami.ShadowedRectangle {
@@ -562,7 +529,7 @@ Item {
         corners.bottomRightRadius: root.outgoing && !root.groupEnd ? bubbleRadius * 0.45 : bubbleRadius
 
         color: root.outgoing
-                ? Qt.alpha(activePalette.highlight, 0.30)
+                ? Qt.alpha(Kirigami.Theme.highlightColor, 0.30)
                 : Kirigami.Theme.backgroundColor
         border.color: Qt.alpha(Kirigami.Theme.textColor, root.outgoing ? 0.05 : 0.12)
         border.width: 1
@@ -580,9 +547,9 @@ Item {
                     return mediaSlot.y + mediaSlot.height
                 }
                 let bottom = 0
-                if (bodyText.visible) {
+                if (root.hasBody) {
                     bottom = root.tntFitsInline
-                        ? bodyText.y + bodyText.height
+                        ? bodyTextLoader.y + bodyTextLoader.height
                         : footerSlot.y + footerSlot.height
                 } else {
                     bottom = footerSlot.y + footerSlot.height
@@ -590,22 +557,25 @@ Item {
                 return bottom + root.footerInset
             }
 
-            ReplyPreview {
-                id: replyPreview
+            Loader {
+                id: replyPreviewLoader
 
-                visible: root.hasReplyPreview
+                active: root.hasReplyPreview
                 x: root.innerPadding
                 y: root.innerPadding
                 width: root.textRegionWidth
-                senderName: root.replyToSenderName
-                body: root.replyToText
-                mediaKind: root.replyToMediaKind
-                mediaMimeType: root.replyToMediaMimeType
-                targetMessageId: root.replyToMessageId
-                outgoing: root.replyToOutgoing
-                fillColor: Qt.alpha(Kirigami.Theme.textColor, root.outgoing ? 0.06 : 0.045)
-                borderColor: Qt.alpha(Kirigami.Theme.textColor, 0.07)
-                onActivated: messageId => root.replyPreviewActivated(messageId)
+
+                sourceComponent: ReplyPreview {
+                    senderName: root.replyToSenderName
+                    body: root.replyToText
+                    mediaKind: root.replyToMediaKind
+                    mediaMimeType: root.replyToMediaMimeType
+                    targetMessageId: root.replyToMessageId
+                    outgoing: root.replyToOutgoing
+                    fillColor: Qt.alpha(Kirigami.Theme.textColor, root.outgoing ? 0.06 : 0.045)
+                    borderColor: Qt.alpha(Kirigami.Theme.textColor, 0.07)
+                    onActivated: messageId => root.replyPreviewActivated(messageId)
+                }
             }
 
             Item {
@@ -813,104 +783,116 @@ Item {
                 }
             }
 
-            TextEdit {
-                id: bodyText
+            // Text-only and media-only delegates split the cost: the TextEdit
+            // (and its document) is only built when there is body text.
+            Loader {
+                id: bodyTextLoader
 
-                property string currentHoveredLink: ""
-
-                // Formatted WhatsApp markdown and inline-enlarged emoji use RichText;
-                // plain messages stay on the cheaper PlainText path. Apply format and
-                // text together, clearing the old document first, so pooled delegates
-                // cannot carry rich-document font state into normal messages.
-                function syncContent() {
-                    text = ""
-                    if (root.hasRichText) {
-                        textFormat = TextEdit.RichText
-                        text = root.richText
-                    } else {
-                        textFormat = TextEdit.PlainText
-                        text = root.body
-                    }
-                }
-
-                visible: root.body.length > 0
+                active: root.hasBody
                 x: root.innerPadding
                 y: root.contentOffsetBeforeBody()
                 width: root.textRegionWidth
-                readOnly: true
-                selectByMouse: true
-                selectByKeyboard: true
-                persistentSelection: true
-                wrapMode: TextEdit.Wrap
-                color: Kirigami.Theme.textColor
-                font.family: Kirigami.Theme.defaultFont.family
-                font.pointSize: root.bodyPointSize
-                font.weight: Font.Normal
-                onLinkActivated: link => Qt.openUrlExternally(link)
-                onLinkHovered: link => currentHoveredLink = link
 
-                HoverHandler {
-                    cursorShape: bodyText.currentHoveredLink.length > 0 ? Qt.PointingHandCursor : Qt.IBeamCursor
-                }
+                sourceComponent: TextEdit {
+                    id: bodyText
 
-                Component.onCompleted: syncContent()
+                    property string currentHoveredLink: ""
 
-                Connections {
-                    target: root
-                    function onHasRichTextChanged() { bodyText.syncContent() }
-                    function onRichTextChanged() { bodyText.syncContent() }
-                    function onBodyChanged() { bodyText.syncContent() }
-                }
-
-                onSelectedTextChanged: {
-                    if (selectedText.length > 0) {
-                        root.messageSelectionClaimed(root.messageId)
-                    }
-                }
-
-                Keys.onPressed: event => {
-                    if (event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) {
-                        return
-                    }
-                    if (event.text.length === 0 || event.text.charCodeAt(0) < 0x20) {
-                        return
+                    // Formatted WhatsApp markdown and inline-enlarged emoji use RichText;
+                    // plain messages stay on the cheaper PlainText path. Apply format and
+                    // text together, clearing the old document first, so pooled delegates
+                    // cannot carry rich-document font state into normal messages.
+                    function syncContent() {
+                        text = ""
+                        if (root.hasRichText) {
+                            textFormat = TextEdit.RichText
+                            text = root.richText
+                        } else {
+                            textFormat = TextEdit.PlainText
+                            text = root.body
+                        }
                     }
 
-                    root.typeIntoComposerRequested(event.text)
-                    event.accepted = true
+                    readOnly: true
+                    selectByMouse: true
+                    selectByKeyboard: true
+                    persistentSelection: true
+                    wrapMode: TextEdit.Wrap
+                    color: Kirigami.Theme.textColor
+                    font.family: Kirigami.Theme.defaultFont.family
+                    font.pointSize: root.bodyPointSize
+                    font.weight: Font.Normal
+                    onLinkActivated: link => Qt.openUrlExternally(link)
+                    onLinkHovered: link => currentHoveredLink = link
+
+                    HoverHandler {
+                        cursorShape: bodyText.currentHoveredLink.length > 0 ? Qt.PointingHandCursor : Qt.IBeamCursor
+                    }
+
+                    Component.onCompleted: syncContent()
+
+                    Connections {
+                        target: root
+                        function onHasRichTextChanged() { bodyText.syncContent() }
+                        function onRichTextChanged() { bodyText.syncContent() }
+                        function onBodyChanged() { bodyText.syncContent() }
+                    }
+
+                    onSelectedTextChanged: {
+                        if (selectedText.length > 0) {
+                            root.messageSelectionClaimed(root.messageId)
+                        }
+                    }
+
+                    Keys.onPressed: event => {
+                        if (event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) {
+                            return
+                        }
+                        if (event.text.length === 0 || event.text.charCodeAt(0) < 0x20) {
+                            return
+                        }
+
+                        root.typeIntoComposerRequested(event.text)
+                        event.accepted = true
+                    }
                 }
             }
 
-            AbstractButton {
-                id: readMoreButton
+            Loader {
+                id: readMoreLoader
 
-                visible: root.showReadMore
+                active: root.showReadMore
                 x: root.innerPadding
-                y: bodyText.visible ? bodyText.y + bodyText.height + Kirigami.Units.smallSpacing / 2 : root.contentOffsetBeforeBody()
-                width: Math.ceil(readMoreMetrics.advanceWidth + Kirigami.Units.smallSpacing * 2)
-                height: readMoreLabel.implicitHeight + Kirigami.Units.smallSpacing
-                text: root.readMoreLabelText
-                hoverEnabled: true
-                focusPolicy: Qt.NoFocus
-                onClicked: {
-                    root.readMoreRequested(root.messageId)
-                    root.conversationFocusRequested()
-                }
+                y: root.hasBody ? bodyTextLoader.y + bodyTextLoader.height + Kirigami.Units.smallSpacing / 2 : root.contentOffsetBeforeBody()
 
-                contentItem: Label {
-                    id: readMoreLabel
+                sourceComponent: AbstractButton {
+                    id: readMoreButton
 
-                    text: readMoreButton.text
-                    color: readMoreButton.hovered || readMoreButton.pressed ? Kirigami.Theme.highlightColor : Kirigami.Theme.linkColor
-                    font.pointSize: Kirigami.Theme.smallFont.pointSize
-                    font.weight: Font.DemiBold
-                    verticalAlignment: Text.AlignVCenter
-                    horizontalAlignment: Text.AlignLeft
-                }
+                    width: Math.ceil(root.readMoreTextWidth + Kirigami.Units.smallSpacing * 2)
+                    height: readMoreLabel.implicitHeight + Kirigami.Units.smallSpacing
+                    text: root.readMoreLabelText
+                    hoverEnabled: true
+                    focusPolicy: Qt.NoFocus
+                    onClicked: {
+                        root.readMoreRequested(root.messageId)
+                        root.conversationFocusRequested()
+                    }
 
-                background: Rectangle {
-                    color: readMoreButton.hovered || readMoreButton.pressed ? Qt.alpha(Kirigami.Theme.highlightColor, 0.08) : "transparent"
-                    radius: Kirigami.Units.cornerRadius
+                    contentItem: Label {
+                        id: readMoreLabel
+
+                        text: readMoreButton.text
+                        color: readMoreButton.hovered || readMoreButton.pressed ? Kirigami.Theme.highlightColor : Kirigami.Theme.linkColor
+                        font.pointSize: Kirigami.Theme.smallFont.pointSize
+                        font.weight: Font.DemiBold
+                        verticalAlignment: Text.AlignVCenter
+                        horizontalAlignment: Text.AlignLeft
+                    }
+
+                    background: Rectangle {
+                        color: readMoreButton.hovered || readMoreButton.pressed ? Qt.alpha(Kirigami.Theme.highlightColor, 0.08) : "transparent"
+                        radius: Kirigami.Units.cornerRadius
+                    }
                 }
             }
 
@@ -928,9 +910,9 @@ Item {
                         return mediaSlot.y + mediaSlot.height - height - root.footerInset
                     }
                     const off = root.contentOffsetBeforeFooter()
-                    if (bodyText.visible) {
+                    if (root.hasBody) {
                         return root.tntFitsInline
-                            ? bodyText.y + root.bodyEndCursorRect.y + root.bodyEndCursorRect.height - height + root.inlineTntYOffset
+                            ? bodyTextLoader.y + root.bodyEndCursorRect.y + root.bodyEndCursorRect.height - height + root.inlineTntYOffset
                             : off + root.tntGap
                     }
                     return Math.max(0, off)
@@ -1007,25 +989,28 @@ Item {
         }
     }
 
-    ReplyPreview {
-        id: stickerReplyPreview
+    Loader {
+        id: stickerReplyPreviewLoader
 
-        visible: root.frameless && root.hasReplyPreview
+        active: root.frameless && root.hasReplyPreview
         x: root.outgoing
            ? root.width - width - root.outerMargin
            : root.outerMargin + root.senderGutterWidth
         y: root.messageBaseY
         width: Math.min(Math.max(0, root.width - root.outerMargin * 2 - root.senderGutterWidth),
-                        Math.max(Kirigami.Units.gridUnit * 5, stickerReplyPreview.naturalContentWidth))
-        senderName: root.replyToSenderName
-        body: root.replyToText
-        mediaKind: root.replyToMediaKind
-        mediaMimeType: root.replyToMediaMimeType
-        targetMessageId: root.replyToMessageId
-        outgoing: root.replyToOutgoing
-        fillColor: Qt.alpha(Kirigami.Theme.backgroundColor, 0.78)
-        borderColor: Qt.alpha(Kirigami.Theme.textColor, 0.08)
-        onActivated: messageId => root.replyPreviewActivated(messageId)
+                        Math.max(Kirigami.Units.gridUnit * 5, item ? item.naturalContentWidth : 0))
+
+        sourceComponent: ReplyPreview {
+            senderName: root.replyToSenderName
+            body: root.replyToText
+            mediaKind: root.replyToMediaKind
+            mediaMimeType: root.replyToMediaMimeType
+            targetMessageId: root.replyToMessageId
+            outgoing: root.replyToOutgoing
+            fillColor: Qt.alpha(Kirigami.Theme.backgroundColor, 0.78)
+            borderColor: Qt.alpha(Kirigami.Theme.textColor, 0.08)
+            onActivated: messageId => root.replyPreviewActivated(messageId)
+        }
     }
 
     Item {
@@ -1035,7 +1020,7 @@ Item {
         x: root.outgoing
            ? root.width - width - root.outerMargin
            : root.outerMargin + root.senderGutterWidth
-        y: root.messageBaseY + (stickerReplyPreview.visible ? stickerReplyPreview.height + Kirigami.Units.smallSpacing : 0)
+        y: root.messageBaseY + (stickerReplyPreviewLoader.active ? stickerReplyPreviewLoader.height + Kirigami.Units.smallSpacing : 0)
         width: root.isJumboEmoji ? jumboEmoji.implicitWidth : root.stickerDisplayWidth
         height: root.isJumboEmoji ? jumboEmoji.implicitHeight : root.stickerDisplayHeight
 
@@ -1236,17 +1221,24 @@ Item {
         height: root.tntHeight + root.framelessFooterVPadding * 2
         radius: Kirigami.Units.cornerRadius
         color: root.outgoing
-               ? Qt.alpha(activePalette.highlight, 0.30)
+               ? Qt.alpha(Kirigami.Theme.highlightColor, 0.30)
                : Qt.alpha(Kirigami.Theme.backgroundColor, 0.76)
         border.color: Qt.alpha(Kirigami.Theme.textColor, root.outgoing ? 0.05 : 0.12)
 
-        Item {
-            id: stickerFooterContent
-
+        // The footer content (status ticks + time label) is only built for
+        // frameless rows; the Rectangle itself stays so geometry consumers
+        // (root.height, reply glow) keep working before/without the content.
+        Loader {
+            active: root.frameless
             x: root.framelessFooterHPadding
             y: Math.round((parent.height - height) / 2)
             width: root.tntWidth
             height: root.tntHeight
+
+            sourceComponent: Item {
+            id: stickerFooterContent
+
+            anchors.fill: parent
 
             Item {
                 id: stickerStatusArea
@@ -1307,136 +1299,169 @@ Item {
                 horizontalAlignment: Text.AlignRight
                 font.pointSize: root.footerTimePointSize
             }
+            }
         }
     }
 
-    Item {
-        id: replyGlowOverlay
-
-        readonly property real innerMargin: Math.max(1, Math.round(Kirigami.Units.smallSpacing / 2))
-
-        visible: root.replyGlowOpacity > 0
-        opacity: root.replyGlowOpacity
+    // Instantiated only while the jump-to-reply glow animation is running.
+    Loader {
+        active: root.replyGlowOpacity > 0
         x: Math.round(root.replyGlowLeft - root.replyGlowPadding)
         y: Math.round(root.replyGlowTop - root.replyGlowPadding)
         z: 7
         width: Math.max(0, Math.round(root.replyGlowRight - root.replyGlowLeft + root.replyGlowPadding * 2))
         height: Math.max(0, Math.round(root.replyGlowBottom - root.replyGlowTop + root.replyGlowPadding * 2))
 
-        Rectangle {
-            id: replyGlowOuter
+        sourceComponent: Item {
+            id: replyGlowOverlay
+
+            readonly property real innerMargin: Math.max(1, Math.round(Kirigami.Units.smallSpacing / 2))
 
             anchors.fill: parent
-            radius: Kirigami.Units.cornerRadius + root.replyGlowPadding
-            color: Qt.alpha(Kirigami.Theme.highlightColor, 0.06)
-            border.color: Qt.alpha(Kirigami.Theme.highlightColor, 0.72)
-            border.width: Math.max(2, Math.round(Kirigami.Units.smallSpacing / 2))
-        }
+            opacity: root.replyGlowOpacity
 
-        Rectangle {
-            anchors.fill: parent
-            anchors.margins: replyGlowOverlay.innerMargin
-            radius: Math.max(0, replyGlowOuter.radius - replyGlowOverlay.innerMargin)
-            color: "transparent"
-            border.color: Qt.alpha(Kirigami.Theme.highlightColor, 0.28)
-            border.width: 1
+            Rectangle {
+                id: replyGlowOuter
+
+                anchors.fill: parent
+                radius: Kirigami.Units.cornerRadius + root.replyGlowPadding
+                color: Qt.alpha(Kirigami.Theme.highlightColor, 0.06)
+                border.color: Qt.alpha(Kirigami.Theme.highlightColor, 0.72)
+                border.width: Math.max(2, Math.round(Kirigami.Units.smallSpacing / 2))
+            }
+
+            Rectangle {
+                anchors.fill: parent
+                anchors.margins: replyGlowOverlay.innerMargin
+                radius: Math.max(0, replyGlowOuter.radius - replyGlowOverlay.innerMargin)
+                color: "transparent"
+                border.color: Qt.alpha(Kirigami.Theme.highlightColor, 0.28)
+                border.width: 1
+            }
         }
     }
 
-    ToolButton {
-        id: replyButton
-
-        readonly property real visualX: root.frameless ? stickerSlot.x : bubble.x
-        readonly property real visualY: root.frameless ? stickerSlot.y : bubble.y
-        readonly property real visualWidth: root.frameless ? stickerSlot.width : bubble.width
-        readonly property real visualHeight: root.frameless ? stickerSlot.height : bubble.height
-        readonly property real desiredX: root.outgoing
-                                         ? visualX - width - Kirigami.Units.smallSpacing
-                                         : visualX + visualWidth + Kirigami.Units.smallSpacing
-
-        visible: root.messageId.length > 0 && !root.pooled
-        enabled: opacity > 0.01
-        opacity: (rowHoverHandler.hovered || hovered || pressed) ? 1 : 0
-        x: Math.round(Math.max(root.outerMargin,
-                               Math.min(root.width - root.outerMargin - width, desiredX)))
-        y: Math.round(visualY + Math.max(0, visualHeight - height) / 2)
+    // Built lazily on first hover of the row (hoverLatched): scrolling never
+    // pays for the button, only the rows the pointer actually visits do.
+    Loader {
+        anchors.fill: parent
+        active: root.hoverLatched && root.messageId.length > 0 && !root.pooled
         z: 8
-        width: Math.round(Math.max(Kirigami.Units.iconSizes.smallMedium + Kirigami.Units.smallSpacing,
-                                   Math.min(Kirigami.Units.gridUnit * 1.45,
-                                            visualHeight - Kirigami.Units.smallSpacing)))
-        height: width
-        icon.name: "edit-undo"
-        // Set both dimensions to the constant directly; binding icon.height to
-        // icon.width loops through the control's implicit-size machinery.
-        icon.width: Kirigami.Units.iconSizes.smallMedium
-        icon.height: Kirigami.Units.iconSizes.smallMedium
-        text: Whatevr.I18n.i18nc("@action:button", "Reply")
-        display: AbstractButton.IconOnly
-        focusPolicy: Qt.NoFocus
-        hoverEnabled: true
-        onClicked: root.requestReply()
 
-        contentItem: Item {
-            Kirigami.Icon {
-                anchors.centerIn: parent
-                source: replyButton.icon.name
-                width: replyButton.icon.width
-                height: replyButton.icon.height
-                color: Kirigami.Theme.textColor
-                isMask: true
+        sourceComponent: Item {
+            ToolButton {
+                id: replyButton
+
+                readonly property real visualX: root.frameless ? stickerSlot.x : bubble.x
+                readonly property real visualY: root.frameless ? stickerSlot.y : bubble.y
+                readonly property real visualWidth: root.frameless ? stickerSlot.width : bubble.width
+                readonly property real visualHeight: root.frameless ? stickerSlot.height : bubble.height
+                readonly property real desiredX: root.outgoing
+                                                 ? visualX - width - Kirigami.Units.smallSpacing
+                                                 : visualX + visualWidth + Kirigami.Units.smallSpacing
+
+                enabled: opacity > 0.01
+                opacity: (rowHoverHandler.hovered || hovered || pressed) ? 1 : 0
+                x: Math.round(Math.max(root.outerMargin,
+                                       Math.min(root.width - root.outerMargin - width, desiredX)))
+                y: Math.round(visualY + Math.max(0, visualHeight - height) / 2)
+                width: Math.round(Math.max(Kirigami.Units.iconSizes.smallMedium + Kirigami.Units.smallSpacing,
+                                           Math.min(Kirigami.Units.gridUnit * 1.45,
+                                                    visualHeight - Kirigami.Units.smallSpacing)))
+                height: width
+                icon.name: "edit-undo"
+                // Set both dimensions to the constant directly; binding icon.height to
+                // icon.width loops through the control's implicit-size machinery.
+                icon.width: Kirigami.Units.iconSizes.smallMedium
+                icon.height: Kirigami.Units.iconSizes.smallMedium
+                text: Whatevr.I18n.i18nc("@action:button", "Reply")
+                display: AbstractButton.IconOnly
+                focusPolicy: Qt.NoFocus
+                hoverEnabled: true
+                onClicked: root.requestReply()
+
+                contentItem: Item {
+                    Kirigami.Icon {
+                        anchors.centerIn: parent
+                        source: replyButton.icon.name
+                        width: replyButton.icon.width
+                        height: replyButton.icon.height
+                        color: Kirigami.Theme.textColor
+                        isMask: true
+                    }
+                }
+
+                background: Rectangle {
+                    radius: width / 2
+                    color: Qt.alpha(Kirigami.Theme.backgroundColor, replyButton.hovered || replyButton.pressed ? 0.98 : 0.9)
+                    border.color: Qt.alpha(Kirigami.Theme.textColor, replyButton.hovered || replyButton.pressed ? 0.24 : 0.14)
+                    border.width: 1
+                }
+
+                Behavior on opacity {
+                    NumberAnimation {
+                        duration: Kirigami.Units.shortDuration
+                        easing.type: Easing.OutCubic
+                    }
+                }
             }
         }
+    }
 
-        background: Rectangle {
-            radius: width / 2
-            color: Qt.alpha(Kirigami.Theme.backgroundColor, replyButton.hovered || replyButton.pressed ? 0.98 : 0.9)
-            border.color: Qt.alpha(Kirigami.Theme.textColor, replyButton.hovered || replyButton.pressed ? 0.24 : 0.14)
-            border.width: 1
-        }
+    // Sender header (group chats, first message of a sender group) is loaded
+    // only when shown; senderHeaderHeight reads labelImplicitHeight from the
+    // synchronously loaded item, so row height settles in the same frame.
+    Loader {
+        id: senderHeaderLoader
 
-        Behavior on opacity {
-            NumberAnimation {
-                duration: Kirigami.Units.shortDuration
-                easing.type: Easing.OutCubic
+        anchors.fill: parent
+        active: root.showSenderHeader
+
+        sourceComponent: Item {
+            readonly property real labelImplicitHeight: senderHeader.implicitHeight
+
+            anchors.fill: parent
+
+            Label {
+                id: senderHeader
+
+                visible: root.senderName.length > 0
+                x: bubble.x + root.innerPadding / 2
+                y: root.dateSeparatorHeight + Math.max(0, (root.senderHeaderHeight - height) / 2)
+                width: Math.max(0, root.width - x - root.outerMargin)
+                text: root.senderName
+                elide: Text.ElideRight
+                maximumLineCount: 1
+                color: Qt.alpha(Kirigami.Theme.textColor, 0.72)
+                font.weight: Font.DemiBold
+                font.pointSize: Kirigami.Theme.smallFont.pointSize * 0.92
+            }
+
+            AvatarImage {
+                x: root.outerMargin + Math.max(0, root.senderGutterWidth - width) / 2
+                y: root.dateSeparatorHeight + Math.max(0, (root.senderHeaderHeight - height) / 2)
+                width: root.senderAvatarSize
+                height: root.senderAvatarSize
+                avatarLocalPath: root.senderAvatarLocalPath
+                initials: root.senderInitials
+                backgroundColor: Qt.alpha(foregroundColor, 0.12)
             }
         }
     }
 
-    Label {
-        id: senderHeader
+    // Day-separator pill, loaded only for rows that start a day. The loader
+    // auto-sizes to the pill, so dateSeparatorHeight is valid right after the
+    // synchronous load.
+    Loader {
+        id: dateSeparatorLoader
 
-        visible: root.showSenderHeader && root.senderName.length > 0
-        x: bubble.x + root.innerPadding / 2
-        y: root.dateSeparatorHeight + Math.max(0, (root.senderHeaderHeight - height) / 2)
-        width: Math.max(0, root.width - x - root.outerMargin)
-        text: root.senderName
-        elide: Text.ElideRight
-        maximumLineCount: 1
-        color: Qt.alpha(Kirigami.Theme.textColor, 0.72)
-        font.weight: Font.DemiBold
-        font.pointSize: Kirigami.Theme.smallFont.pointSize * 0.92
-    }
-
-    AvatarImage {
-        id: senderAvatar
-
-        visible: root.showSenderHeader
-        x: root.outerMargin + Math.max(0, root.senderGutterWidth - width) / 2
-        y: root.dateSeparatorHeight + Math.max(0, (root.senderHeaderHeight - height) / 2)
-        width: root.senderAvatarSize
-        height: root.senderAvatarSize
-        avatarLocalPath: root.senderAvatarLocalPath
-        initials: root.senderInitials
-        backgroundColor: Qt.alpha(foregroundColor, 0.12)
-    }
-
-    DateSeparatorPill {
-        id: dateSeparator
-
-        visible: root.showDateSeparator
-        text: root.dateSeparatorText
+        active: root.showDateSeparator
         x: Math.round((root.width - width) / 2)
         y: Kirigami.Units.largeSpacing / 2
+
+        sourceComponent: DateSeparatorPill {
+            text: root.dateSeparatorText
+        }
     }
 
 }

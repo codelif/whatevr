@@ -13,9 +13,18 @@ Item {
     property real launchThreshold: 12
     property real stopThreshold: 6
     property real inertiaMultiplier: 1.18
+    // When false (older history can still load into a BottomToTop ListView),
+    // target.originY is only an estimate that the view revises as delegates
+    // materialise; allow scrolling past it by one viewport instead of
+    // hard-stopping at a stale edge that is about to move.
+    property bool clampAtOrigin: true
     property real pendingDelta: 0
     property real velocity: 0
     property bool kineticActive: false
+    // contentY as we last set it; used to detect the ListView repositioning the
+    // viewport underneath an active fling (origin/position fixups).
+    property real lastAppliedContentY: 0
+    property bool hasAppliedContentY: false
     property bool interactionActive: false
     property double lastWheelTimestamp: 0
     property double lastImpulseTimestamp: 0
@@ -46,7 +55,10 @@ Item {
     }
 
     function minimumY() {
-        return target ? target.originY : 0
+        if (!target) {
+            return 0
+        }
+        return clampAtOrigin ? target.originY : target.originY - target.height
     }
 
     function maximumY() {
@@ -153,6 +165,8 @@ Item {
         }
 
         target.contentY = nextY
+        lastAppliedContentY = nextY
+        hasAppliedContentY = true
         const actual = nextY - oldY
         scrolled(actual)
         return actual
@@ -162,6 +176,7 @@ Item {
         kineticActive = false
         velocity = 0
         pendingDelta = 0
+        hasAppliedContentY = false
         lastWheelTimestamp = 0
         lastImpulseTimestamp = 0
         lastInputTimestamp = 0
@@ -332,6 +347,16 @@ Item {
                 if (Math.abs(root.pendingDelta) < 0.01) {
                     frameDriver.stop()
                 }
+                return
+            }
+
+            // The ListView moved the viewport underneath us (origin/position
+            // fixup after delegates resized or materialised). Integrating the
+            // fling against the new position would look like a jump-then-drag;
+            // stop and let the user resume from where the view settled.
+            if (root.hasAppliedContentY
+                    && Math.abs(root.target.contentY - root.lastAppliedContentY) > root.target.height / 2) {
+                root.stopKinetic()
                 return
             }
 
