@@ -4,9 +4,11 @@
 #include <QDir>
 #include <QDateTime>
 #include <QFileInfo>
+#include <QFileSystemWatcher>
 #include <QGuiApplication>
 #include <QImage>
 #include <QMimeData>
+#include <QProcess>
 #include <QQmlEngine>
 #include <QLocale>
 #include <QStandardPaths>
@@ -19,11 +21,13 @@
 #include <KLocalizedString>
 
 #include <QtGrpc/qgrpccallreply.h>
+#include <QtGrpc/qgrpcchanneloptions.h>
 #include <QtGrpc/qgrpchttp2channel.h>
 #include <QtGrpc/qtgrpcnamespace.h>
 #include <QtGrpc/qgrpcstream.h>
 
 #include <algorithm>
+#include <chrono>
 
 #include "../models/chatlistmodel.h"
 #include "../models/emojimodel.h"
@@ -257,6 +261,8 @@ AppController::AppController(QObject *parent)
     m_retryTimer->setSingleShot(true);
     connect(m_retryTimer, &QTimer::timeout, this, &AppController::refresh);
 
+    setupSocketWatcher();
+
     m_qrTimer = new QTimer(this);
     m_qrTimer->setInterval(1000);
     connect(m_qrTimer, &QTimer::timeout, this, &AppController::updateQrExpiryText);
@@ -342,7 +348,38 @@ QString AppController::daemonSocketUrl() const
 
 bool AppController::loading() const
 {
-    return m_loading;
+    return m_phase == Phase::Connecting;
+}
+
+bool AppController::daemonRunning() const
+{
+    return m_phase != Phase::NotRunning;
+}
+
+QString AppController::connectionPhase() const
+{
+    switch (m_phase) {
+    case Phase::Connecting:
+        return QStringLiteral("connecting");
+    case Phase::Connected:
+        return QStringLiteral("connected");
+    case Phase::NotRunning:
+        return QStringLiteral("not-running");
+    case Phase::Error:
+        return QStringLiteral("error");
+    }
+    return QStringLiteral("connecting");
+}
+
+QString AppController::daemonInstructions() const
+{
+    // Cover both supported launch methods (user chose "both"): the systemd user
+    // unit and a direct invocation of the binary.
+    return i18nc("@info",
+                 "Start it with systemd:\n"
+                 "    systemctl --user start whatevrd.service\n"
+                 "or run it directly:\n"
+                 "    whatevrd");
 }
 
 bool AppController::loginRequired() const
@@ -352,7 +389,7 @@ bool AppController::loginRequired() const
 
 bool AppController::shellVisible() const
 {
-    return !m_loading && !m_loginRequired && m_hasStatus;
+    return m_phase == Phase::Connected && !m_loginRequired && m_hasStatus;
 }
 
 bool AppController::qrAvailable() const
@@ -366,15 +403,18 @@ QString AppController::statusTitle() const
         return i18nc("@title", "Scan to sign in");
     }
 
-    if (m_loading && !m_hasStatus) {
+    switch (m_phase) {
+    case Phase::NotRunning:
+        return i18nc("@title", "whatevrd isn't running");
+    case Phase::Connecting:
         return i18nc("@title", "Connecting to whatevrd");
+    case Phase::Connected:
+        return shellVisible() ? i18nc("@title", "Daemon session ready")
+                              : i18nc("@title", "Waiting for whatevrd");
+    case Phase::Error:
+        return i18nc("@title", "Can't reach whatevrd");
     }
-
-    if (shellVisible()) {
-        return i18nc("@title", "Daemon session ready");
-    }
-
-    return i18nc("@title", "Waiting for whatevrd");
+    return i18nc("@title", "Connecting to whatevrd");
 }
 
 QString AppController::statusText() const
@@ -383,15 +423,19 @@ QString AppController::statusText() const
         return i18nc("@info", "Use WhatsApp on your phone to scan the QR code below.");
     }
 
-    if (m_loading && !m_hasStatus) {
+    switch (m_phase) {
+    case Phase::NotRunning:
+        return i18nc("@info", "The background daemon isn't running. Start it and Whatevr will connect automatically.");
+    case Phase::Connecting:
         return i18nc("@info", "Preparing the local daemon connection and reading the current session state.");
+    case Phase::Connected:
+        return shellVisible()
+            ? i18nc("@info", "The daemon is reachable. Chat list and timeline work land next on top of this shell.")
+            : i18nc("@info", "Connected to the daemon; waiting for it to come online.");
+    case Phase::Error:
+        return i18nc("@info", "Whatevr could not reach the daemon. Retrying automatically.");
     }
-
-    if (shellVisible()) {
-        return i18nc("@info", "The daemon is reachable. Chat list and timeline work land next on top of this shell.");
-    }
-
-    return i18nc("@info", "Whatevr could not reach the daemon yet.");
+    return i18nc("@info", "Preparing the local daemon connection and reading the current session state.");
 }
 
 QString AppController::detailText() const
@@ -430,9 +474,12 @@ QString AppController::qrExpiryText() const
 
 QString AppController::primaryActionText() const
 {
-    return m_canReconnect && !m_loginRequired
-        ? i18nc("@action:button", "Reconnect")
-        : i18nc("@action:button", "Refresh");
+    // Only offer the daemon-side Reconnect RPC when we actually have a live
+    // connection to send it on; otherwise the button rebuilds the channel.
+    if (m_phase == Phase::Connected && m_canReconnect && !m_loginRequired) {
+        return i18nc("@action:button", "Reconnect");
+    }
+    return i18nc("@action:button", "Retry");
 }
 
 bool AppController::primaryActionEnabled() const
@@ -567,8 +614,23 @@ QString AppController::historySyncDetail() const
 void AppController::refresh()
 {
     m_retryTimer->stop();
+
+    // If the daemon socket isn't there, the daemon isn't running. Surface that
+    // directly instead of building a channel and hanging on "Connecting"; the
+    // file watcher (and retry timer) reconnect once the socket appears.
+    if (!daemonSocketExists()) {
+        resetChannel();
+        m_phase = Phase::NotRunning;
+        m_canReconnect = false;
+        clearBanner();
+        refreshSocketWatch();
+        emitStateChanged();
+        scheduleRetry();
+        return;
+    }
+
     clearBanner();
-    m_loading = true;
+    m_phase = Phase::Connecting;
     emitStateChanged();
 
     if (!ensureChannel()) {
@@ -583,7 +645,7 @@ void AppController::refresh()
 
 void AppController::triggerPrimaryAction()
 {
-    if (m_canReconnect && !m_loginRequired) {
+    if (m_phase == Phase::Connected && m_canReconnect && !m_loginRequired) {
         requestReconnect();
         return;
     }
@@ -1017,7 +1079,7 @@ void AppController::logout()
 
         m_logoutReply.reset();
         if (!status.isOk()) {
-            handleTransportFailure(i18nc("@info", "Logout failed"), status.message());
+            handleTransportFailure(i18nc("@info", "Logout failed"), status.message(), status.code());
             return;
         }
 
@@ -1069,17 +1131,115 @@ bool AppController::ensureChannel()
 
     const QString socketUrl = daemonSocketUrl();
     if (socketUrl.isEmpty()) {
-        m_loading = false;
+        m_phase = Phase::Error;
         m_hasStatus = false;
         m_bannerText = i18nc("@info", "XDG runtime directory is unavailable, so the daemon socket cannot be resolved.");
         emitStateChanged();
         return false;
     }
 
-    auto channel = std::make_shared<QGrpcHttp2Channel>(QUrl(socketUrl));
+    using namespace std::chrono_literals;
+    QGrpcChannelOptions options;
+    // Bound every call so a dead/half-open daemon surfaces as a failure we can
+    // classify, instead of leaving the UI stuck on "Connecting" forever.
+    options.setDeadlineTimeout(5s);
+
+    auto channel = std::make_shared<QGrpcHttp2Channel>(QUrl(socketUrl), options);
     m_channel = channel;
     attachClients();
     return true;
+}
+
+void AppController::resetChannel()
+{
+    // Drop the live streams and in-flight status/reconnect calls so the next
+    // ensureChannel() builds a fresh channel; QtGrpc does not transparently
+    // recover a channel whose peer (the daemon) went away and came back.
+    m_daemonStream.reset();
+    m_loginStream.reset();
+    m_frontendSessionStream.reset();
+    m_statusReply.reset();
+    m_reconnectReply.reset();
+    m_reconnectInFlight = false;
+    m_channel.reset();
+}
+
+bool AppController::daemonSocketExists() const
+{
+    const QString path = daemonSocketPath();
+    return !path.isEmpty() && QFileInfo::exists(path);
+}
+
+void AppController::setupSocketWatcher()
+{
+    m_socketWatcher = new QFileSystemWatcher(this);
+    connect(m_socketWatcher, &QFileSystemWatcher::directoryChanged, this, [this]() {
+        refreshSocketWatch();
+        // The socket (re)appeared while we were not connected — connect now
+        // rather than waiting for the next retry tick.
+        if (m_phase != Phase::Connected && daemonSocketExists()) {
+            refresh();
+        }
+    });
+    refreshSocketWatch();
+}
+
+void AppController::refreshSocketWatch()
+{
+    if (!m_socketWatcher) {
+        return;
+    }
+
+    const QString socketPath = daemonSocketPath();
+    if (socketPath.isEmpty()) {
+        return;
+    }
+
+    // Watch the daemon's runtime directory when it exists (to catch the socket
+    // appearing), otherwise watch its parent so we notice the directory itself
+    // being created on first daemon start.
+    const QDir socketDir = QFileInfo(socketPath).dir();
+    QStringList wanted;
+    if (socketDir.exists()) {
+        wanted << socketDir.absolutePath();
+    }
+    const QString parent = QFileInfo(socketDir.absolutePath()).dir().absolutePath();
+    if (!parent.isEmpty() && QFileInfo::exists(parent)) {
+        wanted << parent;
+    }
+
+    const QStringList current = m_socketWatcher->directories();
+    for (const QString &dir : wanted) {
+        if (!current.contains(dir)) {
+            m_socketWatcher->addPath(dir);
+        }
+    }
+}
+
+void AppController::startDaemon()
+{
+    // Prefer the systemd user unit; fall back to launching the binary directly
+    // when systemctl is missing or the unit isn't installed/failed to start.
+    // Either way the file watcher picks up the socket and connects us.
+    auto *proc = new QProcess(this);
+    connect(proc, &QProcess::finished, this, [proc](int exitCode, QProcess::ExitStatus exitStatus) {
+        if (exitStatus != QProcess::NormalExit || exitCode != 0) {
+            QProcess::startDetached(QStringLiteral("whatevrd"), {});
+        }
+        proc->deleteLater();
+    });
+    connect(proc, &QProcess::errorOccurred, this, [proc](QProcess::ProcessError) {
+        QProcess::startDetached(QStringLiteral("whatevrd"), {});
+        proc->deleteLater();
+    });
+    proc->start(QStringLiteral("systemctl"),
+                {QStringLiteral("--user"), QStringLiteral("start"), QStringLiteral("whatevrd.service")});
+
+    m_bannerText = i18nc("@info", "Starting whatevrd…");
+    m_phase = Phase::Connecting;
+    emitStateChanged();
+    refreshSocketWatch();
+    scheduleRetry(500);
 }
 
 void AppController::attachClients()
@@ -1128,7 +1288,7 @@ void AppController::requestStatus()
 
         if (!status.isOk()) {
             m_statusReply.reset();
-            handleTransportFailure(i18nc("@info", "Unable to read daemon status"), status.message());
+            handleTransportFailure(i18nc("@info", "Unable to read daemon status"), status.message(), status.code());
             return;
         }
 
@@ -1166,7 +1326,7 @@ void AppController::requestReconnect()
         m_reconnectInFlight = false;
 
         if (!status.isOk()) {
-            handleTransportFailure(i18nc("@info", "Reconnect request failed"), status.message());
+            handleTransportFailure(i18nc("@info", "Reconnect request failed"), status.message(), status.code());
             return;
         }
 
@@ -1202,7 +1362,7 @@ void AppController::requestChats()
         if (!status.isOk()) {
             m_chatsReply.reset();
             Q_EMIT chatsChanged();
-            handleTransportFailure(i18nc("@info", "Unable to load chats"), status.message());
+            handleTransportFailure(i18nc("@info", "Unable to load chats"), status.message(), status.code());
             return;
         }
 
@@ -1558,7 +1718,7 @@ void AppController::ensureFrontendSession()
 
         m_frontendSessionStream.reset();
         if (!status.isOk()) {
-            handleTransportFailure(i18nc("@info", "Frontend session stream ended"), status.message());
+            handleTransportFailure(i18nc("@info", "Frontend session stream ended"), status.message(), status.code());
             return;
         }
 
@@ -1661,7 +1821,7 @@ void AppController::ensureDaemonStream()
 
         m_daemonStream.reset();
         if (!status.isOk()) {
-            handleTransportFailure(i18nc("@info", "Daemon event stream ended"), status.message());
+            handleTransportFailure(i18nc("@info", "Daemon event stream ended"), status.message(), status.code());
             return;
         }
 
@@ -1698,7 +1858,7 @@ void AppController::ensureLoginStream()
 
         m_loginStream.reset();
         if (!status.isOk()) {
-            handleTransportFailure(i18nc("@info", "Login event stream ended"), status.message());
+            handleTransportFailure(i18nc("@info", "Login event stream ended"), status.message(), status.code());
             return;
         }
 
@@ -1713,9 +1873,26 @@ void AppController::scheduleRetry(int delayMs)
     }
 }
 
-void AppController::handleTransportFailure(const QString &context, const QString &message)
+void AppController::handleTransportFailure(const QString &context, const QString &message, QtGrpc::StatusCode code)
 {
-    m_loading = false;
+    // A dropped/dead channel can't be reused — tear it down so the next
+    // refresh() (button or retry) builds a fresh one and reconnects.
+    resetChannel();
+    m_canReconnect = false;
+
+    // Unavailable, or the socket having vanished, means the daemon is simply not
+    // there: present it as "not running" (with start instructions) rather than a
+    // generic error banner.
+    if (code == QtGrpc::StatusCode::Unavailable || !daemonSocketExists()) {
+        m_phase = Phase::NotRunning;
+        clearBanner();
+        refreshSocketWatch();
+        emitStateChanged();
+        scheduleRetry();
+        return;
+    }
+
+    m_phase = Phase::Error;
 
     QStringList lines;
     if (!context.isEmpty()) {
@@ -1737,7 +1914,7 @@ void AppController::handleTransportFailure(const QString &context, const QString
 void AppController::applyStatusResponse(const GetStatusResponse &status)
 {
     m_hasStatus = true;
-    m_loading = false;
+    m_phase = Phase::Connected;
     m_canReconnect = status.canReconnect();
     m_daemonStateLabel = !status.stateLabel().isEmpty() ? status.stateLabel() : fallbackStateLabel(status.state());
     m_statusDetail = status.detail();
@@ -1761,7 +1938,7 @@ void AppController::applyStatusResponse(const GetStatusResponse &status)
 void AppController::applyConnectionChanged(const ConnectionChanged &change)
 {
     m_hasStatus = true;
-    m_loading = false;
+    m_phase = Phase::Connected;
     m_canReconnect = change.canReconnect();
     m_daemonStateLabel = fallbackStateLabel(change.state());
 
@@ -1794,7 +1971,7 @@ void AppController::applyConnectionChanged(const ConnectionChanged &change)
 void AppController::applyLoginStateChanged(const LoginStateChanged &change)
 {
     m_hasStatus = true;
-    m_loading = false;
+    m_phase = Phase::Connected;
     m_daemonStateLabel = fallbackStateLabel(change.state());
     m_statusDetail = change.detail();
     m_loginRequired = change.state() == DaemonState::DAEMON_STATE_NEED_LOGIN;
@@ -1821,7 +1998,7 @@ void AppController::applyLoginEvent(const LoginEvent &event)
         m_qrCode = qr.code();
         m_qrExpiresAtUnix = qr.expiresAtUnix();
         m_loginRequired = true;
-        m_loading = false;
+        m_phase = Phase::Connected;
         m_hasStatus = true;
         updateQrExpiryText();
         m_qrTimer->start();

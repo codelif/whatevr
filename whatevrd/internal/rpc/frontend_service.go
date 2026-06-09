@@ -18,10 +18,11 @@ type FrontendService struct {
 	pb.UnimplementedFrontendServiceServer
 	sessions FrontendSessionController
 	bus      *SessionBus
+	shutdown <-chan struct{}
 }
 
-func NewFrontendService(sessions FrontendSessionController, bus *SessionBus) *FrontendService {
-	return &FrontendService{sessions: sessions, bus: bus}
+func NewFrontendService(sessions FrontendSessionController, bus *SessionBus, shutdown <-chan struct{}) *FrontendService {
+	return &FrontendService{sessions: sessions, bus: bus, shutdown: shutdown}
 }
 
 func (s *FrontendService) HoldSession(req *pb.HoldSessionRequest, stream pb.FrontendService_HoldSessionServer) error {
@@ -56,6 +57,8 @@ func (s *FrontendService) HoldSession(req *pb.HoldSessionRequest, stream pb.Fron
 	for {
 		select {
 		case <-stream.Context().Done():
+			return nil
+		case <-s.shutdown:
 			return nil
 		case <-ticker.C:
 			if err := stream.Send(&pb.FrontendSessionEvent{Detail: "keepalive"}); err != nil {

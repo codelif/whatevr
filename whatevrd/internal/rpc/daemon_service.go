@@ -24,10 +24,11 @@ type DaemonService struct {
 	pb.UnimplementedDaemonServiceServer
 	daemon      *app.Daemon
 	reconnector ReconnectController
+	shutdown    <-chan struct{}
 }
 
-func NewDaemonService(daemon *app.Daemon, reconnector ReconnectController) *DaemonService {
-	return &DaemonService{daemon: daemon, reconnector: reconnector}
+func NewDaemonService(daemon *app.Daemon, reconnector ReconnectController, shutdown <-chan struct{}) *DaemonService {
+	return &DaemonService{daemon: daemon, reconnector: reconnector, shutdown: shutdown}
 }
 
 func (s *DaemonService) Reconnect(ctx context.Context, _ *pb.ReconnectRequest) (*pb.ReconnectResponse, error) {
@@ -82,6 +83,10 @@ func (s *DaemonService) SubscribeEvents(_ *pb.SubscribeEventsRequest, stream pb.
 				return err
 			}
 		case <-stream.Context().Done():
+			return nil
+		case <-s.shutdown:
+			// Daemon is shutting down: return promptly so GracefulStop does
+			// not have to wait out the timeout for this long-lived stream.
 			return nil
 		}
 	}

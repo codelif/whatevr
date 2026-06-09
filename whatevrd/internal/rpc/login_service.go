@@ -16,12 +16,13 @@ type LoginController interface {
 
 type LoginService struct {
 	pb.UnimplementedLoginServiceServer
-	daemon *app.Daemon
-	login  LoginController
+	daemon   *app.Daemon
+	login    LoginController
+	shutdown <-chan struct{}
 }
 
-func NewLoginService(daemon *app.Daemon, login LoginController) *LoginService {
-	return &LoginService{daemon: daemon, login: login}
+func NewLoginService(daemon *app.Daemon, login LoginController, shutdown <-chan struct{}) *LoginService {
+	return &LoginService{daemon: daemon, login: login, shutdown: shutdown}
 }
 
 func (s *LoginService) SubscribeLoginEvents(_ *pb.SubscribeLoginEventsRequest, stream pb.LoginService_SubscribeLoginEventsServer) error {
@@ -35,6 +36,8 @@ func (s *LoginService) SubscribeLoginEvents(_ *pb.SubscribeLoginEventsRequest, s
 				return err
 			}
 		case <-stream.Context().Done():
+			return nil
+		case <-s.shutdown:
 			return nil
 		}
 	}

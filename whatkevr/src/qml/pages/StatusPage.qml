@@ -53,7 +53,18 @@ Kirigami.ScrollablePage {
                         }
 
                         StatusChip {
-                            text: Whatevr.AppController.loading ? Whatevr.I18n.i18n("Connecting") : Whatevr.I18n.i18n("Daemon")
+                            text: {
+                                switch (Whatevr.AppController.connectionPhase) {
+                                case "not-running":
+                                    return Whatevr.I18n.i18n("Not running")
+                                case "connecting":
+                                    return Whatevr.I18n.i18n("Connecting")
+                                case "error":
+                                    return Whatevr.I18n.i18n("Error")
+                                default:
+                                    return Whatevr.I18n.i18n("Daemon")
+                                }
+                            }
                         }
                     }
 
@@ -62,6 +73,17 @@ Kirigami.ScrollablePage {
                         text: Whatevr.AppController.statusText
                         wrapMode: Text.WordWrap
                         color: Kirigami.Theme.disabledTextColor
+                    }
+
+                    // How to start the daemon, shown only when it isn't running.
+                    Label {
+                        Layout.fillWidth: true
+                        visible: !Whatevr.AppController.daemonRunning
+                        text: Whatevr.AppController.daemonInstructions
+                        textFormat: Text.PlainText
+                        wrapMode: Text.WrapAnywhere
+                        font.family: "monospace"
+                        color: Kirigami.Theme.textColor
                     }
 
                     Label {
@@ -75,6 +97,13 @@ Kirigami.ScrollablePage {
 
                     RowLayout {
                         Layout.fillWidth: true
+
+                        Button {
+                            visible: !Whatevr.AppController.daemonRunning
+                            text: Whatevr.I18n.i18n("Start whatevrd")
+                            icon.name: "media-playback-start-symbolic"
+                            onClicked: Whatevr.AppController.startDaemon()
+                        }
 
                         Button {
                             text: Whatevr.AppController.primaryActionText

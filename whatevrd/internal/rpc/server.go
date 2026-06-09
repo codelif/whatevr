@@ -19,7 +19,7 @@ import (
 const (
 	maxRPCMessageBytes      = 16 * 1024 * 1024
 	maxConcurrentRPCStreams = 32
-	gracefulStopTimeout     = 5 * time.Second
+	gracefulStopTimeout     = 2 * time.Second
 )
 
 type Server struct {
@@ -28,6 +28,9 @@ type Server struct {
 	socketPath string
 	ownsSocket bool
 	errCh      chan error
+	// shutdown is closed at the start of the shutdown sequence so long-lived
+	// streaming handlers return promptly and GracefulStop can finish quickly.
+	shutdown chan struct{}
 }
 
 // Start serves the gRPC API on socketPath. When activated is non-nil (systemd
@@ -61,14 +64,16 @@ func Start(ctx context.Context, socketPath string, activated net.Listener, daemo
 		ownsSocket = true
 	}
 
+	shutdown := make(chan struct{})
+
 	grpcServer := grpc.NewServer(
 		grpc.MaxRecvMsgSize(maxRPCMessageBytes),
 		grpc.MaxSendMsgSize(maxRPCMessageBytes),
 		grpc.MaxConcurrentStreams(maxConcurrentRPCStreams),
 	)
-	pb.RegisterDaemonServiceServer(grpcServer, NewDaemonService(daemon, reconnector))
-	pb.RegisterLoginServiceServer(grpcServer, NewLoginService(daemon, login))
-	pb.RegisterFrontendServiceServer(grpcServer, NewFrontendService(frontend, bus))
+	pb.RegisterDaemonServiceServer(grpcServer, NewDaemonService(daemon, reconnector, shutdown))
+	pb.RegisterLoginServiceServer(grpcServer, NewLoginService(daemon, login, shutdown))
+	pb.RegisterFrontendServiceServer(grpcServer, NewFrontendService(frontend, bus, shutdown))
 	pb.RegisterChatServiceServer(grpcServer, NewChatService(daemon, chatStore, chatActions))
 	pb.RegisterSendServiceServer(grpcServer, NewSendService(sendController))
 
@@ -78,6 +83,7 @@ func Start(ctx context.Context, socketPath string, activated net.Listener, daemo
 		socketPath: socketPath,
 		ownsSocket: ownsSocket,
 		errCh:      make(chan error, 1),
+		shutdown:   shutdown,
 	}
 
 	go server.serve(ctx)
@@ -175,28 +181,51 @@ func (s *Server) Err() <-chan error {
 }
 
 func (s *Server) serve(ctx context.Context) {
+	defer close(s.errCh)
+
+	serveErr := make(chan error, 1)
 	go func() {
-		<-ctx.Done()
-		stopped := make(chan struct{})
-		go func() {
-			s.grpcServer.GracefulStop()
-			close(stopped)
-		}()
-		select {
-		case <-stopped:
-		case <-time.After(gracefulStopTimeout):
-			s.grpcServer.Stop()
-		}
-		s.listener.Close()
-		// Only remove the socket file if we created it. Under systemd socket
-		// activation systemd owns the socket and reuses it for the next start.
-		if s.ownsSocket {
-			_ = os.Remove(s.socketPath)
-		}
+		serveErr <- s.grpcServer.Serve(s.listener)
 	}()
 
-	if err := s.grpcServer.Serve(s.listener); err != nil && ctx.Err() == nil {
-		s.errCh <- err
+	select {
+	case err := <-serveErr:
+		// Serve returned on its own (e.g. listener error) before any shutdown
+		// was requested. Surface the error and skip the graceful path.
+		if err != nil && ctx.Err() == nil {
+			s.errCh <- err
+		}
+		s.cleanup()
+		return
+	case <-ctx.Done():
 	}
-	close(s.errCh)
+
+	// Shutdown requested. Signal long-lived streams to return so GracefulStop
+	// does not block waiting on them, then stop the server.
+	close(s.shutdown)
+
+	stopped := make(chan struct{})
+	go func() {
+		s.grpcServer.GracefulStop()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-time.After(gracefulStopTimeout):
+		s.grpcServer.Stop()
+	}
+
+	// Wait for Serve to return before we tear down the listener/socket, so the
+	// cleanup is complete before serve() returns and main() exits.
+	<-serveErr
+	s.cleanup()
+}
+
+func (s *Server) cleanup() {
+	s.listener.Close()
+	// Only remove the socket file if we created it. Under systemd socket
+	// activation systemd owns the socket and reuses it for the next start.
+	if s.ownsSocket {
+		_ = os.Remove(s.socketPath)
+	}
 }
