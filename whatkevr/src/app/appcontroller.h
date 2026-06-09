@@ -75,6 +75,9 @@ class AppController final : public QObject
     Q_PROPERTY(bool loading READ loading NOTIFY stateChanged FINAL)
     Q_PROPERTY(bool daemonRunning READ daemonRunning NOTIFY stateChanged FINAL)
     Q_PROPERTY(QString daemonInstructions READ daemonInstructions CONSTANT FINAL)
+    Q_PROPERTY(QString daemonServiceCommand READ daemonServiceCommand CONSTANT FINAL)
+    Q_PROPERTY(QString daemonBinaryCommand READ daemonBinaryCommand CONSTANT FINAL)
+    Q_PROPERTY(QString actionError READ actionError NOTIFY stateChanged FINAL)
     Q_PROPERTY(QString connectionPhase READ connectionPhase NOTIFY stateChanged FINAL)
     Q_PROPERTY(bool loginRequired READ loginRequired NOTIFY stateChanged FINAL)
     Q_PROPERTY(bool shellVisible READ shellVisible NOTIFY stateChanged FINAL)
@@ -126,6 +129,9 @@ public:
     [[nodiscard]] bool loading() const;
     [[nodiscard]] bool daemonRunning() const;
     [[nodiscard]] QString daemonInstructions() const;
+    [[nodiscard]] QString daemonServiceCommand() const;
+    [[nodiscard]] QString daemonBinaryCommand() const;
+    [[nodiscard]] QString actionError() const;
     [[nodiscard]] QString connectionPhase() const;
     [[nodiscard]] bool loginRequired() const;
     [[nodiscard]] bool shellVisible() const;
@@ -164,6 +170,7 @@ public:
 
     Q_INVOKABLE void refresh();
     Q_INVOKABLE void startDaemon();
+    Q_INVOKABLE void copyToClipboard(const QString &text);
     Q_INVOKABLE void triggerPrimaryAction();
     Q_INVOKABLE void selectChat(const QString &chatId);
     Q_INVOKABLE void retryMessages();
@@ -203,6 +210,7 @@ Q_SIGNALS:
 
 private:
     void bootstrap();
+    void launchDaemonBinary();
     bool ensureChannel();
     void resetChannel();
     void setupSocketWatcher();
@@ -261,6 +269,10 @@ private:
     QString m_daemonStateLabel;
     QString m_statusDetail;
     QString m_bannerText;
+    // A sticky, action-triggered error (e.g. "Start whatevrd" couldn't launch
+    // anything). Separate from the transient m_bannerText so the NotRunning
+    // retry tick (clearBanner) can't wipe it.
+    QString m_actionError;
     QString m_qrCode;
     QString m_qrExpiryText;
     qint64 m_qrExpiresAtUnix = 0;

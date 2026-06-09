@@ -20,8 +20,8 @@
 
 #include <KLocalizedString>
 
+#include <QtGrpc/qgrpccalloptions.h>
 #include <QtGrpc/qgrpccallreply.h>
-#include <QtGrpc/qgrpcchanneloptions.h>
 #include <QtGrpc/qgrpchttp2channel.h>
 #include <QtGrpc/qtgrpcnamespace.h>
 #include <QtGrpc/qgrpcstream.h>
@@ -144,6 +144,18 @@ QString fallbackStateLabel(DaemonState state)
     default:
         return i18nc("@label daemon state", "Unknown");
     }
+}
+
+QGrpcCallOptions probeCallOptions()
+{
+    // Bound only the unary liveness/control calls (GetStatus, Reconnect) so a
+    // dead/half-open daemon surfaces as a failure instead of hanging. This must
+    // NOT be a channel-wide deadline: that would also force-kill the long-lived
+    // server streams every few seconds.
+    using namespace std::chrono_literals;
+    QGrpcCallOptions options;
+    options.setDeadlineTimeout(5s);
+    return options;
 }
 
 QString formatRetryDetail(qint64 nextRetryUnix)
@@ -382,6 +394,21 @@ QString AppController::daemonInstructions() const
                  "    whatevrd");
 }
 
+QString AppController::daemonServiceCommand() const
+{
+    return QStringLiteral("systemctl --user start whatevrd.service");
+}
+
+QString AppController::daemonBinaryCommand() const
+{
+    return QStringLiteral("whatevrd");
+}
+
+QString AppController::actionError() const
+{
+    return m_actionError;
+}
+
 bool AppController::loginRequired() const
 {
     return m_loginRequired;
@@ -442,12 +469,16 @@ QString AppController::detailText() const
 {
     QStringList lines;
 
-    if (!m_daemonStateLabel.isEmpty()) {
-        lines << i18nc("@info", "State: %1", m_daemonStateLabel);
-    }
+    // The daemon-reported state/detail is only meaningful while we're actually
+    // connected; once the link drops it's stale, so don't show it.
+    if (m_phase == Phase::Connected) {
+        if (!m_daemonStateLabel.isEmpty()) {
+            lines << i18nc("@info", "State: %1", m_daemonStateLabel);
+        }
 
-    if (!m_statusDetail.isEmpty()) {
-        lines << m_statusDetail;
+        if (!m_statusDetail.isEmpty()) {
+            lines << m_statusDetail;
+        }
     }
 
     if (!daemonSocketPath().isEmpty()) {
@@ -622,6 +653,8 @@ void AppController::refresh()
         resetChannel();
         m_phase = Phase::NotRunning;
         m_canReconnect = false;
+        m_daemonStateLabel.clear();
+        m_statusDetail.clear();
         clearBanner();
         refreshSocketWatch();
         emitStateChanged();
@@ -1138,13 +1171,10 @@ bool AppController::ensureChannel()
         return false;
     }
 
-    using namespace std::chrono_literals;
-    QGrpcChannelOptions options;
-    // Bound every call so a dead/half-open daemon surfaces as a failure we can
-    // classify, instead of leaving the UI stuck on "Connecting" forever.
-    options.setDeadlineTimeout(5s);
-
-    auto channel = std::make_shared<QGrpcHttp2Channel>(QUrl(socketUrl), options);
+    // No channel-wide deadline: that would also bound the long-lived server
+    // streams and force-kill them every few seconds. The liveness bound lives
+    // on the unary probe instead (see probeCallOptions() / requestStatus()).
+    auto channel = std::make_shared<QGrpcHttp2Channel>(QUrl(socketUrl));
     m_channel = channel;
     attachClients();
     return true;
@@ -1221,15 +1251,22 @@ void AppController::startDaemon()
     // Prefer the systemd user unit; fall back to launching the binary directly
     // when systemctl is missing or the unit isn't installed/failed to start.
     // Either way the file watcher picks up the socket and connects us.
+    m_actionError.clear();
+
     auto *proc = new QProcess(this);
-    connect(proc, &QProcess::finished, this, [proc](int exitCode, QProcess::ExitStatus exitStatus) {
+    // Both handlers can fire for the same process; whichever lands first owns the
+    // outcome, so disconnect from `this` immediately to keep the fallback (and
+    // the deleteLater) from running twice.
+    connect(proc, &QProcess::finished, this, [this, proc](int exitCode, QProcess::ExitStatus exitStatus) {
+        proc->disconnect(this);
         if (exitStatus != QProcess::NormalExit || exitCode != 0) {
-            QProcess::startDetached(QStringLiteral("whatevrd"), {});
+            launchDaemonBinary();
         }
         proc->deleteLater();
     });
-    connect(proc, &QProcess::errorOccurred, this, [proc](QProcess::ProcessError) {
-        QProcess::startDetached(QStringLiteral("whatevrd"), {});
+    connect(proc, &QProcess::errorOccurred, this, [this, proc](QProcess::ProcessError) {
+        proc->disconnect(this);
+        launchDaemonBinary();
         proc->deleteLater();
     });
     proc->start(QStringLiteral("systemctl"),
@@ -1240,6 +1277,31 @@ void AppController::startDaemon()
     emitStateChanged();
     refreshSocketWatch();
     scheduleRetry(500);
+}
+
+void AppController::launchDaemonBinary()
+{
+    if (QProcess::startDetached(QStringLiteral("whatevrd"), {})) {
+        return;
+    }
+
+    // Neither the systemd unit nor the binary on PATH could be started, so the
+    // user's click produced nothing visible. Surface a sticky error and drop
+    // back to the "not running" page with its manual instructions.
+    m_phase = Phase::NotRunning;
+    m_canReconnect = false;
+    m_actionError = i18nc("@info",
+                          "Couldn't start whatevrd automatically — the systemd service isn't "
+                          "installed and the whatevrd binary wasn't found in PATH. Start it "
+                          "manually using the commands below.");
+    emitStateChanged();
+}
+
+void AppController::copyToClipboard(const QString &text)
+{
+    if (QClipboard *clipboard = QGuiApplication::clipboard()) {
+        clipboard->setText(text);
+    }
 }
 
 void AppController::attachClients()
@@ -1278,7 +1340,7 @@ void AppController::requestStatus()
         return;
     }
 
-    m_statusReply = m_daemonClient->GetStatus(GetStatusRequest {});
+    m_statusReply = m_daemonClient->GetStatus(GetStatusRequest {}, probeCallOptions());
     auto *reply = m_statusReply.get();
 
     connect(reply, &QGrpcCallReply::finished, this, [this, reply](const QGrpcStatus &status) {
@@ -1314,7 +1376,7 @@ void AppController::requestReconnect()
     clearBanner();
     emitStateChanged();
 
-    m_reconnectReply = m_daemonClient->Reconnect(whatevr::v1::ReconnectRequest {});
+    m_reconnectReply = m_daemonClient->Reconnect(whatevr::v1::ReconnectRequest {}, probeCallOptions());
     auto *reply = m_reconnectReply.get();
 
     connect(reply, &QGrpcCallReply::finished, this, [this, reply](const QGrpcStatus &status) {
@@ -1885,6 +1947,8 @@ void AppController::handleTransportFailure(const QString &context, const QString
     // generic error banner.
     if (code == QtGrpc::StatusCode::Unavailable || !daemonSocketExists()) {
         m_phase = Phase::NotRunning;
+        m_daemonStateLabel.clear();
+        m_statusDetail.clear();
         clearBanner();
         refreshSocketWatch();
         emitStateChanged();
@@ -1915,6 +1979,7 @@ void AppController::applyStatusResponse(const GetStatusResponse &status)
 {
     m_hasStatus = true;
     m_phase = Phase::Connected;
+    m_actionError.clear();
     m_canReconnect = status.canReconnect();
     m_daemonStateLabel = !status.stateLabel().isEmpty() ? status.stateLabel() : fallbackStateLabel(status.state());
     m_statusDetail = status.detail();
@@ -1939,6 +2004,7 @@ void AppController::applyConnectionChanged(const ConnectionChanged &change)
 {
     m_hasStatus = true;
     m_phase = Phase::Connected;
+    m_actionError.clear();
     m_canReconnect = change.canReconnect();
     m_daemonStateLabel = fallbackStateLabel(change.state());
 
