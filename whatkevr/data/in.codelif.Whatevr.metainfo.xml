@@ -19,6 +19,18 @@
   </provides>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.2.0" date="2026-06-09">
+      <description>
+        <p>Lots of fixes! and some redesigns!</p>
+        <ul>
+          <li>fixed history sync stalling</li>
+          <li>fixed many UI and daemon reconnection clutter</li>
+          <li>daemon unreachable redesigned to be more intuitive</li>
+          <li>QR code now scales continously instead of at fixed points</li>
+          <li>strip binaries, so now builds would be smaller</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.1.6" date="2026-06-08">
       <description>
         <p>Oh wow, looks like someone shouldn't have used copilot and waste 3 hours of his life</p>
