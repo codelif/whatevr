@@ -13,7 +13,12 @@ Kirigami.Page {
 
     Layout.fillHeight: true
     Layout.minimumWidth: Kirigami.Units.gridUnit * 17
-    Layout.preferredWidth: Kirigami.Units.gridUnit * 20
+    // Track the window: roughly a third of the width, clamped so the list
+    // neither starves the conversation on small windows nor sprawls on wide
+    // ones. (In the single-column layout the column spans the window anyway.)
+    Layout.preferredWidth: Math.max(Kirigami.Units.gridUnit * 17,
+                                    Math.min(Kirigami.Units.gridUnit * 24,
+                                             Math.round((applicationWindow()?.width ?? 0) * 0.34)))
     Layout.maximumWidth: Kirigami.Units.gridUnit * 24
     title: Whatevr.I18n.i18nc("@title", "Chats")
     padding: 0

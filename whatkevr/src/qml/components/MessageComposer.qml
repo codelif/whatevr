@@ -99,14 +99,23 @@ Frame {
         root.updateComposerOverlayRect()
 
         const margin = Kirigami.Units.smallSpacing
-        const minHeight = Kirigami.Units.gridUnit * 12
+        // Minimums shrink with the window so the picker still opens on narrow
+        // (single-column) layouts instead of silently doing nothing.
+        const minHeight = Math.min(Kirigami.Units.gridUnit * 12,
+                                   Math.max(0, Overlay.overlay.height * 0.4))
         const maxHeight = Kirigami.Units.gridUnit * 24
-        const minWidth = Kirigami.Units.gridUnit * 20
+        const minWidth = Math.min(Kirigami.Units.gridUnit * 20,
+                                  Math.max(0, Overlay.overlay.width - margin * 2))
         const maxWidth = Kirigami.Units.gridUnit * 30
-        const targetX = root.composerOverlayX + margin
-        const availableWidth = Math.max(0,
-                                        Math.min(root.composerOverlayWidth - margin * 2,
-                                                 Overlay.overlay.width - targetX - margin))
+        let targetX = root.composerOverlayX + margin
+        let availableWidth = Math.max(0,
+                                      Math.min(root.composerOverlayWidth - margin * 2,
+                                               Overlay.overlay.width - targetX - margin))
+        if (availableWidth < minWidth) {
+            // Composer narrower than the picker wants: span the window instead.
+            targetX = margin
+            availableWidth = Math.max(0, Overlay.overlay.width - margin * 2)
+        }
         const availableAbove = root.composerOverlayY - margin * 2
 
         if (availableWidth < minWidth || availableAbove < minHeight) {
@@ -115,7 +124,7 @@ Frame {
 
         emojiPicker.width = Math.min(maxWidth, availableWidth)
         emojiPicker.height = Math.min(maxHeight, availableAbove)
-        emojiPicker.x = targetX
+        emojiPicker.x = Math.max(margin, Math.min(targetX, Overlay.overlay.width - emojiPicker.width - margin))
         emojiPicker.y = Math.max(margin, root.composerOverlayY - emojiPicker.height - margin)
         return true
     }

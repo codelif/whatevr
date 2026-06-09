@@ -62,6 +62,8 @@ public:
         ReplyToMediaKindRole,
         ReplyToMediaMimeTypeRole,
         ReplyToIsOutgoingRole,
+        WidestLineWidthRole,
+        LastLineWidthRole,
     };
     Q_ENUM(Role)
 
@@ -100,16 +102,28 @@ private:
         QString senderInitials;
         QString senderAvatarLocalPath;
         QString text;
-        QString layoutText;
-        int emojiOnlyCount = 0;
-        bool hasRichText = false;
-        QString richText;
-        bool fullMarkupParsed = false;
-        QString textPreview;
-        QString layoutTextPreview;
-        bool previewHasRichText = false;
-        QString previewRichText;
-        bool textTruncated = false;
+        // Derived text state (preview collapse, markup/emoji parse) is computed
+        // lazily on first access from data(): parsing every message eagerly in
+        // fromProto() made chat switches O(cached messages) on the GUI thread.
+        // The fields are mutable so the const data() path can fill the cache;
+        // it must never emit signals.
+        mutable QString layoutText;
+        mutable int emojiOnlyCount = 0;
+        mutable bool hasRichText = false;
+        mutable QString richText;
+        mutable bool fullMarkupParsed = false;
+        mutable bool previewParsed = false;
+        mutable QString textPreview;
+        mutable QString layoutTextPreview;
+        mutable bool previewHasRichText = false;
+        mutable QString previewRichText;
+        mutable bool textTruncated = false;
+        // Unwrapped advance width of the widest and last line of the displayed
+        // body text, measured with the application font. Replaces per-delegate
+        // TextMetrics + JS line splitting in ChatBubble (it ran for every
+        // delegate created during scrolling).
+        mutable qreal widestLineWidth = 0;
+        mutable qreal lastLineWidth = 0;
         qint64 timestampUnix = 0;
         int dayNumber = 0;
         QString timeText;
@@ -135,6 +149,8 @@ private:
     };
 
     static MessageItem fromProto(const whatevr::v1::Message &message);
+    static void ensurePreviewParsed(const MessageItem &item);
+    static void transplantParsedState(const MessageItem &target, const MessageItem &source);
     static QString formatTime(qint64 timestampUnix);
     static QString formatRelativeDate(qint64 timestampUnix);
     static QString statusText(int status);

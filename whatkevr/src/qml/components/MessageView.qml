@@ -114,6 +114,16 @@ Item {
         acceptedButtons: Qt.LeftButton
     }
 
+    // Shared by every delegate: the "Read more" label is identical in all of
+    // them, so it is measured once here instead of once per ChatBubble.
+    TextMetrics {
+        id: readMoreSharedMetrics
+
+        text: Whatevr.I18n.i18nc("@action:button expand long message", "Read more")
+        font.pointSize: Kirigami.Theme.smallFont.pointSize
+        font.weight: Font.DemiBold
+    }
+
     function clearMessageSelection() {
         activeSelectionMessageId = ""
         clearSelectionGeneration += 1
@@ -411,19 +421,29 @@ Item {
         verticalLayoutDirection: ListView.BottomToTop
 
         spacing: Kirigami.Units.smallSpacing / 2
-        // Generous cache so fast flicks through history stay populated.
-        cacheBuffer: Math.max(height * 0.6, Kirigami.Units.gridUnit * 40)
+        // Deep cache: cache-buffer delegates are incubated asynchronously, so
+        // every row prepared here is one fewer synchronous creation while the
+        // user is scrolling (those are what stall frames).
+        cacheBuffer: Math.max(height * 2, Kirigami.Units.gridUnit * 80)
         reuseItems: true
 
         // True while flinging faster than ~1.25 viewport-heights per second.
         // Delegates use this to hold off full-resolution media decoding so the
         // scroll stays smooth; it drops back to false shortly after the fling
         // slows, at which point media upgrades to full-res.
-        property bool fastFlicking: false
+        //
+        // Derived from live velocities, not just a timer: the kinetic wheel
+        // scroller's velocity decays deterministically per rendered frame, so a
+        // frame stall cannot drop the flag mid-fling. (The old timer-only latch
+        // expired during stalls, kicking off a full-res decode burst for every
+        // visible image at the worst possible moment, compounding the stall.)
+        property bool flickableFast: false
         readonly property real fastFlickThreshold: Math.max(Kirigami.Units.gridUnit * 60, height * 1.25)
+        readonly property bool fastFlicking: flickableFast
+            || Math.abs(kineticWheelScroller.velocity) > fastFlickThreshold
         onVerticalVelocityChanged: {
             if (Math.abs(verticalVelocity) > fastFlickThreshold) {
-                fastFlicking = true
+                flickableFast = true
                 flickSettleTimer.restart()
             }
         }
@@ -431,7 +451,27 @@ Item {
         Timer {
             id: flickSettleTimer
             interval: 90
-            onTriggered: list.fastFlicking = false
+            onTriggered: {
+                // Re-check the live velocity instead of clearing blindly; the
+                // timer may simply have outlived a stalled frame.
+                if (Math.abs(list.verticalVelocity) > list.fastFlickThreshold) {
+                    restart()
+                } else {
+                    list.flickableFast = false
+                }
+            }
+        }
+
+        // Watchdog for touch flicks: Flickable's fling animation is wall-clock
+        // driven, so after a stalled frame it teleports by the elapsed time.
+        // Detect the stall and stop the fling gracefully instead.
+        FrameAnimation {
+            running: list.flicking
+            onTriggered: {
+                if (frameTime > 0.1) {
+                    list.cancelFlick()
+                }
+            }
         }
 
         flickableDirection: Flickable.VerticalFlick
@@ -464,6 +504,9 @@ Item {
             replyPreviewBody: String(model.textPreview || model.text || "")
             textTruncated: messageTextTruncated
             textExpanded: messageTextExpanded
+            widestLineWidth: Number(model.widestLineWidth || 0)
+            lastLineWidth: Number(model.lastLineWidth || 0)
+            readMoreTextWidth: readMoreSharedMetrics.advanceWidth
             timeText: String(model.timeText || "")
             dateSeparatorText: String(model.dateSeparatorText || "")
             status: Number(model.status || 0)
@@ -575,6 +618,9 @@ Item {
         target: list
         wheelStep: Kirigami.Units.gridUnit * 4
         maximumVelocity: 16000
+        // The top edge is only final once all history is loaded; until then the
+        // prefetched page usually fills any overshoot before it becomes visible.
+        clampAtOrigin: !root.canLoadOlderMessages
     }
 
     AbstractButton {
