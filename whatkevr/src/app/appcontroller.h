@@ -245,6 +245,7 @@ private:
     void applyHistorySyncProgress(const whatevr::v1::HistorySyncProgress &progress);
     void applyHistoryBackfilled(const whatevr::v1::HistoryBackfilled &backfilled);
     void updateQrExpiryText();
+    void clearLoginState();
     void clearBanner();
     void emitStateChanged();
     void updateSelectedChatData();

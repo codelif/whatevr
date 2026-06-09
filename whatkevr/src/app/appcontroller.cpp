@@ -1942,6 +1942,12 @@ void AppController::handleTransportFailure(const QString &context, const QString
     resetChannel();
     m_canReconnect = false;
 
+    // The login event stream just died with the channel, so any QR on screen is
+    // stale and login is no longer in progress. Abandon it so page routing
+    // (Main.qml appMode(), which checks loginRequired first) falls through to
+    // the status page instead of stranding the user on a dead QR.
+    clearLoginState();
+
     // Unavailable, or the socket having vanished, means the daemon is simply not
     // there: present it as "not running" (with start instructions) rather than a
     // generic error banner.
@@ -1986,10 +1992,7 @@ void AppController::applyStatusResponse(const GetStatusResponse &status)
     m_loginRequired = status.state() == DaemonState::DAEMON_STATE_NEED_LOGIN;
 
     if (!m_loginRequired) {
-        m_qrCode.clear();
-        m_qrExpiresAtUnix = 0;
-        m_qrExpiryText.clear();
-        m_qrTimer->stop();
+        clearLoginState();
     }
 
     if (shellVisible()) {
@@ -2021,10 +2024,7 @@ void AppController::applyConnectionChanged(const ConnectionChanged &change)
     }
 
     if (!m_loginRequired) {
-        m_qrCode.clear();
-        m_qrExpiresAtUnix = 0;
-        m_qrExpiryText.clear();
-        m_qrTimer->stop();
+        clearLoginState();
     }
 
     if (shellVisible()) {
@@ -2043,10 +2043,7 @@ void AppController::applyLoginStateChanged(const LoginStateChanged &change)
     m_loginRequired = change.state() == DaemonState::DAEMON_STATE_NEED_LOGIN;
 
     if (!m_loginRequired) {
-        m_qrCode.clear();
-        m_qrExpiresAtUnix = 0;
-        m_qrExpiryText.clear();
-        m_qrTimer->stop();
+        clearLoginState();
     }
 
     if (shellVisible()) {
@@ -2382,6 +2379,15 @@ void AppController::updateQrExpiryText()
 
     m_qrExpiryText = nextText;
     emitStateChanged();
+}
+
+void AppController::clearLoginState()
+{
+    m_loginRequired = false;
+    m_qrCode.clear();
+    m_qrExpiresAtUnix = 0;
+    m_qrExpiryText.clear();
+    m_qrTimer->stop();
 }
 
 void AppController::clearBanner()
