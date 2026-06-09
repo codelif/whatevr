@@ -398,6 +398,12 @@ func (c *Client) signalSendQueue() {
 func (c *Client) runSendQueue(ctx context.Context) {
 	c.signalSendQueue()
 
+	retry := time.NewTimer(0)
+	if !retry.Stop() {
+		<-retry.C
+	}
+	defer retry.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -410,11 +416,15 @@ func (c *Client) runSendQueue(ctx context.Context) {
 			processed, err := c.drainSendQueue(ctx)
 			c.sendQueueMu.Unlock()
 			if err != nil {
+				retry.Reset(5 * time.Second)
 				select {
 				case <-ctx.Done():
 					return
 				case <-c.sendQueueWake:
-				case <-time.After(5 * time.Second):
+					if !retry.Stop() {
+						<-retry.C
+					}
+				case <-retry.C:
 				}
 				continue
 			}

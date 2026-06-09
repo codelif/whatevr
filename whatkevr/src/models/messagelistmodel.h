@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QAbstractListModel>
+#include <QDate>
 #include <QHash>
 #include <QList>
 #include <QString>
@@ -146,10 +147,16 @@ private:
     [[nodiscard]] bool startsSenderGroup(int row) const;
     [[nodiscard]] bool endsSenderGroup(int row) const;
     [[nodiscard]] bool startsDayGroup(int row) const;
+    [[nodiscard]] QString cachedRelativeDate(const MessageItem &message) const;
     void rebuildIndex();
     void emitGroupingRolesChanged(int firstRow, int lastRow);
 
     QList<MessageItem> m_messages;
     QHash<QString, int> m_messageIndexById;
     bool m_groupChat = false;
+    // Relative date strings ("Today", "Monday", …) memoized per local Julian
+    // day; data() is hot during scrolling and formatRelativeDate allocates.
+    // The cache resets when the calendar day rolls over.
+    mutable QHash<int, QString> m_dateTextByDay;
+    mutable QDate m_dateTextDay;
 };

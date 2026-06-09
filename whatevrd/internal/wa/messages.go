@@ -144,8 +144,16 @@ func (c *Client) processHistorySyncData(ctx context.Context, data *waHistorySync
 		convPinned := convPinnedOrder > 0
 		forceRead := convUnread == 0 && !convMarkedUnread
 
-		messagesAdded := uint32(0)
-		var lastSavedChat appstore.Chat
+		// Phase 1: parse every message and build its storage input. No app-DB
+		// writes happen here, so the batched save below can hold the single
+		// write transaction without anything else contending for it.
+		type historySaveItem struct {
+			item          appstore.MessageSaveItem
+			id            string
+			historyStatus string
+			isMedia       bool
+		}
+		pending := make([]historySaveItem, 0, len(conv.GetMessages()))
 		for _, msg := range conv.GetMessages() {
 			if ctx.Err() != nil {
 				return
@@ -169,12 +177,65 @@ func (c *Client) processHistorySyncData(ctx context.Context, data *waHistorySync
 				historyStatus:    mapWebMessageStatus(webMsg),
 				forceRead:        forceRead,
 			}
-			saved, inserted := c.ingestMessage(ctx, parsedEvt, opts)
-			if inserted {
-				messagesAdded++
-				lastSavedChat = saved.Chat
+			if textInput, ok := c.textMessageInput(ctx, parsedEvt, opts); ok {
+				input := textInput
+				pending = append(pending, historySaveItem{
+					item:          appstore.MessageSaveItem{Text: &input},
+					id:            input.ID,
+					historyStatus: opts.historyStatus,
+				})
+			} else if mediaInput, ok := c.mediaMessageInput(ctx, parsedEvt, opts); ok {
+				input := mediaInput
+				pending = append(pending, historySaveItem{
+					item:          appstore.MessageSaveItem{Media: &input},
+					id:            input.ID,
+					historyStatus: opts.historyStatus,
+					isMedia:       true,
+				})
 			}
 			publishProcessingProgress(false)
+		}
+
+		// Phase 2: persist the whole conversation in one transaction.
+		messagesAdded := uint32(0)
+		var lastSavedChat appstore.Chat
+		items := make([]appstore.MessageSaveItem, len(pending))
+		for i := range pending {
+			items[i] = pending[i].item
+		}
+		savedBatch, err := c.store.SaveMessages(ctx, items)
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			c.log.Errorf("Failed to store history sync conversation %s: %v", chatID, err)
+			continue
+		}
+
+		// Phase 3: post-save work that must stay outside the batch
+		// transaction (status corrections and sticker cache resolution do
+		// their own store writes).
+		for i, saved := range savedBatch {
+			if ctx.Err() != nil {
+				return
+			}
+			entry := pending[i]
+			if !saved.Inserted {
+				if entry.historyStatus != "" {
+					c.maybeUpdateStatusFromHistory(ctx, entry.id, entry.historyStatus)
+				}
+				continue
+			}
+			if entry.isMedia {
+				if updated, ok, err := c.resolveCachedStickerMedia(ctx, saved.Message); err != nil {
+					c.log.Warnf("Failed to resolve cached sticker media for %s: %v", saved.Message.ID, err)
+				} else if ok {
+					saved.Message = updated
+				}
+			}
+			c.log.Debugf("Stored history message %s from %s", saved.Message.ID, saved.Message.SenderID)
+			messagesAdded++
+			lastSavedChat = saved.Chat
 		}
 		processedConversations++
 		publishProcessingProgress(true)
@@ -1141,6 +1202,7 @@ func toDaemonChat(chat appstore.Chat) app.Chat {
 		IsGroup:              chat.IsGroup,
 		IsPinned:             chat.IsPinned,
 		PinnedOrder:          chat.PinnedOrder,
+		UpdatedAtUnix:        chat.UpdatedAt,
 		AvatarLocalPath:      chat.AvatarLocalPath,
 	}
 }

@@ -14,6 +14,7 @@ pub async fn load_chats() -> Result<Vec<proto::Chat>, DynError> {
         .list_chats(rpc_request(ListChatsRequest {
             limit: 100,
             offset: 0,
+            after_chat_id: String::new(),
         }))
         .await?
         .into_inner();
@@ -40,8 +41,7 @@ pub async fn load_messages_before(
         .get_messages(rpc_request(GetMessagesRequest {
             chat_id,
             limit,
-            before_message_id: before_message_id.unwrap_or_default(),
-            around_message_id: String::new(),
+            anchor: before_message_id.map(proto::get_messages_request::Anchor::BeforeMessageId),
         }))
         .await?
         .into_inner();

@@ -61,6 +61,7 @@ private:
         bool isGroup = false;
         bool isPinned = false;
         quint32 pinnedOrder = 0;
+        qint64 updatedAtUnix = 0;
         QString avatarLocalPath;
     };
 
@@ -73,6 +74,7 @@ private:
     [[nodiscard]] int sortedInsertIndex(const ChatItem &item, int excludingIndex = -1) const;
     void sortChats();
     void rebuildIndex();
+    void reindexRange(int firstRow, int lastRow);
 
     QList<ChatItem> m_chats;
     QHash<QString, int> m_chatIndexById;
