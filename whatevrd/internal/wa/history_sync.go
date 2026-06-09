@@ -83,14 +83,22 @@ func historySyncNotificationFromChunk(chunk appstore.HistorySyncChunk) *waE2E.Hi
 	progress := chunk.Progress
 	fileLength := chunk.FileLength
 	notif := &waE2E.HistorySyncNotification{
-		SyncType:                          &syncType,
-		ChunkOrder:                        &chunkOrder,
-		Progress:                          &progress,
-		FileLength:                        &fileLength,
-		MediaKey:                          chunk.MediaKey,
-		FileSHA256:                        chunk.FileSHA256,
-		FileEncSHA256:                     chunk.FileEncSHA256,
-		InitialHistBootstrapInlinePayload: chunk.InlinePayload,
+		SyncType:      &syncType,
+		ChunkOrder:    &chunkOrder,
+		Progress:      &progress,
+		FileLength:    &fileLength,
+		MediaKey:      chunk.MediaKey,
+		FileSHA256:    chunk.FileSHA256,
+		FileEncSHA256: chunk.FileEncSHA256,
+	}
+	// Only set the inline payload when it actually carries bytes. An empty BLOB
+	// scanned from SQLite comes back as a non-nil []byte{}, and whatmeow's
+	// DownloadHistorySync treats any non-nil InitialHistBootstrapInlinePayload as
+	// "data already inline", skipping the real media download and then failing in
+	// zlib with "unexpected EOF". Leaving the field nil lets it fall through to
+	// cli.Download for download-based chunks (RECENT, NON_BLOCKING_DATA, ...).
+	if len(chunk.InlinePayload) > 0 {
+		notif.InitialHistBootstrapInlinePayload = chunk.InlinePayload
 	}
 	if chunk.DirectPath != "" {
 		notif.DirectPath = proto.String(chunk.DirectPath)
