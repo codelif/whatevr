@@ -7,6 +7,7 @@
 #include <QFileSystemWatcher>
 #include <QGuiApplication>
 #include <QImage>
+#include <QLocalSocket>
 #include <QMimeData>
 #include <QProcess>
 #include <QQmlEngine>
@@ -650,22 +651,47 @@ void AppController::refresh()
     // directly instead of building a channel and hanging on "Connecting"; the
     // file watcher (and retry timer) reconnect once the socket appears.
     if (!daemonSocketExists()) {
-        resetChannel();
-        m_phase = Phase::NotRunning;
-        m_canReconnect = false;
-        m_daemonStateLabel.clear();
-        m_statusDetail.clear();
-        clearBanner();
-        refreshSocketWatch();
-        emitStateChanged();
-        scheduleRetry();
+        enterNotRunning();
         return;
     }
 
+    // The socket file existing doesn't mean anyone is listening: a SIGKILLed or
+    // crashed daemon leaves a stale socket behind. Probe it before building the
+    // gRPC channel, since a connection-refused on a dead unix:// socket doesn't
+    // reliably surface through QtGrpc and would strand us on "Connecting".
     clearBanner();
     m_phase = Phase::Connecting;
     emitStateChanged();
+    probeAndConnect();
+}
 
+// Run a quick connect-only liveness probe against the daemon socket. A stale
+// socket refuses the connection immediately; a live listener accepts it at the
+// kernel level even before the daemon calls accept(). On success we build the
+// real channel; on failure we fall through to the "not running" page.
+void AppController::probeAndConnect()
+{
+    if (!m_probeSocket) {
+        m_probeSocket = new QLocalSocket(this);
+        connect(m_probeSocket, &QLocalSocket::connected, this, [this] {
+            m_probeSocket->abort();
+            startSession();
+        });
+        connect(m_probeSocket, &QLocalSocket::errorOccurred, this, [this](QLocalSocket::LocalSocketError) {
+            m_probeSocket->abort();
+            enterNotRunning();
+        });
+    }
+
+    // Cancel any in-flight probe so a stale callback can't drive a later refresh.
+    m_probeSocket->abort();
+    m_probeSocket->connectToServer(daemonSocketPath());
+}
+
+// Build the channel and start the status probe + event streams. Split out of
+// refresh() so the liveness probe can defer it until the socket answers.
+void AppController::startSession()
+{
     if (!ensureChannel()) {
         return;
     }
@@ -674,6 +700,21 @@ void AppController::refresh()
     ensureFrontendSession();
     ensureDaemonStream();
     ensureLoginStream();
+}
+
+// Drop to the "whatevrd isn't running" page and arm a retry. Shared by the
+// absent-socket fast path, the stale-socket probe failure, and transport drops.
+void AppController::enterNotRunning()
+{
+    resetChannel();
+    m_phase = Phase::NotRunning;
+    m_canReconnect = false;
+    m_daemonStateLabel.clear();
+    m_statusDetail.clear();
+    clearBanner();
+    refreshSocketWatch();
+    emitStateChanged();
+    scheduleRetry();
 }
 
 void AppController::triggerPrimaryAction()
@@ -1952,13 +1993,7 @@ void AppController::handleTransportFailure(const QString &context, const QString
     // there: present it as "not running" (with start instructions) rather than a
     // generic error banner.
     if (code == QtGrpc::StatusCode::Unavailable || !daemonSocketExists()) {
-        m_phase = Phase::NotRunning;
-        m_daemonStateLabel.clear();
-        m_statusDetail.clear();
-        clearBanner();
-        refreshSocketWatch();
-        emitStateChanged();
-        scheduleRetry();
+        enterNotRunning();
         return;
     }
 
