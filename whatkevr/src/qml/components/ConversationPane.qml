@@ -9,7 +9,16 @@ import Whatevr as Whatevr
 Kirigami.Page {
     id: root
 
-    property bool closeChatActionVisible: false
+    // In the wide layout the close action is always offered for a selected
+    // chat; in the single-column layout only while this page is the visible
+    // one (the chat list page has its own actions).
+    readonly property bool closeChatActionVisible: {
+        const window = applicationWindow()
+        if (!window || !Whatevr.AppController.hasSelectedChat) {
+            return false
+        }
+        return !window.chatSingleColumnLayout || root.isCurrentPage
+    }
     property string replyChatId: ""
     property string replyToMessageId: ""
     property string replyToSenderName: ""

@@ -17,14 +17,17 @@ Kirigami.ApplicationWindow {
     property var chatListPageItem: null
     property var conversationPageItem: null
     property var transientPageItem: null
+    // Back-navigation in the single-column layout clears the chat selection,
+    // but only after the column slide settles, so the conversation does not
+    // visibly empty mid-transition. maybeClearSelectionAfterBack() owns this.
     property bool pendingSelectionClear: false
-    // Set when a deep link (e.g. notification click) selected a chat; consumed
-    // by syncChatLayout once the chat pages exist so we navigate to it.
+    // Set when a deep link (e.g. notification click) arrives before the chat
+    // pages exist; consumed by rebuildPageStack once they do.
     property bool pendingShowConversation: false
 
     width: 1180
     height: 760
-    minimumWidth: 420
+    minimumWidth: 360
     minimumHeight: 680
     title: Whatevr.I18n.i18nc("@title:window", "Whatevr")
     visible: true
@@ -36,14 +39,6 @@ Kirigami.ApplicationWindow {
                                                      ? Kirigami.ApplicationHeaderStyle.ShowBackButton
                                                      : Kirigami.ApplicationHeaderStyle.NoNavigationButtons)
                                                   : Kirigami.ApplicationHeaderStyle.NoNavigationButtons
-
-    Timer {
-        id: pageStackRebuildTimer
-
-        interval: 50
-        repeat: false
-        onTriggered: root.rebuildPageStack()
-    }
 
     function appMode() {
         if (Whatevr.AppController.loginRequired) {
@@ -77,10 +72,6 @@ Kirigami.ApplicationWindow {
         id: conversationPaneComponent
 
         ConversationPane {}
-    }
-
-    function scheduleRebuildPageStack() {
-        pageStackRebuildTimer.restart()
     }
 
     function destroyChatPages() {
@@ -147,77 +138,49 @@ Kirigami.ApplicationWindow {
     }
 
     function showConversation() {
-        if (currentMode !== "chat") {
+        if (currentMode !== "chat" || !Whatevr.AppController.hasSelectedChat) {
             return
         }
-        if (chatSingleColumnLayout) {
-            // Defer the column move so selectChat()'s synchronous model rebuild
-            // and the MessageView bottom-pin settle first; otherwise the slide
-            // animation is starved of frames and appears to snap.
-            Qt.callLater(navigateToConversation)
-        } else {
-            pageStack.currentIndex = 1
-        }
-        updateCloseChatActionVisibility()
-    }
-
-    function navigateToConversation() {
-        if (currentMode === "chat" && Whatevr.AppController.hasSelectedChat) {
-            pageStack.currentIndex = 1
-        }
+        // Re-opening before a back-slide settled supersedes the pending clear.
+        pendingSelectionClear = false
+        pageStack.currentIndex = 1
     }
 
     function closeConversation() {
+        pendingSelectionClear = false
         if (Whatevr.AppController.hasSelectedChat) {
             Whatevr.AppController.selectChat("")
         }
         if (pageStack.currentIndex > 0) {
             pageStack.currentIndex = 0
         }
-        updateCloseChatActionVisibility()
     }
 
-    function syncChatLayout() {
-        if (currentMode !== "chat") {
+    // Single owner of the clear-selection-on-back flow. Called when the
+    // current column changes (back button or swipe) and again when the column
+    // animation settles; the selection is only dropped once the chat list is
+    // the settled, visible column, so the conversation never empties mid-slide.
+    function maybeClearSelectionAfterBack() {
+        if (currentMode !== "chat"
+                || !chatSingleColumnLayout
+                || pageStack.currentIndex !== 0
+                || !Whatevr.AppController.hasSelectedChat) {
+            pendingSelectionClear = false
             return
         }
 
-        ensureChatPages()
-
-        // Keep currentIndex in sync in every layout so layout switches never
-        // reveal the wrong column. In wide mode both columns are visible, so
-        // this only sets which one is focused.
-        pageStack.currentIndex = Whatevr.AppController.hasSelectedChat ? 1 : 0
-        updateCloseChatActionVisibility()
-
-        if (pendingShowConversation && Whatevr.AppController.hasSelectedChat) {
-            pendingShowConversation = false
-            showConversation()
-        }
-    }
-
-    function activateWindow() {
-        root.show()
-        root.raise()
-        root.requestActivate()
-    }
-
-    function updateCloseChatActionVisibility() {
-        if (!conversationPageItem) {
+        if (pageStack.columnView.moving) {
+            pendingSelectionClear = true
             return
         }
 
-        conversationPageItem.closeChatActionVisible = currentMode === "chat"
-                && Whatevr.AppController.hasSelectedChat
-                && (!chatSingleColumnLayout || pageStack.currentIndex > 0)
+        pendingSelectionClear = false
+        Whatevr.AppController.selectChat("")
     }
 
     function rebuildPageStack() {
         const nextMode = appMode()
         if (nextMode === currentMode) {
-            if (nextMode === "chat") {
-                syncChatLayout()
-            }
             return
         }
 
@@ -232,34 +195,36 @@ Kirigami.ApplicationWindow {
             clearTransientPage()
             pageStack.clear()
             currentMode = nextMode
-            syncChatLayout()
+            ensureChatPages()
+            if (pendingShowConversation && Whatevr.AppController.hasSelectedChat) {
+                pendingShowConversation = false
+                showConversation()
+            }
             break
         }
     }
 
-    onChatWideLayoutChanged: syncChatLayout()
+    function activateWindow() {
+        root.show()
+        root.raise()
+        root.requestActivate()
+    }
+
+    onChatWideLayoutChanged: {
+        if (currentMode !== "chat") {
+            return
+        }
+        // Land on the column matching the selection so a wide -> single-column
+        // switch never reveals an empty conversation pane.
+        pendingSelectionClear = false
+        pageStack.currentIndex = Whatevr.AppController.hasSelectedChat ? 1 : 0
+    }
 
     Connections {
         target: root.pageStack
 
         function onCurrentIndexChanged() {
-            root.updateCloseChatActionVisibility()
-
-            if (root.currentMode !== "chat"
-                    || !root.chatSingleColumnLayout
-                    || root.pageStack.currentIndex !== 0
-                    || !Whatevr.AppController.hasSelectedChat) {
-                return
-            }
-
-            // Navigated back to the chat list (button or swipe). Drop the
-            // selection once any in-flight column animation settles so the
-            // conversation does not visibly empty mid-transition.
-            if (root.pageStack.columnView.moving) {
-                root.pendingSelectionClear = true
-            } else {
-                Whatevr.AppController.selectChat("")
-            }
+            root.maybeClearSelectionAfterBack()
         }
     }
 
@@ -267,31 +232,20 @@ Kirigami.ApplicationWindow {
         target: root.pageStack.columnView
 
         function onMovingChanged() {
-            if (root.pageStack.columnView.moving) {
-                return
+            if (!root.pageStack.columnView.moving && root.pendingSelectionClear) {
+                root.maybeClearSelectionAfterBack()
             }
-
-            if (root.pendingSelectionClear
-                    && root.pageStack.currentIndex === 0
-                    && Whatevr.AppController.hasSelectedChat) {
-                Whatevr.AppController.selectChat("")
-            }
-            root.pendingSelectionClear = false
-            root.updateCloseChatActionVisibility()
         }
     }
 
-    Component.onCompleted: scheduleRebuildPageStack()
+    Component.onCompleted: rebuildPageStack()
 
     Connections {
         target: Whatevr.AppController
 
         function onStateChanged() {
-            root.scheduleRebuildPageStack()
-        }
-
-        function onSelectionChanged() {
-            root.updateCloseChatActionVisibility()
+            // Coalesce bursts of state changes into one rebuild per frame.
+            Qt.callLater(root.rebuildPageStack)
         }
 
         function onActivateWindowRequested() {
@@ -299,9 +253,13 @@ Kirigami.ApplicationWindow {
         }
 
         function onOpenChatRequested(chatId) {
-            root.pendingShowConversation = true
             root.activateWindow()
-            root.scheduleRebuildPageStack()
+            // The controller has already selected the chat at this point.
+            if (root.currentMode === "chat") {
+                root.showConversation()
+            } else {
+                root.pendingShowConversation = true
+            }
         }
     }
 }
