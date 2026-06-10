@@ -32,10 +32,13 @@ StickerController::StickerController(AppController *appController)
     : QObject(appController)
     , m_appController(appController)
     , m_stickerModel(new StickerModel(this))
+    , m_stickerFilterModel(new StickerFilterModel(this))
     , m_packModel(new StickerPackModel(this, false))
     , m_installedPackModel(new StickerPackModel(this, true))
     , m_searchTimer(new QTimer(this))
 {
+    m_stickerFilterModel->setSourceModel(m_stickerModel);
+
     m_searchTimer->setSingleShot(true);
     m_searchTimer->setInterval(kSearchDebounceMs);
     connect(m_searchTimer, &QTimer::timeout, this, [this] {
@@ -96,7 +99,7 @@ void StickerController::handleDownloadChanged(const Sticker &sticker, const QStr
 
 QAbstractItemModel *StickerController::stickerModel() const
 {
-    return m_stickerModel;
+    return m_stickerFilterModel;
 }
 
 QAbstractItemModel *StickerController::packModel() const
@@ -112,6 +115,11 @@ QAbstractItemModel *StickerController::installedPackModel() const
 bool StickerController::loading() const
 {
     return m_loading;
+}
+
+bool StickerController::downloading() const
+{
+    return m_downloading;
 }
 
 bool StickerController::packsLoading() const
@@ -239,7 +247,7 @@ void StickerController::setPackInstalled(const QString &packId, bool installed)
 void StickerController::requestDownload(const QString &cacheKey)
 {
     if (!clientReady() || cacheKey.isEmpty() || m_downloadReplies.contains(cacheKey)
-        || m_downloadQueued.contains(cacheKey)) {
+        || m_downloadQueued.contains(cacheKey) || m_terminalDownloads.contains(cacheKey)) {
         return;
     }
     // Prepend so the most recently requested (currently visible) tiles are
@@ -249,6 +257,32 @@ void StickerController::requestDownload(const QString &cacheKey)
     pumpDownloadQueue();
 }
 
+void StickerController::prefetchStickers(const QList<Sticker> &stickers)
+{
+    if (!clientReady()) {
+        return;
+    }
+    bool queued = false;
+    // Append (not prepend) so the list keeps its display order; explicit
+    // requestDownload() calls and retries still jump ahead via prepend.
+    for (const auto &sticker : stickers) {
+        const QString cacheKey = sticker.cacheKey();
+        if (cacheKey.isEmpty() || !sticker.localPath().isEmpty()) {
+            continue;
+        }
+        if (m_downloadReplies.contains(cacheKey) || m_downloadQueued.contains(cacheKey)
+            || m_terminalDownloads.contains(cacheKey)) {
+            continue;
+        }
+        m_downloadQueue.append(cacheKey);
+        m_downloadQueued.insert(cacheKey);
+        queued = true;
+    }
+    if (queued) {
+        pumpDownloadQueue();
+    }
+}
+
 void StickerController::pumpDownloadQueue()
 {
     while (m_downloadReplies.size() < kMaxInFlightDownloads && !m_downloadQueue.isEmpty()) {
@@ -256,6 +290,17 @@ void StickerController::pumpDownloadQueue()
         m_downloadQueued.remove(cacheKey);
         startDownload(cacheKey);
     }
+    updateDownloadingState();
+}
+
+void StickerController::updateDownloadingState()
+{
+    const bool downloading = !m_downloadQueue.isEmpty() || !m_downloadReplies.isEmpty();
+    if (downloading == m_downloading) {
+        return;
+    }
+    m_downloading = downloading;
+    Q_EMIT viewChanged();
 }
 
 void StickerController::startDownload(const QString &cacheKey)
@@ -282,7 +327,12 @@ void StickerController::startDownload(const QString &cacheKey)
             return;
         }
         if (!status.isOk()) {
-            scheduleDownloadRetry(cacheKey, status.code());
+            if (!scheduleDownloadRetry(cacheKey, status.code())) {
+                // Terminal failure (e.g. NotFound: media path expired) or
+                // retry budget spent — remember it so we never re-fetch this
+                // dead sticker on a later list reload. It simply stays hidden.
+                m_terminalDownloads.insert(cacheKey);
+            }
         } else {
             // Succeeded: clear the retry budget for this key.
             m_downloadAttempts.remove(cacheKey);
@@ -297,7 +347,7 @@ void StickerController::startDownload(const QString &cacheKey)
     });
 }
 
-void StickerController::scheduleDownloadRetry(const QString &cacheKey, QtGrpc::StatusCode code)
+bool StickerController::scheduleDownloadRetry(const QString &cacheKey, QtGrpc::StatusCode code)
 {
     // Only transient failures are worth retrying; a missing sticker or bad
     // request will never succeed on a retry.
@@ -310,13 +360,13 @@ void StickerController::scheduleDownloadRetry(const QString &cacheKey, QtGrpc::S
         break;
     default:
         m_downloadAttempts.remove(cacheKey);
-        return;
+        return false;
     }
 
     const int attempt = m_downloadAttempts.value(cacheKey, 0);
     if (attempt >= kMaxDownloadRetries) {
         m_downloadAttempts.remove(cacheKey);
-        return;
+        return false;
     }
     m_downloadAttempts.insert(cacheKey, attempt + 1);
 
@@ -325,6 +375,7 @@ void StickerController::scheduleDownloadRetry(const QString &cacheKey, QtGrpc::S
     QTimer::singleShot(delayMs, this, [this, cacheKey] {
         requestDownload(cacheKey);
     });
+    return true;
 }
 
 void StickerController::sendSticker(const QString &cacheKey, const QString &replyToMessageId)
@@ -396,6 +447,9 @@ void StickerController::requestList(View view, const QString &packId, const QStr
             return;
         }
         m_stickerModel->resetWith(stickers);
+        // The grid hides not-yet-downloaded tiles, so fetch the misses in the
+        // background; each row pops into the grid once its file is ready.
+        prefetchStickers(stickers);
         Q_EMIT viewChanged();
     };
 

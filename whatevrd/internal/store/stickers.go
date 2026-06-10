@@ -126,7 +126,7 @@ func scanSticker(scanner interface{ Scan(...any) error }) (Sticker, error) {
 }
 
 func (db *DB) GetSticker(ctx context.Context, cacheKey string) (Sticker, bool, error) {
-	row := db.conn.QueryRowContext(ctx, `SELECT `+stickerColumns+` FROM stickers WHERE cache_key = ?`, cacheKey)
+	row := db.reader().QueryRowContext(ctx, `SELECT `+stickerColumns+` FROM stickers WHERE cache_key = ?`, cacheKey)
 	s, err := scanSticker(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Sticker{}, false, nil
@@ -138,7 +138,7 @@ func (db *DB) GetSticker(ctx context.Context, cacheKey string) (Sticker, bool, e
 }
 
 func (db *DB) GetStickerByEncKey(ctx context.Context, encKey string) (Sticker, bool, error) {
-	row := db.conn.QueryRowContext(ctx, `
+	row := db.reader().QueryRowContext(ctx, `
 		SELECT `+stickerColumns+` FROM stickers WHERE enc_cache_key = ? LIMIT 1
 	`, encKey)
 	s, err := scanSticker(row)
@@ -276,12 +276,50 @@ func (db *DB) ReconcileStickerFavorites(ctx context.Context, favorites []Sticker
 	return tx.Commit()
 }
 
-func (db *DB) SetStickerFile(ctx context.Context, cacheKey, localPath, archivePath string) error {
+// SetStickerFile records the on-disk paths and the animation flag discovered
+// while downloading. is_animated is written here (not just at ingest) because
+// WhatsApp's library metadata carries no animation flag for WebP — only the
+// file bytes reveal it — so the download is the first point we know for sure.
+func (db *DB) SetStickerFile(ctx context.Context, cacheKey, localPath, archivePath string, isAnimated bool) error {
 	_, err := db.conn.ExecContext(ctx, `
-		UPDATE stickers SET local_path = ?, archive_path = ?, updated_at = unixepoch()
+		UPDATE stickers SET local_path = ?, archive_path = ?, is_animated = ?, updated_at = unixepoch()
 		WHERE cache_key = ?
-	`, localPath, archivePath, cacheKey)
+	`, localPath, archivePath, isAnimated, cacheKey)
 	return err
+}
+
+// SetStickerAnimated flips just the animation flag, used by the one-time
+// backfill that re-inspects already-cached WebP files.
+func (db *DB) SetStickerAnimated(ctx context.Context, cacheKey string, isAnimated bool) error {
+	_, err := db.conn.ExecContext(ctx, `
+		UPDATE stickers SET is_animated = ?, updated_at = unixepoch()
+		WHERE cache_key = ?
+	`, isAnimated, cacheKey)
+	return err
+}
+
+// ListDownloadedWebPStickersUnflagged returns cached WebP stickers still marked
+// static, so the backfill can re-inspect their bytes for animation. Only the
+// cache key and local path are needed; payloads are skipped to keep it cheap.
+func (db *DB) ListDownloadedWebPStickersUnflagged(ctx context.Context) ([]Sticker, error) {
+	rows, err := db.reader().QueryContext(ctx, `
+		SELECT cache_key, local_path FROM stickers
+		WHERE local_path != '' AND mime_type = 'image/webp' AND is_animated = 0
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var stickers []Sticker
+	for rows.Next() {
+		var s Sticker
+		if err := rows.Scan(&s.CacheKey, &s.LocalPath); err != nil {
+			return nil, err
+		}
+		stickers = append(stickers, s)
+	}
+	return stickers, rows.Err()
 }
 
 func (db *DB) SetStickerUploadPayload(ctx context.Context, cacheKey string, payload []byte, ts time.Time) error {
@@ -373,7 +411,7 @@ func (db *DB) RekeySticker(ctx context.Context, oldKey, newKey string) (Sticker,
 }
 
 func (db *DB) listStickers(ctx context.Context, query string, args ...any) ([]Sticker, error) {
-	rows, err := db.conn.QueryContext(ctx, query, args...)
+	rows, err := db.reader().QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -495,7 +533,7 @@ func scanStickerPack(scanner interface{ Scan(...any) error }) (StickerPack, erro
 // ListStickerPacks returns installed packs first (most recently installed
 // leading), then the rest in store order.
 func (db *DB) ListStickerPacks(ctx context.Context) ([]StickerPack, error) {
-	rows, err := db.conn.QueryContext(ctx, `
+	rows, err := db.reader().QueryContext(ctx, `
 		SELECT `+stickerPackColumns+` FROM sticker_packs
 		ORDER BY installed DESC, CASE WHEN installed = 1 THEN -installed_ts ELSE store_order END ASC
 	`)
@@ -516,7 +554,7 @@ func (db *DB) ListStickerPacks(ctx context.Context) ([]StickerPack, error) {
 }
 
 func (db *DB) GetStickerPack(ctx context.Context, id string) (StickerPack, bool, error) {
-	row := db.conn.QueryRowContext(ctx, `SELECT `+stickerPackColumns+` FROM sticker_packs WHERE id = ?`, id)
+	row := db.reader().QueryRowContext(ctx, `SELECT `+stickerPackColumns+` FROM sticker_packs WHERE id = ?`, id)
 	p, err := scanStickerPack(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return StickerPack{}, false, nil
@@ -564,7 +602,7 @@ func (db *DB) ClearPackStickerMembership(ctx context.Context, packID string) err
 
 func (db *DB) GetAppStateValue(ctx context.Context, key string) (string, error) {
 	var value string
-	err := db.conn.QueryRowContext(ctx, `SELECT value FROM app_state WHERE key = ?`, key).Scan(&value)
+	err := db.reader().QueryRowContext(ctx, `SELECT value FROM app_state WHERE key = ?`, key).Scan(&value)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
