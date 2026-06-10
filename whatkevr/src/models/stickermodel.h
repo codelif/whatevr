@@ -3,6 +3,7 @@
 #include <QAbstractListModel>
 #include <QHash>
 #include <QList>
+#include <QSortFilterProxyModel>
 #include <QString>
 
 #include <cstdint>
@@ -48,4 +49,20 @@ private:
 
     QList<whatevr::v1::Sticker> m_stickers;
     QHash<QString, int> m_rowByKey;
+};
+
+// Shows only fully-downloaded stickers. The picker binds to this proxy so the
+// grid never displays loading spinners or broken/failed tiles and never
+// reflows as placeholders resolve — a sticker appears the moment its file is
+// ready (StickerController prefetches the misses in the background). Rows that
+// are still downloading or terminally failed simply stay hidden.
+class StickerFilterModel final : public QSortFilterProxyModel
+{
+    Q_OBJECT
+
+public:
+    explicit StickerFilterModel(QObject *parent = nullptr);
+
+protected:
+    [[nodiscard]] bool filterAcceptsRow(int sourceRow, const QModelIndex &sourceParent) const override;
 };

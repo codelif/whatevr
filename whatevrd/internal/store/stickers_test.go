@@ -18,6 +18,49 @@ func openStickerTestDB(t *testing.T) (*DB, context.Context) {
 	return db, ctx
 }
 
+// TestReadsDoNotBlockBehindWriter guards the reader-pool split: a read must
+// proceed while the single writer connection is held open by an uncommitted
+// transaction. With the old single-connection store this read would queue
+// head-of-line behind the writer and time out — the exact stall that left the
+// sticker picker spinning forever while history sync was writing.
+func TestReadsDoNotBlockBehindWriter(t *testing.T) {
+	db, ctx := openStickerTestDB(t)
+
+	if err := db.UpsertPackSticker(ctx, Sticker{
+		CacheKey: "aabb", MimeType: "image/webp", Width: 512, Height: 512,
+		StickerPayload: []byte("pack-payload"), PackID: "Cuppy", PackOrder: 1,
+	}); err != nil {
+		t.Fatalf("upsert pack sticker: %v", err)
+	}
+
+	// Hold the lone writer connection hostage in an open transaction.
+	tx, err := db.conn.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin writer tx: %v", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE stickers SET pack_order = 2 WHERE cache_key = ?`, "aabb"); err != nil {
+		t.Fatalf("writer exec: %v", err)
+	}
+
+	readCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := db.GetSticker(readCtx, "aabb")
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("read blocked behind writer: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("GetSticker did not return while a writer tx was open")
+	}
+}
+
 func TestStickerSourcesShareOneRow(t *testing.T) {
 	db, ctx := openStickerTestDB(t)
 

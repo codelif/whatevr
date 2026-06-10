@@ -503,6 +503,28 @@ func isWhatsAppAnimatedSticker(mimeType string) bool {
 	return strings.EqualFold(strings.TrimSpace(mimeType), "application/was")
 }
 
+// isAnimatedWebP reports whether a WebP file is animated, by inspecting the
+// RIFF/VP8X header. WhatsApp's library metadata (recents, favorites, pack
+// items) carries no animation flag and animated/static WebP share the
+// image/webp mimetype, so the bytes are the only reliable signal — without
+// this, animated stickers sent from the library render as a still frame on the
+// sender's own side even though the recipient sees them animate.
+func isAnimatedWebP(data []byte) bool {
+	// Layout: "RIFF" <size> "WEBP" "VP8X" <chunk size> <flags byte>...
+	// The animation bit lives in the VP8X flags byte at offset 20 (0x02). A
+	// simple (non-extended) WebP has no VP8X chunk and is always a still frame.
+	if len(data) < 21 {
+		return false
+	}
+	if string(data[0:4]) != "RIFF" || string(data[8:12]) != "WEBP" {
+		return false
+	}
+	if string(data[12:16]) != "VP8X" {
+		return false
+	}
+	return data[20]&0x02 != 0
+}
+
 func (c *Client) extractAndStoreLottieSticker(ctx context.Context, message appstore.Message, archivePath string) (appstore.Message, error) {
 	jsonPath, err := extractLottieSticker(archivePath)
 	if err != nil {

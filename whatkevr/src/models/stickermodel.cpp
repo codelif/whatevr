@@ -5,6 +5,25 @@ StickerModel::StickerModel(QObject *parent)
 {
 }
 
+StickerFilterModel::StickerFilterModel(QObject *parent)
+    : QSortFilterProxyModel(parent)
+{
+    // dynamicSortFilter (on by default) re-evaluates filterAcceptsRow when the
+    // source emits dataChanged, so a sticker pops into the grid the moment its
+    // download completes and updateSticker sets its local path.
+}
+
+bool StickerFilterModel::filterAcceptsRow(int sourceRow, const QModelIndex &sourceParent) const
+{
+    // Only fully-downloaded stickers are shown. Tiles still downloading (or
+    // terminally failed, which never download) stay hidden, so the grid never
+    // shows spinners and never reflows as placeholders resolve or drop out —
+    // the controller fetches the misses in the background and each row appears
+    // once its image is ready.
+    const QModelIndex index = sourceModel()->index(sourceRow, 0, sourceParent);
+    return index.data(StickerModel::DownloadedRole).toBool();
+}
+
 int StickerModel::rowCount(const QModelIndex &parent) const
 {
     if (parent.isValid()) {

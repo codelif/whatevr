@@ -12,14 +12,58 @@ import (
 const schemaVersion = 3
 const SQLiteDriverName = "whatevrd-sqlite"
 
+// SQLiteReadDriverName backs the read-only connection pool. Its ConnectHook
+// applies the connection-level pragmas to every physical connection (a pool of
+// many connections cannot be configured with one-off ExecContext PRAGMAs, since
+// those only land on whichever connection is currently checked out).
+const SQLiteReadDriverName = "whatevrd-sqlite-ro"
+
 type DB struct {
+	// conn is the single writer connection. SQLite allows only one writer, and
+	// keeping MaxOpenConns(1) here both serializes writes (no SQLITE_BUSY) and
+	// avoids the *sql.Tx-holds-the-only-connection deadlock footgun.
 	conn *sql.DB
+	// readConn is a separate WAL reader pool. Under WAL a reader never blocks
+	// the writer (or vice-versa), so hot read paths (e.g. the sticker picker's
+	// per-tile GetSticker burst) no longer queue head-of-line behind a long
+	// history-sync write on the lone writer connection.
+	readConn *sql.DB
+}
+
+// reader returns the connection pool to use for read-only queries. It falls
+// back to the writer connection if the reader pool was not opened, so a DB
+// value built outside Open() still functions.
+func (db *DB) reader() *sql.DB {
+	if db.readConn != nil {
+		return db.readConn
+	}
+	return db.conn
 }
 
 func init() {
 	sql.Register(SQLiteDriverName, &sqlite3.SQLiteDriver{
 		ConnectHook: func(conn *sqlite3.SQLiteConn) error {
 			return conn.RegisterFunc("chat_name_source_priority", sqliteChatNameSourcePriority, true)
+		},
+	})
+	sql.Register(SQLiteReadDriverName, &sqlite3.SQLiteDriver{
+		ConnectHook: func(conn *sqlite3.SQLiteConn) error {
+			if err := conn.RegisterFunc("chat_name_source_priority", sqliteChatNameSourcePriority, true); err != nil {
+				return err
+			}
+			// query_only guards the pool against accidental writes; the rest
+			// mirror the writer connection (mmap off to keep RSS down).
+			for _, pragma := range []string{
+				`PRAGMA busy_timeout = 5000`,
+				`PRAGMA query_only = ON`,
+				`PRAGMA foreign_keys = ON`,
+				`PRAGMA mmap_size = 0`,
+			} {
+				if _, err := conn.Exec(pragma, nil); err != nil {
+					return err
+				}
+			}
+			return nil
 		},
 	})
 }
@@ -52,11 +96,36 @@ func Open(ctx context.Context, path string) (*DB, error) {
 		return nil, err
 	}
 
+	// migrate() has put the file in WAL mode, so the reader pool below sees
+	// committed writes immediately and runs concurrently with the writer. The
+	// RO driver's ConnectHook applies the per-connection pragmas to every
+	// connection in the pool.
+	readConn, err := sql.Open(SQLiteReadDriverName, path)
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+	readConn.SetMaxOpenConns(4)
+	readConn.SetMaxIdleConns(4)
+	if err := readConn.PingContext(ctx); err != nil {
+		readConn.Close()
+		conn.Close()
+		return nil, err
+	}
+	db.readConn = readConn
+
 	return db, nil
 }
 
 func (db *DB) Close() error {
-	return db.conn.Close()
+	var readErr error
+	if db.readConn != nil {
+		readErr = db.readConn.Close()
+	}
+	if err := db.conn.Close(); err != nil {
+		return err
+	}
+	return readErr
 }
 
 func (db *DB) migrate(ctx context.Context) error {

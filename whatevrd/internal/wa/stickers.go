@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -40,6 +41,11 @@ const (
 
 	stickerStoreIndexTTL   = 24 * time.Hour
 	stickerStoreFetchedKey = "sticker_store_fetched_at"
+
+	// Run-once marker for the WebP animation-flag backfill. Stickers cached
+	// before byte-level animation detection existed were stored is_animated=0;
+	// the backfill re-inspects their headers exactly once.
+	stickerAnimBackfillKey = "sticker_webp_anim_backfill_done"
 
 	// The frontend bounds itself to a small in-flight download pool, so the
 	// daemon only needs enough parallelism to keep that pool fed; more just
@@ -480,6 +486,24 @@ func (c *Client) ensureStickerFileLocked(ctx context.Context, cacheKey string, n
 	}
 	data, err := client.Download(dlCtx, downloadable)
 	if err != nil {
+		// Favorites carry only an encrypted file hash (FileEncSHA256), never a
+		// plaintext FileSHA256, so whatsmeow's plaintext-hash check always
+		// fails — but it still MAC-verifies the ciphertext and returns the
+		// decrypted bytes alongside the error. With no plaintext hash to honour
+		// in the first place, those bytes are the sticker: use them.
+		if errors.Is(err, whatsmeow.ErrInvalidMediaSHA256) && len(stickerMsg.GetFileSHA256()) == 0 && len(data) > 0 {
+			err = nil
+		}
+	}
+	if err != nil {
+		c.log.Debugf("Sticker download failed for %s: %v", cacheKey, err)
+		// A stale media path (403/404/410) is terminal: favorites have no pack
+		// to re-fetch and no chat message for a media-retry receipt, so the
+		// path can never be refreshed. Report it as non-retryable so the client
+		// marks the tile unavailable instead of hammering the dead path.
+		if staleMediaDownloadError(err) {
+			return appstore.Sticker{}, grpcstatus.Errorf(codes.NotFound, "sticker media is no longer available: %v", err)
+		}
 		return appstore.Sticker{}, grpcstatus.Errorf(codes.Unavailable, "download sticker: %v", err)
 	}
 	if len(data) == 0 || len(data) > maxOutboundMediaBytes {
@@ -507,23 +531,84 @@ func (c *Client) ensureStickerFileLocked(ctx context.Context, cacheKey string, n
 	if err := writeFileAtomic(localPath, data, 0o600); err != nil {
 		return appstore.Sticker{}, grpcstatus.Errorf(codes.Internal, "write sticker cache file: %v", err)
 	}
+	// WhatsApp's library metadata can't tell an animated WebP from a static one
+	// (both are image/webp with no animation flag), so detect it from the bytes
+	// and persist the corrected flag. Lottie is always animated.
+	isAnimated := sticker.IsAnimated
 	if isLottie {
+		isAnimated = true
 		archivePath = localPath
 		localPath, err = extractLottieSticker(archivePath)
 		if err != nil {
 			return appstore.Sticker{}, err
 		}
+	} else if strings.EqualFold(strings.TrimSpace(sticker.MimeType), "image/webp") {
+		isAnimated = isAnimatedWebP(data)
 	}
 
-	if err := c.store.SetStickerFile(ctx, canonicalKey, localPath, archivePath); err != nil {
+	if err := c.store.SetStickerFile(ctx, canonicalKey, localPath, archivePath, isAnimated); err != nil {
 		return appstore.Sticker{}, err
 	}
 	sticker.CacheKey = canonicalKey
 	sticker.LocalPath = localPath
 	sticker.ArchivePath = archivePath
+	sticker.IsAnimated = isAnimated
 
 	c.daemon.PublishStickerDownloadChanged(toDaemonSticker(sticker), "")
 	return sticker, nil
+}
+
+// backfillAnimatedWebPFlags re-inspects already-cached WebP stickers that were
+// stored before byte-level animation detection existed and corrects their
+// is_animated flag. Without it, stickers already in the cache stay static in
+// the picker (the picker never re-downloads a tile it considers downloaded).
+// It runs at most once, guarded by an app_state marker, and only reads each
+// file's header — never the whole file — so it stays cheap even for large
+// libraries.
+func (c *Client) backfillAnimatedWebPFlags(ctx context.Context) {
+	if done, err := c.store.GetAppStateValue(ctx, stickerAnimBackfillKey); err == nil && done != "" {
+		return
+	}
+
+	stickers, err := c.store.ListDownloadedWebPStickersUnflagged(ctx)
+	if err != nil {
+		c.log.Warnf("Failed to list stickers for animation backfill: %v", err)
+		return
+	}
+
+	changed := false
+	for _, sticker := range stickers {
+		if ctx.Err() != nil {
+			return
+		}
+		if !fileLooksAnimatedWebP(sticker.LocalPath) {
+			continue
+		}
+		if err := c.store.SetStickerAnimated(ctx, sticker.CacheKey, true); err != nil {
+			c.log.Warnf("Failed to flag sticker %s as animated: %v", sticker.CacheKey, err)
+			continue
+		}
+		changed = true
+	}
+
+	if err := c.store.SetAppStateValue(ctx, stickerAnimBackfillKey, strconv.FormatInt(time.Now().Unix(), 10)); err != nil {
+		c.log.Warnf("Failed to record sticker animation backfill marker: %v", err)
+	}
+	if changed {
+		c.publishStickerLibraryChangedDebounced(app.StickerSourceUnspecified)
+	}
+}
+
+// fileLooksAnimatedWebP reads just the WebP header to classify a cached file.
+func fileLooksAnimatedWebP(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	header := make([]byte, 32)
+	n, _ := io.ReadFull(f, header)
+	return isAnimatedWebP(header[:n])
 }
 
 // SendSticker queues a sticker from the library to a chat. The file is
