@@ -133,6 +133,9 @@ private:
         mutable qreal widestLineWidth = 0;
         mutable qreal lastLineWidth = 0;
         qint64 timestampUnix = 0;
+        // Daemon-assigned monotonic insertion order; tiebreaker within a single
+        // timestamp second so same-second messages keep their true arrival order.
+        qint64 sortSeq = 0;
         int dayNumber = 0;
         QString timeText;
         int direction = 0;

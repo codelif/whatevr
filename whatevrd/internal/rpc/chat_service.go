@@ -249,6 +249,7 @@ func toAppMessage(message appstore.Message) app.Message {
 		SenderAvatarLocalPath:   message.SenderAvatarLocalPath,
 		Text:                    message.Text,
 		TimestampUnix:           message.TimestampUnix,
+		SortSeq:                 message.SortSeq,
 		Direction:               message.Direction,
 		Status:                  message.Status,
 		MediaKind:               message.MediaKind,

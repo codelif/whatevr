@@ -30,6 +30,7 @@ type Message struct {
 	SenderAvatarLocalPath   string
 	Text                    string
 	TimestampUnix           int64
+	SortSeq                 int64
 	Direction               string
 	IsRead                  bool
 	Status                  string
@@ -556,28 +557,28 @@ func recomputeChatSummaryTx(ctx context.Context, tx *sql.Tx, chatID string) erro
 				END
 				FROM messages
 				WHERE chat_id = ?
-				ORDER BY timestamp DESC, id DESC
+				ORDER BY timestamp DESC, rowid DESC
 				LIMIT 1
 			), ''),
 			last_message_time = COALESCE((
 				SELECT timestamp
 				FROM messages
 				WHERE chat_id = ?
-				ORDER BY timestamp DESC, id DESC
+				ORDER BY timestamp DESC, rowid DESC
 				LIMIT 1
 			), 0),
 			last_message_direction = COALESCE((
 				SELECT direction
 				FROM messages
 				WHERE chat_id = ?
-				ORDER BY timestamp DESC, id DESC
+				ORDER BY timestamp DESC, rowid DESC
 				LIMIT 1
 			), ''),
 			last_message_status = COALESCE((
 				SELECT status
 				FROM messages
 				WHERE chat_id = ?
-				ORDER BY timestamp DESC, id DESC
+				ORDER BY timestamp DESC, rowid DESC
 				LIMIT 1
 			), '')
 		WHERE id = ?
@@ -594,7 +595,7 @@ func (db *DB) ListMessages(ctx context.Context, chatID string, limit int, before
 		SELECT m.id, m.chat_id, m.sender_id,
 		       COALESCE(NULLIF(s.name, ''), NULLIF(c.name, ''), ''),
 		       COALESCE(NULLIF(sa.local_path, ''), NULLIF(ca.local_path, ''), NULLIF(s.avatar_local_path, ''), NULLIF(c.avatar_local_path, ''), ''),
-		       m.text, m.timestamp, m.direction, m.is_read, m.status, m.media_kind, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_animated,
+		       m.text, m.timestamp, m.rowid, m.direction, m.is_read, m.status, m.media_kind, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_animated,
 		       m.reply_to_message_id, m.reply_to_sender_id, m.reply_to_sender_name, m.reply_to_text, m.reply_to_media_kind, m.reply_to_media_mime_type, m.reply_to_direction,
 		       m.send_attempts, m.last_send_error, m.next_send_attempt
 		FROM messages m
@@ -607,19 +608,19 @@ func (db *DB) ListMessages(ctx context.Context, chatID string, limit int, before
 	args := []any{chatID}
 
 	if beforeMessageID != "" {
-		beforeTimestamp, beforeID, err := db.messageCursor(ctx, beforeMessageID)
+		beforeTimestamp, beforeSeq, err := db.messageCursor(ctx, beforeMessageID)
 		if err != nil {
 			return nil, err
 		}
 
 		query += `
-			AND (m.timestamp < ? OR (m.timestamp = ? AND m.id < ?))
+			AND (m.timestamp < ? OR (m.timestamp = ? AND m.rowid < ?))
 		`
-		args = append(args, beforeTimestamp, beforeTimestamp, beforeID)
+		args = append(args, beforeTimestamp, beforeTimestamp, beforeSeq)
 	}
 
 	query += `
-		ORDER BY m.timestamp DESC, m.id DESC
+		ORDER BY m.timestamp DESC, m.rowid DESC
 		LIMIT ?
 	`
 	args = append(args, limit)
@@ -659,11 +660,11 @@ func (db *DB) ListMessagesAround(ctx context.Context, chatID string, limit int, 
 	}
 
 	capacity := limit - 1
-	olderDesc, err := db.listMessagesAroundSide(ctx, chatID, target.TimestampUnix, target.ID, capacity, false)
+	olderDesc, err := db.listMessagesAroundSide(ctx, chatID, target.TimestampUnix, target.SortSeq, capacity, false)
 	if err != nil {
 		return nil, err
 	}
-	newerAsc, err := db.listMessagesAroundSide(ctx, chatID, target.TimestampUnix, target.ID, capacity, true)
+	newerAsc, err := db.listMessagesAroundSide(ctx, chatID, target.TimestampUnix, target.SortSeq, capacity, true)
 	if err != nil {
 		return nil, err
 	}
@@ -684,23 +685,23 @@ func (db *DB) ListMessagesAround(ctx context.Context, chatID string, limit int, 
 	return messages, nil
 }
 
-func (db *DB) listMessagesAroundSide(ctx context.Context, chatID string, timestamp int64, messageID string, limit int, newer bool) ([]Message, error) {
+func (db *DB) listMessagesAroundSide(ctx context.Context, chatID string, timestamp int64, seq int64, limit int, newer bool) ([]Message, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
 
-	comparison := `AND (m.timestamp < ? OR (m.timestamp = ? AND m.id < ?))`
-	order := `ORDER BY m.timestamp DESC, m.id DESC`
+	comparison := `AND (m.timestamp < ? OR (m.timestamp = ? AND m.rowid < ?))`
+	order := `ORDER BY m.timestamp DESC, m.rowid DESC`
 	if newer {
-		comparison = `AND (m.timestamp > ? OR (m.timestamp = ? AND m.id > ?))`
-		order = `ORDER BY m.timestamp ASC, m.id ASC`
+		comparison = `AND (m.timestamp > ? OR (m.timestamp = ? AND m.rowid > ?))`
+		order = `ORDER BY m.timestamp ASC, m.rowid ASC`
 	}
 
 	query := `
 		SELECT m.id, m.chat_id, m.sender_id,
 		       COALESCE(NULLIF(s.name, ''), NULLIF(c.name, ''), ''),
 		       COALESCE(NULLIF(sa.local_path, ''), NULLIF(ca.local_path, ''), NULLIF(s.avatar_local_path, ''), NULLIF(c.avatar_local_path, ''), ''),
-		       m.text, m.timestamp, m.direction, m.is_read, m.status, m.media_kind, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_animated,
+		       m.text, m.timestamp, m.rowid, m.direction, m.is_read, m.status, m.media_kind, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_animated,
 		       m.reply_to_message_id, m.reply_to_sender_id, m.reply_to_sender_name, m.reply_to_text, m.reply_to_media_kind, m.reply_to_media_mime_type, m.reply_to_direction,
 		       m.send_attempts, m.last_send_error, m.next_send_attempt
 		FROM messages m
@@ -714,7 +715,7 @@ func (db *DB) listMessagesAroundSide(ctx context.Context, chatID string, timesta
 		LIMIT ?
 	`
 
-	rows, err := db.conn.QueryContext(ctx, query, chatID, timestamp, timestamp, messageID, limit)
+	rows, err := db.conn.QueryContext(ctx, query, chatID, timestamp, timestamp, seq, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -723,11 +724,11 @@ func (db *DB) listMessagesAroundSide(ctx context.Context, chatID string, timesta
 	return scanMessageRows(rows, limit)
 }
 
-func (db *DB) messageCursor(ctx context.Context, id string) (int64, string, error) {
+func (db *DB) messageCursor(ctx context.Context, id string) (int64, int64, error) {
 	var timestamp int64
-	var messageID string
-	err := db.conn.QueryRowContext(ctx, `SELECT timestamp, id FROM messages WHERE id = ?`, id).Scan(&timestamp, &messageID)
-	return timestamp, messageID, err
+	var seq int64
+	err := db.conn.QueryRowContext(ctx, `SELECT timestamp, rowid FROM messages WHERE id = ?`, id).Scan(&timestamp, &seq)
+	return timestamp, seq, err
 }
 
 func (db *DB) GetMessage(ctx context.Context, id string) (Message, error) {
@@ -1073,7 +1074,7 @@ func getMessageRow(ctx context.Context, queryer interface {
 		SELECT m.id, m.chat_id, m.sender_id,
 		       COALESCE(NULLIF(s.name, ''), NULLIF(c.name, ''), ''),
 		       COALESCE(NULLIF(sa.local_path, ''), NULLIF(ca.local_path, ''), NULLIF(s.avatar_local_path, ''), NULLIF(c.avatar_local_path, ''), ''),
-		       m.text, m.timestamp, m.direction, m.is_read, m.status, m.media_kind, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_animated, m.media_payload, m.media_cache_key,
+		       m.text, m.timestamp, m.rowid, m.direction, m.is_read, m.status, m.media_kind, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_animated, m.media_payload, m.media_cache_key,
 		       m.reply_to_message_id, m.reply_to_sender_id, m.reply_to_sender_name, m.reply_to_text, m.reply_to_media_kind, m.reply_to_media_mime_type, m.reply_to_direction,
 		       m.send_attempts, m.last_send_error, m.next_send_attempt
 		FROM messages m
@@ -1090,6 +1091,7 @@ func getMessageRow(ctx context.Context, queryer interface {
 		&message.SenderAvatarLocalPath,
 		&message.Text,
 		&message.TimestampUnix,
+		&message.SortSeq,
 		&message.Direction,
 		&message.IsRead,
 		&message.Status,
@@ -1168,6 +1170,7 @@ func scanMessageRows(rows *sql.Rows, capacity int) ([]Message, error) {
 			&message.SenderAvatarLocalPath,
 			&message.Text,
 			&message.TimestampUnix,
+			&message.SortSeq,
 			&message.Direction,
 			&message.IsRead,
 			&message.Status,

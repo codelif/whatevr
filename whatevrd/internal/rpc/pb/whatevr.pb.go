@@ -4161,8 +4161,12 @@ type Message struct {
 	MediaKind               string                 `protobuf:"bytes,15,opt,name=media_kind,json=mediaKind,proto3" json:"media_kind,omitempty"`
 	MediaAnimated           bool                   `protobuf:"varint,16,opt,name=media_animated,json=mediaAnimated,proto3" json:"media_animated,omitempty"`
 	ReplyTo                 *MessageReply          `protobuf:"bytes,17,opt,name=reply_to,json=replyTo,proto3" json:"reply_to,omitempty"`
-	unknownFields           protoimpl.UnknownFields
-	sizeCache               protoimpl.SizeCache
+	// Daemon-assigned monotonic insertion order (SQLite rowid). Used as the
+	// tiebreaker within a single timestamp second so messages keep their true
+	// arrival order; the random WhatsApp id carries no chronological meaning.
+	SortSeq       int64 `protobuf:"varint,18,opt,name=sort_seq,json=sortSeq,proto3" json:"sort_seq,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Message) Reset() {
@@ -4312,6 +4316,13 @@ func (x *Message) GetReplyTo() *MessageReply {
 		return x.ReplyTo
 	}
 	return nil
+}
+
+func (x *Message) GetSortSeq() int64 {
+	if x != nil {
+		return x.SortSeq
+	}
+	return 0
 }
 
 type MessageReply struct {
@@ -4655,7 +4666,7 @@ const file_whatevr_proto_rawDesc = "" +
 	"\tis_pinned\x18\n" +
 	" \x01(\bR\bisPinned\x12!\n" +
 	"\fpinned_order\x18\v \x01(\rR\vpinnedOrder\x12&\n" +
-	"\x0fupdated_at_unix\x18\f \x01(\x03R\rupdatedAtUnix\"\xa1\x05\n" +
+	"\x0fupdated_at_unix\x18\f \x01(\x03R\rupdatedAtUnix\"\xbc\x05\n" +
 	"\aMessage\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x17\n" +
 	"\achat_id\x18\x02 \x01(\tR\x06chatId\x12\x1b\n" +
@@ -4677,7 +4688,8 @@ const file_whatevr_proto_rawDesc = "" +
 	"\n" +
 	"media_kind\x18\x0f \x01(\tR\tmediaKind\x12%\n" +
 	"\x0emedia_animated\x18\x10 \x01(\bR\rmediaAnimated\x123\n" +
-	"\breply_to\x18\x11 \x01(\v2\x18.whatevr.v1.MessageReplyR\areplyTo\"\x82\x02\n" +
+	"\breply_to\x18\x11 \x01(\v2\x18.whatevr.v1.MessageReplyR\areplyTo\x12\x19\n" +
+	"\bsort_seq\x18\x12 \x01(\x03R\asortSeq\"\x82\x02\n" +
 	"\fMessageReply\x12\x1d\n" +
 	"\n" +
 	"message_id\x18\x01 \x01(\tR\tmessageId\x12\x1b\n" +
