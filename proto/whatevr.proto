@@ -489,6 +489,10 @@ message Message {
   string media_kind = 15;
   bool media_animated = 16;
   MessageReply reply_to = 17;
+  // Daemon-assigned monotonic insertion order (SQLite rowid). Used as the
+  // tiebreaker within a single timestamp second so messages keep their true
+  // arrival order; the random WhatsApp id carries no chronological meaning.
+  int64 sort_seq = 18;
 }
 
 message MessageReply {

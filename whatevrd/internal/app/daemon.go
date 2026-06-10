@@ -271,6 +271,7 @@ type Message struct {
 	SenderAvatarLocalPath   string
 	Text                    string
 	TimestampUnix           int64
+	SortSeq                 int64
 	Direction               string
 	Status                  string
 	MediaKind               string

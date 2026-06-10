@@ -328,6 +328,7 @@ func toProtoMessage(message app.Message) *pb.Message {
 		SenderAvatarLocalPath:   message.SenderAvatarLocalPath,
 		Text:                    message.Text,
 		TimestampUnix:           message.TimestampUnix,
+		SortSeq:                 message.SortSeq,
 		Direction:               toProtoMessageDirection(message.Direction),
 		Status:                  toProtoMessageStatus(message.Status),
 		MediaKind:               message.MediaKind,

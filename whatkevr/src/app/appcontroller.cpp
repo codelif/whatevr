@@ -124,6 +124,12 @@ QList<whatevr::v1::Message> mergeMessages(const QList<whatevr::v1::Message> &bas
         if (left.timestampUnix() != right.timestampUnix()) {
             return left.timestampUnix() < right.timestampUnix();
         }
+        // Oldest-first here (the cache is trimmed from the front), but the
+        // within-second tiebreaker must match the model: sortSeq is the
+        // daemon's insertion order; the random id is only a final fallback.
+        if (left.sortSeq() != right.sortSeq()) {
+            return left.sortSeq() < right.sortSeq();
+        }
         return left.id_proto() < right.id_proto();
     });
 
