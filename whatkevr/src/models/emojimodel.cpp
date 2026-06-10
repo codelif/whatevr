@@ -46,6 +46,7 @@ EmojiModel::EmojiModel(QObject *parent)
 {
     loadMetadata();
     loadRecents();
+    loadUsage();
     rebuildRows();
 }
 
@@ -132,6 +133,11 @@ void EmojiModel::addRecentEmoji(const QString &emoji)
         m_recentEmoji.removeLast();
     }
 
+    // Every selection (inline accept or picker) routes through here, so this is
+    // the single place that feeds the frecency ranking used by searchEmoji().
+    ++m_emojiUsage[emoji];
+    saveUsage();
+
     loadRecents();
     saveRecents();
     rebuildRows();
@@ -162,6 +168,69 @@ void EmojiModel::setFilter(const QString &query, const QString &group)
     m_selectedGroup = group;
     rebuildRows();
     Q_EMIT filterChanged();
+}
+
+QVariantList EmojiModel::searchEmoji(const QString &query, int limit) const
+{
+    const QString normalised = normalisedQuery(query);
+    if (normalised.isEmpty() || limit <= 0) {
+        return {};
+    }
+
+    struct Candidate {
+        int sourceIndex;
+        int tier;   // 0 = a keyword starts with the query, 1 = substring only
+        int usage;
+    };
+    QList<Candidate> candidates;
+    for (int i = 0; i < m_items.size(); ++i) {
+        const EmojiItem &item = m_items.at(i);
+        bool isPrefix = false;
+        bool isSubstring = false;
+        for (const QString &token : item.keywords) {
+            // Tokens are pre-lowercased at load time, so matching is plain comparison.
+            if (token.startsWith(normalised)) {
+                isPrefix = true;
+                break;
+            }
+            if (!isSubstring && token.contains(normalised)) {
+                isSubstring = true;
+            }
+        }
+        if (!isPrefix && !isSubstring) {
+            continue;
+        }
+        candidates.append({i, isPrefix ? 0 : 1, m_emojiUsage.value(item.emoji, 0)});
+    }
+
+    std::stable_sort(candidates.begin(), candidates.end(), [](const Candidate &a, const Candidate &b) {
+        if (a.tier != b.tier) {
+            return a.tier < b.tier;          // prefix matches first
+        }
+        if (a.usage != b.usage) {
+            return a.usage > b.usage;         // frequently-picked emoji float up
+        }
+        return a.sourceIndex < b.sourceIndex; // stable Unicode order otherwise
+    });
+
+    QVariantList results;
+    const int count = std::min<int>(limit, candidates.size());
+    results.reserve(count);
+    for (int i = 0; i < count; ++i) {
+        const EmojiItem &item = m_items.at(candidates.at(i).sourceIndex);
+        QString shortcode = item.shortcodes.value(0);
+        if (shortcode.startsWith(QLatin1Char(':'))) {
+            shortcode = shortcode.mid(1);
+        }
+        if (shortcode.endsWith(QLatin1Char(':'))) {
+            shortcode.chop(1);
+        }
+        results.append(QVariantMap {
+            {QStringLiteral("emoji"), item.emoji},
+            {QStringLiteral("shortcode"), shortcode},
+        });
+    }
+    return results;
 }
 
 QString EmojiModel::groupIconName(const QString &group) const
@@ -232,6 +301,22 @@ QString EmojiModel::normalisedQuery(QString query)
     return query.trimmed().toLower();
 }
 
+QHash<QString, QStringList> EmojiModel::loadKeywordIndex()
+{
+    QFile file(QStringLiteral(":/data/emoji/emoji_keywords_en.json"));
+    if (!file.open(QIODevice::ReadOnly)) {
+        return {};
+    }
+
+    const QJsonObject root = QJsonDocument::fromJson(file.readAll()).object();
+    QHash<QString, QStringList> index;
+    index.reserve(root.size());
+    for (auto it = root.constBegin(); it != root.constEnd(); ++it) {
+        index.insert(it.key(), stringsFromArray(it.value().toArray()));
+    }
+    return index;
+}
+
 void EmojiModel::loadMetadata()
 {
     QFile file(QStringLiteral(":/data/emoji/emoji_17_0_ordering.json"));
@@ -239,6 +324,7 @@ void EmojiModel::loadMetadata()
         return;
     }
 
+    const QHash<QString, QStringList> keywordIndex = loadKeywordIndex();
     const QJsonDocument document = QJsonDocument::fromJson(file.readAll());
     const QJsonArray groups = document.array();
     for (const QJsonValue &groupValue : groups) {
@@ -272,7 +358,29 @@ void EmojiModel::loadMetadata()
                 }
             }
 
-            QStringList searchable = item.shortcodes + item.emoticons;
+            // Build the lowercased, de-duplicated keyword token list that powers
+            // the inline `:keyword` search: cleaned shortcodes + emojilib words.
+            for (const QString &shortcode : std::as_const(item.shortcodes)) {
+                QString token = shortcode;
+                if (token.startsWith(QLatin1Char(':'))) {
+                    token = token.mid(1);
+                }
+                if (token.endsWith(QLatin1Char(':'))) {
+                    token.chop(1);
+                }
+                token = token.toLower();
+                if (!token.isEmpty() && !item.keywords.contains(token)) {
+                    item.keywords.append(token);
+                }
+            }
+            for (const QString &keyword : keywordIndex.value(item.emoji)) {
+                const QString token = keyword.toLower();
+                if (!token.isEmpty() && !item.keywords.contains(token)) {
+                    item.keywords.append(token);
+                }
+            }
+
+            QStringList searchable = item.shortcodes + item.emoticons + item.keywords;
             searchable.append(item.emoji);
             searchable.append(item.group);
             item.searchText = searchable.join(QLatin1Char(' ')).toLower();
@@ -319,6 +427,30 @@ void EmojiModel::saveRecents() const
 {
     QSettings settings;
     settings.setValue(QStringLiteral("emoji/recent"), m_recentEmoji);
+}
+
+void EmojiModel::loadUsage()
+{
+    const QSettings settings;
+    const QVariantMap stored = settings.value(QStringLiteral("emoji/usage")).toMap();
+    m_emojiUsage.clear();
+    m_emojiUsage.reserve(stored.size());
+    for (auto it = stored.constBegin(); it != stored.constEnd(); ++it) {
+        const int count = it.value().toInt();
+        if (count > 0) {
+            m_emojiUsage.insert(it.key(), count);
+        }
+    }
+}
+
+void EmojiModel::saveUsage() const
+{
+    QVariantMap stored;
+    for (auto it = m_emojiUsage.constBegin(); it != m_emojiUsage.constEnd(); ++it) {
+        stored.insert(it.key(), it.value());
+    }
+    QSettings settings;
+    settings.setValue(QStringLiteral("emoji/usage"), stored);
 }
 
 void EmojiModel::rebuildRows()
