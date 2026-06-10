@@ -78,6 +78,9 @@ constexpr int kMessageLimit = MessageListModel::MaximumMessageCount;
 constexpr int kCachedChatLimit = 32;
 constexpr int kCachedMessagesPerChatLimit = kMessageLimit * 4;
 
+using HistorySyncPhase = whatevr::v1::HistorySyncPhaseGadget::HistorySyncPhase;
+using HistorySyncType = whatevr::v1::HistorySyncTypeGadget::HistorySyncType;
+
 bool isSupportedOutboundImageFile(const QString &filePath)
 {
     const QString suffix = QFileInfo(filePath).suffix().toLower();
@@ -218,9 +221,40 @@ QString formatLastSeen(qint64 lastSeenUnix)
     return i18nc("@info chat presence", "last seen %1", QLocale().toString(lastSeen, QLocale::ShortFormat));
 }
 
-QString syncTypeLabel(whatevr::v1::HistorySyncTypeGadget::HistorySyncType type)
+int historySyncPhaseRank(HistorySyncPhase phase)
 {
-    using whatevr::v1::HistorySyncTypeGadget::HistorySyncType;
+    switch (phase) {
+    case HistorySyncPhase::HISTORY_SYNC_PHASE_QUEUED:
+        return 1;
+    case HistorySyncPhase::HISTORY_SYNC_PHASE_DOWNLOADING:
+        return 2;
+    case HistorySyncPhase::HISTORY_SYNC_PHASE_PROCESSING:
+    case HistorySyncPhase::HISTORY_SYNC_PHASE_UNSPECIFIED:
+        return 3;
+    case HistorySyncPhase::HISTORY_SYNC_PHASE_COMPLETE:
+        return 4;
+    }
+    return 3;
+}
+
+bool isQueuedHistorySyncPhase(HistorySyncPhase phase)
+{
+    return phase == HistorySyncPhase::HISTORY_SYNC_PHASE_QUEUED;
+}
+
+bool isActiveHistorySyncPhase(HistorySyncPhase phase)
+{
+    return historySyncPhaseRank(phase) >= historySyncPhaseRank(HistorySyncPhase::HISTORY_SYNC_PHASE_DOWNLOADING);
+}
+
+bool isAuxiliaryHistorySyncType(HistorySyncType type)
+{
+    return type == HistorySyncType::HISTORY_SYNC_TYPE_PUSH_NAME
+        || type == HistorySyncType::HISTORY_SYNC_TYPE_NON_BLOCKING_DATA;
+}
+
+QString syncTypeLabel(HistorySyncType type)
+{
     switch (type) {
     case HistorySyncType::HISTORY_SYNC_TYPE_INITIAL_BOOTSTRAP:
         return i18nc("@label", "Initial history sync");
@@ -1176,7 +1210,7 @@ void AppController::logout()
         m_selectedChatAvailability = 0;
         m_selectedChatLastSeenUnix = 0;
         m_loginRequired = true;
-        m_historySyncVisible = false;
+        resetHistorySyncDisplay();
         m_messagesLoading = false;
         m_olderMessagesLoading = false;
         m_canLoadOlderMessages = false;
@@ -1243,6 +1277,9 @@ void AppController::resetChannel()
     m_reconnectReply.reset();
     m_reconnectInFlight = false;
     m_channel.reset();
+    if (resetHistorySyncDisplay()) {
+        Q_EMIT historySyncChanged();
+    }
 }
 
 bool AppController::daemonSocketExists() const
@@ -2345,20 +2382,97 @@ void AppController::scheduleSelectedChatMessageReload(const QString &chatId)
     m_selectedChatReloadTimer->start();
 }
 
+bool AppController::shouldDisplayHistorySyncProgress(const HistorySyncProgress &progress) const
+{
+    if (!m_historySyncCursorActive) {
+        return true;
+    }
+
+    const auto incomingType = progress.syncType();
+    const auto incomingPhase = progress.phase();
+    if (isAuxiliaryHistorySyncType(incomingType) && !isAuxiliaryHistorySyncType(m_historySyncCursorSyncType)) {
+        return false;
+    }
+    if (isQueuedHistorySyncPhase(incomingPhase)) {
+        return false;
+    }
+
+    const bool currentActive = isActiveHistorySyncPhase(m_historySyncCursorPhase);
+    const bool incomingActive = isActiveHistorySyncPhase(incomingPhase);
+    if (incomingType != m_historySyncCursorSyncType) {
+        return incomingActive;
+    }
+
+    const std::uint32_t incomingChunk = progress.chunkOrder();
+    if (incomingChunk < m_historySyncCursorChunkOrder) {
+        return !currentActive && incomingActive;
+    }
+    if (incomingChunk == m_historySyncCursorChunkOrder
+        && historySyncPhaseRank(incomingPhase) < historySyncPhaseRank(m_historySyncCursorPhase)) {
+        return false;
+    }
+
+    return true;
+}
+
+bool AppController::shouldCompleteHistorySyncDisplay(const HistorySyncProgress &progress) const
+{
+    if (!m_historySyncVisible) {
+        return false;
+    }
+    if (!m_historySyncCursorActive) {
+        return true;
+    }
+    return progress.syncType() == m_historySyncCursorSyncType || progress.progressPercent() >= 100;
+}
+
+bool AppController::resetHistorySyncDisplay(int percent)
+{
+    const int boundedPercent = qBound(0, percent, 100);
+    const bool changed = m_historySyncVisible
+        || m_historySyncPercent != boundedPercent
+        || !m_historySyncTitle.isEmpty()
+        || !m_historySyncDetail.isEmpty()
+        || m_historySyncCursorActive
+        || m_historySyncCursorSyncType != HistorySyncType::HISTORY_SYNC_TYPE_UNSPECIFIED
+        || m_historySyncCursorChunkOrder != 0
+        || m_historySyncCursorPhase != HistorySyncPhase::HISTORY_SYNC_PHASE_UNSPECIFIED;
+
+    m_historySyncVisible = false;
+    m_historySyncPercent = boundedPercent;
+    m_historySyncTitle.clear();
+    m_historySyncDetail.clear();
+    m_historySyncCursorActive = false;
+    m_historySyncCursorSyncType = HistorySyncType::HISTORY_SYNC_TYPE_UNSPECIFIED;
+    m_historySyncCursorChunkOrder = 0;
+    m_historySyncCursorPhase = HistorySyncPhase::HISTORY_SYNC_PHASE_UNSPECIFIED;
+
+    return changed;
+}
+
 void AppController::applyHistorySyncProgress(const HistorySyncProgress &progress)
 {
     if (progress.isComplete()) {
-        m_historySyncVisible = false;
-        m_historySyncPercent = 100;
-        m_historySyncTitle.clear();
-        m_historySyncDetail.clear();
-        Q_EMIT historySyncChanged();
+        if (shouldCompleteHistorySyncDisplay(progress)) {
+            resetHistorySyncDisplay(100);
+            Q_EMIT historySyncChanged();
+        }
         requestChats();
         return;
     }
 
+    if (!shouldDisplayHistorySyncProgress(progress)) {
+        return;
+    }
+
+    const bool wasVisible = m_historySyncVisible;
+    const int progressPercent = qBound(0, static_cast<int>(progress.progressPercent()), 100);
+    m_historySyncCursorActive = true;
+    m_historySyncCursorSyncType = progress.syncType();
+    m_historySyncCursorChunkOrder = progress.chunkOrder();
+    m_historySyncCursorPhase = progress.phase();
     m_historySyncVisible = true;
-    m_historySyncPercent = qBound(0, static_cast<int>(progress.progressPercent()), 100);
+    m_historySyncPercent = wasVisible ? qMax(m_historySyncPercent, progressPercent) : progressPercent;
     m_historySyncTitle = syncTypeLabel(progress.syncType());
 
     if (progress.syncType() == whatevr::v1::HistorySyncTypeGadget::HistorySyncType::HISTORY_SYNC_TYPE_PROFILE_PICTURE) {
