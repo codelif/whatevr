@@ -493,7 +493,7 @@ func (c *Client) sendPendingMessage(ctx context.Context, client *whatsmeow.Clien
 	}
 
 	outgoingMessage := &waE2E.Message{Conversation: proto.String(message.Text)}
-	if contextInfo := c.outgoingReplyContextInfo(ctx, client, message); contextInfo != nil {
+	if contextInfo := c.outgoingContextInfo(ctx, client, message); contextInfo != nil {
 		outgoingMessage = &waE2E.Message{
 			ExtendedTextMessage: &waE2E.ExtendedTextMessage{
 				Text:        proto.String(message.Text),
@@ -524,6 +524,11 @@ func (c *Client) sendPendingMediaMessage(ctx context.Context, client *whatsmeow.
 
 	data, err := os.ReadFile(message.MediaLocalPath)
 	if err != nil {
+		// Forwarded copies of an undownloaded image carry only the original
+		// sender's media payload; resend those keys instead of re-uploading.
+		if sent, payloadErr := c.sendPendingMediaFromPayload(ctx, client, targetJID, externalID, message); sent || payloadErr != nil {
+			return payloadErr
+		}
 		c.markPendingMessageFailed(ctx, message.ID, "cached media file missing or unreadable")
 		return nil
 	}
@@ -554,7 +559,7 @@ func (c *Client) sendPendingMediaMessage(ctx context.Context, client *whatsmeow.
 	if thumb := outgoingImageThumbnail(data); len(thumb) > 0 {
 		imgMsg.JPEGThumbnail = thumb
 	}
-	if contextInfo := c.outgoingReplyContextInfo(ctx, client, message); contextInfo != nil {
+	if contextInfo := c.outgoingContextInfo(ctx, client, message); contextInfo != nil {
 		imgMsg.ContextInfo = contextInfo
 	}
 
@@ -591,6 +596,11 @@ func (c *Client) sendPendingStickerMessage(ctx context.Context, client *whatsmeo
 		return fmt.Errorf("load sticker %s: %w", message.MediaCacheKey, err)
 	}
 	if !ok {
+		// Forwarded stickers usually aren't in the library; resend the
+		// original media keys carried in the copied payload.
+		if sent, payloadErr := c.sendPendingMediaFromPayload(ctx, client, targetJID, externalID, message); sent || payloadErr != nil {
+			return payloadErr
+		}
 		c.markPendingMessageFailed(ctx, message.ID, "sticker is no longer in the library")
 		return nil
 	}
@@ -623,7 +633,7 @@ func (c *Client) sendPendingStickerMessage(ctx context.Context, client *whatsmeo
 	}
 
 	outgoing := proto.Clone(stickerMsg).(*waE2E.StickerMessage)
-	if contextInfo := c.outgoingReplyContextInfo(ctx, client, message); contextInfo != nil {
+	if contextInfo := c.outgoingContextInfo(ctx, client, message); contextInfo != nil {
 		outgoing.ContextInfo = contextInfo
 	}
 
@@ -654,6 +664,65 @@ func (c *Client) sendPendingStickerMessage(ctx context.Context, client *whatsmeo
 
 	c.markPendingMessageSent(ctx, message.ID)
 	return nil
+}
+
+// outgoingContextInfo combines the reply quote (if any) with WhatsApp's
+// forwarded marker for messages queued by ForwardMessage.
+func (c *Client) outgoingContextInfo(ctx context.Context, client *whatsmeow.Client, message appstore.Message) *waE2E.ContextInfo {
+	contextInfo := c.outgoingReplyContextInfo(ctx, client, message)
+	if message.IsForwarded {
+		if contextInfo == nil {
+			contextInfo = &waE2E.ContextInfo{}
+		}
+		contextInfo.IsForwarded = proto.Bool(true)
+		contextInfo.ForwardingScore = proto.Uint32(1)
+	}
+	return contextInfo
+}
+
+// sendPendingMediaFromPayload sends a media message straight from its stored
+// WhatsApp proto (original media keys, no upload). Returns sent=false when the
+// payload is missing or unusable so the caller can fall through.
+func (c *Client) sendPendingMediaFromPayload(ctx context.Context, client *whatsmeow.Client, targetJID types.JID, externalID types.MessageID, message appstore.Message) (bool, error) {
+	if len(message.MediaPayload) == 0 {
+		return false, nil
+	}
+
+	var outgoing *waE2E.Message
+	switch message.MediaKind {
+	case appstore.MediaKindSticker:
+		sticker := &waE2E.StickerMessage{}
+		if proto.Unmarshal(message.MediaPayload, sticker) != nil || sticker.GetDirectPath() == "" {
+			return false, nil
+		}
+		clone := proto.Clone(sticker).(*waE2E.StickerMessage)
+		clone.ContextInfo = c.outgoingContextInfo(ctx, client, message)
+		outgoing = &waE2E.Message{StickerMessage: clone}
+	default:
+		img := &waE2E.ImageMessage{}
+		if proto.Unmarshal(message.MediaPayload, img) != nil || img.GetDirectPath() == "" {
+			return false, nil
+		}
+		clone := proto.Clone(img).(*waE2E.ImageMessage)
+		if message.Text != "" {
+			clone.Caption = proto.String(message.Text)
+		}
+		clone.ContextInfo = c.outgoingContextInfo(ctx, client, message)
+		outgoing = &waE2E.Message{ImageMessage: clone}
+	}
+
+	if _, err := client.SendMessage(ctx, targetJID, outgoing, whatsmeow.SendRequestExtra{ID: externalID}); err != nil {
+		newAttempts := message.SendAttempts + 1
+		delay := sendQueueBackoff(newAttempts)
+		c.log.Warnf("Failed to send media payload %s (attempt %d), retry in %s: %v", message.ID, newAttempts, delay, err)
+		if dbErr := c.store.UpdateMessageSendAttempt(ctx, message.ID, newAttempts, err.Error(), time.Now().Add(delay)); dbErr != nil {
+			c.log.Warnf("Failed to record send attempt for %s: %v", message.ID, dbErr)
+		}
+		return true, fmt.Errorf("send media payload %s: %w", message.ID, err)
+	}
+
+	c.markPendingMessageSent(ctx, message.ID)
+	return true, nil
 }
 
 func (c *Client) outgoingReplyContextInfo(ctx context.Context, client *whatsmeow.Client, message appstore.Message) *waE2E.ContextInfo {
@@ -820,17 +889,51 @@ func (c *Client) handleReceipt(evt *events.Receipt, offlineSync bool) {
 		return
 	}
 
-	normalizedChat := c.normalizeJIDForChat(context.Background(), evt.Chat)
+	ctx := context.Background()
+	normalizedChat := c.normalizeJIDForChat(ctx, evt.Chat)
 	chatID := normalizedChat.String()
 	if chatID == "" {
 		return
 	}
 
+	isGroup := normalizedChat.Server == types.GroupServer || normalizedChat.Server == types.BroadcastServer
+	kind, isParticipantReceipt := participantReceiptKind(evt.Type)
+
+	participant := ""
+	if isParticipantReceipt {
+		own := c.ownParticipantJIDs()
+		canonical := c.canonicalParticipantJID(ctx, evt.Sender)
+		isSelf := canonical == "" || own[canonical]
+		switch {
+		case !isGroup && isSelf:
+			// 1:1 receipts may arrive without a usable sender; they can only
+			// come from the peer.
+			participant = c.canonicalParticipantJID(ctx, normalizedChat)
+		case isSelf:
+			// A group receipt from our own device says nothing about other
+			// members; treat it as a plain status update.
+			isParticipantReceipt = false
+		default:
+			participant = canonical
+		}
+		if participant == "" {
+			isParticipantReceipt = false
+		}
+	}
+
 	for _, messageID := range evt.MessageIDs {
 		internalID := internalMessageIDForChat(chatID, messageID)
-		message, changed, err := c.store.UpdateMessageStatus(context.Background(), internalID, status)
+
+		var message appstore.Message
+		var changed bool
+		var err error
+		if isParticipantReceipt {
+			message, changed, err = c.applyParticipantReceipt(ctx, normalizedChat, internalID, participant, kind, evt.Timestamp, status, isGroup)
+		} else {
+			message, changed, err = c.store.UpdateMessageStatus(ctx, internalID, status)
+		}
 		if err != nil {
-			if err == sql.ErrNoRows {
+			if errors.Is(err, sql.ErrNoRows) {
 				continue
 			}
 			c.log.Errorf("Failed to update message status for %s: %v", internalID, err)
@@ -841,8 +944,101 @@ func (c *Client) handleReceipt(evt *events.Receipt, offlineSync bool) {
 		}
 
 		if !offlineSync {
-			c.publishMessageStatusUpdated(context.Background(), message)
+			c.publishMessageStatusUpdated(ctx, message)
 		}
+	}
+}
+
+// applyParticipantReceipt records one participant's receipt and derives the
+// message's aggregate status. 1:1 chats keep the direct mapping (the peer is
+// the only recipient); group messages advance to delivered/read only once
+// every member has the receipt, mirroring WhatsApp's tick semantics.
+func (c *Client) applyParticipantReceipt(ctx context.Context, chatJID types.JID, internalID, participant, kind string, ts time.Time, status string, isGroup bool) (appstore.Message, bool, error) {
+	message, err := c.store.GetMessage(ctx, internalID)
+	if err != nil {
+		return appstore.Message{}, false, err
+	}
+
+	// Receipt rows only matter for our own messages (ticks + message info).
+	if message.Direction != appstore.DirectionOutgoing {
+		return c.store.UpdateMessageStatus(ctx, internalID, status)
+	}
+
+	if err := c.store.UpsertMessageReceipt(ctx, internalID, message.ChatID, participant, kind, ts); err != nil {
+		c.log.Warnf("Failed to record receipt for %s from %s: %v", internalID, participant, err)
+	}
+
+	if !isGroup {
+		return c.store.UpdateMessageStatus(ctx, internalID, status)
+	}
+
+	participants, known := c.groupReceiptParticipants(ctx, chatJID)
+	if !known {
+		// Membership unknown: keep the any-member behavior rather than
+		// freezing the ticks at "sent" forever.
+		return c.store.UpdateMessageStatus(ctx, internalID, status)
+	}
+
+	aggregate, err := c.aggregateGroupStatus(ctx, internalID, participants)
+	if err != nil {
+		return appstore.Message{}, false, err
+	}
+	if aggregate == "" {
+		return message, false, nil
+	}
+	return c.store.UpdateMessageStatus(ctx, internalID, aggregate)
+}
+
+// aggregateGroupStatus computes the WhatsApp group tick state: delivered when
+// every member has received the message, read when every member has read it.
+// Empty means neither threshold is met yet.
+func (c *Client) aggregateGroupStatus(ctx context.Context, internalID string, participants []string) (string, error) {
+	receipts, err := c.store.ListMessageReceipts(ctx, internalID)
+	if err != nil {
+		return "", err
+	}
+	byJID := make(map[string]appstore.MessageReceipt, len(receipts))
+	for _, receipt := range receipts {
+		byJID[receipt.ParticipantJID] = receipt
+	}
+
+	allDelivered, allRead := true, true
+	for _, participant := range participants {
+		receipt, ok := byJID[participant]
+		if !ok || receipt.DeliveredTs == 0 {
+			allDelivered = false
+		}
+		if !ok || receipt.ReadTs == 0 {
+			allRead = false
+		}
+		if !allDelivered && !allRead {
+			return "", nil
+		}
+	}
+
+	switch {
+	case allRead:
+		return appstore.StatusRead, nil
+	case allDelivered:
+		return appstore.StatusDelivered, nil
+	default:
+		return "", nil
+	}
+}
+
+// participantReceiptKind maps receipt types that represent another user's
+// delivery/read state. Self receipts (our own other devices) and server
+// receipts don't describe a recipient and report false.
+func participantReceiptKind(receiptType types.ReceiptType) (string, bool) {
+	switch receiptType {
+	case types.ReceiptTypeDelivered:
+		return appstore.ReceiptKindDelivered, true
+	case types.ReceiptTypeRead:
+		return appstore.ReceiptKindRead, true
+	case types.ReceiptTypePlayed:
+		return appstore.ReceiptKindPlayed, true
+	default:
+		return "", false
 	}
 }
 

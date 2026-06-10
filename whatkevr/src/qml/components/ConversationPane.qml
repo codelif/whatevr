@@ -102,14 +102,17 @@ Kirigami.Page {
     }
 
     Keys.onPressed: event => {
-        // ESC priority: pane > reply > close chat. The picker is a focused
-        // Popup that consumes ESC while open, so by the time ESC reaches here
-        // the pane is already closed; clear a pending reply, else close the chat.
+        // ESC priority: pane > selection > reply > close chat. The picker is a
+        // focused Popup that consumes ESC while open, so by the time ESC
+        // reaches here the pane is already closed; leave selection mode, then
+        // clear a pending reply, else close the chat.
         if (event.key === Qt.Key_Escape) {
             if (!Whatevr.AppController.hasSelectedChat) {
                 return
             }
-            if (root.replyToMessageId.length > 0) {
+            if (messageView.selectionActive) {
+                messageView.clearSelection()
+            } else if (root.replyToMessageId.length > 0) {
                 root.clearReplyTarget()
             } else {
                 root.closeChatRequested()
@@ -152,6 +155,7 @@ Kirigami.Page {
     titleDelegate: RowLayout {
         id: headerTitle
 
+        readonly property bool selectionActive: messageView.selectionActive
         readonly property bool hasPresenceText: Whatevr.AppController.hasSelectedChat
                                                 && Whatevr.AppController.selectedChatPresenceText.length > 0
         readonly property real avatarSize: Kirigami.Units.gridUnit * 1.8
@@ -166,8 +170,28 @@ Kirigami.Page {
             onTapped: root.forceActiveFocus(Qt.MouseFocusReason)
         }
 
+        // Selection mode swaps the chat identity for the running count.
+        ToolButton {
+            visible: headerTitle.selectionActive
+            Layout.alignment: Qt.AlignVCenter
+            icon.name: "dialog-close-symbolic"
+            text: Whatevr.I18n.i18nc("@action:button leave message selection", "Cancel Selection")
+            display: AbstractButton.IconOnly
+            focusPolicy: Qt.NoFocus
+            onClicked: messageView.clearSelection()
+        }
+
+        Label {
+            visible: headerTitle.selectionActive
+            Layout.fillWidth: true
+            Layout.minimumWidth: 0
+            text: Whatevr.I18n.i18ncp("@title number of selected messages", "%1 selected", "%1 selected", messageView.selectedCount)
+            elide: Text.ElideRight
+            font.weight: Font.DemiBold
+        }
+
         AvatarImage {
-            visible: Whatevr.AppController.hasSelectedChat
+            visible: !headerTitle.selectionActive && Whatevr.AppController.hasSelectedChat
             Layout.alignment: Qt.AlignVCenter
             Layout.preferredWidth: headerTitle.avatarSize
             Layout.preferredHeight: headerTitle.avatarSize
@@ -176,6 +200,7 @@ Kirigami.Page {
         }
 
         Item {
+            visible: !headerTitle.selectionActive
             Layout.fillWidth: true
             Layout.minimumWidth: 0
             Layout.alignment: Qt.AlignVCenter
@@ -213,12 +238,81 @@ Kirigami.Page {
         }
     }
 
-    actions: [
+    // Selection mode swaps the toolbar to message actions. Frequent actions
+    // stay visible; single-message and rarer ones live in the overflow menu.
+    actions: messageView.selectionActive ? selectionActions : defaultActions
+
+    property list<Kirigami.Action> defaultActions: [
         Kirigami.Action {
             icon.name: "dialog-close-symbolic"
             text: Whatevr.I18n.i18nc("@action:button", "Close Chat")
             visible: Whatevr.AppController.hasSelectedChat && root.closeChatActionVisible
             onTriggered: root.closeChatRequested()
+        }
+    ]
+
+    property list<Kirigami.Action> selectionActions: [
+        Kirigami.Action {
+            icon.name: "edit-copy-symbolic"
+            text: Whatevr.I18n.i18nc("@action:button copy selected messages", "Copy")
+            enabled: messageView.selectedCount > 0
+            onTriggered: messageView.copySelectedMessages(false)
+        },
+        Kirigami.Action {
+            icon.name: "mail-forward-symbolic"
+            text: Whatevr.I18n.i18nc("@action:button forward selected messages", "Forward")
+            enabled: messageView.selectedCount > 0
+            onTriggered: messageView.openForwardPicker(messageView.selectedMessageIdList())
+        },
+        Kirigami.Action {
+            icon.name: "edit-delete-symbolic"
+            text: Whatevr.I18n.i18nc("@action:button delete selected messages locally", "Delete")
+            enabled: messageView.selectedCount > 0
+            onTriggered: messageView.confirmDeleteSelection(false)
+        },
+        Kirigami.Action {
+            icon.name: "mail-replied-symbolic"
+            text: Whatevr.I18n.i18nc("@action:button reply to the selected message", "Reply")
+            displayHint: Kirigami.DisplayHint.AlwaysHide
+            enabled: messageView.selectedCount === 1
+            onTriggered: {
+                messageView.replyToSnapshot(messageView.singleSelectedSnapshot)
+                messageView.clearSelection()
+            }
+        },
+        Kirigami.Action {
+            icon.name: "text-markdown-symbolic"
+            text: Whatevr.I18n.i18nc("@action:button", "Copy as Markdown")
+            displayHint: Kirigami.DisplayHint.AlwaysHide
+            enabled: messageView.selectedCount > 0
+            onTriggered: messageView.copySelectedMessages(true)
+        },
+        Kirigami.Action {
+            icon.name: "documentinfo-symbolic"
+            text: Whatevr.I18n.i18nc("@action:button delivery details", "Info")
+            displayHint: Kirigami.DisplayHint.AlwaysHide
+            enabled: messageView.selectedCount === 1
+                     && messageView.singleSelectedSnapshot !== null
+                     && Boolean(messageView.singleSelectedSnapshot.isOutgoing)
+            onTriggered: messageView.openMessageInfo(String(messageView.singleSelectedSnapshot.messageId))
+        },
+        Kirigami.Action {
+            icon.name: "edit-delete-remove-symbolic"
+            text: Whatevr.I18n.i18nc("@action:button WhatsApp revoke of all selected", "Delete for Everyone")
+            displayHint: Kirigami.DisplayHint.AlwaysHide
+            enabled: messageView.selectionRevision >= 0 && messageView.canRevokeSelection()
+            onTriggered: messageView.confirmDeleteSelection(true)
+        },
+        Kirigami.Action {
+            icon.name: "edit-select-all-symbolic"
+            text: Whatevr.I18n.i18nc("@action:button", "Select All")
+            displayHint: Kirigami.DisplayHint.AlwaysHide
+            onTriggered: messageView.selectAllMessages()
+        },
+        Kirigami.Action {
+            icon.name: "dialog-close-symbolic"
+            text: Whatevr.I18n.i18nc("@action:button leave message selection", "Cancel")
+            onTriggered: messageView.clearSelection()
         }
     ]
 

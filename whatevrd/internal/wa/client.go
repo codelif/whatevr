@@ -50,6 +50,13 @@ type Client struct {
 	avatarQueued   map[appstore.AvatarSubject]bool
 	avatarDeferred map[appstore.AvatarSubject]avatarJob
 
+	// Group member lists back the all-members receipt aggregation. The
+	// freshness map throttles GetGroupInfo fetches: a stale group is
+	// refreshed once in the background while receipts keep flowing.
+	groupParticipantsMu       sync.Mutex
+	groupParticipantsFresh    map[string]time.Time
+	groupParticipantsInFlight map[string]bool
+
 	mediaDownloadMu sync.Mutex
 	mediaDownloads  map[string]*mediaDownloadState
 	mediaRetryMu    sync.Mutex

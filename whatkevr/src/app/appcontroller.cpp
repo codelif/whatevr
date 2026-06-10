@@ -3,6 +3,7 @@
 #include <QClipboard>
 #include <QDir>
 #include <QDateTime>
+#include <QFile>
 #include <QFileInfo>
 #include <QFileSystemWatcher>
 #include <QGuiApplication>
@@ -37,6 +38,7 @@
 #include "whatevr/v1/whatevr.qpb.h"
 #include "whatevr/v1/whatevr_client.grpc.qpb.h"
 
+#include "messagemarkup.h"
 #include "richtext.h"
 
 using whatevr::v1::ChatUpdated;
@@ -61,6 +63,11 @@ using whatevr::v1::SetChatPresenceRequest;
 using whatevr::v1::SubscribeChatPresenceRequest;
 using whatevr::v1::DownloadMessageMediaRequest;
 using whatevr::v1::DownloadMessageMediaResponse;
+using whatevr::v1::DeleteMessageForMeRequest;
+using whatevr::v1::GetMessageInfoRequest;
+using whatevr::v1::RevokeMessageRequest;
+using whatevr::v1::RevokeMessageResponse;
+using whatevr::v1::ForwardMessageRequest;
 using whatevr::v1::HoldSessionRequest;
 using whatevr::v1::SendMediaRequest;
 using whatevr::v1::SendMediaResponse;
@@ -1398,6 +1405,174 @@ void AppController::copyToClipboard(const QString &text)
     }
 }
 
+void AppController::copyImageToClipboard(const QString &localPath)
+{
+    if (localPath.isEmpty()) {
+        return;
+    }
+    const QImage image(localPath);
+    if (image.isNull()) {
+        Q_EMIT messageActionFailed(i18nc("@info", "Unable to copy the image"));
+        return;
+    }
+    if (QClipboard *clipboard = QGuiApplication::clipboard()) {
+        clipboard->setImage(image);
+    }
+}
+
+bool AppController::saveMediaAs(const QString &localPath, const QUrl &destUrl)
+{
+    if (localPath.isEmpty() || !destUrl.isLocalFile()) {
+        return false;
+    }
+    const QString destination = destUrl.toLocalFile();
+    if (destination.isEmpty()) {
+        return false;
+    }
+    // The save dialog already confirmed overwriting; QFile::copy refuses to.
+    if (QFile::exists(destination) && !QFile::remove(destination)) {
+        Q_EMIT messageActionFailed(i18nc("@info", "Unable to overwrite the existing file"));
+        return false;
+    }
+    if (!QFile::copy(localPath, destination)) {
+        Q_EMIT messageActionFailed(i18nc("@info", "Unable to save the file"));
+        return false;
+    }
+    return true;
+}
+
+QString AppController::toCommonMark(const QString &text) const
+{
+    return whatevr::util::whatsAppToCommonMark(text);
+}
+
+void AppController::deleteMessageForMe(const QString &messageId)
+{
+    if (!m_chatClient || messageId.isEmpty()) {
+        return;
+    }
+
+    DeleteMessageForMeRequest request;
+    request.setMessageId(messageId);
+
+    auto reply = m_chatClient->DeleteMessageForMe(request);
+    auto *replyPtr = reply.get();
+    m_deleteMessageReplies.insert(messageId, std::move(reply));
+
+    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, messageId](const QGrpcStatus &status) {
+        auto it = m_deleteMessageReplies.find(messageId);
+        if (it == m_deleteMessageReplies.end() || it.value().get() != replyPtr) {
+            return;
+        }
+        m_deleteMessageReplies.erase(it);
+        if (!status.isOk()) {
+            Q_EMIT messageActionFailed(status.message().isEmpty() ? i18nc("@info", "Unable to delete the message") : status.message());
+        }
+    });
+}
+
+void AppController::revokeMessage(const QString &messageId)
+{
+    if (!m_sendClient || messageId.isEmpty()) {
+        return;
+    }
+
+    RevokeMessageRequest request;
+    request.setMessageId(messageId);
+
+    m_revokeMessageReply = m_sendClient->RevokeMessage(request);
+    auto *replyPtr = m_revokeMessageReply.get();
+    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr](const QGrpcStatus &status) {
+        if (m_revokeMessageReply.get() != replyPtr) {
+            return;
+        }
+        const auto reply = std::move(m_revokeMessageReply);
+        if (!status.isOk()) {
+            Q_EMIT messageActionFailed(status.message().isEmpty() ? i18nc("@info", "Unable to delete the message for everyone") : status.message());
+            return;
+        }
+        if (const auto response = reply->read<RevokeMessageResponse>()) {
+            // The event stream tombstones it too; applying directly avoids a
+            // visible delay between the menu action and the bubble change.
+            applyMessageEvent(response->message());
+        }
+    });
+}
+
+void AppController::forwardMessage(const QString &messageId, const QStringList &chatIds)
+{
+    if (!m_sendClient || messageId.isEmpty() || chatIds.isEmpty()) {
+        return;
+    }
+
+    ForwardMessageRequest request;
+    request.setSourceMessageId(messageId);
+    request.setTargetChatIds(chatIds);
+
+    m_forwardMessageReply = m_sendClient->ForwardMessage(request);
+    auto *replyPtr = m_forwardMessageReply.get();
+    const int chatCount = static_cast<int>(chatIds.size());
+    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, chatCount](const QGrpcStatus &status) {
+        if (m_forwardMessageReply.get() != replyPtr) {
+            return;
+        }
+        m_forwardMessageReply.reset();
+        if (!status.isOk()) {
+            Q_EMIT messageActionFailed(status.message().isEmpty() ? i18nc("@info", "Unable to forward the message") : status.message());
+            return;
+        }
+        Q_EMIT messageForwarded(chatCount);
+    });
+}
+
+void AppController::requestMessageInfo(const QString &messageId)
+{
+    if (!m_chatClient || messageId.isEmpty()) {
+        return;
+    }
+
+    GetMessageInfoRequest request;
+    request.setMessageId(messageId);
+
+    m_messageInfoReply = m_chatClient->GetMessageInfo(request);
+    auto *replyPtr = m_messageInfoReply.get();
+    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, messageId](const QGrpcStatus &status) {
+        if (m_messageInfoReply.get() != replyPtr) {
+            return;
+        }
+        const auto reply = std::move(m_messageInfoReply);
+        if (!status.isOk()) {
+            Q_EMIT messageActionFailed(status.message().isEmpty() ? i18nc("@info", "Unable to load message info") : status.message());
+            return;
+        }
+        const auto response = reply->read<whatevr::v1::GetMessageInfoResponse>();
+        if (!response) {
+            return;
+        }
+
+        QVariantList receipts;
+        for (const auto &receipt : response->receipts()) {
+            receipts.append(QVariantMap {
+                {QStringLiteral("jid"), receipt.jid()},
+                {QStringLiteral("displayName"), receipt.displayName()},
+                {QStringLiteral("avatarLocalPath"), receipt.avatarLocalPath()},
+                {QStringLiteral("deliveredTsUnix"), static_cast<qint64>(receipt.deliveredTsUnix())},
+                {QStringLiteral("readTsUnix"), static_cast<qint64>(receipt.readTsUnix())},
+                {QStringLiteral("playedTsUnix"), static_cast<qint64>(receipt.playedTsUnix())},
+            });
+        }
+        const QVariantMap info {
+            {QStringLiteral("status"), static_cast<int>(response->status())},
+            {QStringLiteral("sentTsUnix"), static_cast<qint64>(response->sentTsUnix())},
+            {QStringLiteral("deliveredTsUnix"), static_cast<qint64>(response->deliveredTsUnix())},
+            {QStringLiteral("readTsUnix"), static_cast<qint64>(response->readTsUnix())},
+            {QStringLiteral("isGroup"), response->isGroup()},
+            {QStringLiteral("receipts"), receipts},
+        };
+        Q_EMIT messageInfoReceived(messageId, info);
+    });
+}
+
 void AppController::attachClients()
 {
     if (!m_channel) {
@@ -1954,6 +2129,9 @@ void AppController::ensureDaemonStream()
         case whatevr::v1::DaemonEvent::PayloadFields::MessageUpdated:
             applyMessageEvent(event->messageUpdated().message());
             break;
+        case whatevr::v1::DaemonEvent::PayloadFields::MessageDeleted:
+            applyMessageDeleted(event->messageDeleted().chatId(), event->messageDeleted().messageId());
+            break;
         case whatevr::v1::DaemonEvent::PayloadFields::HistorySyncProgress:
             applyHistorySyncProgress(event->historySyncProgress());
             break;
@@ -2323,6 +2501,27 @@ void AppController::applyMessageEvent(const whatevr::v1::Message &message)
     }
     if (message.direction() == whatevr::v1::MessageDirectionGadget::MessageDirection::MESSAGE_DIRECTION_INCOMING) {
         requestSelectedChatReadIfActive();
+    }
+}
+
+void AppController::applyMessageDeleted(const QString &chatId, const QString &messageId)
+{
+    auto cached = m_messageCache.find(chatId);
+    if (cached != m_messageCache.end()) {
+        for (int i = 0; i < cached->messages.size(); ++i) {
+            if (cached->messages.at(i).id_proto() == messageId) {
+                cached->messages.removeAt(i);
+                break;
+            }
+        }
+    }
+
+    if (chatId != m_selectedChatId || m_displayedMessagesChatId != chatId) {
+        return;
+    }
+    const bool wasEmpty = m_messageListModel->isEmpty();
+    if (m_messageListModel->removeMessage(messageId) && !wasEmpty && m_messageListModel->isEmpty()) {
+        Q_EMIT messagesChanged();
     }
 }
 

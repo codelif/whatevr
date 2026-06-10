@@ -2,6 +2,8 @@ package rpc
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"strings"
 	"unicode/utf8"
 
@@ -13,13 +15,16 @@ import (
 )
 
 const (
-	maxSendTextRunes = 65536
-	maxCaptionRunes  = 1024
+	maxSendTextRunes  = 65536
+	maxCaptionRunes   = 1024
+	maxForwardTargets = 5
 )
 
 type SendController interface {
 	SendText(context.Context, string, string, string) (appstore.SavedTextMessage, error)
 	SendMedia(context.Context, string, string, string, string) (appstore.SavedTextMessage, error)
+	RevokeMessage(context.Context, string) (appstore.Message, error)
+	ForwardMessage(context.Context, string, []string) ([]appstore.SavedTextMessage, error)
 }
 
 type SendService struct {
@@ -76,4 +81,62 @@ func (s *SendService) SendMedia(ctx context.Context, req *pb.SendMediaRequest) (
 	}
 
 	return &pb.SendMediaResponse{Message: toProtoMessage(toAppMessage(saved.Message))}, nil
+}
+
+func (s *SendService) RevokeMessage(ctx context.Context, req *pb.RevokeMessageRequest) (*pb.RevokeMessageResponse, error) {
+	if s.sender == nil {
+		return nil, status.Error(codes.Unimplemented, "send controller is not available")
+	}
+	if strings.TrimSpace(req.GetMessageId()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "message_id is required")
+	}
+
+	message, err := s.sender.RevokeMessage(ctx, strings.TrimSpace(req.GetMessageId()))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, status.Error(codes.NotFound, "message not found")
+		}
+		return nil, err
+	}
+	return &pb.RevokeMessageResponse{Message: toProtoMessage(toAppMessage(message))}, nil
+}
+
+func (s *SendService) ForwardMessage(ctx context.Context, req *pb.ForwardMessageRequest) (*pb.ForwardMessageResponse, error) {
+	if s.sender == nil {
+		return nil, status.Error(codes.Unimplemented, "send controller is not available")
+	}
+	if strings.TrimSpace(req.GetSourceMessageId()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "source_message_id is required")
+	}
+
+	targets := make([]string, 0, len(req.GetTargetChatIds()))
+	seen := make(map[string]bool, len(req.GetTargetChatIds()))
+	for _, target := range req.GetTargetChatIds() {
+		target = strings.TrimSpace(target)
+		if target == "" || seen[target] {
+			continue
+		}
+		seen[target] = true
+		targets = append(targets, target)
+	}
+	if len(targets) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "at least one target_chat_id is required")
+	}
+	if len(targets) > maxForwardTargets {
+		return nil, status.Errorf(codes.InvalidArgument, "at most %d target chats per forward", maxForwardTargets)
+	}
+
+	saved, err := s.sender.ForwardMessage(ctx, strings.TrimSpace(req.GetSourceMessageId()), targets)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, status.Error(codes.NotFound, "message not found")
+		}
+		return nil, err
+	}
+
+	resp := &pb.ForwardMessageResponse{Messages: make([]*pb.Message, 0, len(saved))}
+	for _, result := range saved {
+		resp.Messages = append(resp.Messages, toProtoMessage(toAppMessage(result.Message)))
+	}
+	return resp, nil
 }

@@ -125,6 +125,12 @@ func toProtoDaemonEvent(event app.DaemonEvent) *pb.DaemonEvent {
 				ChatUpdated: &pb.ChatUpdated{Chat: toProtoChat(event.Chat), PreviousChatId: event.PreviousChatID},
 			},
 		}
+	case app.DaemonEventMessageDeleted:
+		return &pb.DaemonEvent{
+			Payload: &pb.DaemonEvent_MessageDeleted{
+				MessageDeleted: &pb.MessageDeleted{ChatId: event.DeletedChatID, MessageId: event.DeletedMessageID},
+			},
+		}
 	case app.DaemonEventChatPresence:
 		return &pb.DaemonEvent{
 			Payload: &pb.DaemonEvent_ChatPresenceChanged{
@@ -338,6 +344,8 @@ func toProtoMessage(message app.Message) *pb.Message {
 		MediaWidth:              message.MediaWidth,
 		MediaHeight:             message.MediaHeight,
 		MediaAnimated:           message.MediaAnimated,
+		MediaCacheKey:           message.MediaCacheKey,
+		IsRevoked:               message.IsRevoked,
 	}
 	if message.ReplyTo.MessageID != "" {
 		protoMessage.ReplyTo = &pb.MessageReply{

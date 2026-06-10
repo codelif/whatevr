@@ -7,6 +7,8 @@
 #include <QSet>
 #include <QString>
 #include <QStringList>
+#include <QUrl>
+#include <QVariantMap>
 #include <qqmlintegration.h>
 
 #include <cstdint>
@@ -189,6 +191,13 @@ public:
     Q_INVOKABLE void setSelectedChatComposing(bool composing);
     Q_INVOKABLE void downloadMessageMedia(const QString &messageId);
     Q_INVOKABLE [[nodiscard]] bool isMessageMediaDownloading(const QString &messageId) const;
+    Q_INVOKABLE void copyImageToClipboard(const QString &localPath);
+    Q_INVOKABLE bool saveMediaAs(const QString &localPath, const QUrl &destUrl);
+    Q_INVOKABLE [[nodiscard]] QString toCommonMark(const QString &text) const;
+    Q_INVOKABLE void deleteMessageForMe(const QString &messageId);
+    Q_INVOKABLE void revokeMessage(const QString &messageId);
+    Q_INVOKABLE void forwardMessage(const QString &messageId, const QStringList &chatIds);
+    Q_INVOKABLE void requestMessageInfo(const QString &messageId);
     Q_INVOKABLE void logout();
 
     // Entry points for single-instance activation / deep links. handleCommandLine
@@ -211,6 +220,11 @@ Q_SIGNALS:
     void messageJumpUnavailable(const QString &messageId);
     void mediaDownloadChanged(const QString &messageId);
     void mediaDownloadFailed(const QString &messageId, const QString &errorText);
+    // info: status, sentTsUnix, deliveredTsUnix, readTsUnix, isGroup, and
+    // receipts (list of maps with jid/displayName/avatarLocalPath/timestamps).
+    void messageInfoReceived(const QString &messageId, const QVariantMap &info);
+    void messageActionFailed(const QString &errorText);
+    void messageForwarded(int chatCount);
 
 private:
     void bootstrap();
@@ -249,6 +263,7 @@ private:
     void applyChatPresenceChanged(const whatevr::v1::ChatPresenceChanged &presence);
     void applyMediaDownloadChanged(const whatevr::v1::MediaDownloadChanged &download);
     void applyMessageEvent(const whatevr::v1::Message &message);
+    void applyMessageDeleted(const QString &chatId, const QString &messageId);
     void applyHistorySyncProgress(const whatevr::v1::HistorySyncProgress &progress);
     void applyHistoryBackfilled(const whatevr::v1::HistoryBackfilled &backfilled);
     [[nodiscard]] bool shouldDisplayHistorySyncProgress(const whatevr::v1::HistorySyncProgress &progress) const;
@@ -351,6 +366,10 @@ private:
     std::unique_ptr<QGrpcCallReply> m_sendMediaReply;
     QHash<QString, std::shared_ptr<QGrpcCallReply>> m_mediaDownloadReplies;
     QSet<QString> m_mediaDownloadingMessageIds;
+    std::unique_ptr<QGrpcCallReply> m_messageInfoReply;
+    std::unique_ptr<QGrpcCallReply> m_revokeMessageReply;
+    std::unique_ptr<QGrpcCallReply> m_forwardMessageReply;
+    QHash<QString, std::shared_ptr<QGrpcCallReply>> m_deleteMessageReplies;
     std::unique_ptr<QGrpcCallReply> m_logoutReply;
     std::unique_ptr<QGrpcServerStream> m_frontendSessionStream;
     std::unique_ptr<QGrpcServerStream> m_daemonStream;

@@ -174,6 +174,8 @@ QVariant MessageListModel::data(const QModelIndex &index, int role) const
     case TextTruncatedRole:
     case WidestLineWidthRole:
     case LastLineWidthRole:
+    case LinksRole:
+    case HasLinksRole:
         ensurePreviewParsed(message);
         break;
     default:
@@ -271,6 +273,14 @@ QVariant MessageListModel::data(const QModelIndex &index, int role) const
         return message.widestLineWidth;
     case LastLineWidthRole:
         return message.lastLineWidth;
+    case LinksRole:
+        return message.links;
+    case HasLinksRole:
+        return !message.links.isEmpty();
+    case MediaCacheKeyRole:
+        return message.mediaCacheKey;
+    case IsRevokedRole:
+        return message.isRevoked;
     default:
         return {};
     }
@@ -324,6 +334,10 @@ QHash<int, QByteArray> MessageListModel::roleNames() const
         {ReplyToIsOutgoingRole, "replyToIsOutgoing"},
         {WidestLineWidthRole, "widestLineWidth"},
         {LastLineWidthRole, "lastLineWidth"},
+        {LinksRole, "links"},
+        {HasLinksRole, "hasLinks"},
+        {MediaCacheKeyRole, "mediaCacheKey"},
+        {IsRevokedRole, "isRevoked"},
     };
 }
 
@@ -614,6 +628,126 @@ void MessageListModel::upsertMessage(const whatevr::v1::Message &message)
     scheduleParseWarmup(insertAt);
 }
 
+bool MessageListModel::removeMessage(const QString &messageId)
+{
+    const int row = indexOf(messageId);
+    if (row < 0) {
+        return false;
+    }
+
+    beginRemoveRows(QModelIndex(), row, row);
+    m_messages.removeAt(row);
+    rebuildIndex();
+    endRemoveRows();
+    m_warmupCursor = std::min(m_warmupCursor, static_cast<int>(m_messages.size()));
+    // Neighbours may have gained/lost a group edge or the date separator.
+    emitGroupingRolesChanged(row - 1, row);
+    return true;
+}
+
+QString MessageListModel::copyTextForMessages(const QStringList &messageIds) const
+{
+    QList<const MessageItem *> selected;
+    selected.reserve(messageIds.size());
+    for (const auto &id : messageIds) {
+        const int row = indexOf(id);
+        if (row >= 0) {
+            selected.append(&m_messages.at(row));
+        }
+    }
+    if (selected.isEmpty()) {
+        return {};
+    }
+
+    const auto bodyText = [](const MessageItem &message) -> QString {
+        if (message.isRevoked) {
+            return i18nc("@info placeholder body for a deleted message", "This message was deleted");
+        }
+        if (!message.text.isEmpty()) {
+            return message.text;
+        }
+        if (message.mediaKind == QStringLiteral("sticker")) {
+            return QStringLiteral("[Sticker]");
+        }
+        if (!message.mediaKind.isEmpty() || !message.mediaMimeType.isEmpty()) {
+            return QStringLiteral("[Media]");
+        }
+        return {};
+    };
+
+    if (selected.size() == 1) {
+        return bodyText(*selected.first());
+    }
+
+    // Chronological, oldest first (storage is newest-first).
+    std::sort(selected.begin(), selected.end(), [](const MessageItem *left, const MessageItem *right) {
+        if (left->timestampUnix != right->timestampUnix) {
+            return left->timestampUnix < right->timestampUnix;
+        }
+        if (left->sortSeq != right->sortSeq) {
+            return left->sortSeq < right->sortSeq;
+        }
+        return left->id < right->id;
+    });
+
+    QString out;
+    for (const MessageItem *message : selected) {
+        if (!out.isEmpty()) {
+            out += QLatin1Char('\n');
+        }
+        const QString sender = isOutgoing(*message)
+            ? i18nc("@label sender name for own messages in copied text", "You")
+            : message->senderDisplayName;
+        const QString date = QLocale().toString(
+            QDateTime::fromSecsSinceEpoch(message->timestampUnix, QTimeZone::LocalTime).date(), QLocale::ShortFormat);
+        out += QStringLiteral("[%1, %2] %3: %4").arg(date, message->timeText, sender, bodyText(*message));
+    }
+    return out;
+}
+
+QVariantMap MessageListModel::messageSnapshot(const QString &messageId) const
+{
+    const int row = indexOf(messageId);
+    if (row < 0) {
+        return {};
+    }
+    const auto &message = m_messages.at(row);
+    ensurePreviewParsed(message);
+    // hasRichText in the cache only covers the displayed (possibly collapsed)
+    // text; "Copy as Markdown" must reflect the full text.
+    bool hasMarkup = message.hasRichText;
+    if (message.textTruncated && !message.fullMarkupParsed) {
+        hasMarkup = parseWhatsAppMessageMarkup(message.text).hasRichText;
+    }
+    return {
+        {QStringLiteral("messageId"), message.id},
+        {QStringLiteral("text"), message.text},
+        {QStringLiteral("textPreview"), message.textPreview},
+        {QStringLiteral("hasRichText"), hasMarkup},
+        {QStringLiteral("links"), message.links},
+        {QStringLiteral("senderName"), message.senderDisplayName},
+        {QStringLiteral("isOutgoing"), isOutgoing(message)},
+        {QStringLiteral("timestampUnix"), message.timestampUnix},
+        {QStringLiteral("mediaKind"), message.mediaKind},
+        {QStringLiteral("mediaMimeType"), message.mediaMimeType},
+        {QStringLiteral("mediaLocalPath"), message.mediaLocalPath},
+        {QStringLiteral("mediaCacheKey"), message.mediaCacheKey},
+        {QStringLiteral("isRevoked"), message.isRevoked},
+    };
+}
+
+QStringList MessageListModel::allMessageIds() const
+{
+    QStringList ids;
+    ids.reserve(m_messages.size());
+    for (const auto &message : m_messages) {
+        if (!message.id.isEmpty()) {
+            ids.append(message.id);
+        }
+    }
+    return ids;
+}
+
 bool MessageListModel::updateSenderAvatar(const QString &senderId, const QString &avatarLocalPath)
 {
     if (senderId.isEmpty() || senderId == QStringLiteral("me")) {
@@ -768,9 +902,11 @@ MessageListModel::MessageItem MessageListModel::fromProto(const whatevr::v1::Mes
         .mediaMimeType = message.mediaMimeType(),
         .mediaLocalPath = message.mediaLocalPath(),
         .mediaThumbnailLocalPath = message.mediaThumbnailLocalPath(),
+        .mediaCacheKey = message.mediaCacheKey(),
         .mediaWidth = message.mediaWidth(),
         .mediaHeight = message.mediaHeight(),
         .mediaAnimated = message.mediaAnimated(),
+        .isRevoked = message.isRevoked(),
         .mediaDownloading = false,
         .mediaDownloadError = {},
         .replyToMessageId = {},
@@ -789,6 +925,11 @@ MessageListModel::MessageItem MessageListModel::fromProto(const whatevr::v1::Mes
     item.replyToMediaKind = replyTo.mediaKind();
     item.replyToMediaMimeType = replyTo.mediaMimeType();
     item.replyToDirection = static_cast<int>(replyTo.direction());
+    // Revoked rows arrive with cleared content; substitute the tombstone here
+    // so layout measurement, previews and copy all see the displayed string.
+    if (item.isRevoked) {
+        item.text = i18nc("@info placeholder body for a deleted message", "This message was deleted");
+    }
     item.senderDisplayName = displaySenderName(item);
     item.senderInitials = initialsForName(item.senderDisplayName);
     item.timeText = formatTime(item.timestampUnix);
@@ -831,6 +972,9 @@ void MessageListModel::ensurePreviewParsed(const MessageItem &item)
     // when the full text becomes the displayed one.
     const QString &measureText = item.layoutTextPreview.isEmpty() ? item.textPreview : item.layoutTextPreview;
     std::tie(item.widestLineWidth, item.lastLineWidth) = measureLineWidths(measureText);
+    // Links come from the full text: the context menu must offer links the
+    // collapse cut off.
+    item.links = whatevr::util::extractMessageLinks(item.text);
     item.previewParsed = true;
 }
 
@@ -853,6 +997,7 @@ void MessageListModel::transplantParsedState(const MessageItem &target, const Me
     target.textTruncated = source.textTruncated;
     target.widestLineWidth = source.widestLineWidth;
     target.lastLineWidth = source.lastLineWidth;
+    target.links = source.links;
 }
 
 QString MessageListModel::displaySenderName(const MessageItem &message)
@@ -1012,9 +1157,11 @@ bool MessageListModel::sameMessageData(const MessageItem &left, const MessageIte
         && left.mediaMimeType == right.mediaMimeType
         && left.mediaLocalPath == right.mediaLocalPath
         && left.mediaThumbnailLocalPath == right.mediaThumbnailLocalPath
+        && left.mediaCacheKey == right.mediaCacheKey
         && left.mediaWidth == right.mediaWidth
         && left.mediaHeight == right.mediaHeight
         && left.mediaAnimated == right.mediaAnimated
+        && left.isRevoked == right.isRevoked
         && left.mediaDownloading == right.mediaDownloading
         && left.mediaDownloadError == right.mediaDownloadError
         && left.replyToMessageId == right.replyToMessageId

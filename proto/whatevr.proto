@@ -93,11 +93,15 @@ service ChatService {
   rpc SetChatPresence(SetChatPresenceRequest) returns (SetChatPresenceResponse);
   rpc SubscribeChatPresence(SubscribeChatPresenceRequest) returns (SubscribeChatPresenceResponse);
   rpc DownloadMessageMedia(DownloadMessageMediaRequest) returns (DownloadMessageMediaResponse);
+  rpc GetMessageInfo(GetMessageInfoRequest) returns (GetMessageInfoResponse);
+  rpc DeleteMessageForMe(DeleteMessageForMeRequest) returns (DeleteMessageForMeResponse);
 }
 
 service SendService {
   rpc SendText(SendTextRequest) returns (SendTextResponse);
   rpc SendMedia(SendMediaRequest) returns (SendMediaResponse);
+  rpc RevokeMessage(RevokeMessageRequest) returns (RevokeMessageResponse);
+  rpc ForwardMessage(ForwardMessageRequest) returns (ForwardMessageResponse);
 }
 
 service StickerService {
@@ -107,6 +111,7 @@ service StickerService {
   rpc DownloadSticker(DownloadStickerRequest) returns (DownloadStickerResponse);
   rpc SetStickerPackInstalled(SetStickerPackInstalledRequest) returns (SetStickerPackInstalledResponse);
   rpc SendSticker(SendStickerRequest) returns (SendStickerResponse);
+  rpc SetStickerFavorite(SetStickerFavoriteRequest) returns (SetStickerFavoriteResponse);
 }
 
 message GetStatusRequest {}
@@ -141,7 +146,16 @@ message DaemonEvent {
     AvatarUpdated avatar_updated = 10;
     StickerLibraryChanged sticker_library_changed = 11;
     StickerDownloadChanged sticker_download_changed = 12;
+    MessageDeleted message_deleted = 13;
   }
+}
+
+// Published when a message was removed locally (delete for me). Revocations
+// ("delete for everyone") keep the row and arrive as MessageUpdated with
+// is_revoked set.
+message MessageDeleted {
+  string chat_id = 1;
+  string message_id = 2;
 }
 
 // Published when the set of stickers in a source changed (recents reordered,
@@ -343,6 +357,68 @@ message DownloadMessageMediaResponse {
   Message message = 1;
 }
 
+message GetMessageInfoRequest {
+  string message_id = 1;
+}
+
+// One participant's receipt state for a message. Zero timestamps mean
+// "not yet"; pending members appear with all timestamps zero.
+message ParticipantReceipt {
+  string jid = 1;
+  string display_name = 2;
+  string avatar_local_path = 3;
+  int64 delivered_ts_unix = 4;
+  int64 read_ts_unix = 5;
+  int64 played_ts_unix = 6;
+}
+
+message GetMessageInfoResponse {
+  MessageStatus status = 1;
+  int64 sent_ts_unix = 2;
+  // Aggregate times: for 1:1 the peer's receipt; for groups the time the
+  // last member delivered/read (zero until everyone has).
+  int64 delivered_ts_unix = 3;
+  int64 read_ts_unix = 4;
+  bool is_group = 5;
+  // Group chats only: per-member receipt state, including members with no
+  // receipt yet. Empty for 1:1 chats.
+  repeated ParticipantReceipt receipts = 6;
+}
+
+message DeleteMessageForMeRequest {
+  string message_id = 1;
+}
+
+message DeleteMessageForMeResponse {}
+
+message RevokeMessageRequest {
+  string message_id = 1;
+}
+
+message RevokeMessageResponse {
+  Message message = 1;
+}
+
+message ForwardMessageRequest {
+  string source_message_id = 1;
+  repeated string target_chat_ids = 2;
+}
+
+message ForwardMessageResponse {
+  repeated Message messages = 1;
+}
+
+message SetStickerFavoriteRequest {
+  // Either the sticker's cache key or a sticker message id to resolve it from.
+  string cache_key = 1;
+  string message_id = 2;
+  bool favorite = 3;
+}
+
+message SetStickerFavoriteResponse {
+  Sticker sticker = 1;
+}
+
 message SendTextRequest {
   string chat_id = 1;
   string text = 2;
@@ -493,6 +569,12 @@ message Message {
   // tiebreaker within a single timestamp second so messages keep their true
   // arrival order; the random WhatsApp id carries no chronological meaning.
   int64 sort_seq = 18;
+  // Sticker content hash; lets clients favorite a sticker straight from a
+  // message without re-deriving the key.
+  string media_cache_key = 19;
+  // True when the message was deleted for everyone; content fields are
+  // cleared and clients render a tombstone.
+  bool is_revoked = 20;
 }
 
 message MessageReply {

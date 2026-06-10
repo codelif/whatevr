@@ -36,9 +36,16 @@ Item {
     property string mediaMimeType: ""
     property string mediaLocalPath: ""
     property string mediaThumbnailLocalPath: ""
+    property string mediaCacheKey: ""
     property int mediaIntrinsicWidth: 0
     property int mediaIntrinsicHeight: 0
     property bool mediaAnimated: false
+    property bool isRevoked: false
+    // Multi-message selection (top-bar actions). While the mode is active a
+    // covering handler turns every click into a toggle and swallows the
+    // bubble's normal interactions (links, text selection, reply).
+    property bool selectionModeActive: false
+    property bool selected: false
     property bool pooled: false
     property bool activeInViewport: true
     // True while the list is being flung fast. Full-resolution media decoding is
@@ -78,6 +85,9 @@ Item {
     signal replyRequested(string messageId, string senderName, string text, string mediaKind, string mediaMimeType, bool outgoing)
     signal replyPreviewActivated(string messageId)
     signal readMoreRequested(string messageId)
+    // Position is in this delegate's coordinates; the view maps it.
+    signal contextMenuRequested(real posX, real posY)
+    signal selectionToggleRequested()
 
     onClearSelectionGenerationChanged: {
         if (activeSelectionMessageId.length !== 0 && activeSelectionMessageId === messageId) {
@@ -482,10 +492,102 @@ Item {
 
     TapHandler {
         acceptedButtons: Qt.LeftButton
+        enabled: !root.selectionModeActive
         onDoubleTapped: {
             if (root.messageId.length > 0) {
                 root.requestReply()
             }
+        }
+    }
+
+    // Ctrl+click starts (or extends) multi-selection, WhatsApp-Web style.
+    TapHandler {
+        acceptedButtons: Qt.LeftButton
+        acceptedModifiers: Qt.ControlModifier
+        onTapped: {
+            if (root.messageId.length > 0) {
+                root.selectionToggleRequested()
+            }
+        }
+    }
+
+    // Right-click context menu. A MouseArea (not a TapHandler) so the press is
+    // consumed before the text-selection TextEdits see it.
+    MouseArea {
+        anchors.fill: parent
+        acceptedButtons: Qt.RightButton
+        hoverEnabled: false
+        z: 9
+        onPressed: mouse => {
+            if (root.messageId.length === 0) {
+                mouse.accepted = false
+                return
+            }
+            root.contextMenuRequested(mouse.x, mouse.y)
+            mouse.accepted = true
+        }
+    }
+
+    // Selection-mode click surface: every left click toggles this message and
+    // nothing underneath (links, reply button, image buttons) reacts.
+    MouseArea {
+        anchors.fill: parent
+        visible: root.selectionModeActive
+        acceptedButtons: Qt.LeftButton
+        z: 10
+        cursorShape: Qt.PointingHandCursor
+        onClicked: root.selectionToggleRequested()
+    }
+
+    // Selection tint over the whole row.
+    Rectangle {
+        anchors.fill: parent
+        z: 6
+        visible: root.selectionModeActive && root.selected
+        color: Qt.alpha(Kirigami.Theme.highlightColor, 0.14)
+        radius: Kirigami.Units.cornerRadius
+    }
+
+    // Selection check circle in the free space opposite the bubble (mirrors
+    // the hover reply button's placement), so nothing has to shift.
+    Rectangle {
+        id: selectionCheck
+
+        readonly property real visualX: root.frameless ? stickerSlot.x : bubble.x
+        readonly property real visualY: root.frameless ? stickerSlot.y : bubble.y
+        readonly property real visualWidth: root.frameless ? stickerSlot.width : bubble.width
+        readonly property real visualHeight: root.frameless ? stickerSlot.height : bubble.height
+        readonly property real desiredX: root.outgoing
+                                         ? visualX - width - Kirigami.Units.smallSpacing
+                                         : visualX + visualWidth + Kirigami.Units.smallSpacing
+
+        visible: root.selectionModeActive
+        z: 11
+        x: Math.round(Math.max(root.outerMargin,
+                               Math.min(root.width - root.outerMargin - width, desiredX)))
+        y: Math.round(visualY + Math.max(0, visualHeight - height) / 2)
+        width: Kirigami.Units.iconSizes.smallMedium + Kirigami.Units.smallSpacing
+        height: width
+        radius: width / 2
+        color: root.selected ? Kirigami.Theme.highlightColor : Qt.alpha(Kirigami.Theme.backgroundColor, 0.92)
+        border.color: root.selected ? Kirigami.Theme.highlightColor : Qt.alpha(Kirigami.Theme.textColor, 0.38)
+        border.width: 1
+
+        Behavior on color {
+            ColorAnimation {
+                duration: Kirigami.Units.shortDuration
+                easing.type: Easing.OutCubic
+            }
+        }
+
+        Kirigami.Icon {
+            anchors.centerIn: parent
+            visible: root.selected
+            source: root.tickSource
+            width: Math.round(parent.width * 0.62)
+            height: width
+            color: Kirigami.Theme.highlightedTextColor
+            isMask: true
         }
     }
 
@@ -821,10 +923,11 @@ Item {
                     text: root.body
                     textFormat: Text.PlainText
                     wrapMode: Text.Wrap
-                    color: Kirigami.Theme.textColor
+                    color: root.isRevoked ? Kirigami.Theme.disabledTextColor : Kirigami.Theme.textColor
                     font.family: Kirigami.Theme.defaultFont.family
                     font.pointSize: root.bodyPointSize
                     font.weight: Font.Normal
+                    font.italic: root.isRevoked
 
                     onLineLaidOut: line => {
                         if (line.isLast) {

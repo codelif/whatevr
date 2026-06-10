@@ -65,6 +65,10 @@ public:
         ReplyToIsOutgoingRole,
         WidestLineWidthRole,
         LastLineWidthRole,
+        LinksRole,
+        HasLinksRole,
+        MediaCacheKeyRole,
+        IsRevokedRole,
     };
     Q_ENUM(Role)
 
@@ -82,6 +86,7 @@ public:
     void appendOlderMessages(const QList<whatevr::v1::Message> &messages);
     void clear();
     void upsertMessage(const whatevr::v1::Message &message);
+    bool removeMessage(const QString &messageId);
     bool updateSenderAvatar(const QString &senderId, const QString &avatarLocalPath);
     bool setMediaDownloadState(const QString &messageId, bool downloading, const QString &errorText = QString());
     [[nodiscard]] QStringList uniqueIncomingSenderIds() const;
@@ -92,6 +97,13 @@ public:
     [[nodiscard]] Q_INVOKABLE int indexOf(const QString &messageId) const;
     [[nodiscard]] Q_INVOKABLE QString dateTextForRow(int row) const;
     Q_INVOKABLE bool expandMessageText(const QString &messageId);
+    // WhatsApp-style multi-message copy: chronological "[date, time] Sender:
+    // text" lines. A single message copies its bare full text.
+    [[nodiscard]] Q_INVOKABLE QString copyTextForMessages(const QStringList &messageIds) const;
+    // One message's menu-relevant fields as a map, so QML actions (context
+    // menu, selection toolbar) don't need per-role model plumbing.
+    [[nodiscard]] Q_INVOKABLE QVariantMap messageSnapshot(const QString &messageId) const;
+    [[nodiscard]] Q_INVOKABLE QStringList allMessageIds() const;
 
 Q_SIGNALS:
     // Emitted whenever replaceMessages() swaps in a new displayed set without going
@@ -132,6 +144,9 @@ private:
         // delegate created during scrolling).
         mutable qreal widestLineWidth = 0;
         mutable qreal lastLineWidth = 0;
+        // Clickable links in the full (not collapsed) text; filled in the same
+        // lazy parse pass as the preview cache.
+        mutable QStringList links = {};
         qint64 timestampUnix = 0;
         // Daemon-assigned monotonic insertion order; tiebreaker within a single
         // timestamp second so same-second messages keep their true arrival order.
@@ -145,9 +160,11 @@ private:
         QString mediaMimeType;
         QString mediaLocalPath;
         QString mediaThumbnailLocalPath;
+        QString mediaCacheKey;
         int mediaWidth = 0;
         int mediaHeight = 0;
         bool mediaAnimated = false;
+        bool isRevoked = false;
         bool mediaDownloading = false;
         QString mediaDownloadError;
         QString replyToMessageId;

@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Controls
+import Qt.labs.platform as Platform
 import org.kde.kirigami as Kirigami
 import Whatevr as Whatevr
 
@@ -40,6 +41,21 @@ Item {
     property int clearSelectionGeneration: 0
     property string activeSelectionMessageId: ""
     property var expandedMessageTextIds: ({})
+
+    // Multi-message selection. selectionRevision bumps on every change so
+    // recycled delegates re-evaluate their `selected` binding.
+    property bool selectionActive: false
+    property var selectedIds: ({})
+    property int selectedCount: 0
+    property int selectionRevision: 0
+    // Snapshot of the single selected message (for Reply/Info toolbar actions).
+    readonly property var singleSelectedSnapshot: selectedCount === 1 && selectionRevision >= 0
+        ? messageSnapshot(Object.keys(selectedIds)[0])
+        : null
+
+    // How far back "Delete for everyone" is offered (WhatsApp's revoke window,
+    // a little over two days; the server stays authoritative).
+    readonly property int revokeWindowSeconds: 2 * 24 * 60 * 60
 
     // Floating date indicator shown at the top while scrolling. It mirrors the
     // inline day separators (same pill) and fades out shortly after motion
@@ -130,6 +146,155 @@ Item {
         text: Whatevr.I18n.i18nc("@action:button expand long message", "Read more")
         font.pointSize: Kirigami.Theme.smallFont.pointSize
         font.weight: Font.DemiBold
+    }
+
+    function messageSnapshot(messageId) {
+        if (!list.model || typeof list.model.messageSnapshot !== "function") {
+            return null
+        }
+        const snapshot = list.model.messageSnapshot(messageId)
+        return snapshot && snapshot.messageId ? snapshot : null
+    }
+
+    function isSelected(messageId) {
+        return selectedIds[messageId] === true
+    }
+
+    function toggleSelected(messageId) {
+        if (messageId.length === 0) {
+            return
+        }
+        const next = Object.assign({}, selectedIds)
+        if (next[messageId] === true) {
+            delete next[messageId]
+            selectedCount = Math.max(0, selectedCount - 1)
+        } else {
+            next[messageId] = true
+            selectedCount += 1
+        }
+        selectedIds = next
+        selectionRevision += 1
+        // The mode follows the count: selecting starts it, deselecting the
+        // last message ends it (WhatsApp behaviour).
+        selectionActive = selectedCount > 0
+        if (selectionActive) {
+            clearMessageSelection()
+        }
+    }
+
+    function enterSelection(messageId) {
+        if (!isSelected(messageId)) {
+            toggleSelected(messageId)
+        } else {
+            selectionActive = true
+        }
+    }
+
+    function clearSelection() {
+        selectedIds = ({})
+        selectedCount = 0
+        selectionActive = false
+        selectionRevision += 1
+    }
+
+    function selectAllMessages() {
+        if (!list.model || typeof list.model.allMessageIds !== "function") {
+            return
+        }
+        const ids = list.model.allMessageIds()
+        const next = ({})
+        for (const id of ids) {
+            next[id] = true
+        }
+        selectedIds = next
+        selectedCount = ids.length
+        selectionActive = ids.length > 0
+        selectionRevision += 1
+    }
+
+    function selectedMessageIdList() {
+        return Object.keys(selectedIds)
+    }
+
+    function copySelectedMessages(asMarkdown) {
+        if (!list.model || typeof list.model.copyTextForMessages !== "function") {
+            return
+        }
+        let text = list.model.copyTextForMessages(selectedMessageIdList())
+        if (asMarkdown) {
+            text = Whatevr.AppController.toCommonMark(text)
+        }
+        if (text.length > 0) {
+            Whatevr.AppController.copyToClipboard(text)
+            showNotification(Whatevr.I18n.i18ncp("@info:status", "Message copied", "%1 messages copied", root.selectedCount))
+        }
+        clearSelection()
+    }
+
+    function showNotification(text) {
+        const window = ApplicationWindow.window
+        if (window && typeof window.showPassiveNotification === "function") {
+            window.showPassiveNotification(text, "short")
+        }
+    }
+
+    function replyToSnapshot(snapshot) {
+        if (!snapshot) {
+            return
+        }
+        const senderName = snapshot.isOutgoing
+            ? Whatevr.I18n.i18nc("@label quoted own message sender", "You")
+            : String(snapshot.senderName || "")
+        replyToMessageRequested(String(snapshot.messageId),
+                                senderName,
+                                String(snapshot.textPreview || snapshot.text || ""),
+                                String(snapshot.mediaKind || ""),
+                                String(snapshot.mediaMimeType || ""),
+                                Boolean(snapshot.isOutgoing))
+    }
+
+    function canRevokeSnapshot(snapshot) {
+        return snapshot !== null
+               && Boolean(snapshot.isOutgoing)
+               && !snapshot.isRevoked
+               && (Date.now() / 1000) - Number(snapshot.timestampUnix || 0) < revokeWindowSeconds
+    }
+
+    function openMessageInfo(messageId) {
+        messageInfoDialog.openFor(messageId)
+    }
+
+    function confirmDeleteSelection(forEveryone) {
+        if (selectedCount > 0) {
+            deleteConfirmDialog.openFor(selectedMessageIdList(), forEveryone)
+        }
+    }
+
+    // Whether every selected message can still be deleted for everyone.
+    function canRevokeSelection() {
+        const ids = selectedMessageIdList()
+        if (ids.length === 0) {
+            return false
+        }
+        for (const id of ids) {
+            if (!canRevokeSnapshot(messageSnapshot(id))) {
+                return false
+            }
+        }
+        return true
+    }
+
+    function openForwardPicker(messageIds) {
+        forwardChatPicker.openFor(messageIds)
+    }
+
+    function openContextMenu(delegate, posX, posY) {
+        const snapshot = messageSnapshot(delegate.messageId)
+        if (!snapshot) {
+            return
+        }
+        const pos = delegate.mapToItem(list, posX, posY)
+        messageContextMenu.openFor(snapshot, pos.x, pos.y)
     }
 
     function clearMessageSelection() {
@@ -417,6 +582,7 @@ Item {
         if (pendingJumpMessageId.length > 0) {
             finishPendingJump()
         }
+        clearSelection()
         expandedMessageTextIds = ({})
         pendingNewestMessageCount = 0
         atNewest = true
@@ -571,9 +737,13 @@ Item {
             mediaMimeType: String(model.mediaMimeType || "")
             mediaLocalPath: String(model.mediaLocalPath || "")
             mediaThumbnailLocalPath: String(model.mediaThumbnailLocalPath || "")
+            mediaCacheKey: String(model.mediaCacheKey || "")
             mediaIntrinsicWidth: Number(model.mediaWidth || 0)
             mediaIntrinsicHeight: Number(model.mediaHeight || 0)
             mediaAnimated: Boolean(model.mediaAnimated)
+            isRevoked: Boolean(model.isRevoked)
+            selectionModeActive: root.selectionActive
+            selected: root.selectionRevision >= 0 && root.isSelected(messageId)
             pooled: pooledByListView
             activeInViewport: insideViewport
             fastFlicking: list.fastFlicking
@@ -593,6 +763,8 @@ Item {
             onReplyRequested: (messageId, senderName, text, mediaKind, mediaMimeType, outgoing) => root.replyToMessageRequested(messageId, senderName, text, mediaKind, mediaMimeType, outgoing)
             onReplyPreviewActivated: messageId => root.jumpToReplyTarget(messageId)
             onReadMoreRequested: messageId => root.expandMessageText(messageId)
+            onContextMenuRequested: (posX, posY) => root.openContextMenu(messageDelegate, posX, posY)
+            onSelectionToggleRequested: root.toggleSelected(messageDelegate.messageId)
 
             ListView.onPooled: {
                 pooledByListView = true
@@ -840,6 +1012,322 @@ Item {
                 duration: Kirigami.Units.longDuration
                 easing.type: Easing.OutCubic
             }
+        }
+    }
+
+    Connections {
+        target: Whatevr.AppController
+
+        function onMessageActionFailed(errorText) {
+            root.showNotification(errorText)
+        }
+
+        function onMessageForwarded(chatCount) {
+            root.showNotification(Whatevr.I18n.i18ncp("@info:status", "Forwarded to %1 chat", "Forwarded to %1 chats", chatCount))
+        }
+    }
+
+    Connections {
+        target: Whatevr.AppController.stickers
+
+        function onStickerFavoriteFailed(errorText) {
+            root.showNotification(errorText)
+        }
+    }
+
+    Menu {
+        id: messageContextMenu
+
+        // Snapshot of the right-clicked message (MessageListModel::messageSnapshot).
+        property var ctx: null
+        // Favorite state is re-read when the lazily fetched key set changes.
+        property bool ctxStickerFavorite: false
+        // The MenuItem QQC2 generates for the link submenu; resolved once so
+        // its visibility can track the link count (single links get a flat item).
+        property Item linkSubMenuItem: null
+
+        readonly property bool ctxValid: ctx !== null
+        readonly property string ctxMessageId: ctxValid ? String(ctx.messageId) : ""
+        readonly property string ctxText: ctxValid ? String(ctx.text || "") : ""
+        readonly property bool ctxHasRichText: ctxValid && Boolean(ctx.hasRichText)
+        readonly property var ctxLinks: ctxValid && ctx.links ? ctx.links : []
+        readonly property bool ctxOutgoing: ctxValid && Boolean(ctx.isOutgoing)
+        readonly property bool ctxIsRevoked: ctxValid && Boolean(ctx.isRevoked)
+        readonly property string ctxMediaKind: ctxValid ? String(ctx.mediaKind || "") : ""
+        readonly property string ctxMediaMimeType: ctxValid ? String(ctx.mediaMimeType || "") : ""
+        readonly property string ctxMediaLocalPath: ctxValid ? String(ctx.mediaLocalPath || "") : ""
+        readonly property string ctxMediaCacheKey: ctxValid ? String(ctx.mediaCacheKey || "") : ""
+        readonly property bool ctxIsSticker: ctxMediaKind === "sticker"
+        readonly property bool ctxIsImage: !ctxIsSticker && (ctxMediaKind === "image" || ctxMediaMimeType.startsWith("image/"))
+        readonly property bool ctxHasMediaFile: ctxMediaLocalPath.length > 0
+        readonly property bool ctxHasText: ctxText.length > 0 && !ctxIsRevoked
+        readonly property bool ctxCanRevoke: root.canRevokeSnapshot(ctx)
+
+        parent: list
+
+        function openFor(snapshot, x, y) {
+            ctx = snapshot
+            ctxStickerFavorite = ctxIsSticker && ctxMediaCacheKey.length > 0
+                                 && Whatevr.AppController.stickers.isStickerFavorite(ctxMediaCacheKey)
+            if (linkSubMenuItem) {
+                linkSubMenuItem.visible = ctxLinks.length > 1
+            }
+            this.x = x
+            this.y = y
+            open()
+        }
+
+        function linkLabel(link) {
+            return link.length > 48 ? link.substring(0, 45) + "…" : link
+        }
+
+        Component.onCompleted: {
+            for (let i = 0; i < count; ++i) {
+                const item = itemAt(i)
+                if (item && item.subMenu === copyLinkSubMenu) {
+                    linkSubMenuItem = item
+                    item.visible = false
+                    break
+                }
+            }
+        }
+
+        Connections {
+            target: Whatevr.AppController.stickers
+
+            function onFavoritesChanged() {
+                if (messageContextMenu.ctxIsSticker && messageContextMenu.ctxMediaCacheKey.length > 0) {
+                    messageContextMenu.ctxStickerFavorite =
+                        Whatevr.AppController.stickers.isStickerFavorite(messageContextMenu.ctxMediaCacheKey)
+                }
+            }
+        }
+
+        MenuItem {
+            icon.name: "mail-replied-symbolic"
+            text: Whatevr.I18n.i18nc("@action:inmenu", "Reply")
+            visible: !messageContextMenu.ctxIsRevoked
+            onTriggered: root.replyToSnapshot(messageContextMenu.ctx)
+        }
+
+        MenuItem {
+            icon.name: "mail-forward-symbolic"
+            text: Whatevr.I18n.i18nc("@action:inmenu", "Forward…")
+            visible: !messageContextMenu.ctxIsRevoked
+            onTriggered: root.openForwardPicker([messageContextMenu.ctxMessageId])
+        }
+
+        MenuSeparator {
+            visible: messageContextMenu.ctxHasText
+                     || messageContextMenu.ctxLinks.length > 0
+                     || (messageContextMenu.ctxHasMediaFile && (messageContextMenu.ctxIsImage || messageContextMenu.ctxIsSticker))
+        }
+
+        MenuItem {
+            icon.name: "edit-copy-symbolic"
+            text: Whatevr.I18n.i18nc("@action:inmenu copies the whole message text", "Copy Text")
+            visible: messageContextMenu.ctxHasText
+            onTriggered: {
+                Whatevr.AppController.copyToClipboard(messageContextMenu.ctxText)
+                root.showNotification(Whatevr.I18n.i18nc("@info:status", "Text copied"))
+            }
+        }
+
+        MenuItem {
+            icon.name: "text-markdown-symbolic"
+            text: Whatevr.I18n.i18nc("@action:inmenu", "Copy as Markdown")
+            visible: messageContextMenu.ctxHasText && messageContextMenu.ctxHasRichText
+            onTriggered: {
+                Whatevr.AppController.copyToClipboard(Whatevr.AppController.toCommonMark(messageContextMenu.ctxText))
+                root.showNotification(Whatevr.I18n.i18nc("@info:status", "Markdown copied"))
+            }
+        }
+
+        MenuItem {
+            icon.name: "edit-link-symbolic"
+            text: Whatevr.I18n.i18nc("@action:inmenu copies the message's only link", "Copy Link")
+            visible: messageContextMenu.ctxLinks.length === 1
+            onTriggered: {
+                Whatevr.AppController.copyToClipboard(String(messageContextMenu.ctxLinks[0]))
+                root.showNotification(Whatevr.I18n.i18nc("@info:status", "Link copied"))
+            }
+        }
+
+        Menu {
+            id: copyLinkSubMenu
+
+            title: Whatevr.I18n.i18nc("@action:inmenu submenu of the message's links", "Copy Link")
+            icon.name: "edit-link-symbolic"
+
+            MenuItem {
+                text: Whatevr.I18n.i18nc("@action:inmenu", "Copy All Links")
+                onTriggered: {
+                    Whatevr.AppController.copyToClipboard(messageContextMenu.ctxLinks.join("\n"))
+                    root.showNotification(Whatevr.I18n.i18nc("@info:status", "Links copied"))
+                }
+            }
+
+            MenuSeparator {}
+
+            Instantiator {
+                model: messageContextMenu.ctxLinks.length > 1
+                       ? messageContextMenu.ctxLinks.slice(0, 10)
+                       : []
+                delegate: MenuItem {
+                    required property string modelData
+
+                    text: messageContextMenu.linkLabel(modelData)
+                    onTriggered: {
+                        Whatevr.AppController.copyToClipboard(modelData)
+                        root.showNotification(Whatevr.I18n.i18nc("@info:status", "Link copied"))
+                    }
+                }
+                onObjectAdded: (index, object) => copyLinkSubMenu.insertItem(index + 2, object)
+                onObjectRemoved: (index, object) => copyLinkSubMenu.removeItem(object)
+            }
+        }
+
+        MenuItem {
+            icon.name: "edit-copy-symbolic"
+            text: Whatevr.I18n.i18nc("@action:inmenu", "Copy Image")
+            visible: (messageContextMenu.ctxIsImage || messageContextMenu.ctxIsSticker)
+                     && messageContextMenu.ctxHasMediaFile
+            onTriggered: {
+                Whatevr.AppController.copyImageToClipboard(messageContextMenu.ctxMediaLocalPath)
+                root.showNotification(Whatevr.I18n.i18nc("@info:status", "Image copied"))
+            }
+        }
+
+        MenuItem {
+            icon.name: "document-save-symbolic"
+            text: Whatevr.I18n.i18nc("@action:inmenu", "Save As…")
+            visible: messageContextMenu.ctxHasMediaFile
+            onTriggered: saveMediaDialog.openFor(messageContextMenu.ctxMediaLocalPath)
+        }
+
+        MenuSeparator {
+            visible: messageContextMenu.ctxIsSticker && messageContextMenu.ctxMediaCacheKey.length > 0
+        }
+
+        MenuItem {
+            icon.name: messageContextMenu.ctxStickerFavorite ? "starred-symbolic" : "non-starred-symbolic"
+            text: messageContextMenu.ctxStickerFavorite
+                  ? Whatevr.I18n.i18nc("@action:inmenu", "Remove from Favorite Stickers")
+                  : Whatevr.I18n.i18nc("@action:inmenu", "Add to Favorite Stickers")
+            visible: messageContextMenu.ctxIsSticker && messageContextMenu.ctxMediaCacheKey.length > 0
+            onTriggered: Whatevr.AppController.stickers.setStickerFavorite(messageContextMenu.ctxMediaCacheKey,
+                                                                           messageContextMenu.ctxMessageId,
+                                                                           !messageContextMenu.ctxStickerFavorite)
+        }
+
+        MenuSeparator {}
+
+        MenuItem {
+            icon.name: "edit-select-all-symbolic"
+            text: Whatevr.I18n.i18nc("@action:inmenu start multi-message selection", "Select")
+            onTriggered: root.enterSelection(messageContextMenu.ctxMessageId)
+        }
+
+        MenuItem {
+            icon.name: "documentinfo-symbolic"
+            text: Whatevr.I18n.i18nc("@action:inmenu delivery/read details", "Info")
+            visible: messageContextMenu.ctxOutgoing
+            onTriggered: root.openMessageInfo(messageContextMenu.ctxMessageId)
+        }
+
+        MenuSeparator {}
+
+        MenuItem {
+            icon.name: "edit-delete-symbolic"
+            text: Whatevr.I18n.i18nc("@action:inmenu removes the message locally", "Delete for Me…")
+            onTriggered: deleteConfirmDialog.openFor([messageContextMenu.ctxMessageId], false)
+        }
+
+        MenuItem {
+            icon.name: "edit-delete-remove-symbolic"
+            text: Whatevr.I18n.i18nc("@action:inmenu WhatsApp revoke", "Delete for Everyone…")
+            visible: messageContextMenu.ctxCanRevoke
+            onTriggered: deleteConfirmDialog.openFor([messageContextMenu.ctxMessageId], true)
+        }
+    }
+
+    Platform.FileDialog {
+        id: saveMediaDialog
+
+        property string sourcePath: ""
+
+        fileMode: Platform.FileDialog.SaveFile
+
+        function openFor(path) {
+            sourcePath = path
+            const base = path.substring(path.lastIndexOf("/") + 1)
+            currentFile = Platform.StandardPaths.writableLocation(Platform.StandardPaths.PicturesLocation) + "/" + base
+            open()
+        }
+
+        onAccepted: {
+            if (Whatevr.AppController.saveMediaAs(sourcePath, file)) {
+                root.showNotification(Whatevr.I18n.i18nc("@info:status", "File saved"))
+            }
+        }
+    }
+
+    Kirigami.PromptDialog {
+        id: deleteConfirmDialog
+
+        property var messageIds: []
+        property bool forEveryone: false
+
+        function openFor(ids, everyone) {
+            messageIds = ids
+            forEveryone = everyone
+            open()
+        }
+
+        title: forEveryone
+               ? Whatevr.I18n.i18nc("@title:dialog", "Delete for everyone?")
+               : Whatevr.I18n.i18ncp("@title:dialog", "Delete message?", "Delete %1 messages?", messageIds.length)
+        subtitle: forEveryone
+                  ? Whatevr.I18n.i18ncp("@info", "The message will be deleted for everyone in this chat.",
+                                        "%1 messages will be deleted for everyone in this chat.", messageIds.length)
+                  : Whatevr.I18n.i18ncp("@info", "The message will only be removed on this device.",
+                                        "%1 messages will only be removed on this device.", messageIds.length)
+        standardButtons: Kirigami.Dialog.Cancel
+        showCloseButton: false
+
+        customFooterActions: [
+            Kirigami.Action {
+                text: deleteConfirmDialog.forEveryone
+                      ? Whatevr.I18n.i18nc("@action:button", "Delete for Everyone")
+                      : Whatevr.I18n.i18nc("@action:button", "Delete for Me")
+                icon.name: "edit-delete-symbolic"
+                onTriggered: {
+                    for (const id of deleteConfirmDialog.messageIds) {
+                        if (deleteConfirmDialog.forEveryone) {
+                            Whatevr.AppController.revokeMessage(id)
+                        } else {
+                            Whatevr.AppController.deleteMessageForMe(id)
+                        }
+                    }
+                    root.clearSelection()
+                    deleteConfirmDialog.close()
+                }
+            }
+        ]
+    }
+
+    MessageInfoDialog {
+        id: messageInfoDialog
+    }
+
+    ForwardChatPickerDialog {
+        id: forwardChatPicker
+
+        onForwardConfirmed: (messageIds, chatIds) => {
+            for (const messageId of messageIds) {
+                Whatevr.AppController.forwardMessage(messageId, chatIds)
+            }
+            root.clearSelection()
         }
     }
 }
