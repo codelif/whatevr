@@ -92,6 +92,10 @@ Item {
         anchors.fill: parent
         acceptedButtons: Qt.LeftButton
         enabled: root.scrollable
+        // Keep the grab for the whole drag: the message view's full-area
+        // drag-eater DragHandler would otherwise take over once the pointer
+        // passes the drag threshold, freezing the thumb after a few pixels.
+        preventStealing: true
 
         onPressed: mouse => {
             const within = mouse.y >= thumb.y && mouse.y <= thumb.y + thumb.height
