@@ -1,6 +1,7 @@
 #include "messagelistmodel.h"
 
 #include <QDateTime>
+#include <QElapsedTimer>
 #include <QFontMetricsF>
 #include <QGuiApplication>
 #include <QSet>
@@ -113,6 +114,36 @@ std::pair<qreal, qreal> measureLineWidths(const QString &text)
 MessageListModel::MessageListModel(QObject *parent)
     : QAbstractListModel(parent)
 {
+    // Interval 0: one slice per event-loop pass, yielding to input and render
+    // work between slices.
+    m_warmupTimer.setInterval(0);
+    connect(&m_warmupTimer, &QTimer::timeout, this, &MessageListModel::parseWarmupTick);
+}
+
+void MessageListModel::scheduleParseWarmup(int fromRow)
+{
+    m_warmupCursor = std::clamp(std::min(m_warmupCursor, fromRow), 0, static_cast<int>(m_messages.size()));
+    if (!m_warmupTimer.isActive() && m_warmupCursor < m_messages.size()) {
+        m_warmupTimer.start();
+    }
+}
+
+void MessageListModel::parseWarmupTick()
+{
+    // ~2 ms per slice: a full 80-row page clears within a few frames without
+    // ever blocking one. Rows a delegate touched first are no-ops here, and
+    // rows parsed here are no-ops later in data() — the cache fill must never
+    // emit signals, so warm-up is invisible to the view.
+    QElapsedTimer budget;
+    budget.start();
+    while (m_warmupCursor < m_messages.size()) {
+        ensurePreviewParsed(m_messages.at(m_warmupCursor));
+        ++m_warmupCursor;
+        if (budget.nsecsElapsed() > 2'000'000) {
+            return;
+        }
+    }
+    m_warmupTimer.stop();
 }
 
 int MessageListModel::rowCount(const QModelIndex &parent) const
@@ -356,6 +387,9 @@ void MessageListModel::replaceMessages(const QList<whatevr::v1::Message> &messag
         if (firstChanged >= 0) {
             emitGroupingRolesChanged(firstChanged, lastChanged);
         }
+        // Replaced rows lost their parsed state; re-warm after first paint has
+        // had a frame to settle (a chat switch typically lands here).
+        QTimer::singleShot(50, this, [this] { scheduleParseWarmup(0); });
         return;
     }
 
@@ -388,6 +422,8 @@ void MessageListModel::replaceMessages(const QList<whatevr::v1::Message> &messag
         m_messages = std::move(next);
         rebuildIndex();
         endResetModel();
+        m_warmupCursor = 0;
+        QTimer::singleShot(50, this, [this] { scheduleParseWarmup(0); });
         return;
     }
 
@@ -451,6 +487,7 @@ void MessageListModel::replaceMessages(const QList<whatevr::v1::Message> &messag
     if (maxTouched >= 0) {
         emitGroupingRolesChanged(minTouched, maxTouched);
     }
+    QTimer::singleShot(50, this, [this] { scheduleParseWarmup(0); });
 }
 
 void MessageListModel::appendOlderMessages(const QList<whatevr::v1::Message> &messages)
@@ -509,6 +546,8 @@ void MessageListModel::appendOlderMessages(const QList<whatevr::v1::Message> &me
     // Refresh grouping roles around the seam: the previously-oldest message now
     // has an older neighbour and may no longer start a sender group.
     emitGroupingRolesChanged(firstNew - 1, firstNew);
+    // No delay: the user is scrolling toward these rows right now.
+    scheduleParseWarmup(firstNew);
 }
 
 void MessageListModel::clear()
@@ -521,6 +560,8 @@ void MessageListModel::clear()
     m_messages.clear();
     m_messageIndexById.clear();
     endResetModel();
+    m_warmupTimer.stop();
+    m_warmupCursor = 0;
 }
 
 void MessageListModel::upsertMessage(const whatevr::v1::Message &message)
@@ -556,6 +597,7 @@ void MessageListModel::upsertMessage(const whatevr::v1::Message &message)
     rebuildIndex();
     endInsertRows();
     emitGroupingRolesChanged(insertAt - 1, insertAt + 1);
+    scheduleParseWarmup(insertAt);
 }
 
 bool MessageListModel::updateSenderAvatar(const QString &senderId, const QString &avatarLocalPath)

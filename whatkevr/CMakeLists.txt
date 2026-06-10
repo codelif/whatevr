@@ -150,6 +150,7 @@ qt_add_qml_module(whatkevr
         src/qml/components/HistorySyncStrip.qml
         src/qml/components/KineticWheelScroller.qml
         src/qml/components/DiscreetScrollBar.qml
+        src/qml/components/RowScrollBar.qml
         src/qml/components/ReplyPreview.qml
         src/qml/components/RoundedImage.qml
         src/qml/components/ChatBubble.qml

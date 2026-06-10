@@ -6,6 +6,7 @@
 #include <QList>
 #include <QString>
 #include <QStringList>
+#include <QTimer>
 
 #include <cstdint>
 
@@ -166,10 +167,17 @@ private:
     [[nodiscard]] QString cachedRelativeDate(const MessageItem &message) const;
     void rebuildIndex();
     void emitGroupingRolesChanged(int firstRow, int lastRow);
+    void scheduleParseWarmup(int fromRow);
+    void parseWarmupTick();
 
     QList<MessageItem> m_messages;
     QHash<QString, int> m_messageIndexById;
     bool m_groupChat = false;
+    // Idle warm-up of the lazy preview/markup cache: parses unparsed rows in
+    // small time-budgeted slices between event-loop passes, so scrolling never
+    // pays ensurePreviewParsed() inside a frame. Never emits signals.
+    QTimer m_warmupTimer;
+    int m_warmupCursor = 0;
     // Relative date strings ("Today", "Monday", …) memoized per local Julian
     // day; data() is hot during scrolling and formatRelativeDate allocates.
     // The cache resets when the calendar day rolls over.
