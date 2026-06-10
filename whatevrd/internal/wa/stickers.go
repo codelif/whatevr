@@ -41,7 +41,11 @@ const (
 	stickerStoreIndexTTL   = 24 * time.Hour
 	stickerStoreFetchedKey = "sticker_store_fetched_at"
 
-	stickerDownloadConcurrency = 4
+	// The frontend bounds itself to a small in-flight download pool, so the
+	// daemon only needs enough parallelism to keep that pool fed; more just
+	// holds gRPC streams open longer.
+	stickerDownloadConcurrency = 8
+	stickerDownloadTimeout     = 30 * time.Second
 	stickerLibraryDebounce     = 250 * time.Millisecond
 
 	// How long a cached upload (our own media keys) is trusted for re-sends
@@ -464,11 +468,17 @@ func (c *Client) ensureStickerFileLocked(ctx context.Context, cacheKey string, n
 		return appstore.Sticker{}, ctx.Err()
 	}
 
+	// Bound the network fetch so a hung media server frees this semaphore slot
+	// (and the caller's gRPC stream) instead of blocking the picker's download
+	// pool indefinitely.
+	dlCtx, cancel := context.WithTimeout(ctx, stickerDownloadTimeout)
+	defer cancel()
+
 	var downloadable whatsmeow.DownloadableMessage = &stickerMsg
 	if stickerMsg.GetDirectPath() != "" && isPlaceholderMediaURL(stickerMsg.GetURL()) {
 		downloadable = stickerDownloadable{StickerMessage: &stickerMsg}
 	}
-	data, err := client.Download(ctx, downloadable)
+	data, err := client.Download(dlCtx, downloadable)
 	if err != nil {
 		return appstore.Sticker{}, grpcstatus.Errorf(codes.Unavailable, "download sticker: %v", err)
 	}

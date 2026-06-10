@@ -17,8 +17,12 @@ import (
 )
 
 const (
-	maxRPCMessageBytes      = 16 * 1024 * 1024
-	maxConcurrentRPCStreams = 32
+	maxRPCMessageBytes = 16 * 1024 * 1024
+	// The frontend multiplexes every service (including a handful of long-lived
+	// subscription streams) over one HTTP/2 connection, and bursty work like
+	// the sticker picker can briefly want many concurrent unary calls. Keep
+	// generous headroom so those bursts never starve the channel.
+	maxConcurrentRPCStreams = 128
 	gracefulStopTimeout     = 2 * time.Second
 )
 

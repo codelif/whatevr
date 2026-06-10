@@ -68,9 +68,12 @@ func (db *DB) migrate(ctx context.Context) error {
 		// FULL would fsync every commit, which dominates history-sync writes.
 		`PRAGMA synchronous = NORMAL`,
 		`PRAGMA foreign_keys = ON`,
-		`PRAGMA temp_store = MEMORY`,
-		`PRAGMA cache_size = -16000`,
-		`PRAGMA mmap_size = 268435456`,
+		// Disable mmap so DB pages are not faulted into process RSS; reads go
+		// through pread() and the kernel page cache instead. With a large DB an
+		// mmap would inflate RSS by hundreds of MB for little read benefit. The
+		// default ~2MB page cache and on-disk temp store are likewise kept to
+		// hold steady-state memory down.
+		`PRAGMA mmap_size = 0`,
 	} {
 		if _, err := db.conn.ExecContext(ctx, statement); err != nil {
 			return err

@@ -329,6 +329,7 @@ Item {
                     required property int index
                     required property string cacheKey
                     required property string localPath
+                    required property string mimeType
                     required property bool animated
                     required property bool downloaded
                     required property string emojis
@@ -336,6 +337,12 @@ Item {
                     readonly property string description: accessText.length > 0
                                                           ? (emojis.length > 0 ? accessText + "  " + emojis : accessText)
                                                           : emojis
+                    // Three sticker kinds, matching ChatBubble: Lottie JSON,
+                    // animated WebP/GIF, and static images. Animated WebP/GIF
+                    // carry is_animated but must NOT go to RlottieSticker (it
+                    // only parses Lottie JSON and would render blank).
+                    readonly property bool isLottie: mimeType === "application/was"
+                    readonly property bool isAnimatedImage: (animated || mimeType === "image/gif") && !isLottie
 
                     width: stickerGrid.cellWidth
                     height: stickerGrid.cellHeight
@@ -366,8 +373,8 @@ Item {
                     Image {
                         anchors.fill: parent
                         anchors.margins: Kirigami.Units.smallSpacing
-                        visible: stickerTile.downloaded && !stickerTile.animated
-                        source: stickerTile.downloaded && !stickerTile.animated
+                        visible: stickerTile.downloaded && !stickerTile.isLottie && !stickerTile.isAnimatedImage
+                        source: visible
                                 ? Qt.resolvedUrl("file://" + stickerTile.localPath)
                                 : ""
                         sourceSize.width: pane.stickerDecodeSize
@@ -377,11 +384,29 @@ Item {
                         cache: true
                     }
 
+                    // Animated WebP / GIF. The first frame shows at rest so the
+                    // tile is never blank; animate on hover only to keep a full
+                    // grid cheap.
+                    AnimatedImage {
+                        anchors.fill: parent
+                        anchors.margins: Kirigami.Units.smallSpacing
+                        visible: stickerTile.downloaded && stickerTile.isAnimatedImage
+                        source: visible
+                                ? Qt.resolvedUrl("file://" + stickerTile.localPath)
+                                : ""
+                        playing: stickerHover.hovered && status === AnimatedImage.Ready
+                        sourceSize.width: pane.stickerDecodeSize
+                        sourceSize.height: pane.stickerDecodeSize
+                        fillMode: Image.PreserveAspectFit
+                        asynchronous: true
+                        cache: false
+                    }
+
                     Whatevr.RlottieSticker {
                         anchors.fill: parent
                         anchors.margins: Kirigami.Units.smallSpacing
-                        visible: stickerTile.downloaded && stickerTile.animated
-                        source: stickerTile.downloaded && stickerTile.animated
+                        visible: stickerTile.downloaded && stickerTile.isLottie
+                        source: visible
                                 ? Qt.resolvedUrl("file://" + stickerTile.localPath)
                                 : ""
                         // First frame renders at rest; animate on hover only so a

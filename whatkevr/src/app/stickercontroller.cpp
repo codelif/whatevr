@@ -2,6 +2,9 @@
 
 #include <QGrpcCallReply>
 #include <QTimer>
+#include <QtGrpc/qgrpccalloptions.h>
+
+#include <chrono>
 
 #include <KLocalizedString>
 
@@ -16,6 +19,13 @@ using StickerSource = whatevr::v1::StickerSourceGadget::StickerSource;
 namespace {
 constexpr int kSearchDebounceMs = 150;
 constexpr int kDefaultListLimit = 200;
+constexpr int kMaxDownloadRetries = 3;
+constexpr int kDownloadRetryBaseMs = 400;
+// How many DownloadSticker RPCs may be in flight at once. The picker fires a
+// request per visible tile, but the daemon caps the shared HTTP/2 channel at a
+// modest concurrent-stream budget that the long-lived event streams already
+// dip into; a small pool keeps downloads flowing without starving it.
+constexpr int kMaxInFlightDownloads = 6;
 }
 
 StickerController::StickerController(AppController *appController)
@@ -228,6 +238,28 @@ void StickerController::setPackInstalled(const QString &packId, bool installed)
 
 void StickerController::requestDownload(const QString &cacheKey)
 {
+    if (!clientReady() || cacheKey.isEmpty() || m_downloadReplies.contains(cacheKey)
+        || m_downloadQueued.contains(cacheKey)) {
+        return;
+    }
+    // Prepend so the most recently requested (currently visible) tiles are
+    // served first as the user scrolls; stale off-screen requests sink.
+    m_downloadQueue.prepend(cacheKey);
+    m_downloadQueued.insert(cacheKey);
+    pumpDownloadQueue();
+}
+
+void StickerController::pumpDownloadQueue()
+{
+    while (m_downloadReplies.size() < kMaxInFlightDownloads && !m_downloadQueue.isEmpty()) {
+        const QString cacheKey = m_downloadQueue.takeFirst();
+        m_downloadQueued.remove(cacheKey);
+        startDownload(cacheKey);
+    }
+}
+
+void StickerController::startDownload(const QString &cacheKey)
+{
     if (!clientReady() || cacheKey.isEmpty() || m_downloadReplies.contains(cacheKey)) {
         return;
     }
@@ -235,7 +267,13 @@ void StickerController::requestDownload(const QString &cacheKey)
     DownloadStickerRequest request;
     request.setCacheKey(cacheKey);
 
-    std::shared_ptr<QGrpcCallReply> reply = m_client->DownloadSticker(request);
+    // Bound each call so a hung media fetch frees its pool slot (and stream)
+    // instead of stalling the whole queue.
+    using namespace std::chrono_literals;
+    QGrpcCallOptions options;
+    options.setDeadlineTimeout(30s);
+
+    std::shared_ptr<QGrpcCallReply> reply = m_client->DownloadSticker(request, options);
     m_downloadReplies.insert(cacheKey, reply);
     auto *rawReply = reply.get();
     connect(rawReply, &QGrpcCallReply::finished, this, [this, rawReply, cacheKey](const QGrpcStatus &status) {
@@ -244,13 +282,48 @@ void StickerController::requestDownload(const QString &cacheKey)
             return;
         }
         if (!status.isOk()) {
-            return;
+            scheduleDownloadRetry(cacheKey, status.code());
+        } else {
+            // Succeeded: clear the retry budget for this key.
+            m_downloadAttempts.remove(cacheKey);
+            if (const auto response = rawReply->read<DownloadStickerResponse>(); response && response->hasSticker()) {
+                // The response key may differ from the requested one when a
+                // provisional favorite was canonicalized during download.
+                m_stickerModel->updateSticker(response->sticker(), cacheKey);
+            }
         }
-        if (const auto response = rawReply->read<DownloadStickerResponse>(); response && response->hasSticker()) {
-            // The response key may differ from the requested one when a
-            // provisional favorite was canonicalized during download.
-            m_stickerModel->updateSticker(response->sticker(), cacheKey);
-        }
+        // A slot freed up; start the next queued download.
+        pumpDownloadQueue();
+    });
+}
+
+void StickerController::scheduleDownloadRetry(const QString &cacheKey, QtGrpc::StatusCode code)
+{
+    // Only transient failures are worth retrying; a missing sticker or bad
+    // request will never succeed on a retry.
+    switch (code) {
+    case QtGrpc::StatusCode::Unavailable:
+    case QtGrpc::StatusCode::Aborted:
+    case QtGrpc::StatusCode::DeadlineExceeded:
+    case QtGrpc::StatusCode::Unknown:
+    case QtGrpc::StatusCode::ResourceExhausted:
+        break;
+    default:
+        m_downloadAttempts.remove(cacheKey);
+        return;
+    }
+
+    const int attempt = m_downloadAttempts.value(cacheKey, 0);
+    if (attempt >= kMaxDownloadRetries) {
+        m_downloadAttempts.remove(cacheKey);
+        return;
+    }
+    m_downloadAttempts.insert(cacheKey, attempt + 1);
+
+    // Backoff: 400ms, 1200ms, 2400ms.
+    const int delayMs = kDownloadRetryBaseMs * (attempt + 1) * (attempt + 1);
+    QTimer::singleShot(delayMs, this, [this, cacheKey] {
+        requestDownload(cacheKey);
     });
 }
 
