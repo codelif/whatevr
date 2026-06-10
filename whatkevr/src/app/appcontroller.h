@@ -62,6 +62,7 @@ enum class DaemonState : int32_t;
 class ChatListModel;
 class EmojiModel;
 class MessageListModel;
+class StickerController;
 
 class AppController final : public QObject
 {
@@ -96,6 +97,7 @@ class AppController final : public QObject
     Q_PROPERTY(bool chatsEmpty READ chatsEmpty NOTIFY chatsChanged FINAL)
     Q_PROPERTY(QAbstractItemModel *messageListModel READ messageListModel CONSTANT FINAL)
     Q_PROPERTY(QAbstractItemModel *emojiModel READ emojiModel CONSTANT FINAL)
+    Q_PROPERTY(QObject *stickers READ stickers CONSTANT FINAL)
     Q_PROPERTY(bool messagesLoading READ messagesLoading NOTIFY messagesChanged FINAL)
     Q_PROPERTY(bool olderMessagesLoading READ olderMessagesLoading NOTIFY messagesChanged FINAL)
     Q_PROPERTY(bool canLoadOlderMessages READ canLoadOlderMessages NOTIFY messagesChanged FINAL)
@@ -150,6 +152,7 @@ public:
     [[nodiscard]] bool chatsEmpty() const;
     [[nodiscard]] QAbstractItemModel *messageListModel() const;
     [[nodiscard]] QAbstractItemModel *emojiModel() const;
+    [[nodiscard]] QObject *stickers() const;
     [[nodiscard]] bool messagesLoading() const;
     [[nodiscard]] bool olderMessagesLoading() const;
     [[nodiscard]] bool canLoadOlderMessages() const;
@@ -316,6 +319,7 @@ private:
     ChatListModel *m_chatListModel = nullptr;
     EmojiModel *m_emojiModel = nullptr;
     MessageListModel *m_messageListModel = nullptr;
+    StickerController *m_stickerController = nullptr;
 
     std::shared_ptr<QAbstractGrpcChannel> m_channel;
     std::unique_ptr<whatevr::v1::DaemonService::Client> m_daemonClient;

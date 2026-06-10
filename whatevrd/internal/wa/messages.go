@@ -71,6 +71,7 @@ func (c *Client) processHistorySyncData(ctx context.Context, data *waHistorySync
 		return
 	}
 	c.updateChatNamesFromHistorySync(ctx, &events.HistorySync{Data: data})
+	c.ingestRecentStickers(ctx, data.GetRecentStickers())
 
 	syncType := historySyncType(data.GetSyncType())
 	progressPercent := data.GetProgress()

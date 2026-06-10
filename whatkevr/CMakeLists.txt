@@ -81,12 +81,18 @@ qt_add_executable(whatkevr
     src/main.cpp
     src/app/appcontroller.cpp
     src/app/appcontroller.h
+    src/app/stickercontroller.cpp
+    src/app/stickercontroller.h
     src/models/chatlistmodel.cpp
     src/models/chatlistmodel.h
     src/models/emojimodel.cpp
     src/models/emojimodel.h
     src/models/messagelistmodel.cpp
     src/models/messagelistmodel.h
+    src/models/stickermodel.cpp
+    src/models/stickermodel.h
+    src/models/stickerpackmodel.cpp
+    src/models/stickerpackmodel.h
     src/ui/rlottiestickeritem.cpp
     src/ui/rlottiestickeritem.h
     src/util/messagemarkup.cpp
@@ -154,7 +160,9 @@ qt_add_qml_module(whatkevr
         src/qml/components/ReplyPreview.qml
         src/qml/components/RoundedImage.qml
         src/qml/components/ChatBubble.qml
-        src/qml/components/EmojiPicker.qml
+        src/qml/components/ExpressionPicker.qml
+        src/qml/components/EmojiPane.qml
+        src/qml/components/StickerPane.qml
         src/qml/components/MessageView.qml
         src/qml/components/MessageComposer.qml
         src/qml/pages/LoginPage.qml

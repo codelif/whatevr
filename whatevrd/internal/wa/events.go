@@ -42,6 +42,10 @@ func (c *Client) handleEvent(eventGen uint64, raw any) {
 		go c.migrateLIDChats(ctx)
 	case *events.AppStateSyncComplete:
 		c.syncPresence(c.backgroundContext(), true)
+	case *events.AppState:
+		// Typed app-state events (pins, mutes...) have their own cases;
+		// sticker favorites/recents only arrive through this generic event.
+		c.handleStickerAppState(c.backgroundContext(), evt)
 	case *events.AppStateSyncError:
 		if evt.Name == appstate.WAPatchRegularLow && isAppStateConflictError(evt.Error) {
 			c.log.Warnf("WhatsApp regular_low app state sync failed; recovering pinned chats: %v", evt.Error)

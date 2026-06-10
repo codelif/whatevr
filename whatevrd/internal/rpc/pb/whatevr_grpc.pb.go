@@ -957,3 +957,295 @@ var SendService_ServiceDesc = grpc.ServiceDesc{
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "whatevr.proto",
 }
+
+const (
+	StickerService_ListStickers_FullMethodName            = "/whatevr.v1.StickerService/ListStickers"
+	StickerService_ListStickerPacks_FullMethodName        = "/whatevr.v1.StickerService/ListStickerPacks"
+	StickerService_GetStickerPack_FullMethodName          = "/whatevr.v1.StickerService/GetStickerPack"
+	StickerService_DownloadSticker_FullMethodName         = "/whatevr.v1.StickerService/DownloadSticker"
+	StickerService_SetStickerPackInstalled_FullMethodName = "/whatevr.v1.StickerService/SetStickerPackInstalled"
+	StickerService_SendSticker_FullMethodName             = "/whatevr.v1.StickerService/SendSticker"
+)
+
+// StickerServiceClient is the client API for StickerService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+type StickerServiceClient interface {
+	ListStickers(ctx context.Context, in *ListStickersRequest, opts ...grpc.CallOption) (*ListStickersResponse, error)
+	ListStickerPacks(ctx context.Context, in *ListStickerPacksRequest, opts ...grpc.CallOption) (*ListStickerPacksResponse, error)
+	GetStickerPack(ctx context.Context, in *GetStickerPackRequest, opts ...grpc.CallOption) (*GetStickerPackResponse, error)
+	DownloadSticker(ctx context.Context, in *DownloadStickerRequest, opts ...grpc.CallOption) (*DownloadStickerResponse, error)
+	SetStickerPackInstalled(ctx context.Context, in *SetStickerPackInstalledRequest, opts ...grpc.CallOption) (*SetStickerPackInstalledResponse, error)
+	SendSticker(ctx context.Context, in *SendStickerRequest, opts ...grpc.CallOption) (*SendStickerResponse, error)
+}
+
+type stickerServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewStickerServiceClient(cc grpc.ClientConnInterface) StickerServiceClient {
+	return &stickerServiceClient{cc}
+}
+
+func (c *stickerServiceClient) ListStickers(ctx context.Context, in *ListStickersRequest, opts ...grpc.CallOption) (*ListStickersResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListStickersResponse)
+	err := c.cc.Invoke(ctx, StickerService_ListStickers_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *stickerServiceClient) ListStickerPacks(ctx context.Context, in *ListStickerPacksRequest, opts ...grpc.CallOption) (*ListStickerPacksResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListStickerPacksResponse)
+	err := c.cc.Invoke(ctx, StickerService_ListStickerPacks_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *stickerServiceClient) GetStickerPack(ctx context.Context, in *GetStickerPackRequest, opts ...grpc.CallOption) (*GetStickerPackResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetStickerPackResponse)
+	err := c.cc.Invoke(ctx, StickerService_GetStickerPack_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *stickerServiceClient) DownloadSticker(ctx context.Context, in *DownloadStickerRequest, opts ...grpc.CallOption) (*DownloadStickerResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DownloadStickerResponse)
+	err := c.cc.Invoke(ctx, StickerService_DownloadSticker_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *stickerServiceClient) SetStickerPackInstalled(ctx context.Context, in *SetStickerPackInstalledRequest, opts ...grpc.CallOption) (*SetStickerPackInstalledResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetStickerPackInstalledResponse)
+	err := c.cc.Invoke(ctx, StickerService_SetStickerPackInstalled_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *stickerServiceClient) SendSticker(ctx context.Context, in *SendStickerRequest, opts ...grpc.CallOption) (*SendStickerResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SendStickerResponse)
+	err := c.cc.Invoke(ctx, StickerService_SendSticker_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// StickerServiceServer is the server API for StickerService service.
+// All implementations must embed UnimplementedStickerServiceServer
+// for forward compatibility.
+type StickerServiceServer interface {
+	ListStickers(context.Context, *ListStickersRequest) (*ListStickersResponse, error)
+	ListStickerPacks(context.Context, *ListStickerPacksRequest) (*ListStickerPacksResponse, error)
+	GetStickerPack(context.Context, *GetStickerPackRequest) (*GetStickerPackResponse, error)
+	DownloadSticker(context.Context, *DownloadStickerRequest) (*DownloadStickerResponse, error)
+	SetStickerPackInstalled(context.Context, *SetStickerPackInstalledRequest) (*SetStickerPackInstalledResponse, error)
+	SendSticker(context.Context, *SendStickerRequest) (*SendStickerResponse, error)
+	mustEmbedUnimplementedStickerServiceServer()
+}
+
+// UnimplementedStickerServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedStickerServiceServer struct{}
+
+func (UnimplementedStickerServiceServer) ListStickers(context.Context, *ListStickersRequest) (*ListStickersResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListStickers not implemented")
+}
+func (UnimplementedStickerServiceServer) ListStickerPacks(context.Context, *ListStickerPacksRequest) (*ListStickerPacksResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListStickerPacks not implemented")
+}
+func (UnimplementedStickerServiceServer) GetStickerPack(context.Context, *GetStickerPackRequest) (*GetStickerPackResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetStickerPack not implemented")
+}
+func (UnimplementedStickerServiceServer) DownloadSticker(context.Context, *DownloadStickerRequest) (*DownloadStickerResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DownloadSticker not implemented")
+}
+func (UnimplementedStickerServiceServer) SetStickerPackInstalled(context.Context, *SetStickerPackInstalledRequest) (*SetStickerPackInstalledResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetStickerPackInstalled not implemented")
+}
+func (UnimplementedStickerServiceServer) SendSticker(context.Context, *SendStickerRequest) (*SendStickerResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SendSticker not implemented")
+}
+func (UnimplementedStickerServiceServer) mustEmbedUnimplementedStickerServiceServer() {}
+func (UnimplementedStickerServiceServer) testEmbeddedByValue()                        {}
+
+// UnsafeStickerServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to StickerServiceServer will
+// result in compilation errors.
+type UnsafeStickerServiceServer interface {
+	mustEmbedUnimplementedStickerServiceServer()
+}
+
+func RegisterStickerServiceServer(s grpc.ServiceRegistrar, srv StickerServiceServer) {
+	// If the following call panics, it indicates UnimplementedStickerServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&StickerService_ServiceDesc, srv)
+}
+
+func _StickerService_ListStickers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListStickersRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StickerServiceServer).ListStickers(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StickerService_ListStickers_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StickerServiceServer).ListStickers(ctx, req.(*ListStickersRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StickerService_ListStickerPacks_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListStickerPacksRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StickerServiceServer).ListStickerPacks(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StickerService_ListStickerPacks_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StickerServiceServer).ListStickerPacks(ctx, req.(*ListStickerPacksRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StickerService_GetStickerPack_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetStickerPackRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StickerServiceServer).GetStickerPack(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StickerService_GetStickerPack_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StickerServiceServer).GetStickerPack(ctx, req.(*GetStickerPackRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StickerService_DownloadSticker_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DownloadStickerRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StickerServiceServer).DownloadSticker(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StickerService_DownloadSticker_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StickerServiceServer).DownloadSticker(ctx, req.(*DownloadStickerRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StickerService_SetStickerPackInstalled_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetStickerPackInstalledRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StickerServiceServer).SetStickerPackInstalled(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StickerService_SetStickerPackInstalled_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StickerServiceServer).SetStickerPackInstalled(ctx, req.(*SetStickerPackInstalledRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StickerService_SendSticker_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SendStickerRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StickerServiceServer).SendSticker(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StickerService_SendSticker_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StickerServiceServer).SendSticker(ctx, req.(*SendStickerRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// StickerService_ServiceDesc is the grpc.ServiceDesc for StickerService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var StickerService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "whatevr.v1.StickerService",
+	HandlerType: (*StickerServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "ListStickers",
+			Handler:    _StickerService_ListStickers_Handler,
+		},
+		{
+			MethodName: "ListStickerPacks",
+			Handler:    _StickerService_ListStickerPacks_Handler,
+		},
+		{
+			MethodName: "GetStickerPack",
+			Handler:    _StickerService_GetStickerPack_Handler,
+		},
+		{
+			MethodName: "DownloadSticker",
+			Handler:    _StickerService_DownloadSticker_Handler,
+		},
+		{
+			MethodName: "SetStickerPackInstalled",
+			Handler:    _StickerService_SetStickerPackInstalled_Handler,
+		},
+		{
+			MethodName: "SendSticker",
+			Handler:    _StickerService_SendSticker_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "whatevr.proto",
+}

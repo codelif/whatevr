@@ -217,7 +217,7 @@ Frame {
             ToolButton {
                 id: emojiButton
 
-                text: Whatevr.I18n.i18nc("@action:button", "Choose emoji")
+                text: Whatevr.I18n.i18nc("@action:button", "Choose emoji or sticker")
                 display: AbstractButton.IconOnly
                 checkable: true
                 checked: emojiPicker.opened
@@ -318,12 +318,20 @@ Frame {
         }
     }
 
-    EmojiPicker {
+    ExpressionPicker {
         id: emojiPicker
 
         parent: Overlay.overlay
         z: 10001
+        replyToMessageId: root.replyToMessageId
         onEmojiSelected: emoji => root.focusAndInsertText(emoji, false)
+        onStickerChosen: keepOpen => {
+            root.replyConsumed()
+            if (!keepOpen) {
+                emojiPicker.close()
+                root.forceInputFocus()
+            }
+        }
     }
 
     Item {
