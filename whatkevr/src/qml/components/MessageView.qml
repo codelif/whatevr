@@ -621,6 +621,16 @@ Item {
                 // message. Older-history appends do not reset the model.
                 Qt.callLater(root.afterModelReset)
             }
+            function onModelReplaced() {
+                // replaceMessages() usually swaps a chat's content via incremental
+                // insert/remove rather than a full reset, so onModelReset never
+                // fires on a normal open. Finalise the open here too (clears
+                // openingChat, re-enabling history prefetch). Guarded so routine
+                // same-chat refetches never yank the viewport to the newest message.
+                if (root.openingChat) {
+                    Qt.callLater(root.afterModelReset)
+                }
+            }
             function onRowsInserted(parent, first, last) {
                 // first === 0 means a new newest message arrived at the bottom.
                 // Older history is appended at the end (first > 0) and must not

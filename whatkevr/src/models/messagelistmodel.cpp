@@ -355,6 +355,7 @@ void MessageListModel::replaceMessages(const QList<whatevr::v1::Message> &messag
     });
 
     if (sameMessages(m_messages, next)) {
+        Q_EMIT modelReplaced();
         return;
     }
 
@@ -390,6 +391,7 @@ void MessageListModel::replaceMessages(const QList<whatevr::v1::Message> &messag
         // Replaced rows lost their parsed state; re-warm after first paint has
         // had a frame to settle (a chat switch typically lands here).
         QTimer::singleShot(50, this, [this] { scheduleParseWarmup(0); });
+        Q_EMIT modelReplaced();
         return;
     }
 
@@ -488,6 +490,7 @@ void MessageListModel::replaceMessages(const QList<whatevr::v1::Message> &messag
         emitGroupingRolesChanged(minTouched, maxTouched);
     }
     QTimer::singleShot(50, this, [this] { scheduleParseWarmup(0); });
+    Q_EMIT modelReplaced();
 }
 
 void MessageListModel::appendOlderMessages(const QList<whatevr::v1::Message> &messages)

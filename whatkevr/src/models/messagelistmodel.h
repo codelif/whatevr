@@ -93,6 +93,13 @@ public:
     [[nodiscard]] Q_INVOKABLE QString dateTextForRow(int row) const;
     Q_INVOKABLE bool expandMessageText(const QString &messageId);
 
+Q_SIGNALS:
+    // Emitted whenever replaceMessages() swaps in a new displayed set without going
+    // through beginResetModel() (the incremental insert/remove and in-place update
+    // paths). The view uses it to finalise a chat-open, since onModelReset only fires
+    // on the rare full-reset path.
+    void modelReplaced();
+
 private:
     struct MessageItem {
         QString id;
