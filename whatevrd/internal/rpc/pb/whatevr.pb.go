@@ -363,6 +363,58 @@ func (ContactAvailability) EnumDescriptor() ([]byte, []int) {
 	return file_whatevr_proto_rawDescGZIP(), []int{5}
 }
 
+type StickerSource int32
+
+const (
+	StickerSource_STICKER_SOURCE_UNSPECIFIED StickerSource = 0
+	StickerSource_STICKER_SOURCE_RECENT      StickerSource = 1
+	StickerSource_STICKER_SOURCE_FAVORITE    StickerSource = 2
+	StickerSource_STICKER_SOURCE_ALL         StickerSource = 3
+)
+
+// Enum value maps for StickerSource.
+var (
+	StickerSource_name = map[int32]string{
+		0: "STICKER_SOURCE_UNSPECIFIED",
+		1: "STICKER_SOURCE_RECENT",
+		2: "STICKER_SOURCE_FAVORITE",
+		3: "STICKER_SOURCE_ALL",
+	}
+	StickerSource_value = map[string]int32{
+		"STICKER_SOURCE_UNSPECIFIED": 0,
+		"STICKER_SOURCE_RECENT":      1,
+		"STICKER_SOURCE_FAVORITE":    2,
+		"STICKER_SOURCE_ALL":         3,
+	}
+)
+
+func (x StickerSource) Enum() *StickerSource {
+	p := new(StickerSource)
+	*p = x
+	return p
+}
+
+func (x StickerSource) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (StickerSource) Descriptor() protoreflect.EnumDescriptor {
+	return file_whatevr_proto_enumTypes[6].Descriptor()
+}
+
+func (StickerSource) Type() protoreflect.EnumType {
+	return &file_whatevr_proto_enumTypes[6]
+}
+
+func (x StickerSource) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use StickerSource.Descriptor instead.
+func (StickerSource) EnumDescriptor() ([]byte, []int) {
+	return file_whatevr_proto_rawDescGZIP(), []int{6}
+}
+
 type AvatarSubjectKind int32
 
 const (
@@ -396,11 +448,11 @@ func (x AvatarSubjectKind) String() string {
 }
 
 func (AvatarSubjectKind) Descriptor() protoreflect.EnumDescriptor {
-	return file_whatevr_proto_enumTypes[6].Descriptor()
+	return file_whatevr_proto_enumTypes[7].Descriptor()
 }
 
 func (AvatarSubjectKind) Type() protoreflect.EnumType {
-	return &file_whatevr_proto_enumTypes[6]
+	return &file_whatevr_proto_enumTypes[7]
 }
 
 func (x AvatarSubjectKind) Number() protoreflect.EnumNumber {
@@ -409,7 +461,7 @@ func (x AvatarSubjectKind) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use AvatarSubjectKind.Descriptor instead.
 func (AvatarSubjectKind) EnumDescriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{6}
+	return file_whatevr_proto_rawDescGZIP(), []int{7}
 }
 
 type GetStatusRequest struct {
@@ -622,6 +674,8 @@ type DaemonEvent struct {
 	//	*DaemonEvent_HistoryBackfilled
 	//	*DaemonEvent_MediaDownloadChanged
 	//	*DaemonEvent_AvatarUpdated
+	//	*DaemonEvent_StickerLibraryChanged
+	//	*DaemonEvent_StickerDownloadChanged
 	Payload       isDaemonEvent_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -754,6 +808,24 @@ func (x *DaemonEvent) GetAvatarUpdated() *AvatarUpdated {
 	return nil
 }
 
+func (x *DaemonEvent) GetStickerLibraryChanged() *StickerLibraryChanged {
+	if x != nil {
+		if x, ok := x.Payload.(*DaemonEvent_StickerLibraryChanged); ok {
+			return x.StickerLibraryChanged
+		}
+	}
+	return nil
+}
+
+func (x *DaemonEvent) GetStickerDownloadChanged() *StickerDownloadChanged {
+	if x != nil {
+		if x, ok := x.Payload.(*DaemonEvent_StickerDownloadChanged); ok {
+			return x.StickerDownloadChanged
+		}
+	}
+	return nil
+}
+
 type isDaemonEvent_Payload interface {
 	isDaemonEvent_Payload()
 }
@@ -798,6 +870,14 @@ type DaemonEvent_AvatarUpdated struct {
 	AvatarUpdated *AvatarUpdated `protobuf:"bytes,10,opt,name=avatar_updated,json=avatarUpdated,proto3,oneof"`
 }
 
+type DaemonEvent_StickerLibraryChanged struct {
+	StickerLibraryChanged *StickerLibraryChanged `protobuf:"bytes,11,opt,name=sticker_library_changed,json=stickerLibraryChanged,proto3,oneof"`
+}
+
+type DaemonEvent_StickerDownloadChanged struct {
+	StickerDownloadChanged *StickerDownloadChanged `protobuf:"bytes,12,opt,name=sticker_download_changed,json=stickerDownloadChanged,proto3,oneof"`
+}
+
 func (*DaemonEvent_ConnectionChanged) isDaemonEvent_Payload() {}
 
 func (*DaemonEvent_LoginStateChanged) isDaemonEvent_Payload() {}
@@ -818,6 +898,111 @@ func (*DaemonEvent_MediaDownloadChanged) isDaemonEvent_Payload() {}
 
 func (*DaemonEvent_AvatarUpdated) isDaemonEvent_Payload() {}
 
+func (*DaemonEvent_StickerLibraryChanged) isDaemonEvent_Payload() {}
+
+func (*DaemonEvent_StickerDownloadChanged) isDaemonEvent_Payload() {}
+
+// Published when the set of stickers in a source changed (recents reordered,
+// favorites synced, packs installed/removed). Clients re-list the source if
+// they are currently showing it.
+type StickerLibraryChanged struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Source        StickerSource          `protobuf:"varint,1,opt,name=source,proto3,enum=whatevr.v1.StickerSource" json:"source,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StickerLibraryChanged) Reset() {
+	*x = StickerLibraryChanged{}
+	mi := &file_whatevr_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StickerLibraryChanged) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StickerLibraryChanged) ProtoMessage() {}
+
+func (x *StickerLibraryChanged) ProtoReflect() protoreflect.Message {
+	mi := &file_whatevr_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StickerLibraryChanged.ProtoReflect.Descriptor instead.
+func (*StickerLibraryChanged) Descriptor() ([]byte, []int) {
+	return file_whatevr_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *StickerLibraryChanged) GetSource() StickerSource {
+	if x != nil {
+		return x.Source
+	}
+	return StickerSource_STICKER_SOURCE_UNSPECIFIED
+}
+
+// Published when a sticker file finished downloading (or failed). Carries the
+// full sticker so clients can patch a single row in place.
+type StickerDownloadChanged struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Sticker       *Sticker               `protobuf:"bytes,1,opt,name=sticker,proto3" json:"sticker,omitempty"`
+	ErrorText     string                 `protobuf:"bytes,2,opt,name=error_text,json=errorText,proto3" json:"error_text,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StickerDownloadChanged) Reset() {
+	*x = StickerDownloadChanged{}
+	mi := &file_whatevr_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StickerDownloadChanged) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StickerDownloadChanged) ProtoMessage() {}
+
+func (x *StickerDownloadChanged) ProtoReflect() protoreflect.Message {
+	mi := &file_whatevr_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StickerDownloadChanged.ProtoReflect.Descriptor instead.
+func (*StickerDownloadChanged) Descriptor() ([]byte, []int) {
+	return file_whatevr_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *StickerDownloadChanged) GetSticker() *Sticker {
+	if x != nil {
+		return x.Sticker
+	}
+	return nil
+}
+
+func (x *StickerDownloadChanged) GetErrorText() string {
+	if x != nil {
+		return x.ErrorText
+	}
+	return ""
+}
+
 type Avatar struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Kind          AvatarSubjectKind      `protobuf:"varint,1,opt,name=kind,proto3,enum=whatevr.v1.AvatarSubjectKind" json:"kind,omitempty"`
@@ -832,7 +1017,7 @@ type Avatar struct {
 
 func (x *Avatar) Reset() {
 	*x = Avatar{}
-	mi := &file_whatevr_proto_msgTypes[4]
+	mi := &file_whatevr_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -844,7 +1029,7 @@ func (x *Avatar) String() string {
 func (*Avatar) ProtoMessage() {}
 
 func (x *Avatar) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[4]
+	mi := &file_whatevr_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -857,7 +1042,7 @@ func (x *Avatar) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Avatar.ProtoReflect.Descriptor instead.
 func (*Avatar) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{4}
+	return file_whatevr_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *Avatar) GetKind() AvatarSubjectKind {
@@ -911,7 +1096,7 @@ type AvatarUpdated struct {
 
 func (x *AvatarUpdated) Reset() {
 	*x = AvatarUpdated{}
-	mi := &file_whatevr_proto_msgTypes[5]
+	mi := &file_whatevr_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -923,7 +1108,7 @@ func (x *AvatarUpdated) String() string {
 func (*AvatarUpdated) ProtoMessage() {}
 
 func (x *AvatarUpdated) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[5]
+	mi := &file_whatevr_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -936,7 +1121,7 @@ func (x *AvatarUpdated) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AvatarUpdated.ProtoReflect.Descriptor instead.
 func (*AvatarUpdated) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{5}
+	return file_whatevr_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *AvatarUpdated) GetAvatar() *Avatar {
@@ -966,7 +1151,7 @@ type HistorySyncProgress struct {
 
 func (x *HistorySyncProgress) Reset() {
 	*x = HistorySyncProgress{}
-	mi := &file_whatevr_proto_msgTypes[6]
+	mi := &file_whatevr_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -978,7 +1163,7 @@ func (x *HistorySyncProgress) String() string {
 func (*HistorySyncProgress) ProtoMessage() {}
 
 func (x *HistorySyncProgress) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[6]
+	mi := &file_whatevr_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -991,7 +1176,7 @@ func (x *HistorySyncProgress) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HistorySyncProgress.ProtoReflect.Descriptor instead.
 func (*HistorySyncProgress) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{6}
+	return file_whatevr_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *HistorySyncProgress) GetSyncType() HistorySyncType {
@@ -1067,7 +1252,7 @@ type HistoryBackfilled struct {
 
 func (x *HistoryBackfilled) Reset() {
 	*x = HistoryBackfilled{}
-	mi := &file_whatevr_proto_msgTypes[7]
+	mi := &file_whatevr_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1079,7 +1264,7 @@ func (x *HistoryBackfilled) String() string {
 func (*HistoryBackfilled) ProtoMessage() {}
 
 func (x *HistoryBackfilled) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[7]
+	mi := &file_whatevr_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1092,7 +1277,7 @@ func (x *HistoryBackfilled) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HistoryBackfilled.ProtoReflect.Descriptor instead.
 func (*HistoryBackfilled) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{7}
+	return file_whatevr_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *HistoryBackfilled) GetChatId() string {
@@ -1122,7 +1307,7 @@ type ChatPresenceChanged struct {
 
 func (x *ChatPresenceChanged) Reset() {
 	*x = ChatPresenceChanged{}
-	mi := &file_whatevr_proto_msgTypes[8]
+	mi := &file_whatevr_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1134,7 +1319,7 @@ func (x *ChatPresenceChanged) String() string {
 func (*ChatPresenceChanged) ProtoMessage() {}
 
 func (x *ChatPresenceChanged) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[8]
+	mi := &file_whatevr_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1147,7 +1332,7 @@ func (x *ChatPresenceChanged) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChatPresenceChanged.ProtoReflect.Descriptor instead.
 func (*ChatPresenceChanged) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{8}
+	return file_whatevr_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ChatPresenceChanged) GetChatId() string {
@@ -1197,7 +1382,7 @@ type MediaDownloadChanged struct {
 
 func (x *MediaDownloadChanged) Reset() {
 	*x = MediaDownloadChanged{}
-	mi := &file_whatevr_proto_msgTypes[9]
+	mi := &file_whatevr_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1209,7 +1394,7 @@ func (x *MediaDownloadChanged) String() string {
 func (*MediaDownloadChanged) ProtoMessage() {}
 
 func (x *MediaDownloadChanged) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[9]
+	mi := &file_whatevr_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1222,7 +1407,7 @@ func (x *MediaDownloadChanged) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MediaDownloadChanged.ProtoReflect.Descriptor instead.
 func (*MediaDownloadChanged) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{9}
+	return file_whatevr_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *MediaDownloadChanged) GetMessageId() string {
@@ -1268,7 +1453,7 @@ type ConnectionChanged struct {
 
 func (x *ConnectionChanged) Reset() {
 	*x = ConnectionChanged{}
-	mi := &file_whatevr_proto_msgTypes[10]
+	mi := &file_whatevr_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1280,7 +1465,7 @@ func (x *ConnectionChanged) String() string {
 func (*ConnectionChanged) ProtoMessage() {}
 
 func (x *ConnectionChanged) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[10]
+	mi := &file_whatevr_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1293,7 +1478,7 @@ func (x *ConnectionChanged) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConnectionChanged.ProtoReflect.Descriptor instead.
 func (*ConnectionChanged) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{10}
+	return file_whatevr_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ConnectionChanged) GetState() DaemonState {
@@ -1353,7 +1538,7 @@ type ReconnectRequest struct {
 
 func (x *ReconnectRequest) Reset() {
 	*x = ReconnectRequest{}
-	mi := &file_whatevr_proto_msgTypes[11]
+	mi := &file_whatevr_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1365,7 +1550,7 @@ func (x *ReconnectRequest) String() string {
 func (*ReconnectRequest) ProtoMessage() {}
 
 func (x *ReconnectRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[11]
+	mi := &file_whatevr_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1378,7 +1563,7 @@ func (x *ReconnectRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReconnectRequest.ProtoReflect.Descriptor instead.
 func (*ReconnectRequest) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{11}
+	return file_whatevr_proto_rawDescGZIP(), []int{13}
 }
 
 type ReconnectResponse struct {
@@ -1389,7 +1574,7 @@ type ReconnectResponse struct {
 
 func (x *ReconnectResponse) Reset() {
 	*x = ReconnectResponse{}
-	mi := &file_whatevr_proto_msgTypes[12]
+	mi := &file_whatevr_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1401,7 +1586,7 @@ func (x *ReconnectResponse) String() string {
 func (*ReconnectResponse) ProtoMessage() {}
 
 func (x *ReconnectResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[12]
+	mi := &file_whatevr_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1414,7 +1599,7 @@ func (x *ReconnectResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReconnectResponse.ProtoReflect.Descriptor instead.
 func (*ReconnectResponse) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{12}
+	return file_whatevr_proto_rawDescGZIP(), []int{14}
 }
 
 type LoginStateChanged struct {
@@ -1427,7 +1612,7 @@ type LoginStateChanged struct {
 
 func (x *LoginStateChanged) Reset() {
 	*x = LoginStateChanged{}
-	mi := &file_whatevr_proto_msgTypes[13]
+	mi := &file_whatevr_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1439,7 +1624,7 @@ func (x *LoginStateChanged) String() string {
 func (*LoginStateChanged) ProtoMessage() {}
 
 func (x *LoginStateChanged) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[13]
+	mi := &file_whatevr_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1452,7 +1637,7 @@ func (x *LoginStateChanged) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LoginStateChanged.ProtoReflect.Descriptor instead.
 func (*LoginStateChanged) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{13}
+	return file_whatevr_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *LoginStateChanged) GetState() DaemonState {
@@ -1478,7 +1663,7 @@ type NewMessage struct {
 
 func (x *NewMessage) Reset() {
 	*x = NewMessage{}
-	mi := &file_whatevr_proto_msgTypes[14]
+	mi := &file_whatevr_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1490,7 +1675,7 @@ func (x *NewMessage) String() string {
 func (*NewMessage) ProtoMessage() {}
 
 func (x *NewMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[14]
+	mi := &file_whatevr_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1503,7 +1688,7 @@ func (x *NewMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NewMessage.ProtoReflect.Descriptor instead.
 func (*NewMessage) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{14}
+	return file_whatevr_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *NewMessage) GetMessage() *Message {
@@ -1522,7 +1707,7 @@ type MessageUpdated struct {
 
 func (x *MessageUpdated) Reset() {
 	*x = MessageUpdated{}
-	mi := &file_whatevr_proto_msgTypes[15]
+	mi := &file_whatevr_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1534,7 +1719,7 @@ func (x *MessageUpdated) String() string {
 func (*MessageUpdated) ProtoMessage() {}
 
 func (x *MessageUpdated) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[15]
+	mi := &file_whatevr_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1547,7 +1732,7 @@ func (x *MessageUpdated) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MessageUpdated.ProtoReflect.Descriptor instead.
 func (*MessageUpdated) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{15}
+	return file_whatevr_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *MessageUpdated) GetMessage() *Message {
@@ -1567,7 +1752,7 @@ type ChatUpdated struct {
 
 func (x *ChatUpdated) Reset() {
 	*x = ChatUpdated{}
-	mi := &file_whatevr_proto_msgTypes[16]
+	mi := &file_whatevr_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1579,7 +1764,7 @@ func (x *ChatUpdated) String() string {
 func (*ChatUpdated) ProtoMessage() {}
 
 func (x *ChatUpdated) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[16]
+	mi := &file_whatevr_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1592,7 +1777,7 @@ func (x *ChatUpdated) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChatUpdated.ProtoReflect.Descriptor instead.
 func (*ChatUpdated) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{16}
+	return file_whatevr_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *ChatUpdated) GetChat() *Chat {
@@ -1617,7 +1802,7 @@ type SubscribeLoginEventsRequest struct {
 
 func (x *SubscribeLoginEventsRequest) Reset() {
 	*x = SubscribeLoginEventsRequest{}
-	mi := &file_whatevr_proto_msgTypes[17]
+	mi := &file_whatevr_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1629,7 +1814,7 @@ func (x *SubscribeLoginEventsRequest) String() string {
 func (*SubscribeLoginEventsRequest) ProtoMessage() {}
 
 func (x *SubscribeLoginEventsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[17]
+	mi := &file_whatevr_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1642,7 +1827,7 @@ func (x *SubscribeLoginEventsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubscribeLoginEventsRequest.ProtoReflect.Descriptor instead.
 func (*SubscribeLoginEventsRequest) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{17}
+	return file_whatevr_proto_rawDescGZIP(), []int{19}
 }
 
 type LoginEvent struct {
@@ -1658,7 +1843,7 @@ type LoginEvent struct {
 
 func (x *LoginEvent) Reset() {
 	*x = LoginEvent{}
-	mi := &file_whatevr_proto_msgTypes[18]
+	mi := &file_whatevr_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1670,7 +1855,7 @@ func (x *LoginEvent) String() string {
 func (*LoginEvent) ProtoMessage() {}
 
 func (x *LoginEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[18]
+	mi := &file_whatevr_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1683,7 +1868,7 @@ func (x *LoginEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LoginEvent.ProtoReflect.Descriptor instead.
 func (*LoginEvent) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{18}
+	return file_whatevr_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *LoginEvent) GetPayload() isLoginEvent_Payload {
@@ -1737,7 +1922,7 @@ type QrCode struct {
 
 func (x *QrCode) Reset() {
 	*x = QrCode{}
-	mi := &file_whatevr_proto_msgTypes[19]
+	mi := &file_whatevr_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1749,7 +1934,7 @@ func (x *QrCode) String() string {
 func (*QrCode) ProtoMessage() {}
 
 func (x *QrCode) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[19]
+	mi := &file_whatevr_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1762,7 +1947,7 @@ func (x *QrCode) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QrCode.ProtoReflect.Descriptor instead.
 func (*QrCode) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{19}
+	return file_whatevr_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *QrCode) GetCode() string {
@@ -1787,7 +1972,7 @@ type LogoutRequest struct {
 
 func (x *LogoutRequest) Reset() {
 	*x = LogoutRequest{}
-	mi := &file_whatevr_proto_msgTypes[20]
+	mi := &file_whatevr_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1799,7 +1984,7 @@ func (x *LogoutRequest) String() string {
 func (*LogoutRequest) ProtoMessage() {}
 
 func (x *LogoutRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[20]
+	mi := &file_whatevr_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1812,7 +1997,7 @@ func (x *LogoutRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogoutRequest.ProtoReflect.Descriptor instead.
 func (*LogoutRequest) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{20}
+	return file_whatevr_proto_rawDescGZIP(), []int{22}
 }
 
 type LogoutResponse struct {
@@ -1823,7 +2008,7 @@ type LogoutResponse struct {
 
 func (x *LogoutResponse) Reset() {
 	*x = LogoutResponse{}
-	mi := &file_whatevr_proto_msgTypes[21]
+	mi := &file_whatevr_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1835,7 +2020,7 @@ func (x *LogoutResponse) String() string {
 func (*LogoutResponse) ProtoMessage() {}
 
 func (x *LogoutResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[21]
+	mi := &file_whatevr_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1848,7 +2033,7 @@ func (x *LogoutResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogoutResponse.ProtoReflect.Descriptor instead.
 func (*LogoutResponse) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{21}
+	return file_whatevr_proto_rawDescGZIP(), []int{23}
 }
 
 type HoldSessionRequest struct {
@@ -1861,7 +2046,7 @@ type HoldSessionRequest struct {
 
 func (x *HoldSessionRequest) Reset() {
 	*x = HoldSessionRequest{}
-	mi := &file_whatevr_proto_msgTypes[22]
+	mi := &file_whatevr_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1873,7 +2058,7 @@ func (x *HoldSessionRequest) String() string {
 func (*HoldSessionRequest) ProtoMessage() {}
 
 func (x *HoldSessionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[22]
+	mi := &file_whatevr_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1886,7 +2071,7 @@ func (x *HoldSessionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HoldSessionRequest.ProtoReflect.Descriptor instead.
 func (*HoldSessionRequest) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{22}
+	return file_whatevr_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *HoldSessionRequest) GetClientName() string {
@@ -1916,7 +2101,7 @@ type FrontendSessionEvent struct {
 
 func (x *FrontendSessionEvent) Reset() {
 	*x = FrontendSessionEvent{}
-	mi := &file_whatevr_proto_msgTypes[23]
+	mi := &file_whatevr_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1928,7 +2113,7 @@ func (x *FrontendSessionEvent) String() string {
 func (*FrontendSessionEvent) ProtoMessage() {}
 
 func (x *FrontendSessionEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[23]
+	mi := &file_whatevr_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1941,7 +2126,7 @@ func (x *FrontendSessionEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrontendSessionEvent.ProtoReflect.Descriptor instead.
 func (*FrontendSessionEvent) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{23}
+	return file_whatevr_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *FrontendSessionEvent) GetDetail() string {
@@ -1967,7 +2152,7 @@ type OpenChat struct {
 
 func (x *OpenChat) Reset() {
 	*x = OpenChat{}
-	mi := &file_whatevr_proto_msgTypes[24]
+	mi := &file_whatevr_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1979,7 +2164,7 @@ func (x *OpenChat) String() string {
 func (*OpenChat) ProtoMessage() {}
 
 func (x *OpenChat) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[24]
+	mi := &file_whatevr_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1992,7 +2177,7 @@ func (x *OpenChat) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OpenChat.ProtoReflect.Descriptor instead.
 func (*OpenChat) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{24}
+	return file_whatevr_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *OpenChat) GetChatId() string {
@@ -2013,7 +2198,7 @@ type UpdateSessionStateRequest struct {
 
 func (x *UpdateSessionStateRequest) Reset() {
 	*x = UpdateSessionStateRequest{}
-	mi := &file_whatevr_proto_msgTypes[25]
+	mi := &file_whatevr_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2025,7 +2210,7 @@ func (x *UpdateSessionStateRequest) String() string {
 func (*UpdateSessionStateRequest) ProtoMessage() {}
 
 func (x *UpdateSessionStateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[25]
+	mi := &file_whatevr_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2038,7 +2223,7 @@ func (x *UpdateSessionStateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateSessionStateRequest.ProtoReflect.Descriptor instead.
 func (*UpdateSessionStateRequest) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{25}
+	return file_whatevr_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *UpdateSessionStateRequest) GetSessionId() string {
@@ -2070,7 +2255,7 @@ type UpdateSessionStateResponse struct {
 
 func (x *UpdateSessionStateResponse) Reset() {
 	*x = UpdateSessionStateResponse{}
-	mi := &file_whatevr_proto_msgTypes[26]
+	mi := &file_whatevr_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2082,7 +2267,7 @@ func (x *UpdateSessionStateResponse) String() string {
 func (*UpdateSessionStateResponse) ProtoMessage() {}
 
 func (x *UpdateSessionStateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[26]
+	mi := &file_whatevr_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2095,7 +2280,7 @@ func (x *UpdateSessionStateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateSessionStateResponse.ProtoReflect.Descriptor instead.
 func (*UpdateSessionStateResponse) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{26}
+	return file_whatevr_proto_rawDescGZIP(), []int{28}
 }
 
 type ListChatsRequest struct {
@@ -2113,7 +2298,7 @@ type ListChatsRequest struct {
 
 func (x *ListChatsRequest) Reset() {
 	*x = ListChatsRequest{}
-	mi := &file_whatevr_proto_msgTypes[27]
+	mi := &file_whatevr_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2125,7 +2310,7 @@ func (x *ListChatsRequest) String() string {
 func (*ListChatsRequest) ProtoMessage() {}
 
 func (x *ListChatsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[27]
+	mi := &file_whatevr_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2138,7 +2323,7 @@ func (x *ListChatsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListChatsRequest.ProtoReflect.Descriptor instead.
 func (*ListChatsRequest) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{27}
+	return file_whatevr_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *ListChatsRequest) GetLimit() int32 {
@@ -2171,7 +2356,7 @@ type ListChatsResponse struct {
 
 func (x *ListChatsResponse) Reset() {
 	*x = ListChatsResponse{}
-	mi := &file_whatevr_proto_msgTypes[28]
+	mi := &file_whatevr_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2183,7 +2368,7 @@ func (x *ListChatsResponse) String() string {
 func (*ListChatsResponse) ProtoMessage() {}
 
 func (x *ListChatsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[28]
+	mi := &file_whatevr_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2196,7 +2381,7 @@ func (x *ListChatsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListChatsResponse.ProtoReflect.Descriptor instead.
 func (*ListChatsResponse) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{28}
+	return file_whatevr_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *ListChatsResponse) GetChats() []*Chat {
@@ -2224,7 +2409,7 @@ type GetMessagesRequest struct {
 
 func (x *GetMessagesRequest) Reset() {
 	*x = GetMessagesRequest{}
-	mi := &file_whatevr_proto_msgTypes[29]
+	mi := &file_whatevr_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2236,7 +2421,7 @@ func (x *GetMessagesRequest) String() string {
 func (*GetMessagesRequest) ProtoMessage() {}
 
 func (x *GetMessagesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[29]
+	mi := &file_whatevr_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2249,7 +2434,7 @@ func (x *GetMessagesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetMessagesRequest.ProtoReflect.Descriptor instead.
 func (*GetMessagesRequest) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{29}
+	return file_whatevr_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *GetMessagesRequest) GetChatId() string {
@@ -2316,7 +2501,7 @@ type GetMessagesResponse struct {
 
 func (x *GetMessagesResponse) Reset() {
 	*x = GetMessagesResponse{}
-	mi := &file_whatevr_proto_msgTypes[30]
+	mi := &file_whatevr_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2328,7 +2513,7 @@ func (x *GetMessagesResponse) String() string {
 func (*GetMessagesResponse) ProtoMessage() {}
 
 func (x *GetMessagesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[30]
+	mi := &file_whatevr_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2341,7 +2526,7 @@ func (x *GetMessagesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetMessagesResponse.ProtoReflect.Descriptor instead.
 func (*GetMessagesResponse) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{30}
+	return file_whatevr_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *GetMessagesResponse) GetMessages() []*Message {
@@ -2360,7 +2545,7 @@ type MarkChatReadRequest struct {
 
 func (x *MarkChatReadRequest) Reset() {
 	*x = MarkChatReadRequest{}
-	mi := &file_whatevr_proto_msgTypes[31]
+	mi := &file_whatevr_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2372,7 +2557,7 @@ func (x *MarkChatReadRequest) String() string {
 func (*MarkChatReadRequest) ProtoMessage() {}
 
 func (x *MarkChatReadRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[31]
+	mi := &file_whatevr_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2385,7 +2570,7 @@ func (x *MarkChatReadRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MarkChatReadRequest.ProtoReflect.Descriptor instead.
 func (*MarkChatReadRequest) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{31}
+	return file_whatevr_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *MarkChatReadRequest) GetChatId() string {
@@ -2403,7 +2588,7 @@ type MarkChatReadResponse struct {
 
 func (x *MarkChatReadResponse) Reset() {
 	*x = MarkChatReadResponse{}
-	mi := &file_whatevr_proto_msgTypes[32]
+	mi := &file_whatevr_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2415,7 +2600,7 @@ func (x *MarkChatReadResponse) String() string {
 func (*MarkChatReadResponse) ProtoMessage() {}
 
 func (x *MarkChatReadResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[32]
+	mi := &file_whatevr_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2428,7 +2613,7 @@ func (x *MarkChatReadResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MarkChatReadResponse.ProtoReflect.Descriptor instead.
 func (*MarkChatReadResponse) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{32}
+	return file_whatevr_proto_rawDescGZIP(), []int{34}
 }
 
 type SetChatPinnedRequest struct {
@@ -2441,7 +2626,7 @@ type SetChatPinnedRequest struct {
 
 func (x *SetChatPinnedRequest) Reset() {
 	*x = SetChatPinnedRequest{}
-	mi := &file_whatevr_proto_msgTypes[33]
+	mi := &file_whatevr_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2453,7 +2638,7 @@ func (x *SetChatPinnedRequest) String() string {
 func (*SetChatPinnedRequest) ProtoMessage() {}
 
 func (x *SetChatPinnedRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[33]
+	mi := &file_whatevr_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2466,7 +2651,7 @@ func (x *SetChatPinnedRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetChatPinnedRequest.ProtoReflect.Descriptor instead.
 func (*SetChatPinnedRequest) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{33}
+	return file_whatevr_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *SetChatPinnedRequest) GetChatId() string {
@@ -2491,7 +2676,7 @@ type SetChatPinnedResponse struct {
 
 func (x *SetChatPinnedResponse) Reset() {
 	*x = SetChatPinnedResponse{}
-	mi := &file_whatevr_proto_msgTypes[34]
+	mi := &file_whatevr_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2503,7 +2688,7 @@ func (x *SetChatPinnedResponse) String() string {
 func (*SetChatPinnedResponse) ProtoMessage() {}
 
 func (x *SetChatPinnedResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[34]
+	mi := &file_whatevr_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2516,7 +2701,7 @@ func (x *SetChatPinnedResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetChatPinnedResponse.ProtoReflect.Descriptor instead.
 func (*SetChatPinnedResponse) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{34}
+	return file_whatevr_proto_rawDescGZIP(), []int{36}
 }
 
 type SetChatPresenceRequest struct {
@@ -2529,7 +2714,7 @@ type SetChatPresenceRequest struct {
 
 func (x *SetChatPresenceRequest) Reset() {
 	*x = SetChatPresenceRequest{}
-	mi := &file_whatevr_proto_msgTypes[35]
+	mi := &file_whatevr_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2541,7 +2726,7 @@ func (x *SetChatPresenceRequest) String() string {
 func (*SetChatPresenceRequest) ProtoMessage() {}
 
 func (x *SetChatPresenceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[35]
+	mi := &file_whatevr_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2554,7 +2739,7 @@ func (x *SetChatPresenceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetChatPresenceRequest.ProtoReflect.Descriptor instead.
 func (*SetChatPresenceRequest) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{35}
+	return file_whatevr_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *SetChatPresenceRequest) GetChatId() string {
@@ -2579,7 +2764,7 @@ type SetChatPresenceResponse struct {
 
 func (x *SetChatPresenceResponse) Reset() {
 	*x = SetChatPresenceResponse{}
-	mi := &file_whatevr_proto_msgTypes[36]
+	mi := &file_whatevr_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2591,7 +2776,7 @@ func (x *SetChatPresenceResponse) String() string {
 func (*SetChatPresenceResponse) ProtoMessage() {}
 
 func (x *SetChatPresenceResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[36]
+	mi := &file_whatevr_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2604,7 +2789,7 @@ func (x *SetChatPresenceResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetChatPresenceResponse.ProtoReflect.Descriptor instead.
 func (*SetChatPresenceResponse) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{36}
+	return file_whatevr_proto_rawDescGZIP(), []int{38}
 }
 
 type SubscribeChatPresenceRequest struct {
@@ -2616,7 +2801,7 @@ type SubscribeChatPresenceRequest struct {
 
 func (x *SubscribeChatPresenceRequest) Reset() {
 	*x = SubscribeChatPresenceRequest{}
-	mi := &file_whatevr_proto_msgTypes[37]
+	mi := &file_whatevr_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2628,7 +2813,7 @@ func (x *SubscribeChatPresenceRequest) String() string {
 func (*SubscribeChatPresenceRequest) ProtoMessage() {}
 
 func (x *SubscribeChatPresenceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[37]
+	mi := &file_whatevr_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2641,7 +2826,7 @@ func (x *SubscribeChatPresenceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubscribeChatPresenceRequest.ProtoReflect.Descriptor instead.
 func (*SubscribeChatPresenceRequest) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{37}
+	return file_whatevr_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *SubscribeChatPresenceRequest) GetChatId() string {
@@ -2659,7 +2844,7 @@ type SubscribeChatPresenceResponse struct {
 
 func (x *SubscribeChatPresenceResponse) Reset() {
 	*x = SubscribeChatPresenceResponse{}
-	mi := &file_whatevr_proto_msgTypes[38]
+	mi := &file_whatevr_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2671,7 +2856,7 @@ func (x *SubscribeChatPresenceResponse) String() string {
 func (*SubscribeChatPresenceResponse) ProtoMessage() {}
 
 func (x *SubscribeChatPresenceResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[38]
+	mi := &file_whatevr_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2684,7 +2869,7 @@ func (x *SubscribeChatPresenceResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubscribeChatPresenceResponse.ProtoReflect.Descriptor instead.
 func (*SubscribeChatPresenceResponse) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{38}
+	return file_whatevr_proto_rawDescGZIP(), []int{40}
 }
 
 type DownloadMessageMediaRequest struct {
@@ -2696,7 +2881,7 @@ type DownloadMessageMediaRequest struct {
 
 func (x *DownloadMessageMediaRequest) Reset() {
 	*x = DownloadMessageMediaRequest{}
-	mi := &file_whatevr_proto_msgTypes[39]
+	mi := &file_whatevr_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2708,7 +2893,7 @@ func (x *DownloadMessageMediaRequest) String() string {
 func (*DownloadMessageMediaRequest) ProtoMessage() {}
 
 func (x *DownloadMessageMediaRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[39]
+	mi := &file_whatevr_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2721,7 +2906,7 @@ func (x *DownloadMessageMediaRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DownloadMessageMediaRequest.ProtoReflect.Descriptor instead.
 func (*DownloadMessageMediaRequest) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{39}
+	return file_whatevr_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *DownloadMessageMediaRequest) GetMessageId() string {
@@ -2740,7 +2925,7 @@ type DownloadMessageMediaResponse struct {
 
 func (x *DownloadMessageMediaResponse) Reset() {
 	*x = DownloadMessageMediaResponse{}
-	mi := &file_whatevr_proto_msgTypes[40]
+	mi := &file_whatevr_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2752,7 +2937,7 @@ func (x *DownloadMessageMediaResponse) String() string {
 func (*DownloadMessageMediaResponse) ProtoMessage() {}
 
 func (x *DownloadMessageMediaResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[40]
+	mi := &file_whatevr_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2765,7 +2950,7 @@ func (x *DownloadMessageMediaResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DownloadMessageMediaResponse.ProtoReflect.Descriptor instead.
 func (*DownloadMessageMediaResponse) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{40}
+	return file_whatevr_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *DownloadMessageMediaResponse) GetMessage() *Message {
@@ -2786,7 +2971,7 @@ type SendTextRequest struct {
 
 func (x *SendTextRequest) Reset() {
 	*x = SendTextRequest{}
-	mi := &file_whatevr_proto_msgTypes[41]
+	mi := &file_whatevr_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2798,7 +2983,7 @@ func (x *SendTextRequest) String() string {
 func (*SendTextRequest) ProtoMessage() {}
 
 func (x *SendTextRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[41]
+	mi := &file_whatevr_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2811,7 +2996,7 @@ func (x *SendTextRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SendTextRequest.ProtoReflect.Descriptor instead.
 func (*SendTextRequest) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{41}
+	return file_whatevr_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *SendTextRequest) GetChatId() string {
@@ -2844,7 +3029,7 @@ type SendTextResponse struct {
 
 func (x *SendTextResponse) Reset() {
 	*x = SendTextResponse{}
-	mi := &file_whatevr_proto_msgTypes[42]
+	mi := &file_whatevr_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2856,7 +3041,7 @@ func (x *SendTextResponse) String() string {
 func (*SendTextResponse) ProtoMessage() {}
 
 func (x *SendTextResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[42]
+	mi := &file_whatevr_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2869,7 +3054,7 @@ func (x *SendTextResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SendTextResponse.ProtoReflect.Descriptor instead.
 func (*SendTextResponse) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{42}
+	return file_whatevr_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *SendTextResponse) GetMessage() *Message {
@@ -2891,7 +3076,7 @@ type SendMediaRequest struct {
 
 func (x *SendMediaRequest) Reset() {
 	*x = SendMediaRequest{}
-	mi := &file_whatevr_proto_msgTypes[43]
+	mi := &file_whatevr_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2903,7 +3088,7 @@ func (x *SendMediaRequest) String() string {
 func (*SendMediaRequest) ProtoMessage() {}
 
 func (x *SendMediaRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[43]
+	mi := &file_whatevr_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2916,7 +3101,7 @@ func (x *SendMediaRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SendMediaRequest.ProtoReflect.Descriptor instead.
 func (*SendMediaRequest) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{43}
+	return file_whatevr_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *SendMediaRequest) GetChatId() string {
@@ -2956,7 +3141,7 @@ type SendMediaResponse struct {
 
 func (x *SendMediaResponse) Reset() {
 	*x = SendMediaResponse{}
-	mi := &file_whatevr_proto_msgTypes[44]
+	mi := &file_whatevr_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2968,7 +3153,7 @@ func (x *SendMediaResponse) String() string {
 func (*SendMediaResponse) ProtoMessage() {}
 
 func (x *SendMediaResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[44]
+	mi := &file_whatevr_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2981,10 +3166,842 @@ func (x *SendMediaResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SendMediaResponse.ProtoReflect.Descriptor instead.
 func (*SendMediaResponse) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{44}
+	return file_whatevr_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *SendMediaResponse) GetMessage() *Message {
+	if x != nil {
+		return x.Message
+	}
+	return nil
+}
+
+type Sticker struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Content hash identity: hex(FileSHA256), or "enc:"+hex(FileEncSHA256)
+	// until the file has been downloaded once (app-state favorites do not
+	// carry the plaintext hash).
+	CacheKey string `protobuf:"bytes,1,opt,name=cache_key,json=cacheKey,proto3" json:"cache_key,omitempty"`
+	// Display file: .webp, or the extracted Lottie .json for animated packs.
+	// Empty until downloaded.
+	LocalPath string `protobuf:"bytes,2,opt,name=local_path,json=localPath,proto3" json:"local_path,omitempty"`
+	MimeType  string `protobuf:"bytes,3,opt,name=mime_type,json=mimeType,proto3" json:"mime_type,omitempty"`
+	// True for Lottie stickers (rendered via RlottieSticker).
+	IsAnimated        bool     `protobuf:"varint,4,opt,name=is_animated,json=isAnimated,proto3" json:"is_animated,omitempty"`
+	Width             int32    `protobuf:"varint,5,opt,name=width,proto3" json:"width,omitempty"`
+	Height            int32    `protobuf:"varint,6,opt,name=height,proto3" json:"height,omitempty"`
+	Emojis            []string `protobuf:"bytes,7,rep,name=emojis,proto3" json:"emojis,omitempty"`
+	AccessibilityText string   `protobuf:"bytes,8,opt,name=accessibility_text,json=accessibilityText,proto3" json:"accessibility_text,omitempty"`
+	PackId            string   `protobuf:"bytes,9,opt,name=pack_id,json=packId,proto3" json:"pack_id,omitempty"`
+	IsFavorite        bool     `protobuf:"varint,10,opt,name=is_favorite,json=isFavorite,proto3" json:"is_favorite,omitempty"`
+	LastUsedUnix      int64    `protobuf:"varint,11,opt,name=last_used_unix,json=lastUsedUnix,proto3" json:"last_used_unix,omitempty"`
+	Weight            float32  `protobuf:"fixed32,12,opt,name=weight,proto3" json:"weight,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *Sticker) Reset() {
+	*x = Sticker{}
+	mi := &file_whatevr_proto_msgTypes[47]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Sticker) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Sticker) ProtoMessage() {}
+
+func (x *Sticker) ProtoReflect() protoreflect.Message {
+	mi := &file_whatevr_proto_msgTypes[47]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Sticker.ProtoReflect.Descriptor instead.
+func (*Sticker) Descriptor() ([]byte, []int) {
+	return file_whatevr_proto_rawDescGZIP(), []int{47}
+}
+
+func (x *Sticker) GetCacheKey() string {
+	if x != nil {
+		return x.CacheKey
+	}
+	return ""
+}
+
+func (x *Sticker) GetLocalPath() string {
+	if x != nil {
+		return x.LocalPath
+	}
+	return ""
+}
+
+func (x *Sticker) GetMimeType() string {
+	if x != nil {
+		return x.MimeType
+	}
+	return ""
+}
+
+func (x *Sticker) GetIsAnimated() bool {
+	if x != nil {
+		return x.IsAnimated
+	}
+	return false
+}
+
+func (x *Sticker) GetWidth() int32 {
+	if x != nil {
+		return x.Width
+	}
+	return 0
+}
+
+func (x *Sticker) GetHeight() int32 {
+	if x != nil {
+		return x.Height
+	}
+	return 0
+}
+
+func (x *Sticker) GetEmojis() []string {
+	if x != nil {
+		return x.Emojis
+	}
+	return nil
+}
+
+func (x *Sticker) GetAccessibilityText() string {
+	if x != nil {
+		return x.AccessibilityText
+	}
+	return ""
+}
+
+func (x *Sticker) GetPackId() string {
+	if x != nil {
+		return x.PackId
+	}
+	return ""
+}
+
+func (x *Sticker) GetIsFavorite() bool {
+	if x != nil {
+		return x.IsFavorite
+	}
+	return false
+}
+
+func (x *Sticker) GetLastUsedUnix() int64 {
+	if x != nil {
+		return x.LastUsedUnix
+	}
+	return 0
+}
+
+func (x *Sticker) GetWeight() float32 {
+	if x != nil {
+		return x.Weight
+	}
+	return 0
+}
+
+type StickerPack struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Id              string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Name            string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Publisher       string                 `protobuf:"bytes,3,opt,name=publisher,proto3" json:"publisher,omitempty"`
+	Description     string                 `protobuf:"bytes,4,opt,name=description,proto3" json:"description,omitempty"`
+	Animated        bool                   `protobuf:"varint,5,opt,name=animated,proto3" json:"animated,omitempty"`
+	Lottie          bool                   `protobuf:"varint,6,opt,name=lottie,proto3" json:"lottie,omitempty"`
+	TrayLocalPath   string                 `protobuf:"bytes,7,opt,name=tray_local_path,json=trayLocalPath,proto3" json:"tray_local_path,omitempty"`
+	StickerCount    int32                  `protobuf:"varint,8,opt,name=sticker_count,json=stickerCount,proto3" json:"sticker_count,omitempty"`
+	Installed       bool                   `protobuf:"varint,9,opt,name=installed,proto3" json:"installed,omitempty"`
+	ContentsFetched bool                   `protobuf:"varint,10,opt,name=contents_fetched,json=contentsFetched,proto3" json:"contents_fetched,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *StickerPack) Reset() {
+	*x = StickerPack{}
+	mi := &file_whatevr_proto_msgTypes[48]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StickerPack) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StickerPack) ProtoMessage() {}
+
+func (x *StickerPack) ProtoReflect() protoreflect.Message {
+	mi := &file_whatevr_proto_msgTypes[48]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StickerPack.ProtoReflect.Descriptor instead.
+func (*StickerPack) Descriptor() ([]byte, []int) {
+	return file_whatevr_proto_rawDescGZIP(), []int{48}
+}
+
+func (x *StickerPack) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *StickerPack) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *StickerPack) GetPublisher() string {
+	if x != nil {
+		return x.Publisher
+	}
+	return ""
+}
+
+func (x *StickerPack) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+func (x *StickerPack) GetAnimated() bool {
+	if x != nil {
+		return x.Animated
+	}
+	return false
+}
+
+func (x *StickerPack) GetLottie() bool {
+	if x != nil {
+		return x.Lottie
+	}
+	return false
+}
+
+func (x *StickerPack) GetTrayLocalPath() string {
+	if x != nil {
+		return x.TrayLocalPath
+	}
+	return ""
+}
+
+func (x *StickerPack) GetStickerCount() int32 {
+	if x != nil {
+		return x.StickerCount
+	}
+	return 0
+}
+
+func (x *StickerPack) GetInstalled() bool {
+	if x != nil {
+		return x.Installed
+	}
+	return false
+}
+
+func (x *StickerPack) GetContentsFetched() bool {
+	if x != nil {
+		return x.ContentsFetched
+	}
+	return false
+}
+
+type ListStickersRequest struct {
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Source StickerSource          `protobuf:"varint,1,opt,name=source,proto3,enum=whatevr.v1.StickerSource" json:"source,omitempty"`
+	// Non-empty query searches across all sources (emoji tags, accessibility
+	// text, pack names) and ignores source.
+	Query         string `protobuf:"bytes,2,opt,name=query,proto3" json:"query,omitempty"`
+	Limit         int32  `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListStickersRequest) Reset() {
+	*x = ListStickersRequest{}
+	mi := &file_whatevr_proto_msgTypes[49]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListStickersRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListStickersRequest) ProtoMessage() {}
+
+func (x *ListStickersRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_whatevr_proto_msgTypes[49]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListStickersRequest.ProtoReflect.Descriptor instead.
+func (*ListStickersRequest) Descriptor() ([]byte, []int) {
+	return file_whatevr_proto_rawDescGZIP(), []int{49}
+}
+
+func (x *ListStickersRequest) GetSource() StickerSource {
+	if x != nil {
+		return x.Source
+	}
+	return StickerSource_STICKER_SOURCE_UNSPECIFIED
+}
+
+func (x *ListStickersRequest) GetQuery() string {
+	if x != nil {
+		return x.Query
+	}
+	return ""
+}
+
+func (x *ListStickersRequest) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+type ListStickersResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Stickers      []*Sticker             `protobuf:"bytes,1,rep,name=stickers,proto3" json:"stickers,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListStickersResponse) Reset() {
+	*x = ListStickersResponse{}
+	mi := &file_whatevr_proto_msgTypes[50]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListStickersResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListStickersResponse) ProtoMessage() {}
+
+func (x *ListStickersResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_whatevr_proto_msgTypes[50]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListStickersResponse.ProtoReflect.Descriptor instead.
+func (*ListStickersResponse) Descriptor() ([]byte, []int) {
+	return file_whatevr_proto_rawDescGZIP(), []int{50}
+}
+
+func (x *ListStickersResponse) GetStickers() []*Sticker {
+	if x != nil {
+		return x.Stickers
+	}
+	return nil
+}
+
+type ListStickerPacksRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ForceRefresh  bool                   `protobuf:"varint,1,opt,name=force_refresh,json=forceRefresh,proto3" json:"force_refresh,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListStickerPacksRequest) Reset() {
+	*x = ListStickerPacksRequest{}
+	mi := &file_whatevr_proto_msgTypes[51]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListStickerPacksRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListStickerPacksRequest) ProtoMessage() {}
+
+func (x *ListStickerPacksRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_whatevr_proto_msgTypes[51]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListStickerPacksRequest.ProtoReflect.Descriptor instead.
+func (*ListStickerPacksRequest) Descriptor() ([]byte, []int) {
+	return file_whatevr_proto_rawDescGZIP(), []int{51}
+}
+
+func (x *ListStickerPacksRequest) GetForceRefresh() bool {
+	if x != nil {
+		return x.ForceRefresh
+	}
+	return false
+}
+
+type ListStickerPacksResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Packs         []*StickerPack         `protobuf:"bytes,1,rep,name=packs,proto3" json:"packs,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListStickerPacksResponse) Reset() {
+	*x = ListStickerPacksResponse{}
+	mi := &file_whatevr_proto_msgTypes[52]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListStickerPacksResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListStickerPacksResponse) ProtoMessage() {}
+
+func (x *ListStickerPacksResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_whatevr_proto_msgTypes[52]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListStickerPacksResponse.ProtoReflect.Descriptor instead.
+func (*ListStickerPacksResponse) Descriptor() ([]byte, []int) {
+	return file_whatevr_proto_rawDescGZIP(), []int{52}
+}
+
+func (x *ListStickerPacksResponse) GetPacks() []*StickerPack {
+	if x != nil {
+		return x.Packs
+	}
+	return nil
+}
+
+type GetStickerPackRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	PackId        string                 `protobuf:"bytes,1,opt,name=pack_id,json=packId,proto3" json:"pack_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetStickerPackRequest) Reset() {
+	*x = GetStickerPackRequest{}
+	mi := &file_whatevr_proto_msgTypes[53]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetStickerPackRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetStickerPackRequest) ProtoMessage() {}
+
+func (x *GetStickerPackRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_whatevr_proto_msgTypes[53]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetStickerPackRequest.ProtoReflect.Descriptor instead.
+func (*GetStickerPackRequest) Descriptor() ([]byte, []int) {
+	return file_whatevr_proto_rawDescGZIP(), []int{53}
+}
+
+func (x *GetStickerPackRequest) GetPackId() string {
+	if x != nil {
+		return x.PackId
+	}
+	return ""
+}
+
+type GetStickerPackResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Pack          *StickerPack           `protobuf:"bytes,1,opt,name=pack,proto3" json:"pack,omitempty"`
+	Stickers      []*Sticker             `protobuf:"bytes,2,rep,name=stickers,proto3" json:"stickers,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetStickerPackResponse) Reset() {
+	*x = GetStickerPackResponse{}
+	mi := &file_whatevr_proto_msgTypes[54]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetStickerPackResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetStickerPackResponse) ProtoMessage() {}
+
+func (x *GetStickerPackResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_whatevr_proto_msgTypes[54]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetStickerPackResponse.ProtoReflect.Descriptor instead.
+func (*GetStickerPackResponse) Descriptor() ([]byte, []int) {
+	return file_whatevr_proto_rawDescGZIP(), []int{54}
+}
+
+func (x *GetStickerPackResponse) GetPack() *StickerPack {
+	if x != nil {
+		return x.Pack
+	}
+	return nil
+}
+
+func (x *GetStickerPackResponse) GetStickers() []*Sticker {
+	if x != nil {
+		return x.Stickers
+	}
+	return nil
+}
+
+type DownloadStickerRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	CacheKey      string                 `protobuf:"bytes,1,opt,name=cache_key,json=cacheKey,proto3" json:"cache_key,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DownloadStickerRequest) Reset() {
+	*x = DownloadStickerRequest{}
+	mi := &file_whatevr_proto_msgTypes[55]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DownloadStickerRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DownloadStickerRequest) ProtoMessage() {}
+
+func (x *DownloadStickerRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_whatevr_proto_msgTypes[55]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DownloadStickerRequest.ProtoReflect.Descriptor instead.
+func (*DownloadStickerRequest) Descriptor() ([]byte, []int) {
+	return file_whatevr_proto_rawDescGZIP(), []int{55}
+}
+
+func (x *DownloadStickerRequest) GetCacheKey() string {
+	if x != nil {
+		return x.CacheKey
+	}
+	return ""
+}
+
+type DownloadStickerResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Sticker       *Sticker               `protobuf:"bytes,1,opt,name=sticker,proto3" json:"sticker,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DownloadStickerResponse) Reset() {
+	*x = DownloadStickerResponse{}
+	mi := &file_whatevr_proto_msgTypes[56]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DownloadStickerResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DownloadStickerResponse) ProtoMessage() {}
+
+func (x *DownloadStickerResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_whatevr_proto_msgTypes[56]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DownloadStickerResponse.ProtoReflect.Descriptor instead.
+func (*DownloadStickerResponse) Descriptor() ([]byte, []int) {
+	return file_whatevr_proto_rawDescGZIP(), []int{56}
+}
+
+func (x *DownloadStickerResponse) GetSticker() *Sticker {
+	if x != nil {
+		return x.Sticker
+	}
+	return nil
+}
+
+type SetStickerPackInstalledRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	PackId        string                 `protobuf:"bytes,1,opt,name=pack_id,json=packId,proto3" json:"pack_id,omitempty"`
+	Installed     bool                   `protobuf:"varint,2,opt,name=installed,proto3" json:"installed,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetStickerPackInstalledRequest) Reset() {
+	*x = SetStickerPackInstalledRequest{}
+	mi := &file_whatevr_proto_msgTypes[57]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetStickerPackInstalledRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetStickerPackInstalledRequest) ProtoMessage() {}
+
+func (x *SetStickerPackInstalledRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_whatevr_proto_msgTypes[57]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetStickerPackInstalledRequest.ProtoReflect.Descriptor instead.
+func (*SetStickerPackInstalledRequest) Descriptor() ([]byte, []int) {
+	return file_whatevr_proto_rawDescGZIP(), []int{57}
+}
+
+func (x *SetStickerPackInstalledRequest) GetPackId() string {
+	if x != nil {
+		return x.PackId
+	}
+	return ""
+}
+
+func (x *SetStickerPackInstalledRequest) GetInstalled() bool {
+	if x != nil {
+		return x.Installed
+	}
+	return false
+}
+
+type SetStickerPackInstalledResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Pack          *StickerPack           `protobuf:"bytes,1,opt,name=pack,proto3" json:"pack,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetStickerPackInstalledResponse) Reset() {
+	*x = SetStickerPackInstalledResponse{}
+	mi := &file_whatevr_proto_msgTypes[58]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetStickerPackInstalledResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetStickerPackInstalledResponse) ProtoMessage() {}
+
+func (x *SetStickerPackInstalledResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_whatevr_proto_msgTypes[58]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetStickerPackInstalledResponse.ProtoReflect.Descriptor instead.
+func (*SetStickerPackInstalledResponse) Descriptor() ([]byte, []int) {
+	return file_whatevr_proto_rawDescGZIP(), []int{58}
+}
+
+func (x *SetStickerPackInstalledResponse) GetPack() *StickerPack {
+	if x != nil {
+		return x.Pack
+	}
+	return nil
+}
+
+type SendStickerRequest struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	ChatId           string                 `protobuf:"bytes,1,opt,name=chat_id,json=chatId,proto3" json:"chat_id,omitempty"`
+	CacheKey         string                 `protobuf:"bytes,2,opt,name=cache_key,json=cacheKey,proto3" json:"cache_key,omitempty"`
+	ReplyToMessageId string                 `protobuf:"bytes,3,opt,name=reply_to_message_id,json=replyToMessageId,proto3" json:"reply_to_message_id,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *SendStickerRequest) Reset() {
+	*x = SendStickerRequest{}
+	mi := &file_whatevr_proto_msgTypes[59]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SendStickerRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SendStickerRequest) ProtoMessage() {}
+
+func (x *SendStickerRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_whatevr_proto_msgTypes[59]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SendStickerRequest.ProtoReflect.Descriptor instead.
+func (*SendStickerRequest) Descriptor() ([]byte, []int) {
+	return file_whatevr_proto_rawDescGZIP(), []int{59}
+}
+
+func (x *SendStickerRequest) GetChatId() string {
+	if x != nil {
+		return x.ChatId
+	}
+	return ""
+}
+
+func (x *SendStickerRequest) GetCacheKey() string {
+	if x != nil {
+		return x.CacheKey
+	}
+	return ""
+}
+
+func (x *SendStickerRequest) GetReplyToMessageId() string {
+	if x != nil {
+		return x.ReplyToMessageId
+	}
+	return ""
+}
+
+type SendStickerResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Message       *Message               `protobuf:"bytes,1,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SendStickerResponse) Reset() {
+	*x = SendStickerResponse{}
+	mi := &file_whatevr_proto_msgTypes[60]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SendStickerResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SendStickerResponse) ProtoMessage() {}
+
+func (x *SendStickerResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_whatevr_proto_msgTypes[60]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SendStickerResponse.ProtoReflect.Descriptor instead.
+func (*SendStickerResponse) Descriptor() ([]byte, []int) {
+	return file_whatevr_proto_rawDescGZIP(), []int{60}
+}
+
+func (x *SendStickerResponse) GetMessage() *Message {
 	if x != nil {
 		return x.Message
 	}
@@ -3013,7 +4030,7 @@ type Chat struct {
 
 func (x *Chat) Reset() {
 	*x = Chat{}
-	mi := &file_whatevr_proto_msgTypes[45]
+	mi := &file_whatevr_proto_msgTypes[61]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3025,7 +4042,7 @@ func (x *Chat) String() string {
 func (*Chat) ProtoMessage() {}
 
 func (x *Chat) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[45]
+	mi := &file_whatevr_proto_msgTypes[61]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3038,7 +4055,7 @@ func (x *Chat) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Chat.ProtoReflect.Descriptor instead.
 func (*Chat) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{45}
+	return file_whatevr_proto_rawDescGZIP(), []int{61}
 }
 
 func (x *Chat) GetId() string {
@@ -3150,7 +4167,7 @@ type Message struct {
 
 func (x *Message) Reset() {
 	*x = Message{}
-	mi := &file_whatevr_proto_msgTypes[46]
+	mi := &file_whatevr_proto_msgTypes[62]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3162,7 +4179,7 @@ func (x *Message) String() string {
 func (*Message) ProtoMessage() {}
 
 func (x *Message) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[46]
+	mi := &file_whatevr_proto_msgTypes[62]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3175,7 +4192,7 @@ func (x *Message) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Message.ProtoReflect.Descriptor instead.
 func (*Message) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{46}
+	return file_whatevr_proto_rawDescGZIP(), []int{62}
 }
 
 func (x *Message) GetId() string {
@@ -3312,7 +4329,7 @@ type MessageReply struct {
 
 func (x *MessageReply) Reset() {
 	*x = MessageReply{}
-	mi := &file_whatevr_proto_msgTypes[47]
+	mi := &file_whatevr_proto_msgTypes[63]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3324,7 +4341,7 @@ func (x *MessageReply) String() string {
 func (*MessageReply) ProtoMessage() {}
 
 func (x *MessageReply) ProtoReflect() protoreflect.Message {
-	mi := &file_whatevr_proto_msgTypes[47]
+	mi := &file_whatevr_proto_msgTypes[63]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3337,7 +4354,7 @@ func (x *MessageReply) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MessageReply.ProtoReflect.Descriptor instead.
 func (*MessageReply) Descriptor() ([]byte, []int) {
-	return file_whatevr_proto_rawDescGZIP(), []int{47}
+	return file_whatevr_proto_rawDescGZIP(), []int{63}
 }
 
 func (x *MessageReply) GetMessageId() string {
@@ -3411,7 +4428,7 @@ const file_whatevr_proto_rawDesc = "" +
 	"\rretry_attempt\x18\n" +
 	" \x01(\x05R\fretryAttempt\x12&\n" +
 	"\x0fnext_retry_unix\x18\v \x01(\x03R\rnextRetryUnix\"\x18\n" +
-	"\x16SubscribeEventsRequest\"\x95\x06\n" +
+	"\x16SubscribeEventsRequest\"\xd2\a\n" +
 	"\vDaemonEvent\x12N\n" +
 	"\x12connection_changed\x18\x01 \x01(\v2\x1d.whatevr.v1.ConnectionChangedH\x00R\x11connectionChanged\x12O\n" +
 	"\x13login_state_changed\x18\x02 \x01(\v2\x1d.whatevr.v1.LoginStateChangedH\x00R\x11loginStateChanged\x129\n" +
@@ -3424,8 +4441,16 @@ const file_whatevr_proto_rawDesc = "" +
 	"\x12history_backfilled\x18\b \x01(\v2\x1d.whatevr.v1.HistoryBackfilledH\x00R\x11historyBackfilled\x12X\n" +
 	"\x16media_download_changed\x18\t \x01(\v2 .whatevr.v1.MediaDownloadChangedH\x00R\x14mediaDownloadChanged\x12B\n" +
 	"\x0eavatar_updated\x18\n" +
-	" \x01(\v2\x19.whatevr.v1.AvatarUpdatedH\x00R\ravatarUpdatedB\t\n" +
-	"\apayload\"\xc6\x01\n" +
+	" \x01(\v2\x19.whatevr.v1.AvatarUpdatedH\x00R\ravatarUpdated\x12[\n" +
+	"\x17sticker_library_changed\x18\v \x01(\v2!.whatevr.v1.StickerLibraryChangedH\x00R\x15stickerLibraryChanged\x12^\n" +
+	"\x18sticker_download_changed\x18\f \x01(\v2\".whatevr.v1.StickerDownloadChangedH\x00R\x16stickerDownloadChangedB\t\n" +
+	"\apayload\"J\n" +
+	"\x15StickerLibraryChanged\x121\n" +
+	"\x06source\x18\x01 \x01(\x0e2\x19.whatevr.v1.StickerSourceR\x06source\"f\n" +
+	"\x16StickerDownloadChanged\x12-\n" +
+	"\asticker\x18\x01 \x01(\v2\x13.whatevr.v1.StickerR\asticker\x12\x1d\n" +
+	"\n" +
+	"error_text\x18\x02 \x01(\tR\terrorText\"\xc6\x01\n" +
 	"\x06Avatar\x121\n" +
 	"\x04kind\x18\x01 \x01(\x0e2\x1d.whatevr.v1.AvatarSubjectKindR\x04kind\x12\x0e\n" +
 	"\x02id\x18\x02 \x01(\tR\x02id\x12\x1d\n" +
@@ -3557,6 +4582,65 @@ const file_whatevr_proto_rawDesc = "" +
 	"\acaption\x18\x03 \x01(\tR\acaption\x12-\n" +
 	"\x13reply_to_message_id\x18\x04 \x01(\tR\x10replyToMessageId\"B\n" +
 	"\x11SendMediaResponse\x12-\n" +
+	"\amessage\x18\x01 \x01(\v2\x13.whatevr.v1.MessageR\amessage\"\xf0\x02\n" +
+	"\aSticker\x12\x1b\n" +
+	"\tcache_key\x18\x01 \x01(\tR\bcacheKey\x12\x1d\n" +
+	"\n" +
+	"local_path\x18\x02 \x01(\tR\tlocalPath\x12\x1b\n" +
+	"\tmime_type\x18\x03 \x01(\tR\bmimeType\x12\x1f\n" +
+	"\vis_animated\x18\x04 \x01(\bR\n" +
+	"isAnimated\x12\x14\n" +
+	"\x05width\x18\x05 \x01(\x05R\x05width\x12\x16\n" +
+	"\x06height\x18\x06 \x01(\x05R\x06height\x12\x16\n" +
+	"\x06emojis\x18\a \x03(\tR\x06emojis\x12-\n" +
+	"\x12accessibility_text\x18\b \x01(\tR\x11accessibilityText\x12\x17\n" +
+	"\apack_id\x18\t \x01(\tR\x06packId\x12\x1f\n" +
+	"\vis_favorite\x18\n" +
+	" \x01(\bR\n" +
+	"isFavorite\x12$\n" +
+	"\x0elast_used_unix\x18\v \x01(\x03R\flastUsedUnix\x12\x16\n" +
+	"\x06weight\x18\f \x01(\x02R\x06weight\"\xbb\x02\n" +
+	"\vStickerPack\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1c\n" +
+	"\tpublisher\x18\x03 \x01(\tR\tpublisher\x12 \n" +
+	"\vdescription\x18\x04 \x01(\tR\vdescription\x12\x1a\n" +
+	"\banimated\x18\x05 \x01(\bR\banimated\x12\x16\n" +
+	"\x06lottie\x18\x06 \x01(\bR\x06lottie\x12&\n" +
+	"\x0ftray_local_path\x18\a \x01(\tR\rtrayLocalPath\x12#\n" +
+	"\rsticker_count\x18\b \x01(\x05R\fstickerCount\x12\x1c\n" +
+	"\tinstalled\x18\t \x01(\bR\tinstalled\x12)\n" +
+	"\x10contents_fetched\x18\n" +
+	" \x01(\bR\x0fcontentsFetched\"t\n" +
+	"\x13ListStickersRequest\x121\n" +
+	"\x06source\x18\x01 \x01(\x0e2\x19.whatevr.v1.StickerSourceR\x06source\x12\x14\n" +
+	"\x05query\x18\x02 \x01(\tR\x05query\x12\x14\n" +
+	"\x05limit\x18\x03 \x01(\x05R\x05limit\"G\n" +
+	"\x14ListStickersResponse\x12/\n" +
+	"\bstickers\x18\x01 \x03(\v2\x13.whatevr.v1.StickerR\bstickers\">\n" +
+	"\x17ListStickerPacksRequest\x12#\n" +
+	"\rforce_refresh\x18\x01 \x01(\bR\fforceRefresh\"I\n" +
+	"\x18ListStickerPacksResponse\x12-\n" +
+	"\x05packs\x18\x01 \x03(\v2\x17.whatevr.v1.StickerPackR\x05packs\"0\n" +
+	"\x15GetStickerPackRequest\x12\x17\n" +
+	"\apack_id\x18\x01 \x01(\tR\x06packId\"v\n" +
+	"\x16GetStickerPackResponse\x12+\n" +
+	"\x04pack\x18\x01 \x01(\v2\x17.whatevr.v1.StickerPackR\x04pack\x12/\n" +
+	"\bstickers\x18\x02 \x03(\v2\x13.whatevr.v1.StickerR\bstickers\"5\n" +
+	"\x16DownloadStickerRequest\x12\x1b\n" +
+	"\tcache_key\x18\x01 \x01(\tR\bcacheKey\"H\n" +
+	"\x17DownloadStickerResponse\x12-\n" +
+	"\asticker\x18\x01 \x01(\v2\x13.whatevr.v1.StickerR\asticker\"W\n" +
+	"\x1eSetStickerPackInstalledRequest\x12\x17\n" +
+	"\apack_id\x18\x01 \x01(\tR\x06packId\x12\x1c\n" +
+	"\tinstalled\x18\x02 \x01(\bR\tinstalled\"N\n" +
+	"\x1fSetStickerPackInstalledResponse\x12+\n" +
+	"\x04pack\x18\x01 \x01(\v2\x17.whatevr.v1.StickerPackR\x04pack\"y\n" +
+	"\x12SendStickerRequest\x12\x17\n" +
+	"\achat_id\x18\x01 \x01(\tR\x06chatId\x12\x1b\n" +
+	"\tcache_key\x18\x02 \x01(\tR\bcacheKey\x12-\n" +
+	"\x13reply_to_message_id\x18\x03 \x01(\tR\x10replyToMessageId\"D\n" +
+	"\x13SendStickerResponse\x12-\n" +
 	"\amessage\x18\x01 \x01(\v2\x13.whatevr.v1.MessageR\amessage\"\xf3\x03\n" +
 	"\x04Chat\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
@@ -3644,7 +4728,12 @@ const file_whatevr_proto_rawDesc = "" +
 	"\x13ContactAvailability\x12$\n" +
 	" CONTACT_AVAILABILITY_UNSPECIFIED\x10\x00\x12\x1f\n" +
 	"\x1bCONTACT_AVAILABILITY_ONLINE\x10\x01\x12 \n" +
-	"\x1cCONTACT_AVAILABILITY_OFFLINE\x10\x02*v\n" +
+	"\x1cCONTACT_AVAILABILITY_OFFLINE\x10\x02*\x7f\n" +
+	"\rStickerSource\x12\x1e\n" +
+	"\x1aSTICKER_SOURCE_UNSPECIFIED\x10\x00\x12\x19\n" +
+	"\x15STICKER_SOURCE_RECENT\x10\x01\x12\x1b\n" +
+	"\x17STICKER_SOURCE_FAVORITE\x10\x02\x12\x16\n" +
+	"\x12STICKER_SOURCE_ALL\x10\x03*v\n" +
 	"\x11AvatarSubjectKind\x12#\n" +
 	"\x1fAVATAR_SUBJECT_KIND_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x18AVATAR_SUBJECT_KIND_CHAT\x10\x01\x12\x1e\n" +
@@ -3669,7 +4758,14 @@ const file_whatevr_proto_rawDesc = "" +
 	"\x14DownloadMessageMedia\x12'.whatevr.v1.DownloadMessageMediaRequest\x1a(.whatevr.v1.DownloadMessageMediaResponse2\x9e\x01\n" +
 	"\vSendService\x12E\n" +
 	"\bSendText\x12\x1b.whatevr.v1.SendTextRequest\x1a\x1c.whatevr.v1.SendTextResponse\x12H\n" +
-	"\tSendMedia\x12\x1c.whatevr.v1.SendMediaRequest\x1a\x1d.whatevr.v1.SendMediaResponseB\x1dZ\x1bwhatevrd/internal/rpc/pb;pbb\x06proto3"
+	"\tSendMedia\x12\x1c.whatevr.v1.SendMediaRequest\x1a\x1d.whatevr.v1.SendMediaResponse2\xbb\x04\n" +
+	"\x0eStickerService\x12Q\n" +
+	"\fListStickers\x12\x1f.whatevr.v1.ListStickersRequest\x1a .whatevr.v1.ListStickersResponse\x12]\n" +
+	"\x10ListStickerPacks\x12#.whatevr.v1.ListStickerPacksRequest\x1a$.whatevr.v1.ListStickerPacksResponse\x12W\n" +
+	"\x0eGetStickerPack\x12!.whatevr.v1.GetStickerPackRequest\x1a\".whatevr.v1.GetStickerPackResponse\x12Z\n" +
+	"\x0fDownloadSticker\x12\".whatevr.v1.DownloadStickerRequest\x1a#.whatevr.v1.DownloadStickerResponse\x12r\n" +
+	"\x17SetStickerPackInstalled\x12*.whatevr.v1.SetStickerPackInstalledRequest\x1a+.whatevr.v1.SetStickerPackInstalledResponse\x12N\n" +
+	"\vSendSticker\x12\x1e.whatevr.v1.SendStickerRequest\x1a\x1f.whatevr.v1.SendStickerResponseB\x1dZ\x1bwhatevrd/internal/rpc/pb;pbb\x06proto3"
 
 var (
 	file_whatevr_proto_rawDescOnce sync.Once
@@ -3683,138 +4779,179 @@ func file_whatevr_proto_rawDescGZIP() []byte {
 	return file_whatevr_proto_rawDescData
 }
 
-var file_whatevr_proto_enumTypes = make([]protoimpl.EnumInfo, 7)
-var file_whatevr_proto_msgTypes = make([]protoimpl.MessageInfo, 48)
+var file_whatevr_proto_enumTypes = make([]protoimpl.EnumInfo, 8)
+var file_whatevr_proto_msgTypes = make([]protoimpl.MessageInfo, 64)
 var file_whatevr_proto_goTypes = []any{
-	(DaemonState)(0),                      // 0: whatevr.v1.DaemonState
-	(MessageDirection)(0),                 // 1: whatevr.v1.MessageDirection
-	(MessageStatus)(0),                    // 2: whatevr.v1.MessageStatus
-	(HistorySyncType)(0),                  // 3: whatevr.v1.HistorySyncType
-	(HistorySyncPhase)(0),                 // 4: whatevr.v1.HistorySyncPhase
-	(ContactAvailability)(0),              // 5: whatevr.v1.ContactAvailability
-	(AvatarSubjectKind)(0),                // 6: whatevr.v1.AvatarSubjectKind
-	(*GetStatusRequest)(nil),              // 7: whatevr.v1.GetStatusRequest
-	(*GetStatusResponse)(nil),             // 8: whatevr.v1.GetStatusResponse
-	(*SubscribeEventsRequest)(nil),        // 9: whatevr.v1.SubscribeEventsRequest
-	(*DaemonEvent)(nil),                   // 10: whatevr.v1.DaemonEvent
-	(*Avatar)(nil),                        // 11: whatevr.v1.Avatar
-	(*AvatarUpdated)(nil),                 // 12: whatevr.v1.AvatarUpdated
-	(*HistorySyncProgress)(nil),           // 13: whatevr.v1.HistorySyncProgress
-	(*HistoryBackfilled)(nil),             // 14: whatevr.v1.HistoryBackfilled
-	(*ChatPresenceChanged)(nil),           // 15: whatevr.v1.ChatPresenceChanged
-	(*MediaDownloadChanged)(nil),          // 16: whatevr.v1.MediaDownloadChanged
-	(*ConnectionChanged)(nil),             // 17: whatevr.v1.ConnectionChanged
-	(*ReconnectRequest)(nil),              // 18: whatevr.v1.ReconnectRequest
-	(*ReconnectResponse)(nil),             // 19: whatevr.v1.ReconnectResponse
-	(*LoginStateChanged)(nil),             // 20: whatevr.v1.LoginStateChanged
-	(*NewMessage)(nil),                    // 21: whatevr.v1.NewMessage
-	(*MessageUpdated)(nil),                // 22: whatevr.v1.MessageUpdated
-	(*ChatUpdated)(nil),                   // 23: whatevr.v1.ChatUpdated
-	(*SubscribeLoginEventsRequest)(nil),   // 24: whatevr.v1.SubscribeLoginEventsRequest
-	(*LoginEvent)(nil),                    // 25: whatevr.v1.LoginEvent
-	(*QrCode)(nil),                        // 26: whatevr.v1.QrCode
-	(*LogoutRequest)(nil),                 // 27: whatevr.v1.LogoutRequest
-	(*LogoutResponse)(nil),                // 28: whatevr.v1.LogoutResponse
-	(*HoldSessionRequest)(nil),            // 29: whatevr.v1.HoldSessionRequest
-	(*FrontendSessionEvent)(nil),          // 30: whatevr.v1.FrontendSessionEvent
-	(*OpenChat)(nil),                      // 31: whatevr.v1.OpenChat
-	(*UpdateSessionStateRequest)(nil),     // 32: whatevr.v1.UpdateSessionStateRequest
-	(*UpdateSessionStateResponse)(nil),    // 33: whatevr.v1.UpdateSessionStateResponse
-	(*ListChatsRequest)(nil),              // 34: whatevr.v1.ListChatsRequest
-	(*ListChatsResponse)(nil),             // 35: whatevr.v1.ListChatsResponse
-	(*GetMessagesRequest)(nil),            // 36: whatevr.v1.GetMessagesRequest
-	(*GetMessagesResponse)(nil),           // 37: whatevr.v1.GetMessagesResponse
-	(*MarkChatReadRequest)(nil),           // 38: whatevr.v1.MarkChatReadRequest
-	(*MarkChatReadResponse)(nil),          // 39: whatevr.v1.MarkChatReadResponse
-	(*SetChatPinnedRequest)(nil),          // 40: whatevr.v1.SetChatPinnedRequest
-	(*SetChatPinnedResponse)(nil),         // 41: whatevr.v1.SetChatPinnedResponse
-	(*SetChatPresenceRequest)(nil),        // 42: whatevr.v1.SetChatPresenceRequest
-	(*SetChatPresenceResponse)(nil),       // 43: whatevr.v1.SetChatPresenceResponse
-	(*SubscribeChatPresenceRequest)(nil),  // 44: whatevr.v1.SubscribeChatPresenceRequest
-	(*SubscribeChatPresenceResponse)(nil), // 45: whatevr.v1.SubscribeChatPresenceResponse
-	(*DownloadMessageMediaRequest)(nil),   // 46: whatevr.v1.DownloadMessageMediaRequest
-	(*DownloadMessageMediaResponse)(nil),  // 47: whatevr.v1.DownloadMessageMediaResponse
-	(*SendTextRequest)(nil),               // 48: whatevr.v1.SendTextRequest
-	(*SendTextResponse)(nil),              // 49: whatevr.v1.SendTextResponse
-	(*SendMediaRequest)(nil),              // 50: whatevr.v1.SendMediaRequest
-	(*SendMediaResponse)(nil),             // 51: whatevr.v1.SendMediaResponse
-	(*Chat)(nil),                          // 52: whatevr.v1.Chat
-	(*Message)(nil),                       // 53: whatevr.v1.Message
-	(*MessageReply)(nil),                  // 54: whatevr.v1.MessageReply
+	(DaemonState)(0),                        // 0: whatevr.v1.DaemonState
+	(MessageDirection)(0),                   // 1: whatevr.v1.MessageDirection
+	(MessageStatus)(0),                      // 2: whatevr.v1.MessageStatus
+	(HistorySyncType)(0),                    // 3: whatevr.v1.HistorySyncType
+	(HistorySyncPhase)(0),                   // 4: whatevr.v1.HistorySyncPhase
+	(ContactAvailability)(0),                // 5: whatevr.v1.ContactAvailability
+	(StickerSource)(0),                      // 6: whatevr.v1.StickerSource
+	(AvatarSubjectKind)(0),                  // 7: whatevr.v1.AvatarSubjectKind
+	(*GetStatusRequest)(nil),                // 8: whatevr.v1.GetStatusRequest
+	(*GetStatusResponse)(nil),               // 9: whatevr.v1.GetStatusResponse
+	(*SubscribeEventsRequest)(nil),          // 10: whatevr.v1.SubscribeEventsRequest
+	(*DaemonEvent)(nil),                     // 11: whatevr.v1.DaemonEvent
+	(*StickerLibraryChanged)(nil),           // 12: whatevr.v1.StickerLibraryChanged
+	(*StickerDownloadChanged)(nil),          // 13: whatevr.v1.StickerDownloadChanged
+	(*Avatar)(nil),                          // 14: whatevr.v1.Avatar
+	(*AvatarUpdated)(nil),                   // 15: whatevr.v1.AvatarUpdated
+	(*HistorySyncProgress)(nil),             // 16: whatevr.v1.HistorySyncProgress
+	(*HistoryBackfilled)(nil),               // 17: whatevr.v1.HistoryBackfilled
+	(*ChatPresenceChanged)(nil),             // 18: whatevr.v1.ChatPresenceChanged
+	(*MediaDownloadChanged)(nil),            // 19: whatevr.v1.MediaDownloadChanged
+	(*ConnectionChanged)(nil),               // 20: whatevr.v1.ConnectionChanged
+	(*ReconnectRequest)(nil),                // 21: whatevr.v1.ReconnectRequest
+	(*ReconnectResponse)(nil),               // 22: whatevr.v1.ReconnectResponse
+	(*LoginStateChanged)(nil),               // 23: whatevr.v1.LoginStateChanged
+	(*NewMessage)(nil),                      // 24: whatevr.v1.NewMessage
+	(*MessageUpdated)(nil),                  // 25: whatevr.v1.MessageUpdated
+	(*ChatUpdated)(nil),                     // 26: whatevr.v1.ChatUpdated
+	(*SubscribeLoginEventsRequest)(nil),     // 27: whatevr.v1.SubscribeLoginEventsRequest
+	(*LoginEvent)(nil),                      // 28: whatevr.v1.LoginEvent
+	(*QrCode)(nil),                          // 29: whatevr.v1.QrCode
+	(*LogoutRequest)(nil),                   // 30: whatevr.v1.LogoutRequest
+	(*LogoutResponse)(nil),                  // 31: whatevr.v1.LogoutResponse
+	(*HoldSessionRequest)(nil),              // 32: whatevr.v1.HoldSessionRequest
+	(*FrontendSessionEvent)(nil),            // 33: whatevr.v1.FrontendSessionEvent
+	(*OpenChat)(nil),                        // 34: whatevr.v1.OpenChat
+	(*UpdateSessionStateRequest)(nil),       // 35: whatevr.v1.UpdateSessionStateRequest
+	(*UpdateSessionStateResponse)(nil),      // 36: whatevr.v1.UpdateSessionStateResponse
+	(*ListChatsRequest)(nil),                // 37: whatevr.v1.ListChatsRequest
+	(*ListChatsResponse)(nil),               // 38: whatevr.v1.ListChatsResponse
+	(*GetMessagesRequest)(nil),              // 39: whatevr.v1.GetMessagesRequest
+	(*GetMessagesResponse)(nil),             // 40: whatevr.v1.GetMessagesResponse
+	(*MarkChatReadRequest)(nil),             // 41: whatevr.v1.MarkChatReadRequest
+	(*MarkChatReadResponse)(nil),            // 42: whatevr.v1.MarkChatReadResponse
+	(*SetChatPinnedRequest)(nil),            // 43: whatevr.v1.SetChatPinnedRequest
+	(*SetChatPinnedResponse)(nil),           // 44: whatevr.v1.SetChatPinnedResponse
+	(*SetChatPresenceRequest)(nil),          // 45: whatevr.v1.SetChatPresenceRequest
+	(*SetChatPresenceResponse)(nil),         // 46: whatevr.v1.SetChatPresenceResponse
+	(*SubscribeChatPresenceRequest)(nil),    // 47: whatevr.v1.SubscribeChatPresenceRequest
+	(*SubscribeChatPresenceResponse)(nil),   // 48: whatevr.v1.SubscribeChatPresenceResponse
+	(*DownloadMessageMediaRequest)(nil),     // 49: whatevr.v1.DownloadMessageMediaRequest
+	(*DownloadMessageMediaResponse)(nil),    // 50: whatevr.v1.DownloadMessageMediaResponse
+	(*SendTextRequest)(nil),                 // 51: whatevr.v1.SendTextRequest
+	(*SendTextResponse)(nil),                // 52: whatevr.v1.SendTextResponse
+	(*SendMediaRequest)(nil),                // 53: whatevr.v1.SendMediaRequest
+	(*SendMediaResponse)(nil),               // 54: whatevr.v1.SendMediaResponse
+	(*Sticker)(nil),                         // 55: whatevr.v1.Sticker
+	(*StickerPack)(nil),                     // 56: whatevr.v1.StickerPack
+	(*ListStickersRequest)(nil),             // 57: whatevr.v1.ListStickersRequest
+	(*ListStickersResponse)(nil),            // 58: whatevr.v1.ListStickersResponse
+	(*ListStickerPacksRequest)(nil),         // 59: whatevr.v1.ListStickerPacksRequest
+	(*ListStickerPacksResponse)(nil),        // 60: whatevr.v1.ListStickerPacksResponse
+	(*GetStickerPackRequest)(nil),           // 61: whatevr.v1.GetStickerPackRequest
+	(*GetStickerPackResponse)(nil),          // 62: whatevr.v1.GetStickerPackResponse
+	(*DownloadStickerRequest)(nil),          // 63: whatevr.v1.DownloadStickerRequest
+	(*DownloadStickerResponse)(nil),         // 64: whatevr.v1.DownloadStickerResponse
+	(*SetStickerPackInstalledRequest)(nil),  // 65: whatevr.v1.SetStickerPackInstalledRequest
+	(*SetStickerPackInstalledResponse)(nil), // 66: whatevr.v1.SetStickerPackInstalledResponse
+	(*SendStickerRequest)(nil),              // 67: whatevr.v1.SendStickerRequest
+	(*SendStickerResponse)(nil),             // 68: whatevr.v1.SendStickerResponse
+	(*Chat)(nil),                            // 69: whatevr.v1.Chat
+	(*Message)(nil),                         // 70: whatevr.v1.Message
+	(*MessageReply)(nil),                    // 71: whatevr.v1.MessageReply
 }
 var file_whatevr_proto_depIdxs = []int32{
 	0,  // 0: whatevr.v1.GetStatusResponse.state:type_name -> whatevr.v1.DaemonState
-	17, // 1: whatevr.v1.DaemonEvent.connection_changed:type_name -> whatevr.v1.ConnectionChanged
-	20, // 2: whatevr.v1.DaemonEvent.login_state_changed:type_name -> whatevr.v1.LoginStateChanged
-	21, // 3: whatevr.v1.DaemonEvent.new_message:type_name -> whatevr.v1.NewMessage
-	22, // 4: whatevr.v1.DaemonEvent.message_updated:type_name -> whatevr.v1.MessageUpdated
-	23, // 5: whatevr.v1.DaemonEvent.chat_updated:type_name -> whatevr.v1.ChatUpdated
-	15, // 6: whatevr.v1.DaemonEvent.chat_presence_changed:type_name -> whatevr.v1.ChatPresenceChanged
-	13, // 7: whatevr.v1.DaemonEvent.history_sync_progress:type_name -> whatevr.v1.HistorySyncProgress
-	14, // 8: whatevr.v1.DaemonEvent.history_backfilled:type_name -> whatevr.v1.HistoryBackfilled
-	16, // 9: whatevr.v1.DaemonEvent.media_download_changed:type_name -> whatevr.v1.MediaDownloadChanged
-	12, // 10: whatevr.v1.DaemonEvent.avatar_updated:type_name -> whatevr.v1.AvatarUpdated
-	6,  // 11: whatevr.v1.Avatar.kind:type_name -> whatevr.v1.AvatarSubjectKind
-	11, // 12: whatevr.v1.AvatarUpdated.avatar:type_name -> whatevr.v1.Avatar
-	3,  // 13: whatevr.v1.HistorySyncProgress.sync_type:type_name -> whatevr.v1.HistorySyncType
-	4,  // 14: whatevr.v1.HistorySyncProgress.phase:type_name -> whatevr.v1.HistorySyncPhase
-	5,  // 15: whatevr.v1.ChatPresenceChanged.availability:type_name -> whatevr.v1.ContactAvailability
-	0,  // 16: whatevr.v1.ConnectionChanged.state:type_name -> whatevr.v1.DaemonState
-	0,  // 17: whatevr.v1.LoginStateChanged.state:type_name -> whatevr.v1.DaemonState
-	53, // 18: whatevr.v1.NewMessage.message:type_name -> whatevr.v1.Message
-	53, // 19: whatevr.v1.MessageUpdated.message:type_name -> whatevr.v1.Message
-	52, // 20: whatevr.v1.ChatUpdated.chat:type_name -> whatevr.v1.Chat
-	26, // 21: whatevr.v1.LoginEvent.qr_code:type_name -> whatevr.v1.QrCode
-	20, // 22: whatevr.v1.LoginEvent.login_state_changed:type_name -> whatevr.v1.LoginStateChanged
-	31, // 23: whatevr.v1.FrontendSessionEvent.open_chat:type_name -> whatevr.v1.OpenChat
-	52, // 24: whatevr.v1.ListChatsResponse.chats:type_name -> whatevr.v1.Chat
-	53, // 25: whatevr.v1.GetMessagesResponse.messages:type_name -> whatevr.v1.Message
-	53, // 26: whatevr.v1.DownloadMessageMediaResponse.message:type_name -> whatevr.v1.Message
-	53, // 27: whatevr.v1.SendTextResponse.message:type_name -> whatevr.v1.Message
-	53, // 28: whatevr.v1.SendMediaResponse.message:type_name -> whatevr.v1.Message
-	1,  // 29: whatevr.v1.Chat.last_message_direction:type_name -> whatevr.v1.MessageDirection
-	2,  // 30: whatevr.v1.Chat.last_message_status:type_name -> whatevr.v1.MessageStatus
-	1,  // 31: whatevr.v1.Message.direction:type_name -> whatevr.v1.MessageDirection
-	2,  // 32: whatevr.v1.Message.status:type_name -> whatevr.v1.MessageStatus
-	54, // 33: whatevr.v1.Message.reply_to:type_name -> whatevr.v1.MessageReply
-	1,  // 34: whatevr.v1.MessageReply.direction:type_name -> whatevr.v1.MessageDirection
-	7,  // 35: whatevr.v1.DaemonService.GetStatus:input_type -> whatevr.v1.GetStatusRequest
-	9,  // 36: whatevr.v1.DaemonService.SubscribeEvents:input_type -> whatevr.v1.SubscribeEventsRequest
-	18, // 37: whatevr.v1.DaemonService.Reconnect:input_type -> whatevr.v1.ReconnectRequest
-	24, // 38: whatevr.v1.LoginService.SubscribeLoginEvents:input_type -> whatevr.v1.SubscribeLoginEventsRequest
-	27, // 39: whatevr.v1.LoginService.Logout:input_type -> whatevr.v1.LogoutRequest
-	29, // 40: whatevr.v1.FrontendService.HoldSession:input_type -> whatevr.v1.HoldSessionRequest
-	32, // 41: whatevr.v1.FrontendService.UpdateSessionState:input_type -> whatevr.v1.UpdateSessionStateRequest
-	34, // 42: whatevr.v1.ChatService.ListChats:input_type -> whatevr.v1.ListChatsRequest
-	36, // 43: whatevr.v1.ChatService.GetMessages:input_type -> whatevr.v1.GetMessagesRequest
-	38, // 44: whatevr.v1.ChatService.MarkChatRead:input_type -> whatevr.v1.MarkChatReadRequest
-	40, // 45: whatevr.v1.ChatService.SetChatPinned:input_type -> whatevr.v1.SetChatPinnedRequest
-	42, // 46: whatevr.v1.ChatService.SetChatPresence:input_type -> whatevr.v1.SetChatPresenceRequest
-	44, // 47: whatevr.v1.ChatService.SubscribeChatPresence:input_type -> whatevr.v1.SubscribeChatPresenceRequest
-	46, // 48: whatevr.v1.ChatService.DownloadMessageMedia:input_type -> whatevr.v1.DownloadMessageMediaRequest
-	48, // 49: whatevr.v1.SendService.SendText:input_type -> whatevr.v1.SendTextRequest
-	50, // 50: whatevr.v1.SendService.SendMedia:input_type -> whatevr.v1.SendMediaRequest
-	8,  // 51: whatevr.v1.DaemonService.GetStatus:output_type -> whatevr.v1.GetStatusResponse
-	10, // 52: whatevr.v1.DaemonService.SubscribeEvents:output_type -> whatevr.v1.DaemonEvent
-	19, // 53: whatevr.v1.DaemonService.Reconnect:output_type -> whatevr.v1.ReconnectResponse
-	25, // 54: whatevr.v1.LoginService.SubscribeLoginEvents:output_type -> whatevr.v1.LoginEvent
-	28, // 55: whatevr.v1.LoginService.Logout:output_type -> whatevr.v1.LogoutResponse
-	30, // 56: whatevr.v1.FrontendService.HoldSession:output_type -> whatevr.v1.FrontendSessionEvent
-	33, // 57: whatevr.v1.FrontendService.UpdateSessionState:output_type -> whatevr.v1.UpdateSessionStateResponse
-	35, // 58: whatevr.v1.ChatService.ListChats:output_type -> whatevr.v1.ListChatsResponse
-	37, // 59: whatevr.v1.ChatService.GetMessages:output_type -> whatevr.v1.GetMessagesResponse
-	39, // 60: whatevr.v1.ChatService.MarkChatRead:output_type -> whatevr.v1.MarkChatReadResponse
-	41, // 61: whatevr.v1.ChatService.SetChatPinned:output_type -> whatevr.v1.SetChatPinnedResponse
-	43, // 62: whatevr.v1.ChatService.SetChatPresence:output_type -> whatevr.v1.SetChatPresenceResponse
-	45, // 63: whatevr.v1.ChatService.SubscribeChatPresence:output_type -> whatevr.v1.SubscribeChatPresenceResponse
-	47, // 64: whatevr.v1.ChatService.DownloadMessageMedia:output_type -> whatevr.v1.DownloadMessageMediaResponse
-	49, // 65: whatevr.v1.SendService.SendText:output_type -> whatevr.v1.SendTextResponse
-	51, // 66: whatevr.v1.SendService.SendMedia:output_type -> whatevr.v1.SendMediaResponse
-	51, // [51:67] is the sub-list for method output_type
-	35, // [35:51] is the sub-list for method input_type
-	35, // [35:35] is the sub-list for extension type_name
-	35, // [35:35] is the sub-list for extension extendee
-	0,  // [0:35] is the sub-list for field type_name
+	20, // 1: whatevr.v1.DaemonEvent.connection_changed:type_name -> whatevr.v1.ConnectionChanged
+	23, // 2: whatevr.v1.DaemonEvent.login_state_changed:type_name -> whatevr.v1.LoginStateChanged
+	24, // 3: whatevr.v1.DaemonEvent.new_message:type_name -> whatevr.v1.NewMessage
+	25, // 4: whatevr.v1.DaemonEvent.message_updated:type_name -> whatevr.v1.MessageUpdated
+	26, // 5: whatevr.v1.DaemonEvent.chat_updated:type_name -> whatevr.v1.ChatUpdated
+	18, // 6: whatevr.v1.DaemonEvent.chat_presence_changed:type_name -> whatevr.v1.ChatPresenceChanged
+	16, // 7: whatevr.v1.DaemonEvent.history_sync_progress:type_name -> whatevr.v1.HistorySyncProgress
+	17, // 8: whatevr.v1.DaemonEvent.history_backfilled:type_name -> whatevr.v1.HistoryBackfilled
+	19, // 9: whatevr.v1.DaemonEvent.media_download_changed:type_name -> whatevr.v1.MediaDownloadChanged
+	15, // 10: whatevr.v1.DaemonEvent.avatar_updated:type_name -> whatevr.v1.AvatarUpdated
+	12, // 11: whatevr.v1.DaemonEvent.sticker_library_changed:type_name -> whatevr.v1.StickerLibraryChanged
+	13, // 12: whatevr.v1.DaemonEvent.sticker_download_changed:type_name -> whatevr.v1.StickerDownloadChanged
+	6,  // 13: whatevr.v1.StickerLibraryChanged.source:type_name -> whatevr.v1.StickerSource
+	55, // 14: whatevr.v1.StickerDownloadChanged.sticker:type_name -> whatevr.v1.Sticker
+	7,  // 15: whatevr.v1.Avatar.kind:type_name -> whatevr.v1.AvatarSubjectKind
+	14, // 16: whatevr.v1.AvatarUpdated.avatar:type_name -> whatevr.v1.Avatar
+	3,  // 17: whatevr.v1.HistorySyncProgress.sync_type:type_name -> whatevr.v1.HistorySyncType
+	4,  // 18: whatevr.v1.HistorySyncProgress.phase:type_name -> whatevr.v1.HistorySyncPhase
+	5,  // 19: whatevr.v1.ChatPresenceChanged.availability:type_name -> whatevr.v1.ContactAvailability
+	0,  // 20: whatevr.v1.ConnectionChanged.state:type_name -> whatevr.v1.DaemonState
+	0,  // 21: whatevr.v1.LoginStateChanged.state:type_name -> whatevr.v1.DaemonState
+	70, // 22: whatevr.v1.NewMessage.message:type_name -> whatevr.v1.Message
+	70, // 23: whatevr.v1.MessageUpdated.message:type_name -> whatevr.v1.Message
+	69, // 24: whatevr.v1.ChatUpdated.chat:type_name -> whatevr.v1.Chat
+	29, // 25: whatevr.v1.LoginEvent.qr_code:type_name -> whatevr.v1.QrCode
+	23, // 26: whatevr.v1.LoginEvent.login_state_changed:type_name -> whatevr.v1.LoginStateChanged
+	34, // 27: whatevr.v1.FrontendSessionEvent.open_chat:type_name -> whatevr.v1.OpenChat
+	69, // 28: whatevr.v1.ListChatsResponse.chats:type_name -> whatevr.v1.Chat
+	70, // 29: whatevr.v1.GetMessagesResponse.messages:type_name -> whatevr.v1.Message
+	70, // 30: whatevr.v1.DownloadMessageMediaResponse.message:type_name -> whatevr.v1.Message
+	70, // 31: whatevr.v1.SendTextResponse.message:type_name -> whatevr.v1.Message
+	70, // 32: whatevr.v1.SendMediaResponse.message:type_name -> whatevr.v1.Message
+	6,  // 33: whatevr.v1.ListStickersRequest.source:type_name -> whatevr.v1.StickerSource
+	55, // 34: whatevr.v1.ListStickersResponse.stickers:type_name -> whatevr.v1.Sticker
+	56, // 35: whatevr.v1.ListStickerPacksResponse.packs:type_name -> whatevr.v1.StickerPack
+	56, // 36: whatevr.v1.GetStickerPackResponse.pack:type_name -> whatevr.v1.StickerPack
+	55, // 37: whatevr.v1.GetStickerPackResponse.stickers:type_name -> whatevr.v1.Sticker
+	55, // 38: whatevr.v1.DownloadStickerResponse.sticker:type_name -> whatevr.v1.Sticker
+	56, // 39: whatevr.v1.SetStickerPackInstalledResponse.pack:type_name -> whatevr.v1.StickerPack
+	70, // 40: whatevr.v1.SendStickerResponse.message:type_name -> whatevr.v1.Message
+	1,  // 41: whatevr.v1.Chat.last_message_direction:type_name -> whatevr.v1.MessageDirection
+	2,  // 42: whatevr.v1.Chat.last_message_status:type_name -> whatevr.v1.MessageStatus
+	1,  // 43: whatevr.v1.Message.direction:type_name -> whatevr.v1.MessageDirection
+	2,  // 44: whatevr.v1.Message.status:type_name -> whatevr.v1.MessageStatus
+	71, // 45: whatevr.v1.Message.reply_to:type_name -> whatevr.v1.MessageReply
+	1,  // 46: whatevr.v1.MessageReply.direction:type_name -> whatevr.v1.MessageDirection
+	8,  // 47: whatevr.v1.DaemonService.GetStatus:input_type -> whatevr.v1.GetStatusRequest
+	10, // 48: whatevr.v1.DaemonService.SubscribeEvents:input_type -> whatevr.v1.SubscribeEventsRequest
+	21, // 49: whatevr.v1.DaemonService.Reconnect:input_type -> whatevr.v1.ReconnectRequest
+	27, // 50: whatevr.v1.LoginService.SubscribeLoginEvents:input_type -> whatevr.v1.SubscribeLoginEventsRequest
+	30, // 51: whatevr.v1.LoginService.Logout:input_type -> whatevr.v1.LogoutRequest
+	32, // 52: whatevr.v1.FrontendService.HoldSession:input_type -> whatevr.v1.HoldSessionRequest
+	35, // 53: whatevr.v1.FrontendService.UpdateSessionState:input_type -> whatevr.v1.UpdateSessionStateRequest
+	37, // 54: whatevr.v1.ChatService.ListChats:input_type -> whatevr.v1.ListChatsRequest
+	39, // 55: whatevr.v1.ChatService.GetMessages:input_type -> whatevr.v1.GetMessagesRequest
+	41, // 56: whatevr.v1.ChatService.MarkChatRead:input_type -> whatevr.v1.MarkChatReadRequest
+	43, // 57: whatevr.v1.ChatService.SetChatPinned:input_type -> whatevr.v1.SetChatPinnedRequest
+	45, // 58: whatevr.v1.ChatService.SetChatPresence:input_type -> whatevr.v1.SetChatPresenceRequest
+	47, // 59: whatevr.v1.ChatService.SubscribeChatPresence:input_type -> whatevr.v1.SubscribeChatPresenceRequest
+	49, // 60: whatevr.v1.ChatService.DownloadMessageMedia:input_type -> whatevr.v1.DownloadMessageMediaRequest
+	51, // 61: whatevr.v1.SendService.SendText:input_type -> whatevr.v1.SendTextRequest
+	53, // 62: whatevr.v1.SendService.SendMedia:input_type -> whatevr.v1.SendMediaRequest
+	57, // 63: whatevr.v1.StickerService.ListStickers:input_type -> whatevr.v1.ListStickersRequest
+	59, // 64: whatevr.v1.StickerService.ListStickerPacks:input_type -> whatevr.v1.ListStickerPacksRequest
+	61, // 65: whatevr.v1.StickerService.GetStickerPack:input_type -> whatevr.v1.GetStickerPackRequest
+	63, // 66: whatevr.v1.StickerService.DownloadSticker:input_type -> whatevr.v1.DownloadStickerRequest
+	65, // 67: whatevr.v1.StickerService.SetStickerPackInstalled:input_type -> whatevr.v1.SetStickerPackInstalledRequest
+	67, // 68: whatevr.v1.StickerService.SendSticker:input_type -> whatevr.v1.SendStickerRequest
+	9,  // 69: whatevr.v1.DaemonService.GetStatus:output_type -> whatevr.v1.GetStatusResponse
+	11, // 70: whatevr.v1.DaemonService.SubscribeEvents:output_type -> whatevr.v1.DaemonEvent
+	22, // 71: whatevr.v1.DaemonService.Reconnect:output_type -> whatevr.v1.ReconnectResponse
+	28, // 72: whatevr.v1.LoginService.SubscribeLoginEvents:output_type -> whatevr.v1.LoginEvent
+	31, // 73: whatevr.v1.LoginService.Logout:output_type -> whatevr.v1.LogoutResponse
+	33, // 74: whatevr.v1.FrontendService.HoldSession:output_type -> whatevr.v1.FrontendSessionEvent
+	36, // 75: whatevr.v1.FrontendService.UpdateSessionState:output_type -> whatevr.v1.UpdateSessionStateResponse
+	38, // 76: whatevr.v1.ChatService.ListChats:output_type -> whatevr.v1.ListChatsResponse
+	40, // 77: whatevr.v1.ChatService.GetMessages:output_type -> whatevr.v1.GetMessagesResponse
+	42, // 78: whatevr.v1.ChatService.MarkChatRead:output_type -> whatevr.v1.MarkChatReadResponse
+	44, // 79: whatevr.v1.ChatService.SetChatPinned:output_type -> whatevr.v1.SetChatPinnedResponse
+	46, // 80: whatevr.v1.ChatService.SetChatPresence:output_type -> whatevr.v1.SetChatPresenceResponse
+	48, // 81: whatevr.v1.ChatService.SubscribeChatPresence:output_type -> whatevr.v1.SubscribeChatPresenceResponse
+	50, // 82: whatevr.v1.ChatService.DownloadMessageMedia:output_type -> whatevr.v1.DownloadMessageMediaResponse
+	52, // 83: whatevr.v1.SendService.SendText:output_type -> whatevr.v1.SendTextResponse
+	54, // 84: whatevr.v1.SendService.SendMedia:output_type -> whatevr.v1.SendMediaResponse
+	58, // 85: whatevr.v1.StickerService.ListStickers:output_type -> whatevr.v1.ListStickersResponse
+	60, // 86: whatevr.v1.StickerService.ListStickerPacks:output_type -> whatevr.v1.ListStickerPacksResponse
+	62, // 87: whatevr.v1.StickerService.GetStickerPack:output_type -> whatevr.v1.GetStickerPackResponse
+	64, // 88: whatevr.v1.StickerService.DownloadSticker:output_type -> whatevr.v1.DownloadStickerResponse
+	66, // 89: whatevr.v1.StickerService.SetStickerPackInstalled:output_type -> whatevr.v1.SetStickerPackInstalledResponse
+	68, // 90: whatevr.v1.StickerService.SendSticker:output_type -> whatevr.v1.SendStickerResponse
+	69, // [69:91] is the sub-list for method output_type
+	47, // [47:69] is the sub-list for method input_type
+	47, // [47:47] is the sub-list for extension type_name
+	47, // [47:47] is the sub-list for extension extendee
+	0,  // [0:47] is the sub-list for field type_name
 }
 
 func init() { file_whatevr_proto_init() }
@@ -3833,12 +4970,14 @@ func file_whatevr_proto_init() {
 		(*DaemonEvent_HistoryBackfilled)(nil),
 		(*DaemonEvent_MediaDownloadChanged)(nil),
 		(*DaemonEvent_AvatarUpdated)(nil),
+		(*DaemonEvent_StickerLibraryChanged)(nil),
+		(*DaemonEvent_StickerDownloadChanged)(nil),
 	}
-	file_whatevr_proto_msgTypes[18].OneofWrappers = []any{
+	file_whatevr_proto_msgTypes[20].OneofWrappers = []any{
 		(*LoginEvent_QrCode)(nil),
 		(*LoginEvent_LoginStateChanged)(nil),
 	}
-	file_whatevr_proto_msgTypes[29].OneofWrappers = []any{
+	file_whatevr_proto_msgTypes[31].OneofWrappers = []any{
 		(*GetMessagesRequest_BeforeMessageId)(nil),
 		(*GetMessagesRequest_AroundMessageId)(nil),
 	}
@@ -3847,10 +4986,10 @@ func file_whatevr_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_whatevr_proto_rawDesc), len(file_whatevr_proto_rawDesc)),
-			NumEnums:      7,
-			NumMessages:   48,
+			NumEnums:      8,
+			NumMessages:   64,
 			NumExtensions: 0,
-			NumServices:   5,
+			NumServices:   6,
 		},
 		GoTypes:           file_whatevr_proto_goTypes,
 		DependencyIndexes: file_whatevr_proto_depIdxs,

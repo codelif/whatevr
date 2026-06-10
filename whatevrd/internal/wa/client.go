@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -53,6 +54,14 @@ type Client struct {
 	mediaDownloads  map[string]*mediaDownloadState
 	mediaRetryMu    sync.Mutex
 	mediaRetries    map[string]*mediaRetryState
+
+	stickerMu            sync.Mutex
+	stickerDownloads     map[string]*stickerFileDownloadState
+	stickerDownloadSem   chan struct{}
+	stickerLibraryTimers map[app.StickerSource]*time.Timer
+	stickerHTTPClient    *http.Client
+	// Serializes sticker store index refreshes (cheap, but no point racing).
+	stickerIndexMu sync.Mutex
 
 	historySyncMu             sync.Mutex
 	historySyncRunning        bool
@@ -126,7 +135,9 @@ func New(ctx context.Context, paths app.Paths, daemon *app.Daemon, store *appsto
 		mediaRetries:     make(map[string]*mediaRetryState),
 		sendQueueWake:    make(chan struct{}, 1),
 		reconnectCh:      make(chan struct{}, 1),
+		stickerDownloads: make(map[string]*stickerFileDownloadState),
 	}
+	c.stickerDownloadSem = make(chan struct{}, stickerDownloadConcurrency)
 
 	if err := c.resetClient(ctx); err != nil {
 		container.Close()

@@ -33,6 +33,7 @@
 #include "../models/chatlistmodel.h"
 #include "../models/emojimodel.h"
 #include "../models/messagelistmodel.h"
+#include "stickercontroller.h"
 #include "whatevr/v1/whatevr.qpb.h"
 #include "whatevr/v1/whatevr_client.grpc.qpb.h"
 
@@ -268,6 +269,10 @@ AppController::AppController(QObject *parent)
     m_chatListModel = new ChatListModel(this);
     m_emojiModel = new EmojiModel(this);
     m_messageListModel = new MessageListModel(this);
+    m_stickerController = new StickerController(this);
+    connect(m_stickerController, &StickerController::messageSent, this, [this](const whatevr::v1::Message &message) {
+        applyMessageEvent(message);
+    });
     m_frontendSessionId = QUuid::createUuid().toString(QUuid::WithoutBraces);
 
     m_retryTimer = new QTimer(this);
@@ -542,6 +547,11 @@ QAbstractItemModel *AppController::messageListModel() const
 QAbstractItemModel *AppController::emojiModel() const
 {
     return m_emojiModel;
+}
+
+QObject *AppController::stickers() const
+{
+    return m_stickerController;
 }
 
 bool AppController::messagesLoading() const
@@ -1372,6 +1382,7 @@ void AppController::attachClients()
     m_frontendClient->attachChannel(m_channel);
     m_chatClient->attachChannel(m_channel);
     m_sendClient->attachChannel(m_channel);
+    m_stickerController->attachChannel(m_channel);
     Q_EMIT composerChanged();
 }
 
@@ -1911,6 +1922,13 @@ void AppController::ensureDaemonStream()
             break;
         case whatevr::v1::DaemonEvent::PayloadFields::AvatarUpdated:
             applyAvatarUpdated(event->avatarUpdated());
+            break;
+        case whatevr::v1::DaemonEvent::PayloadFields::StickerLibraryChanged:
+            m_stickerController->handleLibraryChanged(event->stickerLibraryChanged().source());
+            break;
+        case whatevr::v1::DaemonEvent::PayloadFields::StickerDownloadChanged:
+            m_stickerController->handleDownloadChanged(event->stickerDownloadChanged().sticker(),
+                                                       event->stickerDownloadChanged().errorText());
             break;
         default:
             break;

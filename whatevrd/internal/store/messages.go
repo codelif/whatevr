@@ -742,7 +742,7 @@ func (db *DB) ListPendingOutgoingMessages(ctx context.Context, limit int, now ti
 	}
 
 	rows, err := db.conn.QueryContext(ctx, `
-		SELECT id, chat_id, sender_id, text, timestamp, direction, is_read, status, media_kind, media_mime_type, media_local_path, media_thumbnail_local_path, media_width, media_height, media_animated, media_payload,
+		SELECT id, chat_id, sender_id, text, timestamp, direction, is_read, status, media_kind, media_mime_type, media_local_path, media_thumbnail_local_path, media_width, media_height, media_animated, media_payload, media_cache_key,
 		       reply_to_message_id, reply_to_sender_id, reply_to_sender_name, reply_to_text, reply_to_media_kind, reply_to_media_mime_type, reply_to_direction,
 		       send_attempts, last_send_error, next_send_attempt
 		FROM messages
@@ -775,6 +775,7 @@ func (db *DB) ListPendingOutgoingMessages(ctx context.Context, limit int, now ti
 			&message.MediaHeight,
 			&message.MediaAnimated,
 			&message.MediaPayload,
+			&message.MediaCacheKey,
 			&message.ReplyTo.MessageID,
 			&message.ReplyTo.SenderID,
 			&message.ReplyTo.SenderName,

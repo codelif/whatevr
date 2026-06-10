@@ -518,6 +518,10 @@ func (c *Client) sendPendingMessage(ctx context.Context, client *whatsmeow.Clien
 }
 
 func (c *Client) sendPendingMediaMessage(ctx context.Context, client *whatsmeow.Client, targetJID types.JID, externalID types.MessageID, message appstore.Message) error {
+	if message.MediaKind == appstore.MediaKindSticker {
+		return c.sendPendingStickerMessage(ctx, client, targetJID, externalID, message)
+	}
+
 	data, err := os.ReadFile(message.MediaLocalPath)
 	if err != nil {
 		c.markPendingMessageFailed(ctx, message.ID, "cached media file missing or unreadable")
@@ -569,6 +573,82 @@ func (c *Client) sendPendingMediaMessage(ctx context.Context, client *whatsmeow.
 	if payload, marshalErr := proto.Marshal(imgMsg); marshalErr == nil {
 		if _, dbErr := c.store.UpdateMessageMediaPayload(ctx, message.ID, payload); dbErr != nil {
 			c.log.Warnf("Failed to persist sent image payload for %s: %v", message.ID, dbErr)
+		}
+	}
+
+	c.markPendingMessageSent(ctx, message.ID)
+	return nil
+}
+
+// sendPendingStickerMessage sends a queued sticker. The first send of a
+// sticker uploads its cached file once and persists the resulting media keys
+// (stickers.upload_payload); every later send of the same sticker skips the
+// upload entirely. A send failure on reused keys invalidates the cache and
+// retries with a fresh upload via the normal backoff.
+func (c *Client) sendPendingStickerMessage(ctx context.Context, client *whatsmeow.Client, targetJID types.JID, externalID types.MessageID, message appstore.Message) error {
+	sticker, ok, err := c.store.GetSticker(ctx, message.MediaCacheKey)
+	if err != nil {
+		return fmt.Errorf("load sticker %s: %w", message.MediaCacheKey, err)
+	}
+	if !ok {
+		c.markPendingMessageFailed(ctx, message.ID, "sticker is no longer in the library")
+		return nil
+	}
+
+	var stickerMsg *waE2E.StickerMessage
+	reusedUpload := false
+	if len(sticker.UploadPayload) > 0 && time.Since(time.Unix(sticker.UploadTS, 0)) < stickerUploadReuseTTL {
+		var cached waE2E.StickerMessage
+		if proto.Unmarshal(sticker.UploadPayload, &cached) == nil && cached.GetDirectPath() != "" {
+			stickerMsg = &cached
+			reusedUpload = true
+		}
+	}
+	if stickerMsg == nil {
+		stickerMsg, err = c.uploadStickerForSend(ctx, client, sticker)
+		if err != nil {
+			newAttempts := message.SendAttempts + 1
+			delay := sendQueueBackoff(newAttempts)
+			c.log.Warnf("Failed to upload sticker %s (attempt %d), retry in %s: %v", message.ID, newAttempts, delay, err)
+			if dbErr := c.store.UpdateMessageSendAttempt(ctx, message.ID, newAttempts, err.Error(), time.Now().Add(delay)); dbErr != nil {
+				c.log.Warnf("Failed to record send attempt for %s: %v", message.ID, dbErr)
+			}
+			return fmt.Errorf("upload sticker %s: %w", message.ID, err)
+		}
+		if payload, marshalErr := proto.Marshal(stickerMsg); marshalErr == nil {
+			if dbErr := c.store.SetStickerUploadPayload(ctx, sticker.CacheKey, payload, time.Now()); dbErr != nil {
+				c.log.Warnf("Failed to cache sticker upload for %s: %v", sticker.CacheKey, dbErr)
+			}
+		}
+	}
+
+	outgoing := proto.Clone(stickerMsg).(*waE2E.StickerMessage)
+	if contextInfo := c.outgoingReplyContextInfo(ctx, client, message); contextInfo != nil {
+		outgoing.ContextInfo = contextInfo
+	}
+
+	if _, err := client.SendMessage(ctx, targetJID, &waE2E.Message{StickerMessage: outgoing}, whatsmeow.SendRequestExtra{ID: externalID}); err != nil {
+		if reusedUpload {
+			// The cached upload may have expired server-side; force a fresh
+			// upload on the next attempt.
+			if dbErr := c.store.SetStickerUploadPayload(ctx, sticker.CacheKey, nil, time.Now()); dbErr != nil {
+				c.log.Warnf("Failed to invalidate sticker upload for %s: %v", sticker.CacheKey, dbErr)
+			}
+		}
+		newAttempts := message.SendAttempts + 1
+		delay := sendQueueBackoff(newAttempts)
+		c.log.Warnf("Failed to send sticker %s (attempt %d), retry in %s: %v", message.ID, newAttempts, delay, err)
+		if dbErr := c.store.UpdateMessageSendAttempt(ctx, message.ID, newAttempts, err.Error(), time.Now().Add(delay)); dbErr != nil {
+			c.log.Warnf("Failed to record send attempt for %s: %v", message.ID, dbErr)
+		}
+		return fmt.Errorf("send sticker %s: %w", message.ID, err)
+	}
+
+	// Persist the sent proto (our upload's media keys, no context info) so a
+	// later reply quoting this sticker reconstructs losslessly.
+	if payload, marshalErr := proto.Marshal(stickerMsg); marshalErr == nil {
+		if _, dbErr := c.store.UpdateMessageMediaPayload(ctx, message.ID, payload); dbErr != nil {
+			c.log.Warnf("Failed to persist sent sticker payload for %s: %v", message.ID, dbErr)
 		}
 	}
 

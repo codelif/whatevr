@@ -72,6 +72,9 @@ func (c *Client) backfillPinnedChatsFromAppState(ctx context.Context) error {
 		}
 	}
 
+	// The full regular_low snapshot also carries sticker favorites; reconcile
+	// them here so one fetch serves both features.
+	c.reconcileFavoriteStickersFromEvents(ctx, eventsToDispatch)
 	return c.reconcilePinnedChatsFromEvents(ctx, eventsToDispatch)
 }
 
@@ -87,6 +90,7 @@ func (c *Client) recoverPinnedChatsFromAppState(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	c.reconcileFavoriteStickersFromEvents(ctx, eventsToDispatch)
 	return c.reconcilePinnedChatsFromEvents(ctx, eventsToDispatch)
 }
 
@@ -170,6 +174,11 @@ func recoverRegularLowAppState(ctx context.Context, client *whatsmeow.Client) ([
 	handlerID := client.AddEventHandler(func(raw any) {
 		switch evt := raw.(type) {
 		case *events.Pin:
+			mu.Lock()
+			eventsToDispatch = append(eventsToDispatch, evt)
+			mu.Unlock()
+		case *events.AppState:
+			// Sticker favorites ride in the same regular_low snapshot.
 			mu.Lock()
 			eventsToDispatch = append(eventsToDispatch, evt)
 			mu.Unlock()

@@ -116,9 +116,11 @@ type DaemonEvent struct {
 	NextRetryUnix  int64
 	CanReconnect   bool
 
-	HistorySync   HistorySyncEvent
-	MediaDownload MediaDownloadEvent
-	Avatar        Avatar
+	HistorySync     HistorySyncEvent
+	MediaDownload   MediaDownloadEvent
+	Avatar          Avatar
+	StickerSource   StickerSource
+	StickerDownload StickerDownloadEvent
 }
 
 type presenceState struct {
@@ -149,7 +151,38 @@ const (
 	DaemonEventHistoryBackfilled
 	DaemonEventMediaDownloadChanged
 	DaemonEventAvatarUpdated
+	DaemonEventStickerLibraryChanged
+	DaemonEventStickerDownloadChanged
 )
+
+type StickerSource int32
+
+const (
+	StickerSourceUnspecified StickerSource = iota
+	StickerSourceRecent
+	StickerSourceFavorite
+	StickerSourceAll
+)
+
+type Sticker struct {
+	CacheKey          string
+	LocalPath         string
+	MimeType          string
+	IsAnimated        bool
+	Width             int32
+	Height            int32
+	Emojis            []string
+	AccessibilityText string
+	PackID            string
+	IsFavorite        bool
+	LastUsedUnix      int64
+	Weight            float32
+}
+
+type StickerDownloadEvent struct {
+	Sticker   Sticker
+	ErrorText string
+}
 
 type AvatarSubjectKind int32
 
@@ -554,6 +587,17 @@ func (d *Daemon) PublishMediaDownloadChanged(messageID, chatID string, downloadi
 
 func (d *Daemon) PublishAvatarUpdated(avatar Avatar) {
 	d.broadcastDaemonEvent(DaemonEvent{Kind: DaemonEventAvatarUpdated, Avatar: avatar})
+}
+
+func (d *Daemon) PublishStickerLibraryChanged(source StickerSource) {
+	d.broadcastDaemonEvent(DaemonEvent{Kind: DaemonEventStickerLibraryChanged, StickerSource: source})
+}
+
+func (d *Daemon) PublishStickerDownloadChanged(sticker Sticker, errorText string) {
+	d.broadcastDaemonEvent(DaemonEvent{
+		Kind:            DaemonEventStickerDownloadChanged,
+		StickerDownload: StickerDownloadEvent{Sticker: sticker, ErrorText: errorText},
+	})
 }
 
 func (d *Daemon) broadcastLoginEvent(event LoginEvent) {

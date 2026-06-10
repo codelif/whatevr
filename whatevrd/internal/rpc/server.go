@@ -36,7 +36,7 @@ type Server struct {
 // Start serves the gRPC API on socketPath. When activated is non-nil (systemd
 // socket activation), that inherited listener is used and systemd owns the
 // socket file; otherwise the daemon creates and owns the socket itself.
-func Start(ctx context.Context, socketPath string, activated net.Listener, daemon *app.Daemon, login LoginController, frontend FrontendSessionController, bus *SessionBus, chatStore ChatStore, chatActions ChatActionController, sendController SendController, reconnector ReconnectController) (*Server, error) {
+func Start(ctx context.Context, socketPath string, activated net.Listener, daemon *app.Daemon, login LoginController, frontend FrontendSessionController, bus *SessionBus, chatStore ChatStore, chatActions ChatActionController, sendController SendController, stickerController StickerController, reconnector ReconnectController) (*Server, error) {
 	var (
 		listener   net.Listener
 		ownsSocket bool
@@ -76,6 +76,7 @@ func Start(ctx context.Context, socketPath string, activated net.Listener, daemo
 	pb.RegisterFrontendServiceServer(grpcServer, NewFrontendService(frontend, bus, shutdown))
 	pb.RegisterChatServiceServer(grpcServer, NewChatService(daemon, chatStore, chatActions))
 	pb.RegisterSendServiceServer(grpcServer, NewSendService(sendController))
+	pb.RegisterStickerServiceServer(grpcServer, NewStickerService(stickerController))
 
 	server := &Server{
 		grpcServer: grpcServer,
