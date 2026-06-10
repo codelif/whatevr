@@ -428,8 +428,8 @@ Frame {
 
     Connections {
         target: Overlay.overlay
-        function onWidthChanged() { root.handlePickerGeometryChanged() }
-        function onHeightChanged() { root.handlePickerGeometryChanged() }
+        function onWidthChanged() { if (emojiPicker.opened) emojiPicker.close() }
+        function onHeightChanged() { if (emojiPicker.opened) emojiPicker.close() }
     }
 
     Timer {
