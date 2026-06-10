@@ -251,6 +251,9 @@ private:
     void applyMessageEvent(const whatevr::v1::Message &message);
     void applyHistorySyncProgress(const whatevr::v1::HistorySyncProgress &progress);
     void applyHistoryBackfilled(const whatevr::v1::HistoryBackfilled &backfilled);
+    [[nodiscard]] bool shouldDisplayHistorySyncProgress(const whatevr::v1::HistorySyncProgress &progress) const;
+    [[nodiscard]] bool shouldCompleteHistorySyncDisplay(const whatevr::v1::HistorySyncProgress &progress) const;
+    bool resetHistorySyncDisplay(int percent = 0);
     void updateQrExpiryText();
     void clearLoginState();
     void clearBanner();
@@ -308,6 +311,12 @@ private:
     int m_historySyncPercent = 0;
     QString m_historySyncTitle;
     QString m_historySyncDetail;
+    bool m_historySyncCursorActive = false;
+    whatevr::v1::HistorySyncTypeGadget::HistorySyncType m_historySyncCursorSyncType =
+        whatevr::v1::HistorySyncTypeGadget::HistorySyncType::HISTORY_SYNC_TYPE_UNSPECIFIED;
+    std::uint32_t m_historySyncCursorChunkOrder = 0;
+    whatevr::v1::HistorySyncPhaseGadget::HistorySyncPhase m_historySyncCursorPhase =
+        whatevr::v1::HistorySyncPhaseGadget::HistorySyncPhase::HISTORY_SYNC_PHASE_UNSPECIFIED;
 
     struct CachedMessages {
         QList<whatevr::v1::Message> messages;
