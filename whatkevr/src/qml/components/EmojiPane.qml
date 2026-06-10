@@ -261,15 +261,19 @@ Item {
             color: Qt.alpha(Kirigami.Theme.textColor, 0.10)
         }
 
+        Item {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+
         GridView {
             id: emojiGrid
 
-            Layout.fillWidth: true
-            Layout.fillHeight: true
+            anchors.fill: parent
             clip: true
             reuseItems: true
             cacheBuffer: pane.cellSize * 8
             boundsBehavior: Flickable.StopAtBounds
+            ScrollBar.vertical: DiscreetScrollBar {}
             model: Whatevr.AppController.emojiModel
             cellWidth: Math.max(pane.cellSize, Math.floor(width / Math.max(1, Math.floor(width / pane.cellSize))))
             cellHeight: pane.cellSize
@@ -460,6 +464,13 @@ Item {
                 explanation: Whatevr.AppController.emojiModel.loaded
                              ? Whatevr.I18n.i18nc("@info", "Try a shortcode like joy, an emoticon like :-), or another category.")
                              : Whatevr.I18n.i18nc("@info", "The bundled Google Fonts emoji metadata resource is unavailable.")
+            }
+        }
+
+            KineticWheelScroller {
+                anchors.fill: emojiGrid
+                target: emojiGrid
+                wheelStep: Kirigami.Units.gridUnit * 4
             }
         }
 

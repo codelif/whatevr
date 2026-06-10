@@ -102,6 +102,22 @@ Kirigami.Page {
     }
 
     Keys.onPressed: event => {
+        // ESC priority: pane > reply > close chat. The picker is a focused
+        // Popup that consumes ESC while open, so by the time ESC reaches here
+        // the pane is already closed; clear a pending reply, else close the chat.
+        if (event.key === Qt.Key_Escape) {
+            if (!Whatevr.AppController.hasSelectedChat) {
+                return
+            }
+            if (root.replyToMessageId.length > 0) {
+                root.clearReplyTarget()
+            } else {
+                root.closeChatRequested()
+            }
+            event.accepted = true
+            return
+        }
+
         if (!root.shouldTypeIntoComposer(event)) {
             return
         }
