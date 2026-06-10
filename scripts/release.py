@@ -77,8 +77,8 @@ def open_editor(version: str) -> str:
     template = (
         "<!--\n"
         f"Release notes for v{version}.\n"
-        "Write Markdown. Supported in AppStream: paragraphs, bullets, "
-        "numbered lists, emphasis, and inline code.\n"
+        "Write Markdown. Supported in AppStream: headings, paragraphs, "
+        "bullets, numbered lists, emphasis, and inline code.\n"
         "Delete these comments or leave them here; they are ignored.\n"
         "Save empty notes to abort.\n"
         "-->\n\n"
@@ -197,6 +197,7 @@ HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 BULLET_RE = re.compile(r"^\s*[-*+]\s+(.+)$")
 ORDERED_RE = re.compile(r"^\s*\d+[.)]\s+(.+)$")
 FENCE_RE = re.compile(r"^\s*(```|~~~)")
+HEADING_RE = re.compile(r"^\s*#{1,6}\s+(.+?)\s*#*\s*$")
 INLINE_LINK_RE = re.compile(r"!?\[([^\]]*)\]\([^)]*\)")
 INLINE_MARKUP_RE = re.compile(r"`([^`\n]+)`|\*\*([^*\n]+)\*\*|__([^_\n]+)__")
 
@@ -246,6 +247,11 @@ def markdown_blocks(markdown: str) -> list[tuple[str, list[str]]]:
                 blocks.append(("p", [" ".join(text)]))
             continue
 
+        if match := HEADING_RE.match(line):
+            blocks.append(("p", [clean_block_text(match.group(1))]))
+            i += 1
+            continue
+
         list_match = list_item_match(line)
         if list_match is not None:
             kind, text = list_match
@@ -284,6 +290,7 @@ def markdown_blocks(markdown: str) -> list[tuple[str, list[str]]]:
                 not line.strip()
                 or list_item_match(line) is not None
                 or FENCE_RE.match(line)
+                or HEADING_RE.match(line)
             ):
                 break
             paragraph.append(line.strip().removeprefix("> ").removeprefix(">"))
