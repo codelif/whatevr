@@ -2,8 +2,11 @@
 
 #include <QAbstractItemModel>
 #include <QHash>
+#include <QList>
 #include <QObject>
+#include <QSet>
 #include <QString>
+#include <QtGrpc/qtgrpcnamespace.h>
 
 #include <memory>
 
@@ -88,6 +91,14 @@ private:
 
     void requestList(View view, const QString &packId = QString(), const QString &query = QString());
     void requestPacks(bool forceRefresh);
+    // Starts queued downloads up to the in-flight cap, so the shared gRPC
+    // channel is never flooded with one stream per visible tile.
+    void pumpDownloadQueue();
+    // Dispatches the actual DownloadSticker RPC for one key (assumes a free
+    // in-flight slot). Called only via pumpDownloadQueue().
+    void startDownload(const QString &cacheKey);
+    // Retries a transient download failure with backoff, up to a small budget.
+    void scheduleDownloadRetry(const QString &cacheKey, QtGrpc::StatusCode code);
     void applyPackList(const QList<whatevr::v1::StickerPack> &packs);
     [[nodiscard]] bool clientReady() const;
 
@@ -100,6 +111,14 @@ private:
     std::unique_ptr<QGrpcCallReply> m_listReply;
     std::unique_ptr<QGrpcCallReply> m_packsReply;
     QHash<QString, std::shared_ptr<QGrpcCallReply>> m_downloadReplies;
+    // Keys awaiting an in-flight slot. Used as a LIFO stack (prepend on
+    // request, take from front) so the tiles the user is currently looking at
+    // download first; m_downloadQueued mirrors it for O(1) dedup.
+    QList<QString> m_downloadQueue;
+    QSet<QString> m_downloadQueued;
+    // Per-key download attempt counts, so a transient failure is retried a few
+    // times with backoff instead of leaving the tile spinning forever.
+    QHash<QString, int> m_downloadAttempts;
     QHash<QString, std::shared_ptr<QGrpcCallReply>> m_installReplies;
     QHash<QString, std::shared_ptr<QGrpcCallReply>> m_sendReplies;
 

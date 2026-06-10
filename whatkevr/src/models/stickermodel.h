@@ -20,6 +20,7 @@ public:
     enum Role : std::uint16_t {
         CacheKeyRole = Qt::UserRole + 1,
         LocalPathRole,
+        MimeTypeRole,
         AnimatedRole,
         DownloadedRole,
         EmojisRole,

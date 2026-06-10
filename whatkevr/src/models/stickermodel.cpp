@@ -24,6 +24,8 @@ QVariant StickerModel::data(const QModelIndex &index, int role) const
         return sticker.cacheKey();
     case LocalPathRole:
         return sticker.localPath();
+    case MimeTypeRole:
+        return sticker.mimeType();
     case AnimatedRole:
         return sticker.isAnimated();
     case DownloadedRole:
@@ -44,6 +46,7 @@ QHash<int, QByteArray> StickerModel::roleNames() const
     return {
         {CacheKeyRole, QByteArrayLiteral("cacheKey")},
         {LocalPathRole, QByteArrayLiteral("localPath")},
+        {MimeTypeRole, QByteArrayLiteral("mimeType")},
         {AnimatedRole, QByteArrayLiteral("animated")},
         {DownloadedRole, QByteArrayLiteral("downloaded")},
         {EmojisRole, QByteArrayLiteral("emojis")},
