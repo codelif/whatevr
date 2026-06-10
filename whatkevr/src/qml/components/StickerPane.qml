@@ -51,7 +51,7 @@ Item {
         }
         stickerGrid.currentIndex = 0
         const item = stickerGrid.itemAtIndex(0)
-        if (item && item.downloaded) {
+        if (item) {
             pane.sendSticker(item.cacheKey, false)
             event.accepted = true
         }
@@ -299,14 +299,14 @@ Item {
 
                 Keys.onReturnPressed: event => {
                     const item = stickerGrid.itemAtIndex(stickerGrid.currentIndex)
-                    if (item && item.downloaded) {
+                    if (item) {
                         pane.sendSticker(item.cacheKey, (event.modifiers & Qt.ControlModifier) !== 0)
                         event.accepted = true
                     }
                 }
                 Keys.onEnterPressed: event => {
                     const item = stickerGrid.itemAtIndex(stickerGrid.currentIndex)
-                    if (item && item.downloaded) {
+                    if (item) {
                         pane.sendSticker(item.cacheKey, (event.modifiers & Qt.ControlModifier) !== 0)
                         event.accepted = true
                     }
@@ -331,7 +331,6 @@ Item {
                     required property string localPath
                     required property string mimeType
                     required property bool animated
-                    required property bool downloaded
                     required property string emojis
                     required property string accessText
                     readonly property string description: accessText.length > 0
@@ -349,14 +348,10 @@ Item {
                     Accessible.role: Accessible.Button
                     Accessible.name: description.length > 0 ? description : Whatevr.I18n.i18nc("@info", "Sticker")
 
-                    function maybeDownload() {
-                        if (!downloaded && cacheKey.length > 0) {
-                            pane.stickers.requestDownload(cacheKey)
-                        }
-                    }
-
-                    Component.onCompleted: maybeDownload()
-                    GridView.onReused: maybeDownload()
+                    // The grid only ever holds downloaded stickers (the filter
+                    // proxy hides the rest), so tiles render their image straight
+                    // away — no spinner placeholder, no lazy per-tile download.
+                    // The controller prefetches misses in the background.
 
                     Rectangle {
                         anchors.fill: parent
@@ -373,7 +368,7 @@ Item {
                     Image {
                         anchors.fill: parent
                         anchors.margins: Kirigami.Units.smallSpacing
-                        visible: stickerTile.downloaded && !stickerTile.isLottie && !stickerTile.isAnimatedImage
+                        visible: !stickerTile.isLottie && !stickerTile.isAnimatedImage
                         source: visible
                                 ? Qt.resolvedUrl("file://" + stickerTile.localPath)
                                 : ""
@@ -390,7 +385,7 @@ Item {
                     AnimatedImage {
                         anchors.fill: parent
                         anchors.margins: Kirigami.Units.smallSpacing
-                        visible: stickerTile.downloaded && stickerTile.isAnimatedImage
+                        visible: stickerTile.isAnimatedImage
                         source: visible
                                 ? Qt.resolvedUrl("file://" + stickerTile.localPath)
                                 : ""
@@ -405,7 +400,7 @@ Item {
                     Whatevr.RlottieSticker {
                         anchors.fill: parent
                         anchors.margins: Kirigami.Units.smallSpacing
-                        visible: stickerTile.downloaded && stickerTile.isLottie
+                        visible: stickerTile.isLottie
                         source: visible
                                 ? Qt.resolvedUrl("file://" + stickerTile.localPath)
                                 : ""
@@ -413,31 +408,6 @@ Item {
                         // full grid of Lottie stickers stays cheap.
                         playing: stickerHover.hovered
                         renderScale: Math.max(1, Math.min(2, Screen.devicePixelRatio))
-                    }
-
-                    // Not-yet-downloaded placeholder; the lazy download was
-                    // already kicked off above.
-                    Rectangle {
-                        anchors.fill: parent
-                        anchors.margins: Kirigami.Units.smallSpacing
-                        visible: !stickerTile.downloaded
-                        radius: Kirigami.Units.cornerRadius
-                        color: Qt.alpha(Kirigami.Theme.textColor, 0.05)
-
-                        BusyIndicator {
-                            anchors.centerIn: parent
-                            width: Kirigami.Units.gridUnit * 1.5
-                            height: width
-                            running: visible && busyDelay.fired
-                        }
-                    }
-
-                    Timer {
-                        id: busyDelay
-                        property bool fired: false
-                        interval: 400
-                        running: !stickerTile.downloaded && stickerTile.visible
-                        onTriggered: fired = true
                     }
 
                     HoverHandler {
@@ -458,11 +428,7 @@ Item {
 
                         onClicked: mouse => {
                             stickerGrid.currentIndex = stickerTile.index
-                            if (stickerTile.downloaded) {
-                                pane.sendSticker(stickerTile.cacheKey, (mouse.modifiers & Qt.ControlModifier) !== 0)
-                            } else {
-                                stickerTile.maybeDownload()
-                            }
+                            pane.sendSticker(stickerTile.cacheKey, (mouse.modifiers & Qt.ControlModifier) !== 0)
                             mouse.accepted = true
                         }
                     }
@@ -470,7 +436,9 @@ Item {
 
                 Kirigami.PlaceholderMessage {
                     anchors.centerIn: parent
-                    visible: stickerGrid.count === 0 && !pane.stickers.loading
+                    // Stay hidden while stickers are still being fetched in the
+                    // background; the grid reads empty until the first one lands.
+                    visible: stickerGrid.count === 0 && !pane.stickers.loading && !pane.stickers.downloading
                     width: Math.min(parent.width - Kirigami.Units.largeSpacing * 2,
                                     Kirigami.Units.gridUnit * 18)
                     text: {
@@ -497,7 +465,7 @@ Item {
 
                 BusyIndicator {
                     anchors.centerIn: parent
-                    running: stickerGrid.count === 0 && pane.stickers.loading
+                    running: stickerGrid.count === 0 && (pane.stickers.loading || pane.stickers.downloading)
                 }
             }
 
