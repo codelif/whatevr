@@ -108,7 +108,7 @@ Item {
         id: tile
 
         property string glyph: ""
-        property string trayPath: ""
+        property string iconPath: ""
         property string label: ""
         property bool current: false
 
@@ -133,7 +133,7 @@ Item {
 
         Text {
             anchors.centerIn: parent
-            visible: tile.trayPath.length === 0
+            visible: tile.iconPath.length === 0
             text: tile.glyph
             color: tile.current ? Kirigami.Theme.highlightColor : Kirigami.Theme.textColor
             font.weight: Font.DemiBold
@@ -143,10 +143,10 @@ Item {
 
         Image {
             anchors.centerIn: parent
-            visible: tile.trayPath.length > 0
+            visible: tile.iconPath.length > 0
             width: Kirigami.Units.gridUnit * 1.5
             height: Kirigami.Units.gridUnit * 1.5
-            source: tile.trayPath.length > 0 ? Qt.resolvedUrl("file://" + tile.trayPath) : ""
+            source: tile.iconPath.length > 0 ? Qt.resolvedUrl("file://" + tile.iconPath) : ""
             sourceSize.width: Math.round(Kirigami.Units.gridUnit * 1.5 * Screen.devicePixelRatio)
             sourceSize.height: Math.round(Kirigami.Units.gridUnit * 1.5 * Screen.devicePixelRatio)
             fillMode: Image.PreserveAspectFit
@@ -218,7 +218,10 @@ Item {
                         required property string trayPath
 
                         label: name
+                        // Pack tray art when downloaded; the glyph is the
+                        // fallback until the image lands.
                         glyph: "▣"
+                        iconPath: trayPath
                         current: !pane.storeOpen && pane.packView && pane.stickers.activePackId === packId
                         onTapped: pane.openPack(packId, false)
                     }
