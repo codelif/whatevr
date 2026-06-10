@@ -51,6 +51,14 @@ Item {
     // Index whose date the floating pill currently shows. The date for a given
     // row never changes, so the model lookup is skipped while it stays put.
     property int lastTopIndex: -1
+    // Visible-row window feeding the index-based scrollbar. topVisibleIndex is
+    // the row at the visual top (oldest visible — highest index in this
+    // BottomToTop list); topRowFraction is how much of it is scrolled off
+    // above the viewport. They keep their last value when the indexAt probes
+    // land in row spacing, so the thumb never flickers.
+    property int topVisibleIndex: -1
+    property int bottomVisibleIndex: -1
+    property real topRowFraction: 0
     // Set while we move the viewport ourselves (chat open, scroll-to-newest) so
     // those programmatic jumps don't flash the floating date pill.
     property bool programmaticScroll: false
@@ -296,6 +304,9 @@ Item {
             atNewest = true
             followNewest = true
             pendingNewestMessageCount = 0
+            topVisibleIndex = -1
+            bottomVisibleIndex = -1
+            topRowFraction = 0
             return
         }
 
@@ -314,6 +325,9 @@ Item {
             floatingDateHandoff = topItem !== null
                                   && topItem.showDateSeparator
                                   && (topItem.y - list.contentY) < topItem.dateSeparatorHeight
+            topRowFraction = topItem !== null && topItem.height > 0
+                             ? Math.max(0, Math.min(1, (list.contentY - topItem.y) / topItem.height))
+                             : 0
         } else {
             lastTopIndex = -1
         }
@@ -327,6 +341,13 @@ Item {
         if (bottomIndex >= 0) {
             lo = lo < 0 ? bottomIndex : Math.min(lo, bottomIndex)
             hi = hi < 0 ? bottomIndex : Math.max(hi, bottomIndex)
+        }
+
+        if (hi >= 0) {
+            topVisibleIndex = hi
+        }
+        if (lo >= 0) {
+            bottomVisibleIndex = lo
         }
 
         if (lo >= 0) {
@@ -371,6 +392,9 @@ Item {
 
     function afterModelReset() {
         lastTopIndex = -1
+        topVisibleIndex = -1
+        bottomVisibleIndex = -1
+        topRowFraction = 0
         if (pendingJumpMessageId.length === 0) {
             scrollToNewest()
         } else {
@@ -423,8 +447,10 @@ Item {
         spacing: Kirigami.Units.smallSpacing / 2
         // Deep cache: cache-buffer delegates are incubated asynchronously, so
         // every row prepared here is one fewer synchronous creation while the
-        // user is scrolling (those are what stall frames).
-        cacheBuffer: Math.max(height * 2, Kirigami.Units.gridUnit * 80)
+        // user is scrolling (those are what stall frames). Cached text rows
+        // are now a Text node plus a few rectangles; the bound cost left in
+        // the band is thumbnail decodes, capped per image.
+        cacheBuffer: Math.max(height * 4, Kirigami.Units.gridUnit * 120)
         reuseItems: true
 
         // True while flinging faster than ~1.25 viewport-heights per second.
@@ -448,13 +474,37 @@ Item {
             }
         }
 
+        // Scrollbar thumb drags move contentY positionally, so neither
+        // verticalVelocity nor the kinetic scroller's velocity ever reflects
+        // them; estimate one from contentY deltas while the thumb is pressed so
+        // fast drags also engage the fastFlicking media deferral. Slow precise
+        // drags never trip the threshold and keep full-res media.
+        property real dragVelocity: 0
+        property real lastDragY: 0
+        property double lastDragMs: 0
+        function noteThumbDrag() {
+            const now = Date.now()
+            if (lastDragMs > 0) {
+                const dt = Math.max(1, now - lastDragMs) / 1000
+                const instant = (contentY - lastDragY) / dt
+                dragVelocity = dragVelocity * 0.4 + instant * 0.6
+                if (Math.abs(dragVelocity) > fastFlickThreshold) {
+                    flickableFast = true
+                    flickSettleTimer.restart()
+                }
+            }
+            lastDragY = contentY
+            lastDragMs = now
+        }
+
         Timer {
             id: flickSettleTimer
             interval: 90
             onTriggered: {
-                // Re-check the live velocity instead of clearing blindly; the
+                // Re-check the live velocities instead of clearing blindly; the
                 // timer may simply have outlived a stalled frame.
-                if (Math.abs(list.verticalVelocity) > list.fastFlickThreshold) {
+                if (Math.abs(list.verticalVelocity) > list.fastFlickThreshold
+                        || Math.abs(list.dragVelocity) > list.fastFlickThreshold) {
                     restart()
                 } else {
                     list.flickableFast = false
@@ -480,8 +530,6 @@ Item {
         acceptedButtons: Qt.NoButton
         flickDeceleration: 4000
         maximumFlickVelocity: 8000
-
-        ScrollBar.vertical: DiscreetScrollBar {}
 
         delegate: ChatBubble {
             id: messageDelegate
@@ -556,6 +604,9 @@ Item {
         }
 
         onContentYChanged: {
+            if (rowScrollBar.dragging) {
+                noteThumbDrag()
+            }
             root.updateScrollState()
             root.noteScroll()
         }
@@ -621,6 +672,52 @@ Item {
         // The top edge is only final once all history is loaded; until then the
         // prefetched page usually fills any overshoot before it becomes visible.
         clampAtOrigin: !root.canLoadOlderMessages
+    }
+
+    RowScrollBar {
+        id: rowScrollBar
+
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        anchors.right: parent.right
+        z: kineticWheelScroller.z + 1
+
+        count: list.count
+        topVisibleIndex: root.topVisibleIndex
+        bottomVisibleIndex: root.bottomVisibleIndex
+        topRowFraction: root.topRowFraction
+
+        onDraggingChanged: {
+            // Reset the drag-velocity estimator on both grab and release so
+            // its first sample never spans the idle gap before the drag.
+            list.dragVelocity = 0
+            list.lastDragMs = 0
+            if (dragging) {
+                if (root.pendingJumpMessageId.length > 0) {
+                    root.finishPendingJump()
+                }
+                kineticWheelScroller.stopKinetic()
+                list.cancelFlick()
+            } else {
+                Qt.callLater(root.updateScrollState)
+            }
+        }
+
+        onDragPositionRequested: (index, fraction) => {
+            // positionViewAtIndex only materialises the row near the viewport;
+            // the exact alignment is done through contentY below, so the
+            // BottomToTop Beginning/End anchor semantics never matter.
+            list.positionViewAtIndex(index, ListView.Visible)
+            const item = list.itemAtIndex(index)
+            if (item !== null && item.height > 0) {
+                // item.y puts the row top at the viewport top; hide `fraction`
+                // of it above so thumb and view round-trip cleanly.
+                list.contentY = Math.max(kineticWheelScroller.minimumY(),
+                                         Math.min(kineticWheelScroller.maximumY(),
+                                                  item.y + fraction * item.height))
+            }
+        }
+        onJumpToNewestRequested: list.positionViewAtBeginning()
     }
 
     AbstractButton {

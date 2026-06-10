@@ -64,7 +64,13 @@ Item {
     property real readMoreTextWidth: 0
     // Latches true on first hover so the reply button is only ever instantiated
     // for rows the pointer actually visits; reset when the delegate is reused.
+    // Hovers reported while the list flings past the idle pointer don't count
+    // (see rowHoverHandler) — those rows were never really visited.
     property bool hoverLatched: false
+    // Same latch for the text-selection surface: plain-text bodies render with
+    // a cheap Text element; the TextEdit (QTextDocument) that provides mouse
+    // selection is only built once the pointer genuinely visits the row.
+    property bool selectionLatched: false
 
     signal conversationFocusRequested()
     signal messageSelectionClaimed(string messageId)
@@ -74,7 +80,14 @@ Item {
     signal readMoreRequested(string messageId)
 
     onClearSelectionGenerationChanged: {
-        if (bodyTextLoader.item && (activeSelectionMessageId.length === 0 || activeSelectionMessageId !== messageId)) {
+        if (activeSelectionMessageId.length !== 0 && activeSelectionMessageId === messageId) {
+            return
+        }
+        // Rich bodies select on the body TextEdit itself; plain bodies select
+        // on the on-demand overlay (absent until the row was hovered).
+        if (selectionEditLoader.item) {
+            selectionEditLoader.item.deselect()
+        } else if (bodyTextLoader.item && root.hasRichText) {
             bodyTextLoader.item.deselect()
         }
     }
@@ -207,6 +220,7 @@ Item {
     onMessageIdChanged: {
         resetReservedImageGeometry()
         hoverLatched = false
+        selectionLatched = false
     }
     onMediaMimeTypeChanged: resetReservedImageGeometry()
     onMediaIntrinsicWidthChanged: resetReservedImageGeometry()
@@ -289,22 +303,13 @@ Item {
     readonly property real naturalLastLineWidth: Math.min(textWrapWidth, lastLineWidth)
     readonly property bool canReserveInlineTntWidth: hasBody
                                                    && naturalLastLineWidth + inlineTntGap + tntWidth <= textWrapWidth
-    readonly property rect bodyEndCursorRect: {
-        const edit = bodyTextLoader.item
-        if (!edit) {
-            return Qt.rect(0, 0, 0, 0)
-        }
-        const bodyWidth = edit.width
-        const bodyHeight = edit.height
-        const bodyLength = edit.length
-        return bodyWidth > 0 && bodyHeight > 0
-            ? edit.positionToRectangle(bodyLength)
-            : Qt.rect(0, 0, 0, 0)
-    }
+    // Whether the time+ticks fit after the last line of body text. Both body
+    // components (Text and TextEdit) expose the end of their last laid-out
+    // line through the same lastLine* interface — see bodyTextLoader.
     readonly property bool tntFitsInline: !showReadMore
                                          && hasBody
                                          && bodyTextLoader.item !== null
-                                         && bodyEndCursorRect.x + inlineTntGap + tntWidth <= bodyTextLoader.width
+                                         && bodyTextLoader.item.lastLineEndX + inlineTntGap + tntWidth <= bodyTextLoader.width
     readonly property real inlineTntReserve: 0
     readonly property real inlineTntYOffset: Kirigami.Units.smallSpacing / 2
     readonly property real blockTntReserve: tntHeight + tntGap
@@ -456,9 +461,22 @@ Item {
 
         acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
         onHoveredChanged: {
-            if (hovered) {
+            // Ignore hovers caused by rows flying past an idle pointer during
+            // a fast fling — latching there would instantiate the reply button
+            // and selection TextEdit for every row that crosses the cursor.
+            if (hovered && !root.fastFlicking) {
                 root.hoverLatched = true
+                root.selectionLatched = true
             }
+        }
+    }
+
+    onFastFlickingChanged: {
+        // A fling that ends with the pointer resting on this row counts as a
+        // genuine visit; latch now instead of waiting for the next move.
+        if (!fastFlicking && rowHoverHandler.hovered) {
+            hoverLatched = true
+            selectionLatched = true
         }
     }
 
@@ -783,36 +801,64 @@ Item {
                 }
             }
 
-            // Text-only and media-only delegates split the cost: the TextEdit
-            // (and its document) is only built when there is body text.
-            Loader {
-                id: bodyTextLoader
+            // Plain bodies render with a cheap Text node; rich bodies (markup,
+            // links, inline-enlarged emoji) need a QTextDocument and keep the
+            // TextEdit. Both expose the end of their last laid-out line via the
+            // same lastLine* interface (tntFitsInline, footerSlot).
+            Component {
+                id: plainBodyComponent
 
-                active: root.hasBody
-                x: root.innerPadding
-                y: root.contentOffsetBeforeBody()
-                width: root.textRegionWidth
+                Text {
+                    id: plainBody
 
-                sourceComponent: TextEdit {
-                    id: bodyText
+                    // End of the last laid-out line, captured during layout.
+                    // Mirrors what positionToRectangle(length) reports for the
+                    // rich TextEdit.
+                    property real lastLineEndX: 0
+                    property real lastLineY: 0
+                    property real lastLineHeight: 0
 
-                    property string currentHoveredLink: ""
+                    text: root.body
+                    textFormat: Text.PlainText
+                    wrapMode: Text.Wrap
+                    color: Kirigami.Theme.textColor
+                    font.family: Kirigami.Theme.defaultFont.family
+                    font.pointSize: root.bodyPointSize
+                    font.weight: Font.Normal
 
-                    // Formatted WhatsApp markdown and inline-enlarged emoji use RichText;
-                    // plain messages stay on the cheaper PlainText path. Apply format and
-                    // text together, clearing the old document first, so pooled delegates
-                    // cannot carry rich-document font state into normal messages.
-                    function syncContent() {
-                        text = ""
-                        if (root.hasRichText) {
-                            textFormat = TextEdit.RichText
-                            text = root.richText
-                        } else {
-                            textFormat = TextEdit.PlainText
-                            text = root.body
+                    onLineLaidOut: line => {
+                        if (line.isLast) {
+                            lastLineEndX = line.x + line.implicitWidth
+                            lastLineY = line.y
+                            lastLineHeight = line.height
                         }
                     }
 
+                    HoverHandler {
+                        cursorShape: Qt.IBeamCursor
+                    }
+                }
+            }
+
+            Component {
+                id: richBodyComponent
+
+                TextEdit {
+                    id: richBody
+
+                    property string currentHoveredLink: ""
+
+                    // Rect after the last character; re-evaluates with the
+                    // document (length) and the wrap geometry (width/height).
+                    readonly property rect endCursorRect: width > 0 && height > 0
+                                                          ? positionToRectangle(length)
+                                                          : Qt.rect(0, 0, 0, 0)
+                    readonly property real lastLineEndX: endCursorRect.x
+                    readonly property real lastLineY: endCursorRect.y
+                    readonly property real lastLineHeight: endCursorRect.height
+
+                    text: root.richText
+                    textFormat: TextEdit.RichText
                     readOnly: true
                     selectByMouse: true
                     selectByKeyboard: true
@@ -826,17 +872,79 @@ Item {
                     onLinkHovered: link => currentHoveredLink = link
 
                     HoverHandler {
-                        cursorShape: bodyText.currentHoveredLink.length > 0 ? Qt.PointingHandCursor : Qt.IBeamCursor
+                        cursorShape: richBody.currentHoveredLink.length > 0 ? Qt.PointingHandCursor : Qt.IBeamCursor
                     }
 
-                    Component.onCompleted: syncContent()
-
-                    Connections {
-                        target: root
-                        function onHasRichTextChanged() { bodyText.syncContent() }
-                        function onRichTextChanged() { bodyText.syncContent() }
-                        function onBodyChanged() { bodyText.syncContent() }
+                    onSelectedTextChanged: {
+                        if (selectedText.length > 0) {
+                            root.messageSelectionClaimed(root.messageId)
+                        }
                     }
+
+                    Keys.onPressed: event => {
+                        if (event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) {
+                            return
+                        }
+                        if (event.text.length === 0 || event.text.charCodeAt(0) < 0x20) {
+                            return
+                        }
+
+                        root.typeIntoComposerRequested(event.text)
+                        event.accepted = true
+                    }
+                }
+            }
+
+            // Text-only and media-only delegates split the cost: a body item is
+            // only built when there is body text (and never for frameless rows,
+            // whose body renders in the sticker slot as a jumbo emoji).
+            Loader {
+                id: bodyTextLoader
+
+                active: root.hasBody && !root.frameless
+                x: root.innerPadding
+                y: root.contentOffsetBeforeBody()
+                width: root.textRegionWidth
+
+                sourceComponent: root.hasRichText ? richBodyComponent : plainBodyComponent
+            }
+
+            // On-demand selection surface for plain bodies (rich bodies select
+            // on their TextEdit directly). Its glyphs are transparent so the
+            // Text underneath stays the visible one — only the selection
+            // highlight and the selected glyphs paint here, which keeps any
+            // sub-pixel layout difference between Text and TextEdit from ever
+            // shifting the message.
+            Loader {
+                id: selectionEditLoader
+
+                active: root.selectionLatched
+                        && root.hasBody
+                        && !root.hasRichText
+                        && !root.frameless
+                        && !root.pooled
+                x: bodyTextLoader.x
+                y: bodyTextLoader.y
+                width: bodyTextLoader.width
+                height: bodyTextLoader.height
+
+                sourceComponent: TextEdit {
+                    id: selectionEdit
+
+                    text: root.body
+                    textFormat: TextEdit.PlainText
+                    textMargin: 0
+                    readOnly: true
+                    selectByMouse: true
+                    selectByKeyboard: true
+                    persistentSelection: true
+                    wrapMode: TextEdit.Wrap
+                    color: "transparent"
+                    selectionColor: Kirigami.Theme.highlightColor
+                    selectedTextColor: Kirigami.Theme.highlightedTextColor
+                    font.family: Kirigami.Theme.defaultFont.family
+                    font.pointSize: root.bodyPointSize
+                    font.weight: Font.Normal
 
                     onSelectedTextChanged: {
                         if (selectedText.length > 0) {
@@ -912,7 +1020,7 @@ Item {
                     const off = root.contentOffsetBeforeFooter()
                     if (root.hasBody) {
                         return root.tntFitsInline
-                            ? bodyTextLoader.y + root.bodyEndCursorRect.y + root.bodyEndCursorRect.height - height + root.inlineTntYOffset
+                            ? bodyTextLoader.y + bodyTextLoader.item.lastLineY + bodyTextLoader.item.lastLineHeight - height + root.inlineTntYOffset
                             : off + root.tntGap
                     }
                     return Math.max(0, off)
@@ -1113,7 +1221,10 @@ Item {
 
             anchors.fill: parent
             visible: root.isLottieSticker && root.hasLocalSticker
-            source: root.mediaSourceActive && stickerSlot.visible && visible ? Qt.resolvedUrl("file://" + root.mediaLocalPath) : ""
+            // Defer the JSON load + first rasterisation while flinging unless ready.
+            source: root.mediaSourceActive && stickerSlot.visible && visible
+                    && (!root.fastFlicking || status === Whatevr.RlottieSticker.Ready)
+                    ? Qt.resolvedUrl("file://" + root.mediaLocalPath) : ""
             playing: root.animationActive && visible
             // Rasterise at device resolution (capped) rather than a fixed 2.5×;
             // the sticker is ~144 px so 2× is already crisp and halves the
