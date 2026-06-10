@@ -346,10 +346,15 @@ void MessageListModel::replaceMessages(const QList<whatevr::v1::Message> &messag
     }
 
     // Newest first: index 0 is the most recent message. The view renders the
-    // list bottom-to-top, so older history lands at higher indices.
+    // list bottom-to-top, so older history lands at higher indices. Within a
+    // single timestamp second, sortSeq (the daemon's insertion order) decides;
+    // the random message id is only a final stable fallback.
     std::sort(next.begin(), next.end(), [](const MessageItem &left, const MessageItem &right) {
         if (left.timestampUnix != right.timestampUnix) {
             return left.timestampUnix > right.timestampUnix;
+        }
+        if (left.sortSeq != right.sortSeq) {
+            return left.sortSeq > right.sortSeq;
         }
         return left.id > right.id;
     });
@@ -535,6 +540,9 @@ void MessageListModel::appendOlderMessages(const QList<whatevr::v1::Message> &me
         if (left.timestampUnix != right.timestampUnix) {
             return left.timestampUnix > right.timestampUnix;
         }
+        if (left.sortSeq != right.sortSeq) {
+            return left.sortSeq > right.sortSeq;
+        }
         return left.id > right.id;
     });
 
@@ -587,11 +595,14 @@ void MessageListModel::upsertMessage(const whatevr::v1::Message &message)
         return;
     }
 
-    // Newest-first order: advance past every message that is newer than this one.
+    // Newest-first order: advance past every message that is newer than this
+    // one. Within a single timestamp second, sortSeq (the daemon's insertion
+    // order) decides; the random message id is only a final stable fallback.
     int insertAt = 0;
     while (insertAt < static_cast<int>(m_messages.size())
            && (m_messages.at(insertAt).timestampUnix > item.timestampUnix
-               || (m_messages.at(insertAt).timestampUnix == item.timestampUnix && m_messages.at(insertAt).id > item.id))) {
+               || (m_messages.at(insertAt).timestampUnix == item.timestampUnix && m_messages.at(insertAt).sortSeq > item.sortSeq)
+               || (m_messages.at(insertAt).timestampUnix == item.timestampUnix && m_messages.at(insertAt).sortSeq == item.sortSeq && m_messages.at(insertAt).id > item.id))) {
         ++insertAt;
     }
 
@@ -748,6 +759,7 @@ MessageListModel::MessageItem MessageListModel::fromProto(const whatevr::v1::Mes
         .previewRichText = {},
         .textTruncated = false,
         .timestampUnix = message.timestampUnix(),
+        .sortSeq = message.sortSeq(),
         .timeText = {},
         .direction = static_cast<int>(message.direction()),
         .status = static_cast<int>(message.status()),
