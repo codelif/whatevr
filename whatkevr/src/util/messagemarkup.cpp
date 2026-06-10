@@ -800,6 +800,220 @@ QString buildRichText(const QString &text, QString &layoutText, HtmlBuildContext
 
 }
 
+namespace {
+
+void appendCommonMarkEscaped(const QString &text, int start, int end, QString &out)
+{
+    for (int i = start; i < end; ++i) {
+        const QChar ch = text.at(i);
+        switch (ch.unicode()) {
+        case '\\':
+        case '`':
+        case '*':
+        case '_':
+        case '~':
+        case '[':
+        case ']':
+        case '<':
+        case '>':
+            out += QLatin1Char('\\');
+            out += ch;
+            break;
+        default:
+            out += ch;
+            break;
+        }
+    }
+}
+
+void appendCommonMarkInline(const QString &text, int start, int end, QString &out)
+{
+    int i = start;
+    while (i < end) {
+        const QChar ch = text.at(i);
+        if (ch == QLatin1Char('`')) {
+            const int close = findClosingBacktick(text, i, end);
+            if (close >= 0) {
+                out += QLatin1Char('`');
+                out += QStringView{text}.mid(i + 1, close - i - 1);
+                out += QLatin1Char('`');
+                i = close + 1;
+                continue;
+            }
+        }
+
+        const UrlMatch url = findUrlAt(text, i, end);
+        if (url.end > i) {
+            const QString visible = text.mid(i, url.end - i);
+            if (visible == url.href) {
+                out += QLatin1Char('<');
+                out += url.href;
+                out += QLatin1Char('>');
+            } else {
+                out += QLatin1Char('[');
+                appendCommonMarkEscaped(text, i, url.end, out);
+                out += QStringLiteral("](");
+                out += url.href;
+                out += QLatin1Char(')');
+            }
+            i = url.end;
+            continue;
+        }
+
+        if (ch == QLatin1Char('*') || ch == QLatin1Char('_') || ch == QLatin1Char('~')) {
+            const int close = findClosingDelimiter(text, i, end, ch);
+            if (close >= 0) {
+                const QString marker = ch == QLatin1Char('*') ? QStringLiteral("**")
+                    : ch == QLatin1Char('_')                  ? QStringLiteral("*")
+                                                              : QStringLiteral("~~");
+                out += marker;
+                appendCommonMarkInline(text, i + 1, close, out);
+                out += marker;
+                i = close + 1;
+                continue;
+            }
+        }
+
+        int runEnd = i + 1;
+        while (runEnd < end) {
+            if (findUrlAt(text, runEnd, end).end > runEnd) {
+                break;
+            }
+            const QChar next = text.at(runEnd);
+            if (next == QLatin1Char('`') || next == QLatin1Char('*') || next == QLatin1Char('_') || next == QLatin1Char('~')) {
+                break;
+            }
+            ++runEnd;
+        }
+        appendCommonMarkEscaped(text, i, runEnd, out);
+        i = runEnd;
+    }
+}
+
+void appendCommonMarkLine(const QString &text, int start, int end, QString &out)
+{
+    if (startsWithAt(text, start, QStringLiteral("> "))) {
+        out += QStringLiteral("> ");
+        appendCommonMarkInline(text, start + 2, end, out);
+        return;
+    }
+    if (startsWithAt(text, start, QStringLiteral("* ")) || startsWithAt(text, start, QStringLiteral("- "))) {
+        out += QStringLiteral("- ");
+        appendCommonMarkInline(text, start + 2, end, out);
+        return;
+    }
+
+    int numberedContentStart = start;
+    if (lineStartsNumberedList(text, start, end, &numberedContentStart)) {
+        out += QStringView{text}.mid(start, numberedContentStart - start);
+        appendCommonMarkInline(text, numberedContentStart, end, out);
+        return;
+    }
+
+    appendCommonMarkInline(text, start, end, out);
+}
+
+void appendCommonMarkSegment(const QString &text, int start, int end, QString &out)
+{
+    int lineStart = start;
+    while (lineStart < end) {
+        const int newline = text.indexOf(QLatin1Char('\n'), lineStart);
+        const int lineEnd = (newline < 0 || newline >= end) ? end : newline;
+        appendCommonMarkLine(text, lineStart, lineEnd, out);
+        if (lineEnd >= end) {
+            break;
+        }
+        out += QLatin1Char('\n');
+        lineStart = lineEnd + 1;
+    }
+}
+
+}
+
+QStringList extractMessageLinks(const QString &text)
+{
+    QStringList links;
+    const int end = text.size();
+    int i = 0;
+    while (i < end) {
+        // Skip code spans exactly like the rich-text renderer: their content
+        // is never linkified.
+        if (startsWithAt(text, i, QStringLiteral("```"))) {
+            const int close = findClosingTripleBacktick(text, i, end);
+            i = close >= 0 ? close + 3 : i + 3;
+            continue;
+        }
+        if (text.at(i) == QLatin1Char('`')) {
+            const int close = findClosingBacktick(text, i, end);
+            if (close >= 0) {
+                i = close + 1;
+                continue;
+            }
+        }
+        const UrlMatch url = findUrlAt(text, i, end);
+        if (url.end > i) {
+            if (!links.contains(url.href)) {
+                links.append(url.href);
+            }
+            i = url.end;
+            continue;
+        }
+        ++i;
+    }
+    return links;
+}
+
+QString whatsAppToCommonMark(const QString &text)
+{
+    QString out;
+    out.reserve(text.size() + text.size() / 4);
+
+    int segmentStart = 0;
+    bool firstBlock = true;
+    while (segmentStart < text.size()) {
+        int close = -1;
+        const int open = findNextClosedTripleBacktick(text, segmentStart, text.size(), &close);
+        if (open < 0) {
+            break;
+        }
+        if (open > segmentStart) {
+            if (!firstBlock) {
+                out += QLatin1Char('\n');
+            }
+            // Trim the newline that visually separates text from the block so
+            // the fenced block doesn't pick up an extra blank line.
+            int textEnd = open;
+            if (textEnd > segmentStart && text.at(textEnd - 1) == QLatin1Char('\n')) {
+                --textEnd;
+            }
+            appendCommonMarkSegment(text, segmentStart, textEnd, out);
+            firstBlock = false;
+        }
+
+        const int codeStart = firstCodeContentChar(text, open + 3, close);
+        const int codeEnd = lastCodeContentChar(text, codeStart, close);
+        if (!firstBlock) {
+            out += QLatin1Char('\n');
+        }
+        out += QStringLiteral("```\n");
+        out += QStringView{text}.mid(codeStart, codeEnd - codeStart);
+        out += QStringLiteral("\n```");
+        firstBlock = false;
+
+        segmentStart = close + 3;
+        if (segmentStart < text.size() && text.at(segmentStart) == QLatin1Char('\n')) {
+            ++segmentStart;
+        }
+    }
+    if (segmentStart < text.size()) {
+        if (!firstBlock) {
+            out += QLatin1Char('\n');
+        }
+        appendCommonMarkSegment(text, segmentStart, text.size(), out);
+    }
+    return out;
+}
+
 MessageMarkup parseWhatsAppMessageMarkup(const QString &text)
 {
     MessageMarkup result;

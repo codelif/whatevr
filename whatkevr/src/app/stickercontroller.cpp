@@ -68,6 +68,10 @@ void StickerController::attachChannel(const std::shared_ptr<QAbstractGrpcChannel
 
 void StickerController::handleLibraryChanged(StickerSource source)
 {
+    if (source == StickerSource::STICKER_SOURCE_FAVORITE && m_favoriteKeysLoaded) {
+        m_favoriteKeysLoaded = false;
+        requestFavoriteKeys();
+    }
     if (!m_activated) {
         return;
     }
@@ -411,6 +415,93 @@ void StickerController::sendSticker(const QString &cacheKey, const QString &repl
             Q_EMIT messageSent(response->message());
         }
         Q_EMIT stickerSent(cacheKey);
+    });
+}
+
+void StickerController::setStickerFavorite(const QString &cacheKey, const QString &messageId, bool favorite)
+{
+    if (!clientReady() || (cacheKey.isEmpty() && messageId.isEmpty())) {
+        return;
+    }
+    const QString replyKey = cacheKey.isEmpty() ? messageId : cacheKey;
+    if (m_setFavoriteReplies.contains(replyKey)) {
+        return;
+    }
+
+    SetStickerFavoriteRequest request;
+    request.setCacheKey(cacheKey);
+    request.setMessageId(messageId);
+    request.setFavorite(favorite);
+
+    std::shared_ptr<QGrpcCallReply> reply = m_client->SetStickerFavorite(request);
+    m_setFavoriteReplies.insert(replyKey, reply);
+    auto *rawReply = reply.get();
+    connect(rawReply, &QGrpcCallReply::finished, this, [this, rawReply, replyKey, favorite](const QGrpcStatus &status) {
+        const auto reply = m_setFavoriteReplies.take(replyKey);
+        if (!reply || reply.get() != rawReply) {
+            return;
+        }
+        if (!status.isOk()) {
+            Q_EMIT stickerFavoriteFailed(status.message().isEmpty()
+                                             ? (favorite ? i18nc("@info", "Unable to favorite the sticker")
+                                                         : i18nc("@info", "Unable to unfavorite the sticker"))
+                                             : status.message());
+            return;
+        }
+        if (const auto response = rawReply->read<SetStickerFavoriteResponse>(); response && response->hasSticker()) {
+            const QString key = response->sticker().cacheKey();
+            if (favorite) {
+                m_favoriteKeys.insert(key);
+            } else {
+                m_favoriteKeys.remove(key);
+            }
+            Q_EMIT favoritesChanged();
+        }
+    });
+}
+
+bool StickerController::isStickerFavorite(const QString &cacheKey)
+{
+    if (!m_favoriteKeysLoaded) {
+        requestFavoriteKeys();
+    }
+    return m_favoriteKeys.contains(cacheKey);
+}
+
+// Fetches the favorite cache keys backing isStickerFavorite. Cheap (keys
+// only), so a refresh on every favorites library change is fine.
+void StickerController::requestFavoriteKeys()
+{
+    if (!clientReady() || m_favoriteKeysReply) {
+        return;
+    }
+
+    ListStickersRequest request;
+    request.setSource(StickerSource::STICKER_SOURCE_FAVORITE);
+
+    m_favoriteKeysReply = m_client->ListStickers(request);
+    auto *reply = m_favoriteKeysReply.get();
+    connect(reply, &QGrpcCallReply::finished, this, [this, reply](const QGrpcStatus &status) {
+        if (m_favoriteKeysReply.get() != reply) {
+            return;
+        }
+        const auto owned = std::move(m_favoriteKeysReply);
+        if (!status.isOk()) {
+            return;
+        }
+        const auto response = owned->read<ListStickersResponse>();
+        if (!response) {
+            return;
+        }
+        QSet<QString> keys;
+        for (const auto &sticker : response->stickers()) {
+            keys.insert(sticker.cacheKey());
+        }
+        m_favoriteKeysLoaded = true;
+        if (keys != m_favoriteKeys) {
+            m_favoriteKeys = std::move(keys);
+            Q_EMIT favoritesChanged();
+        }
     });
 }
 

@@ -43,6 +43,8 @@ type Message struct {
 	MediaAnimated           bool
 	MediaPayload            []byte
 	MediaCacheKey           string
+	IsRevoked               bool
+	IsForwarded             bool
 	SendAttempts            int32
 	LastSendError           string
 	NextSendAttempt         int64
@@ -93,6 +95,7 @@ type TextMessageInput struct {
 	Status         string
 	IsGroup        bool
 	CountUnread    bool
+	IsForwarded    bool
 	ReplyTo        MessageReply
 }
 
@@ -165,10 +168,10 @@ func saveTextMessageTx(ctx context.Context, tx *sql.Tx, input TextMessageInput) 
 	}
 
 	result, err := tx.ExecContext(ctx, `
-		INSERT INTO messages (id, chat_id, sender_id, text, timestamp, direction, is_read, status, reply_to_message_id, reply_to_sender_id, reply_to_sender_name, reply_to_text, reply_to_media_kind, reply_to_media_mime_type, reply_to_direction)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO messages (id, chat_id, sender_id, text, timestamp, direction, is_read, status, is_forwarded, reply_to_message_id, reply_to_sender_id, reply_to_sender_name, reply_to_text, reply_to_media_kind, reply_to_media_mime_type, reply_to_direction)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO NOTHING
-	`, input.ID, input.ChatID, input.SenderID, input.Text, input.Timestamp.Unix(), input.Direction, boolToInt(!input.CountUnread), input.Status,
+	`, input.ID, input.ChatID, input.SenderID, input.Text, input.Timestamp.Unix(), input.Direction, boolToInt(!input.CountUnread), input.Status, boolToInt(input.IsForwarded),
 		input.ReplyTo.MessageID, input.ReplyTo.SenderID, input.ReplyTo.SenderName, input.ReplyTo.Text, input.ReplyTo.MediaKind, input.ReplyTo.MediaMimeType, input.ReplyTo.Direction)
 	if err != nil {
 		return SavedTextMessage{}, err
@@ -322,11 +325,11 @@ func saveMediaMessageTx(ctx context.Context, tx *sql.Tx, input MediaMessageInput
 	}
 
 	result, err := tx.ExecContext(ctx, `
-		INSERT INTO messages (id, chat_id, sender_id, text, timestamp, direction, is_read, status, media_kind, media_mime_type, media_local_path, media_thumbnail_local_path, media_width, media_height, media_animated, media_payload, media_cache_key, reply_to_message_id, reply_to_sender_id, reply_to_sender_name, reply_to_text, reply_to_media_kind, reply_to_media_mime_type, reply_to_direction)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO messages (id, chat_id, sender_id, text, timestamp, direction, is_read, status, is_forwarded, media_kind, media_mime_type, media_local_path, media_thumbnail_local_path, media_width, media_height, media_animated, media_payload, media_cache_key, reply_to_message_id, reply_to_sender_id, reply_to_sender_name, reply_to_text, reply_to_media_kind, reply_to_media_mime_type, reply_to_direction)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO NOTHING
 	`, input.ID, input.ChatID, input.SenderID, input.Text, input.Timestamp.Unix(), input.Direction,
-		boolToInt(!input.CountUnread), input.Status, input.MediaKind, input.MediaMimeType, input.MediaLocalPath, input.MediaThumbnailLocalPath, input.MediaWidth, input.MediaHeight, boolToInt(input.MediaAnimated), input.MediaPayload, input.MediaCacheKey,
+		boolToInt(!input.CountUnread), input.Status, boolToInt(input.IsForwarded), input.MediaKind, input.MediaMimeType, input.MediaLocalPath, input.MediaThumbnailLocalPath, input.MediaWidth, input.MediaHeight, boolToInt(input.MediaAnimated), input.MediaPayload, input.MediaCacheKey,
 		input.ReplyTo.MessageID, input.ReplyTo.SenderID, input.ReplyTo.SenderName, input.ReplyTo.Text, input.ReplyTo.MediaKind, input.ReplyTo.MediaMimeType, input.ReplyTo.Direction)
 	if err != nil {
 		return SavedTextMessage{}, err
@@ -548,6 +551,7 @@ func recomputeChatSummaryTx(ctx context.Context, tx *sql.Tx, chatID string) erro
 		UPDATE chats
 		SET last_message = COALESCE((
 				SELECT CASE
+					WHEN is_revoked = 1 THEN 'This message was deleted'
 					WHEN text != '' THEN text
 					WHEN media_kind = 'sticker' THEN '[Sticker]'
 					WHEN media_mime_type IN ('image/jpeg', 'image/png', 'image/webp', 'image/gif') THEN '[Image]'
@@ -597,7 +601,7 @@ func (db *DB) ListMessages(ctx context.Context, chatID string, limit int, before
 		       COALESCE(NULLIF(sa.local_path, ''), NULLIF(ca.local_path, ''), NULLIF(s.avatar_local_path, ''), NULLIF(c.avatar_local_path, ''), ''),
 		       m.text, m.timestamp, m.rowid, m.direction, m.is_read, m.status, m.media_kind, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_animated,
 		       m.reply_to_message_id, m.reply_to_sender_id, m.reply_to_sender_name, m.reply_to_text, m.reply_to_media_kind, m.reply_to_media_mime_type, m.reply_to_direction,
-		       m.send_attempts, m.last_send_error, m.next_send_attempt
+		       m.send_attempts, m.last_send_error, m.next_send_attempt, m.is_revoked
 		FROM messages m
 		LEFT JOIN senders s ON s.id = m.sender_id
 		LEFT JOIN chats c ON c.id = m.sender_id
@@ -703,7 +707,7 @@ func (db *DB) listMessagesAroundSide(ctx context.Context, chatID string, timesta
 		       COALESCE(NULLIF(sa.local_path, ''), NULLIF(ca.local_path, ''), NULLIF(s.avatar_local_path, ''), NULLIF(c.avatar_local_path, ''), ''),
 		       m.text, m.timestamp, m.rowid, m.direction, m.is_read, m.status, m.media_kind, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_animated,
 		       m.reply_to_message_id, m.reply_to_sender_id, m.reply_to_sender_name, m.reply_to_text, m.reply_to_media_kind, m.reply_to_media_mime_type, m.reply_to_direction,
-		       m.send_attempts, m.last_send_error, m.next_send_attempt
+		       m.send_attempts, m.last_send_error, m.next_send_attempt, m.is_revoked
 		FROM messages m
 		LEFT JOIN senders s ON s.id = m.sender_id
 		LEFT JOIN chats c ON c.id = m.sender_id
@@ -745,7 +749,7 @@ func (db *DB) ListPendingOutgoingMessages(ctx context.Context, limit int, now ti
 	rows, err := db.conn.QueryContext(ctx, `
 		SELECT id, chat_id, sender_id, text, timestamp, direction, is_read, status, media_kind, media_mime_type, media_local_path, media_thumbnail_local_path, media_width, media_height, media_animated, media_payload, media_cache_key,
 		       reply_to_message_id, reply_to_sender_id, reply_to_sender_name, reply_to_text, reply_to_media_kind, reply_to_media_mime_type, reply_to_direction,
-		       send_attempts, last_send_error, next_send_attempt
+		       send_attempts, last_send_error, next_send_attempt, is_forwarded
 		FROM messages
 		WHERE direction = ? AND status = ? AND next_send_attempt <= ?
 		ORDER BY timestamp ASC, rowid ASC
@@ -787,6 +791,7 @@ func (db *DB) ListPendingOutgoingMessages(ctx context.Context, limit int, now ti
 			&message.SendAttempts,
 			&message.LastSendError,
 			&message.NextSendAttempt,
+			&message.IsForwarded,
 		); err != nil {
 			return nil, err
 		}
@@ -858,6 +863,124 @@ func (db *DB) updateMessageStatus(ctx context.Context, id, status string, nextSt
 
 	message.Status = updatedStatus
 	return message, true, nil
+}
+
+// MarkMessageRevoked tombstones a message that was deleted for everyone:
+// the row survives (so ordering and reply previews keep working) but its
+// content is cleared. Returns the refreshed message and chat, and whether
+// anything changed (false when the message was already revoked).
+func (db *DB) MarkMessageRevoked(ctx context.Context, id string) (Message, Chat, bool, error) {
+	tx, err := db.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return Message{}, Chat{}, false, err
+	}
+	defer tx.Rollback()
+
+	message, err := getMessageTx(ctx, tx, id)
+	if err != nil {
+		return Message{}, Chat{}, false, err
+	}
+	if message.IsRevoked {
+		chat, err := getChatTx(ctx, tx, message.ChatID)
+		if err != nil {
+			return Message{}, Chat{}, false, err
+		}
+		return message, chat, false, nil
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE messages
+		SET is_revoked = 1,
+			text = '',
+			media_kind = '',
+			media_mime_type = '',
+			media_local_path = '',
+			media_thumbnail_local_path = '',
+			media_width = 0,
+			media_height = 0,
+			media_animated = 0,
+			media_payload = x'',
+			media_cache_key = ''
+		WHERE id = ?
+	`, id); err != nil {
+		return Message{}, Chat{}, false, err
+	}
+
+	// A revoked unread message no longer counts toward the badge.
+	if message.Direction == DirectionIncoming && !message.IsRead {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE messages SET is_read = 1 WHERE id = ?
+		`, id); err != nil {
+			return Message{}, Chat{}, false, err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE chats SET unread_count = MAX(0, unread_count - 1) WHERE id = ?
+		`, message.ChatID); err != nil {
+			return Message{}, Chat{}, false, err
+		}
+	}
+
+	if err := recomputeChatSummaryTx(ctx, tx, message.ChatID); err != nil {
+		return Message{}, Chat{}, false, err
+	}
+
+	updated, err := getMessageTx(ctx, tx, id)
+	if err != nil {
+		return Message{}, Chat{}, false, err
+	}
+	chat, err := getChatTx(ctx, tx, message.ChatID)
+	if err != nil {
+		return Message{}, Chat{}, false, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return Message{}, Chat{}, false, err
+	}
+	return updated, chat, true, nil
+}
+
+// DeleteMessageForMe removes a message row locally (receipts cascade via FK).
+// Returns the deleted message, the refreshed chat, and whether a row existed.
+func (db *DB) DeleteMessageForMe(ctx context.Context, id string) (Message, Chat, bool, error) {
+	tx, err := db.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return Message{}, Chat{}, false, err
+	}
+	defer tx.Rollback()
+
+	message, err := getMessageTx(ctx, tx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Message{}, Chat{}, false, nil
+	}
+	if err != nil {
+		return Message{}, Chat{}, false, err
+	}
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM messages WHERE id = ?`, id); err != nil {
+		return Message{}, Chat{}, false, err
+	}
+
+	if message.Direction == DirectionIncoming && !message.IsRead {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE chats SET unread_count = MAX(0, unread_count - 1) WHERE id = ?
+		`, message.ChatID); err != nil {
+			return Message{}, Chat{}, false, err
+		}
+	}
+
+	if err := recomputeChatSummaryTx(ctx, tx, message.ChatID); err != nil {
+		return Message{}, Chat{}, false, err
+	}
+
+	chat, err := getChatTx(ctx, tx, message.ChatID)
+	if err != nil {
+		return Message{}, Chat{}, false, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return Message{}, Chat{}, false, err
+	}
+	return message, chat, true, nil
 }
 
 func (db *DB) UpdateMessageMediaLocalPath(ctx context.Context, id, localPath string) (Message, error) {
@@ -1076,7 +1199,7 @@ func getMessageRow(ctx context.Context, queryer interface {
 		       COALESCE(NULLIF(sa.local_path, ''), NULLIF(ca.local_path, ''), NULLIF(s.avatar_local_path, ''), NULLIF(c.avatar_local_path, ''), ''),
 		       m.text, m.timestamp, m.rowid, m.direction, m.is_read, m.status, m.media_kind, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_animated, m.media_payload, m.media_cache_key,
 		       m.reply_to_message_id, m.reply_to_sender_id, m.reply_to_sender_name, m.reply_to_text, m.reply_to_media_kind, m.reply_to_media_mime_type, m.reply_to_direction,
-		       m.send_attempts, m.last_send_error, m.next_send_attempt
+		       m.send_attempts, m.last_send_error, m.next_send_attempt, m.is_revoked
 		FROM messages m
 		LEFT JOIN senders s ON s.id = m.sender_id
 		LEFT JOIN chats c ON c.id = m.sender_id
@@ -1114,7 +1237,25 @@ func getMessageRow(ctx context.Context, queryer interface {
 		&message.SendAttempts,
 		&message.LastSendError,
 		&message.NextSendAttempt,
+		&message.IsRevoked,
 	)
+}
+
+// SenderDisplay returns the stored display name and avatar path for a sender
+// id; both empty (no error) when the sender is unknown.
+func (db *DB) SenderDisplay(ctx context.Context, id string) (string, string, error) {
+	var name, avatarLocalPath string
+	err := db.reader().QueryRowContext(ctx, `
+		SELECT COALESCE(NULLIF(s.name, ''), ''),
+		       COALESCE(NULLIF(a.local_path, ''), NULLIF(s.avatar_local_path, ''), '')
+		FROM senders s
+		LEFT JOIN avatars a ON a.subject_kind = 'sender' AND a.subject_id = s.id
+		WHERE s.id = ?
+	`, id).Scan(&name, &avatarLocalPath)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", nil
+	}
+	return name, avatarLocalPath, err
 }
 
 func ExternalMessageID(chatID, internalID string) string {
@@ -1191,6 +1332,7 @@ func scanMessageRows(rows *sql.Rows, capacity int) ([]Message, error) {
 			&message.SendAttempts,
 			&message.LastSendError,
 			&message.NextSendAttempt,
+			&message.IsRevoked,
 		); err != nil {
 			return nil, err
 		}

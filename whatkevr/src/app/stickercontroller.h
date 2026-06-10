@@ -83,8 +83,16 @@ public:
     Q_INVOKABLE void setPackInstalled(const QString &packId, bool installed);
     Q_INVOKABLE void requestDownload(const QString &cacheKey);
     Q_INVOKABLE void sendSticker(const QString &cacheKey, const QString &replyToMessageId = QString());
+    // Favorite a sticker straight from a message bubble (synced to WhatsApp).
+    // Either identifier may be empty; the daemon resolves from the other.
+    Q_INVOKABLE void setStickerFavorite(const QString &cacheKey, const QString &messageId, bool favorite);
+    // Backed by a lazily-fetched favorite key set; re-evaluated by QML via
+    // favoritesChanged. Returns false until the set has loaded.
+    Q_INVOKABLE [[nodiscard]] bool isStickerFavorite(const QString &cacheKey);
 
 Q_SIGNALS:
+    void favoritesChanged();
+    void stickerFavoriteFailed(const QString &errorText);
     void viewChanged();
     // Relayed to AppController so the optimistic bubble lands in the message
     // list exactly like text/image sends.
@@ -119,6 +127,7 @@ private:
     // unavailable so the picker stops re-arming the download.
     [[nodiscard]] bool scheduleDownloadRetry(const QString &cacheKey, QtGrpc::StatusCode code);
     void applyPackList(const QList<whatevr::v1::StickerPack> &packs);
+    void requestFavoriteKeys();
     [[nodiscard]] bool clientReady() const;
 
     AppController *m_appController = nullptr;
@@ -146,6 +155,13 @@ private:
     QSet<QString> m_terminalDownloads;
     QHash<QString, std::shared_ptr<QGrpcCallReply>> m_installReplies;
     QHash<QString, std::shared_ptr<QGrpcCallReply>> m_sendReplies;
+    QHash<QString, std::shared_ptr<QGrpcCallReply>> m_setFavoriteReplies;
+    std::unique_ptr<QGrpcCallReply> m_favoriteKeysReply;
+    // Cache keys of favorited stickers, for the message context menu's
+    // Favorite/Unfavorite label. Loaded lazily, refreshed on favorite
+    // library-changed events.
+    QSet<QString> m_favoriteKeys;
+    bool m_favoriteKeysLoaded = false;
 
     QTimer *m_searchTimer = nullptr;
     QString m_pendingSearchQuery;

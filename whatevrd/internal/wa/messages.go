@@ -2,7 +2,9 @@ package wa
 
 import (
 	"context"
+	"database/sql"
 	"encoding/hex"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -293,6 +295,9 @@ func (c *Client) handleMessage(ctx context.Context, evt *events.Message, offline
 	if c.handleManualHistorySyncNotification(ctx, evt) {
 		return
 	}
+	if c.handleRevokeMessage(ctx, evt, offlineSync) {
+		return
+	}
 	source := sourceLive
 	if offlineSync {
 		source = sourceOfflineSync
@@ -308,6 +313,42 @@ func (c *Client) handleMessage(ctx context.Context, evt *events.Message, offline
 	}
 	c.refreshRawGroupNameForChat(ctx, saved.Chat)
 	c.refreshLiveMessageAvatars(ctx, evt)
+}
+
+// handleRevokeMessage intercepts "delete for everyone" protocol messages and
+// tombstones the referenced message instead of ingesting the protocol message
+// as a chat message. Returns true when the event was a revoke.
+func (c *Client) handleRevokeMessage(ctx context.Context, evt *events.Message, offlineSync bool) bool {
+	if evt == nil || evt.Message == nil {
+		return false
+	}
+	protocol := evt.Message.GetProtocolMessage()
+	if protocol == nil || protocol.GetKey() == nil {
+		return false
+	}
+	if protocol.GetType() != waE2E.ProtocolMessage_REVOKE {
+		return false
+	}
+
+	chatID, _ := c.internalMessageIDFromInfo(ctx, evt.Info)
+	targetID := strings.TrimSpace(protocol.GetKey().GetID())
+	if chatID == "" || targetID == "" {
+		return true
+	}
+
+	internalID := internalMessageIDForChat(chatID, types.MessageID(targetID))
+	message, chat, changed, err := c.store.MarkMessageRevoked(ctx, internalID)
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			c.log.Warnf("Failed to mark message %s revoked: %v", internalID, err)
+		}
+		return true
+	}
+	if changed && !offlineSync {
+		c.daemon.PublishMessageUpdated(toDaemonMessage(message))
+		c.daemon.PublishChatUpdated(toDaemonChat(chat))
+	}
+	return true
 }
 
 func (c *Client) handleUndecryptableMessage(ctx context.Context, evt *events.UndecryptableMessage) {
@@ -1180,6 +1221,8 @@ func toDaemonMessage(message appstore.Message) app.Message {
 		MediaWidth:              message.MediaWidth,
 		MediaHeight:             message.MediaHeight,
 		MediaAnimated:           message.MediaAnimated,
+		MediaCacheKey:           message.MediaCacheKey,
+		IsRevoked:               message.IsRevoked,
 		ReplyTo: app.MessageReply{
 			MessageID:     message.ReplyTo.MessageID,
 			SenderID:      message.ReplyTo.SenderID,

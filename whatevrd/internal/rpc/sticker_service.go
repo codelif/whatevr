@@ -22,6 +22,7 @@ type StickerController interface {
 	DownloadSticker(context.Context, string) (appstore.Sticker, error)
 	SetStickerPackInstalled(context.Context, string, bool) (appstore.StickerPack, error)
 	SendSticker(context.Context, string, string, string) (appstore.SavedTextMessage, error)
+	SetStickerFavorite(context.Context, string, string, bool) (appstore.Sticker, error)
 }
 
 type StickerService struct {
@@ -114,6 +115,20 @@ func (s *StickerService) SendSticker(ctx context.Context, req *pb.SendStickerReq
 		return nil, err
 	}
 	return &pb.SendStickerResponse{Message: toProtoMessage(toAppMessage(saved.Message))}, nil
+}
+
+func (s *StickerService) SetStickerFavorite(ctx context.Context, req *pb.SetStickerFavoriteRequest) (*pb.SetStickerFavoriteResponse, error) {
+	if s.stickers == nil {
+		return nil, status.Error(codes.Unimplemented, "sticker controller is not available")
+	}
+	if strings.TrimSpace(req.GetCacheKey()) == "" && strings.TrimSpace(req.GetMessageId()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "cache_key or message_id is required")
+	}
+	sticker, err := s.stickers.SetStickerFavorite(ctx, strings.TrimSpace(req.GetCacheKey()), strings.TrimSpace(req.GetMessageId()), req.GetFavorite())
+	if err != nil {
+		return nil, err
+	}
+	return &pb.SetStickerFavoriteResponse{Sticker: toProtoStoreSticker(sticker)}, nil
 }
 
 func toProtoStickers(stickers []appstore.Sticker) []*pb.Sticker {

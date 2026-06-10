@@ -36,6 +36,8 @@ type ChatActionController interface {
 	SubscribeChatPresence(context.Context, string) error
 	DownloadMessageMedia(context.Context, string) (appstore.Message, error)
 	ResolveCachedStickerMedia(context.Context, []appstore.Message) []appstore.Message
+	GetMessageInfo(context.Context, string) (app.MessageInfo, error)
+	DeleteMessageForMe(context.Context, string) error
 }
 
 type ChatService struct {
@@ -207,6 +209,60 @@ func (s *ChatService) DownloadMessageMedia(ctx context.Context, req *pb.Download
 	return &pb.DownloadMessageMediaResponse{Message: toProtoMessage(toAppMessage(message))}, nil
 }
 
+func (s *ChatService) GetMessageInfo(ctx context.Context, req *pb.GetMessageInfoRequest) (*pb.GetMessageInfoResponse, error) {
+	if s.actions == nil {
+		return nil, status.Error(codes.Unimplemented, "chat action controller is not available")
+	}
+	if strings.TrimSpace(req.GetMessageId()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "message_id is required")
+	}
+
+	info, err := s.actions.GetMessageInfo(ctx, strings.TrimSpace(req.GetMessageId()))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, status.Error(codes.NotFound, "message not found")
+		}
+		return nil, err
+	}
+
+	resp := &pb.GetMessageInfoResponse{
+		Status:          toProtoMessageStatus(info.Status),
+		SentTsUnix:      info.SentTsUnix,
+		DeliveredTsUnix: info.DeliveredTsUnix,
+		ReadTsUnix:      info.ReadTsUnix,
+		IsGroup:         info.IsGroup,
+		Receipts:        make([]*pb.ParticipantReceipt, 0, len(info.Receipts)),
+	}
+	for _, receipt := range info.Receipts {
+		resp.Receipts = append(resp.Receipts, &pb.ParticipantReceipt{
+			Jid:             receipt.JID,
+			DisplayName:     receipt.DisplayName,
+			AvatarLocalPath: receipt.AvatarLocalPath,
+			DeliveredTsUnix: receipt.DeliveredTsUnix,
+			ReadTsUnix:      receipt.ReadTsUnix,
+			PlayedTsUnix:    receipt.PlayedTsUnix,
+		})
+	}
+	return resp, nil
+}
+
+func (s *ChatService) DeleteMessageForMe(ctx context.Context, req *pb.DeleteMessageForMeRequest) (*pb.DeleteMessageForMeResponse, error) {
+	if s.actions == nil {
+		return nil, status.Error(codes.Unimplemented, "chat action controller is not available")
+	}
+	if strings.TrimSpace(req.GetMessageId()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "message_id is required")
+	}
+
+	if err := s.actions.DeleteMessageForMe(ctx, strings.TrimSpace(req.GetMessageId())); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, status.Error(codes.NotFound, "message not found")
+		}
+		return nil, err
+	}
+	return &pb.DeleteMessageForMeResponse{}, nil
+}
+
 func normalizePage(limit int32, offset int32, defaultLimit int, maxLimit int) (int, int, error) {
 	if offset < 0 {
 		return 0, 0, status.Error(codes.InvalidArgument, "offset must be non-negative")
@@ -259,6 +315,8 @@ func toAppMessage(message appstore.Message) app.Message {
 		MediaWidth:              message.MediaWidth,
 		MediaHeight:             message.MediaHeight,
 		MediaAnimated:           message.MediaAnimated,
+		MediaCacheKey:           message.MediaCacheKey,
+		IsRevoked:               message.IsRevoked,
 		ReplyTo: app.MessageReply{
 			MessageID:     message.ReplyTo.MessageID,
 			SenderID:      message.ReplyTo.SenderID,

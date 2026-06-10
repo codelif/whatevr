@@ -112,6 +112,9 @@ type DaemonEvent struct {
 	IsComposing    bool
 	Availability   ContactAvailability
 	LastSeenUnix   int64
+	// MessageDeleted payload (the row is gone, so only ids survive).
+	DeletedChatID    string
+	DeletedMessageID string
 	RetryAttempt   int32
 	NextRetryUnix  int64
 	CanReconnect   bool
@@ -153,6 +156,7 @@ const (
 	DaemonEventAvatarUpdated
 	DaemonEventStickerLibraryChanged
 	DaemonEventStickerDownloadChanged
+	DaemonEventMessageDeleted
 )
 
 type StickerSource int32
@@ -281,6 +285,8 @@ type Message struct {
 	MediaWidth              int32
 	MediaHeight             int32
 	MediaAnimated           bool
+	MediaCacheKey           string
+	IsRevoked               bool
 	ReplyTo                 MessageReply
 }
 
@@ -292,6 +298,26 @@ type MessageReply struct {
 	MediaKind     string
 	MediaMimeType string
 	Direction     string
+}
+
+// ParticipantReceipt is one group member's receipt state for a message; zero
+// timestamps mean the member hasn't reached that state yet.
+type ParticipantReceipt struct {
+	JID             string
+	DisplayName     string
+	AvatarLocalPath string
+	DeliveredTsUnix int64
+	ReadTsUnix      int64
+	PlayedTsUnix    int64
+}
+
+type MessageInfo struct {
+	Status          string
+	SentTsUnix      int64
+	DeliveredTsUnix int64
+	ReadTsUnix      int64
+	IsGroup         bool
+	Receipts        []ParticipantReceipt
 }
 
 type LoginEventKind int
@@ -406,6 +432,13 @@ func (d *Daemon) PublishNewMessage(message Message, chat Chat) {
 
 func (d *Daemon) PublishMessageUpdated(message Message) {
 	d.broadcastDaemonEvent(DaemonEvent{Kind: DaemonEventMessageUpdated, Message: message})
+}
+
+func (d *Daemon) PublishMessageDeleted(chatID, messageID string, chat Chat) {
+	d.broadcastDaemonEvent(DaemonEvent{Kind: DaemonEventMessageDeleted, DeletedChatID: chatID, DeletedMessageID: messageID})
+	if chat.ID != "" {
+		d.broadcastDaemonEvent(DaemonEvent{Kind: DaemonEventChatUpdated, Chat: chat})
+	}
 }
 
 type FrontendSessionController interface {

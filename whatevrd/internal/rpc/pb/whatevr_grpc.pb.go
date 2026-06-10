@@ -496,6 +496,8 @@ const (
 	ChatService_SetChatPresence_FullMethodName       = "/whatevr.v1.ChatService/SetChatPresence"
 	ChatService_SubscribeChatPresence_FullMethodName = "/whatevr.v1.ChatService/SubscribeChatPresence"
 	ChatService_DownloadMessageMedia_FullMethodName  = "/whatevr.v1.ChatService/DownloadMessageMedia"
+	ChatService_GetMessageInfo_FullMethodName        = "/whatevr.v1.ChatService/GetMessageInfo"
+	ChatService_DeleteMessageForMe_FullMethodName    = "/whatevr.v1.ChatService/DeleteMessageForMe"
 )
 
 // ChatServiceClient is the client API for ChatService service.
@@ -509,6 +511,8 @@ type ChatServiceClient interface {
 	SetChatPresence(ctx context.Context, in *SetChatPresenceRequest, opts ...grpc.CallOption) (*SetChatPresenceResponse, error)
 	SubscribeChatPresence(ctx context.Context, in *SubscribeChatPresenceRequest, opts ...grpc.CallOption) (*SubscribeChatPresenceResponse, error)
 	DownloadMessageMedia(ctx context.Context, in *DownloadMessageMediaRequest, opts ...grpc.CallOption) (*DownloadMessageMediaResponse, error)
+	GetMessageInfo(ctx context.Context, in *GetMessageInfoRequest, opts ...grpc.CallOption) (*GetMessageInfoResponse, error)
+	DeleteMessageForMe(ctx context.Context, in *DeleteMessageForMeRequest, opts ...grpc.CallOption) (*DeleteMessageForMeResponse, error)
 }
 
 type chatServiceClient struct {
@@ -589,6 +593,26 @@ func (c *chatServiceClient) DownloadMessageMedia(ctx context.Context, in *Downlo
 	return out, nil
 }
 
+func (c *chatServiceClient) GetMessageInfo(ctx context.Context, in *GetMessageInfoRequest, opts ...grpc.CallOption) (*GetMessageInfoResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetMessageInfoResponse)
+	err := c.cc.Invoke(ctx, ChatService_GetMessageInfo_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *chatServiceClient) DeleteMessageForMe(ctx context.Context, in *DeleteMessageForMeRequest, opts ...grpc.CallOption) (*DeleteMessageForMeResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteMessageForMeResponse)
+	err := c.cc.Invoke(ctx, ChatService_DeleteMessageForMe_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ChatServiceServer is the server API for ChatService service.
 // All implementations must embed UnimplementedChatServiceServer
 // for forward compatibility.
@@ -600,6 +624,8 @@ type ChatServiceServer interface {
 	SetChatPresence(context.Context, *SetChatPresenceRequest) (*SetChatPresenceResponse, error)
 	SubscribeChatPresence(context.Context, *SubscribeChatPresenceRequest) (*SubscribeChatPresenceResponse, error)
 	DownloadMessageMedia(context.Context, *DownloadMessageMediaRequest) (*DownloadMessageMediaResponse, error)
+	GetMessageInfo(context.Context, *GetMessageInfoRequest) (*GetMessageInfoResponse, error)
+	DeleteMessageForMe(context.Context, *DeleteMessageForMeRequest) (*DeleteMessageForMeResponse, error)
 	mustEmbedUnimplementedChatServiceServer()
 }
 
@@ -630,6 +656,12 @@ func (UnimplementedChatServiceServer) SubscribeChatPresence(context.Context, *Su
 }
 func (UnimplementedChatServiceServer) DownloadMessageMedia(context.Context, *DownloadMessageMediaRequest) (*DownloadMessageMediaResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DownloadMessageMedia not implemented")
+}
+func (UnimplementedChatServiceServer) GetMessageInfo(context.Context, *GetMessageInfoRequest) (*GetMessageInfoResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetMessageInfo not implemented")
+}
+func (UnimplementedChatServiceServer) DeleteMessageForMe(context.Context, *DeleteMessageForMeRequest) (*DeleteMessageForMeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteMessageForMe not implemented")
 }
 func (UnimplementedChatServiceServer) mustEmbedUnimplementedChatServiceServer() {}
 func (UnimplementedChatServiceServer) testEmbeddedByValue()                     {}
@@ -778,6 +810,42 @@ func _ChatService_DownloadMessageMedia_Handler(srv interface{}, ctx context.Cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ChatService_GetMessageInfo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetMessageInfoRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ChatServiceServer).GetMessageInfo(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ChatService_GetMessageInfo_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ChatServiceServer).GetMessageInfo(ctx, req.(*GetMessageInfoRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ChatService_DeleteMessageForMe_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteMessageForMeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ChatServiceServer).DeleteMessageForMe(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ChatService_DeleteMessageForMe_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ChatServiceServer).DeleteMessageForMe(ctx, req.(*DeleteMessageForMeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ChatService_ServiceDesc is the grpc.ServiceDesc for ChatService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -813,14 +881,24 @@ var ChatService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "DownloadMessageMedia",
 			Handler:    _ChatService_DownloadMessageMedia_Handler,
 		},
+		{
+			MethodName: "GetMessageInfo",
+			Handler:    _ChatService_GetMessageInfo_Handler,
+		},
+		{
+			MethodName: "DeleteMessageForMe",
+			Handler:    _ChatService_DeleteMessageForMe_Handler,
+		},
 	},
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "whatevr.proto",
 }
 
 const (
-	SendService_SendText_FullMethodName  = "/whatevr.v1.SendService/SendText"
-	SendService_SendMedia_FullMethodName = "/whatevr.v1.SendService/SendMedia"
+	SendService_SendText_FullMethodName       = "/whatevr.v1.SendService/SendText"
+	SendService_SendMedia_FullMethodName      = "/whatevr.v1.SendService/SendMedia"
+	SendService_RevokeMessage_FullMethodName  = "/whatevr.v1.SendService/RevokeMessage"
+	SendService_ForwardMessage_FullMethodName = "/whatevr.v1.SendService/ForwardMessage"
 )
 
 // SendServiceClient is the client API for SendService service.
@@ -829,6 +907,8 @@ const (
 type SendServiceClient interface {
 	SendText(ctx context.Context, in *SendTextRequest, opts ...grpc.CallOption) (*SendTextResponse, error)
 	SendMedia(ctx context.Context, in *SendMediaRequest, opts ...grpc.CallOption) (*SendMediaResponse, error)
+	RevokeMessage(ctx context.Context, in *RevokeMessageRequest, opts ...grpc.CallOption) (*RevokeMessageResponse, error)
+	ForwardMessage(ctx context.Context, in *ForwardMessageRequest, opts ...grpc.CallOption) (*ForwardMessageResponse, error)
 }
 
 type sendServiceClient struct {
@@ -859,12 +939,34 @@ func (c *sendServiceClient) SendMedia(ctx context.Context, in *SendMediaRequest,
 	return out, nil
 }
 
+func (c *sendServiceClient) RevokeMessage(ctx context.Context, in *RevokeMessageRequest, opts ...grpc.CallOption) (*RevokeMessageResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RevokeMessageResponse)
+	err := c.cc.Invoke(ctx, SendService_RevokeMessage_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sendServiceClient) ForwardMessage(ctx context.Context, in *ForwardMessageRequest, opts ...grpc.CallOption) (*ForwardMessageResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ForwardMessageResponse)
+	err := c.cc.Invoke(ctx, SendService_ForwardMessage_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SendServiceServer is the server API for SendService service.
 // All implementations must embed UnimplementedSendServiceServer
 // for forward compatibility.
 type SendServiceServer interface {
 	SendText(context.Context, *SendTextRequest) (*SendTextResponse, error)
 	SendMedia(context.Context, *SendMediaRequest) (*SendMediaResponse, error)
+	RevokeMessage(context.Context, *RevokeMessageRequest) (*RevokeMessageResponse, error)
+	ForwardMessage(context.Context, *ForwardMessageRequest) (*ForwardMessageResponse, error)
 	mustEmbedUnimplementedSendServiceServer()
 }
 
@@ -880,6 +982,12 @@ func (UnimplementedSendServiceServer) SendText(context.Context, *SendTextRequest
 }
 func (UnimplementedSendServiceServer) SendMedia(context.Context, *SendMediaRequest) (*SendMediaResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SendMedia not implemented")
+}
+func (UnimplementedSendServiceServer) RevokeMessage(context.Context, *RevokeMessageRequest) (*RevokeMessageResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RevokeMessage not implemented")
+}
+func (UnimplementedSendServiceServer) ForwardMessage(context.Context, *ForwardMessageRequest) (*ForwardMessageResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ForwardMessage not implemented")
 }
 func (UnimplementedSendServiceServer) mustEmbedUnimplementedSendServiceServer() {}
 func (UnimplementedSendServiceServer) testEmbeddedByValue()                     {}
@@ -938,6 +1046,42 @@ func _SendService_SendMedia_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SendService_RevokeMessage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RevokeMessageRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SendServiceServer).RevokeMessage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SendService_RevokeMessage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SendServiceServer).RevokeMessage(ctx, req.(*RevokeMessageRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SendService_ForwardMessage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ForwardMessageRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SendServiceServer).ForwardMessage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SendService_ForwardMessage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SendServiceServer).ForwardMessage(ctx, req.(*ForwardMessageRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SendService_ServiceDesc is the grpc.ServiceDesc for SendService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -953,6 +1097,14 @@ var SendService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "SendMedia",
 			Handler:    _SendService_SendMedia_Handler,
 		},
+		{
+			MethodName: "RevokeMessage",
+			Handler:    _SendService_RevokeMessage_Handler,
+		},
+		{
+			MethodName: "ForwardMessage",
+			Handler:    _SendService_ForwardMessage_Handler,
+		},
 	},
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "whatevr.proto",
@@ -965,6 +1117,7 @@ const (
 	StickerService_DownloadSticker_FullMethodName         = "/whatevr.v1.StickerService/DownloadSticker"
 	StickerService_SetStickerPackInstalled_FullMethodName = "/whatevr.v1.StickerService/SetStickerPackInstalled"
 	StickerService_SendSticker_FullMethodName             = "/whatevr.v1.StickerService/SendSticker"
+	StickerService_SetStickerFavorite_FullMethodName      = "/whatevr.v1.StickerService/SetStickerFavorite"
 )
 
 // StickerServiceClient is the client API for StickerService service.
@@ -977,6 +1130,7 @@ type StickerServiceClient interface {
 	DownloadSticker(ctx context.Context, in *DownloadStickerRequest, opts ...grpc.CallOption) (*DownloadStickerResponse, error)
 	SetStickerPackInstalled(ctx context.Context, in *SetStickerPackInstalledRequest, opts ...grpc.CallOption) (*SetStickerPackInstalledResponse, error)
 	SendSticker(ctx context.Context, in *SendStickerRequest, opts ...grpc.CallOption) (*SendStickerResponse, error)
+	SetStickerFavorite(ctx context.Context, in *SetStickerFavoriteRequest, opts ...grpc.CallOption) (*SetStickerFavoriteResponse, error)
 }
 
 type stickerServiceClient struct {
@@ -1047,6 +1201,16 @@ func (c *stickerServiceClient) SendSticker(ctx context.Context, in *SendStickerR
 	return out, nil
 }
 
+func (c *stickerServiceClient) SetStickerFavorite(ctx context.Context, in *SetStickerFavoriteRequest, opts ...grpc.CallOption) (*SetStickerFavoriteResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetStickerFavoriteResponse)
+	err := c.cc.Invoke(ctx, StickerService_SetStickerFavorite_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // StickerServiceServer is the server API for StickerService service.
 // All implementations must embed UnimplementedStickerServiceServer
 // for forward compatibility.
@@ -1057,6 +1221,7 @@ type StickerServiceServer interface {
 	DownloadSticker(context.Context, *DownloadStickerRequest) (*DownloadStickerResponse, error)
 	SetStickerPackInstalled(context.Context, *SetStickerPackInstalledRequest) (*SetStickerPackInstalledResponse, error)
 	SendSticker(context.Context, *SendStickerRequest) (*SendStickerResponse, error)
+	SetStickerFavorite(context.Context, *SetStickerFavoriteRequest) (*SetStickerFavoriteResponse, error)
 	mustEmbedUnimplementedStickerServiceServer()
 }
 
@@ -1084,6 +1249,9 @@ func (UnimplementedStickerServiceServer) SetStickerPackInstalled(context.Context
 }
 func (UnimplementedStickerServiceServer) SendSticker(context.Context, *SendStickerRequest) (*SendStickerResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SendSticker not implemented")
+}
+func (UnimplementedStickerServiceServer) SetStickerFavorite(context.Context, *SetStickerFavoriteRequest) (*SetStickerFavoriteResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetStickerFavorite not implemented")
 }
 func (UnimplementedStickerServiceServer) mustEmbedUnimplementedStickerServiceServer() {}
 func (UnimplementedStickerServiceServer) testEmbeddedByValue()                        {}
@@ -1214,6 +1382,24 @@ func _StickerService_SendSticker_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _StickerService_SetStickerFavorite_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetStickerFavoriteRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StickerServiceServer).SetStickerFavorite(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StickerService_SetStickerFavorite_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StickerServiceServer).SetStickerFavorite(ctx, req.(*SetStickerFavoriteRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // StickerService_ServiceDesc is the grpc.ServiceDesc for StickerService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1244,6 +1430,10 @@ var StickerService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SendSticker",
 			Handler:    _StickerService_SendSticker_Handler,
+		},
+		{
+			MethodName: "SetStickerFavorite",
+			Handler:    _StickerService_SetStickerFavorite_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

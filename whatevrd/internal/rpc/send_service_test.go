@@ -34,6 +34,14 @@ func (f *fakeSendController) SendMedia(context.Context, string, string, string, 
 	return appstore.SavedTextMessage{}, nil
 }
 
+func (f *fakeSendController) RevokeMessage(context.Context, string) (appstore.Message, error) {
+	return appstore.Message{}, nil
+}
+
+func (f *fakeSendController) ForwardMessage(context.Context, string, []string) ([]appstore.SavedTextMessage, error) {
+	return nil, nil
+}
+
 func TestSendTextAllowsNativeSizedMessage(t *testing.T) {
 	sender := &fakeSendController{}
 	service := NewSendService(sender)

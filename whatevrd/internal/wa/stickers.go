@@ -906,6 +906,120 @@ func favoriteStickerFromAction(action *waSyncAction.StickerAction, encKey string
 	}
 }
 
+// SetStickerFavorite favorites or unfavorites a sticker, pushing the change
+// to WhatsApp as a favoriteSticker app-state mutation (the exact inverse of
+// applyFavoriteStickerAction) so it syncs to the user's other devices. The
+// sticker is identified by its cache key, or resolved from a sticker message
+// when only a message id is at hand.
+func (c *Client) SetStickerFavorite(ctx context.Context, cacheKey, messageID string, favorite bool) (appstore.Sticker, error) {
+	client := c.currentClient()
+	if client == nil || !client.IsLoggedIn() {
+		return appstore.Sticker{}, grpcstatus.Error(codes.Unavailable, "WhatsApp client is not logged in")
+	}
+
+	cacheKey = strings.TrimSpace(cacheKey)
+	var message appstore.Message
+	haveMessage := false
+	if cacheKey == "" && strings.TrimSpace(messageID) != "" {
+		var err error
+		message, err = c.store.GetMessage(ctx, strings.TrimSpace(messageID))
+		if err != nil {
+			return appstore.Sticker{}, err
+		}
+		if message.MediaKind != appstore.MediaKindSticker {
+			return appstore.Sticker{}, grpcstatus.Error(codes.InvalidArgument, "message is not a sticker")
+		}
+		haveMessage = true
+		cacheKey = message.MediaCacheKey
+		if cacheKey == "" {
+			cacheKey, _ = appstore.StickerCacheKeyFromPayload(message.MediaPayload)
+		}
+	}
+	if cacheKey == "" {
+		return appstore.Sticker{}, grpcstatus.Error(codes.InvalidArgument, "sticker could not be identified")
+	}
+
+	sticker, ok, err := c.store.GetSticker(ctx, cacheKey)
+	if err != nil {
+		return appstore.Sticker{}, err
+	}
+	if !ok {
+		// Not in the library yet (a sticker someone sent us): build the row
+		// from the message payload — the same shape incoming app-state
+		// favorites are stored in — plus the already-downloaded file.
+		if !haveMessage || len(message.MediaPayload) == 0 {
+			return appstore.Sticker{}, grpcstatus.Error(codes.NotFound, "sticker is not available")
+		}
+		var stickerMsg waE2E.StickerMessage
+		if err := proto.Unmarshal(message.MediaPayload, &stickerMsg); err != nil {
+			return appstore.Sticker{}, grpcstatus.Error(codes.InvalidArgument, "sticker payload is unreadable")
+		}
+		mimeType := strings.TrimSpace(stickerMsg.GetMimetype())
+		if mimeType == "" {
+			mimeType = "image/webp"
+		}
+		sticker = appstore.Sticker{
+			CacheKey:       cacheKey,
+			EncCacheKey:    hex.EncodeToString(stickerMsg.GetFileEncSHA256()),
+			MimeType:       mimeType,
+			IsAnimated:     isWhatsAppAnimatedSticker(mimeType) || stickerMsg.GetIsLottie() || message.MediaAnimated,
+			Width:          int32(stickerMsg.GetWidth()),
+			Height:         int32(stickerMsg.GetHeight()),
+			LocalPath:      message.MediaLocalPath,
+			StickerPayload: message.MediaPayload,
+		}
+	}
+
+	var stickerMsg waE2E.StickerMessage
+	if len(sticker.StickerPayload) > 0 {
+		if err := proto.Unmarshal(sticker.StickerPayload, &stickerMsg); err != nil {
+			stickerMsg = waE2E.StickerMessage{}
+		}
+	}
+
+	action := &waSyncAction.StickerAction{
+		URL:           proto.String(stickerMsg.GetURL()),
+		FileEncSHA256: stickerMsg.GetFileEncSHA256(),
+		MediaKey:      stickerMsg.GetMediaKey(),
+		Mimetype:      proto.String(sticker.MimeType),
+		Width:         proto.Uint32(uint32(sticker.Width)),
+		Height:        proto.Uint32(uint32(sticker.Height)),
+		DirectPath:    proto.String(stickerMsg.GetDirectPath()),
+		FileLength:    proto.Uint64(stickerMsg.GetFileLength()),
+		IsFavorite:    proto.Bool(favorite),
+		IsLottie:      proto.Bool(stickerMsg.GetIsLottie()),
+	}
+
+	// Key the mutation by the lowercase content hash, mirroring how
+	// removeRecentSticker arrives keyed; provisional enc-only stickers fall
+	// back to the encrypted hash so the entry still dedupes consistently.
+	indexKey := strings.ToLower(strings.TrimPrefix(cacheKey, "enc:"))
+	patch := appstate.PatchInfo{
+		Type: appstate.WAPatchRegularLow,
+		Mutations: []appstate.MutationInfo{{
+			Index:   []string{appstate.IndexFavoriteSticker, indexKey},
+			Version: 2,
+			Value:   &waSyncAction.SyncActionValue{StickerAction: action},
+		}},
+	}
+	if err := c.sendRegularLowAppState(ctx, client, patch); err != nil {
+		return appstore.Sticker{}, err
+	}
+
+	now := time.Now()
+	if err := c.store.SetStickerFavorite(ctx, sticker, favorite, now); err != nil {
+		return appstore.Sticker{}, err
+	}
+	c.publishStickerLibraryChangedDebounced(app.StickerSourceFavorite)
+
+	if updated, ok, err := c.store.GetSticker(ctx, sticker.CacheKey); err == nil && ok {
+		return updated, nil
+	}
+	sticker.IsFavorite = favorite
+	sticker.FavoriteTS = now.Unix()
+	return sticker, nil
+}
+
 // publishStickerLibraryChangedDebounced coalesces library-change events; a
 // full app state resync can deliver hundreds of favorite mutations in a burst.
 func (c *Client) publishStickerLibraryChangedDebounced(source app.StickerSource) {
