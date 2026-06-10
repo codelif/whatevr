@@ -56,6 +56,13 @@ enum ContactAvailability {
   CONTACT_AVAILABILITY_OFFLINE = 2;
 }
 
+enum StickerSource {
+  STICKER_SOURCE_UNSPECIFIED = 0;
+  STICKER_SOURCE_RECENT = 1;
+  STICKER_SOURCE_FAVORITE = 2;
+  STICKER_SOURCE_ALL = 3;
+}
+
 enum AvatarSubjectKind {
   AVATAR_SUBJECT_KIND_UNSPECIFIED = 0;
   AVATAR_SUBJECT_KIND_CHAT = 1;
@@ -93,6 +100,15 @@ service SendService {
   rpc SendMedia(SendMediaRequest) returns (SendMediaResponse);
 }
 
+service StickerService {
+  rpc ListStickers(ListStickersRequest) returns (ListStickersResponse);
+  rpc ListStickerPacks(ListStickerPacksRequest) returns (ListStickerPacksResponse);
+  rpc GetStickerPack(GetStickerPackRequest) returns (GetStickerPackResponse);
+  rpc DownloadSticker(DownloadStickerRequest) returns (DownloadStickerResponse);
+  rpc SetStickerPackInstalled(SetStickerPackInstalledRequest) returns (SetStickerPackInstalledResponse);
+  rpc SendSticker(SendStickerRequest) returns (SendStickerResponse);
+}
+
 message GetStatusRequest {}
 
 message GetStatusResponse {
@@ -123,7 +139,23 @@ message DaemonEvent {
     HistoryBackfilled history_backfilled = 8;
     MediaDownloadChanged media_download_changed = 9;
     AvatarUpdated avatar_updated = 10;
+    StickerLibraryChanged sticker_library_changed = 11;
+    StickerDownloadChanged sticker_download_changed = 12;
   }
+}
+
+// Published when the set of stickers in a source changed (recents reordered,
+// favorites synced, packs installed/removed). Clients re-list the source if
+// they are currently showing it.
+message StickerLibraryChanged {
+  StickerSource source = 1;
+}
+
+// Published when a sticker file finished downloading (or failed). Carries the
+// full sticker so clients can patch a single row in place.
+message StickerDownloadChanged {
+  Sticker sticker = 1;
+  string error_text = 2;
 }
 
 message Avatar {
@@ -329,6 +361,96 @@ message SendMediaRequest {
 }
 
 message SendMediaResponse {
+  Message message = 1;
+}
+
+message Sticker {
+  // Content hash identity: hex(FileSHA256), or "enc:"+hex(FileEncSHA256)
+  // until the file has been downloaded once (app-state favorites do not
+  // carry the plaintext hash).
+  string cache_key = 1;
+  // Display file: .webp, or the extracted Lottie .json for animated packs.
+  // Empty until downloaded.
+  string local_path = 2;
+  string mime_type = 3;
+  // True for Lottie stickers (rendered via RlottieSticker).
+  bool is_animated = 4;
+  int32 width = 5;
+  int32 height = 6;
+  repeated string emojis = 7;
+  string accessibility_text = 8;
+  string pack_id = 9;
+  bool is_favorite = 10;
+  int64 last_used_unix = 11;
+  float weight = 12;
+}
+
+message StickerPack {
+  string id = 1;
+  string name = 2;
+  string publisher = 3;
+  string description = 4;
+  bool animated = 5;
+  bool lottie = 6;
+  string tray_local_path = 7;
+  int32 sticker_count = 8;
+  bool installed = 9;
+  bool contents_fetched = 10;
+}
+
+message ListStickersRequest {
+  StickerSource source = 1;
+  // Non-empty query searches across all sources (emoji tags, accessibility
+  // text, pack names) and ignores source.
+  string query = 2;
+  int32 limit = 3;
+}
+
+message ListStickersResponse {
+  repeated Sticker stickers = 1;
+}
+
+message ListStickerPacksRequest {
+  bool force_refresh = 1;
+}
+
+message ListStickerPacksResponse {
+  repeated StickerPack packs = 1;
+}
+
+message GetStickerPackRequest {
+  string pack_id = 1;
+}
+
+message GetStickerPackResponse {
+  StickerPack pack = 1;
+  repeated Sticker stickers = 2;
+}
+
+message DownloadStickerRequest {
+  string cache_key = 1;
+}
+
+message DownloadStickerResponse {
+  Sticker sticker = 1;
+}
+
+message SetStickerPackInstalledRequest {
+  string pack_id = 1;
+  bool installed = 2;
+}
+
+message SetStickerPackInstalledResponse {
+  StickerPack pack = 1;
+}
+
+message SendStickerRequest {
+  string chat_id = 1;
+  string cache_key = 2;
+  string reply_to_message_id = 3;
+}
+
+message SendStickerResponse {
   Message message = 1;
 }
 

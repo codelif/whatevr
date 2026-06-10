@@ -236,6 +236,9 @@ func (db *DB) migrate(ctx context.Context) error {
 	if err := db.ensureStickerCacheKeys(ctx); err != nil {
 		return err
 	}
+	if err := db.ensureStickerTables(ctx); err != nil {
+		return err
+	}
 
 	return nil
 }

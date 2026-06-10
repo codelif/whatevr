@@ -6,11 +6,16 @@ import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 import Whatevr as Whatevr
 
-Popup {
-    id: root
+// Emoji half of the expression picker: category tabs, emoji grid and the
+// skin-tone alternates popup. The search field lives in ExpressionPicker and
+// routes here through applySearchFilter()/insertFirstVisibleEmoji().
+Item {
+    id: pane
 
     signal emojiSelected(string emoji)
 
+    // The shell's shared search field, for ↑-from-grid focus handoff.
+    property Item searchField: null
     property var activeAlternates: []
     property string activeBaseEmoji: ""
     property string hoveredEmojiInfo: ""
@@ -18,15 +23,6 @@ Popup {
     property bool animatingGridChange: false
     readonly property real cellSize: Kirigami.Units.gridUnit * 2.2
     readonly property string emojiFontFamily: Whatevr.AppController.emojiModel.emojiFontFamily
-
-    width: Math.min(parent ? parent.width - Kirigami.Units.largeSpacing * 2 : Kirigami.Units.gridUnit * 26,
-                    Kirigami.Units.gridUnit * 30)
-    height: Math.min(parent ? parent.height - Kirigami.Units.largeSpacing * 4 : Kirigami.Units.gridUnit * 26,
-                     Kirigami.Units.gridUnit * 24)
-    modal: false
-    focus: true
-    closePolicy: Popup.CloseOnEscape
-    padding: Kirigami.Units.smallSpacing
 
     function categoryGlyph(group) {
         if (group === "Recent") {
@@ -66,14 +62,14 @@ Popup {
     }
 
     function applyFilterWithTransition(query, group, categoryIndex) {
-        if (root.animatingGridChange) {
+        if (pane.animatingGridChange) {
             Whatevr.AppController.emojiModel.setFilter(query, group)
             categoryList.currentIndex = categoryIndex
             emojiGrid.positionViewAtBeginning()
             return
         }
 
-        root.animatingGridChange = true
+        pane.animatingGridChange = true
         gridFadeOut.query = query
         gridFadeOut.group = group
         gridFadeOut.categoryIndex = categoryIndex
@@ -84,7 +80,7 @@ Popup {
         if (gridFadeOut.running) {
             gridFadeOut.stop()
         }
-        root.animatingGridChange = false
+        pane.animatingGridChange = false
         emojiGrid.opacity = 1
         categoryList.currentIndex = -1
         Whatevr.AppController.emojiModel.setFilter(query, "")
@@ -97,7 +93,7 @@ Popup {
         if (emoji.length === 0) {
             return
         }
-        root.selectEmoji(emoji, searchField)
+        pane.selectEmoji(emoji, pane.searchField)
         event.accepted = true
     }
 
@@ -125,7 +121,7 @@ Popup {
             emojiGrid.currentIndex = 0
         }
         if (delta !== 0) {
-            root.moveGridSelection(delta)
+            pane.moveGridSelection(delta)
         } else {
             emojiGrid.positionViewAtIndex(emojiGrid.currentIndex, GridView.Contain)
             emojiGrid.forceActiveFocus(Qt.PopupFocusReason)
@@ -142,19 +138,23 @@ Popup {
     }
 
     function prepareForOpen() {
-        root.preparing = true
+        pane.preparing = true
         alternatesPopup.close()
-        root.activeAlternates = []
-        root.activeBaseEmoji = ""
-        root.hoveredEmojiInfo = ""
-        searchField.clear()
+        pane.activeAlternates = []
+        pane.activeBaseEmoji = ""
+        pane.hoveredEmojiInfo = ""
 
-        const group = root.preferredOpenGroup()
+        const group = pane.preferredOpenGroup()
         Whatevr.AppController.emojiModel.setFilter("", group)
         categoryList.currentIndex = Math.max(0, Whatevr.AppController.emojiModel.groups.indexOf(group))
         emojiGrid.currentIndex = emojiGrid.count > 0 ? 0 : -1
         emojiGrid.positionViewAtBeginning()
-        root.preparing = false
+        pane.preparing = false
+    }
+
+    function reset() {
+        alternatesPopup.close()
+        pane.hoveredEmojiInfo = ""
     }
 
     function selectEmoji(emoji, focusTarget) {
@@ -162,7 +162,7 @@ Popup {
             return
         }
         Whatevr.AppController.addRecentEmoji(emoji)
-        root.emojiSelected(emoji)
+        pane.emojiSelected(emoji)
         if (focusTarget) {
             focusTarget.forceActiveFocus(Qt.PopupFocusReason)
         }
@@ -173,78 +173,19 @@ Popup {
             return
         }
 
-        root.activeBaseEmoji = baseEmoji
-        root.activeAlternates = alternates
+        pane.activeBaseEmoji = baseEmoji
+        pane.activeAlternates = alternates
         Qt.callLater(() => {
-            alternatesPopup.x = Math.max(0, Math.min(item.mapToItem(root.contentItem, 0, 0).x,
-                                                      root.contentItem.width - alternatesPopup.implicitWidth))
-            alternatesPopup.y = Math.max(0, item.mapToItem(root.contentItem, 0, 0).y - alternatesPopup.implicitHeight - Kirigami.Units.smallSpacing)
+            alternatesPopup.x = Math.max(0, Math.min(item.mapToItem(pane, 0, 0).x,
+                                                      pane.width - alternatesPopup.implicitWidth))
+            alternatesPopup.y = Math.max(0, item.mapToItem(pane, 0, 0).y - alternatesPopup.implicitHeight - Kirigami.Units.smallSpacing)
             alternatesPopup.open()
         })
     }
 
-    onOpened: searchField.forceActiveFocus(Qt.PopupFocusReason)
-    onClosed: {
-        alternatesPopup.close()
-        root.hoveredEmojiInfo = ""
-    }
-
-    background: Rectangle {
-        Kirigami.Theme.inherit: false
-        Kirigami.Theme.colorSet: Kirigami.Theme.View
-        color: Kirigami.Theme.backgroundColor
-        radius: Kirigami.Units.cornerRadius
-        border.color: Qt.alpha(Kirigami.Theme.textColor, 0.14)
-    }
-
-    contentItem: ColumnLayout {
+    ColumnLayout {
+        anchors.fill: parent
         spacing: Kirigami.Units.smallSpacing
-
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: Kirigami.Units.smallSpacing
-
-            TextField {
-                id: searchField
-
-                Layout.fillWidth: true
-                placeholderText: Whatevr.I18n.i18nc("@info:placeholder", "Search emoji")
-                inputMethodHints: Qt.ImhNoPredictiveText
-                onTextChanged: {
-                    if (root.preparing) {
-                        return
-                    }
-                    root.applySearchFilter(text)
-                }
-
-                Keys.onReturnPressed: event => root.insertFirstVisibleEmoji(event)
-                Keys.onEnterPressed: event => root.insertFirstVisibleEmoji(event)
-                Keys.onRightPressed: event => {
-                    root.focusGridFromSearch(0)
-                    event.accepted = true
-                }
-                Keys.onLeftPressed: event => {
-                    root.focusGridFromSearch(0)
-                    event.accepted = true
-                }
-                Keys.onUpPressed: event => {
-                    root.focusGridFromSearch(0)
-                    event.accepted = true
-                }
-                Keys.onDownPressed: event => {
-                    root.focusGridFromSearch(0)
-                    event.accepted = true
-                }
-            }
-
-            ToolButton {
-                icon.name: "edit-clear-symbolic"
-                text: Whatevr.I18n.i18nc("@action:button", "Clear search")
-                display: AbstractButton.IconOnly
-                enabled: searchField.text.length > 0
-                onClicked: searchField.clear()
-            }
-        }
 
         ListView {
             id: categoryList
@@ -285,13 +226,13 @@ Popup {
 
                 Text {
                     anchors.centerIn: parent
-                    text: root.categoryGlyph(categoryButton.modelData)
+                    text: pane.categoryGlyph(categoryButton.modelData)
                     color: categoryButton.modelData === "Recent"
                            ? (categoryButton.current ? Kirigami.Theme.highlightColor : Kirigami.Theme.textColor)
                            : Kirigami.Theme.textColor
                     font.family: categoryButton.modelData === "Recent"
                                  ? Kirigami.Theme.defaultFont.family
-                                 : (root.emojiFontFamily.length > 0 ? root.emojiFontFamily : Kirigami.Theme.defaultFont.family)
+                                 : (pane.emojiFontFamily.length > 0 ? pane.emojiFontFamily : Kirigami.Theme.defaultFont.family)
                     font.weight: categoryButton.modelData === "Recent" ? Font.DemiBold : Font.Normal
                     font.pixelSize: Math.round(Kirigami.Theme.defaultFont.pixelSize * 1.55)
                     renderType: Text.QtRendering
@@ -303,10 +244,12 @@ Popup {
 
                 TapHandler {
                     onTapped: {
-                        root.preparing = true
-                        searchField.clear()
-                        root.preparing = false
-                        root.applyFilterWithTransition("", categoryButton.modelData, categoryButton.index)
+                        pane.preparing = true
+                        if (pane.searchField) {
+                            pane.searchField.clear()
+                        }
+                        pane.preparing = false
+                        pane.applyFilterWithTransition("", categoryButton.modelData, categoryButton.index)
                     }
                 }
             }
@@ -325,11 +268,11 @@ Popup {
             Layout.fillHeight: true
             clip: true
             reuseItems: true
-            cacheBuffer: root.cellSize * 8
+            cacheBuffer: pane.cellSize * 8
             boundsBehavior: Flickable.StopAtBounds
             model: Whatevr.AppController.emojiModel
-            cellWidth: Math.max(root.cellSize, Math.floor(width / Math.max(1, Math.floor(width / root.cellSize))))
-            cellHeight: root.cellSize
+            cellWidth: Math.max(pane.cellSize, Math.floor(width / Math.max(1, Math.floor(width / pane.cellSize))))
+            cellHeight: pane.cellSize
             keyNavigationWraps: true
             highlightMoveDuration: 60
             // Clamp on count changes instead of binding currentIndex to itself
@@ -366,41 +309,43 @@ Popup {
                     easing.type: Easing.OutCubic
                 }
                 ScriptAction {
-                    script: root.animatingGridChange = false
+                    script: pane.animatingGridChange = false
                 }
             }
 
             Keys.onReturnPressed: event => {
                 const emoji = Whatevr.AppController.emojiModel.emojiAt(emojiGrid.currentIndex)
                 if (emoji.length > 0) {
-                    root.selectEmoji(emoji, emojiGrid)
+                    pane.selectEmoji(emoji, emojiGrid)
                     event.accepted = true
                 }
             }
             Keys.onEnterPressed: event => {
                 const emoji = Whatevr.AppController.emojiModel.emojiAt(emojiGrid.currentIndex)
                 if (emoji.length > 0) {
-                    root.selectEmoji(emoji, emojiGrid)
+                    pane.selectEmoji(emoji, emojiGrid)
                     event.accepted = true
                 }
             }
             Keys.onRightPressed: event => {
-                root.moveGridSelection(1)
+                pane.moveGridSelection(1)
                 event.accepted = true
             }
             Keys.onLeftPressed: event => {
-                root.moveGridSelection(-1)
+                pane.moveGridSelection(-1)
                 event.accepted = true
             }
             Keys.onDownPressed: event => {
-                root.moveGridSelection(root.visibleColumnCount())
+                pane.moveGridSelection(pane.visibleColumnCount())
                 event.accepted = true
             }
             Keys.onUpPressed: event => {
-                if (emojiGrid.currentIndex >= 0 && emojiGrid.currentIndex < root.visibleColumnCount()) {
-                    searchField.forceActiveFocus(Qt.PopupFocusReason)
+                if (emojiGrid.currentIndex >= 0 && emojiGrid.currentIndex < pane.visibleColumnCount()) {
+                    if (pane.searchField) {
+                        pane.searchField.forceActiveFocus(Qt.PopupFocusReason)
+                    }
                 } else {
-                    root.moveGridSelection(-root.visibleColumnCount())
+                    pane.moveGridSelection(-pane.visibleColumnCount())
                 }
                 event.accepted = true
             }
@@ -414,7 +359,7 @@ Popup {
                 required property var shortcodes
                 required property var emoticons
                 required property var alternates
-                readonly property string description: root.formatAliases(shortcodes, emoticons)
+                readonly property string description: pane.formatAliases(shortcodes, emoticons)
 
                 width: emojiGrid.cellWidth
                 height: emojiGrid.cellHeight
@@ -438,7 +383,7 @@ Popup {
                     text: emojiTile.emoji
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
-                    font.family: root.emojiFontFamily.length > 0 ? root.emojiFontFamily : Kirigami.Theme.defaultFont.family
+                    font.family: pane.emojiFontFamily.length > 0 ? pane.emojiFontFamily : Kirigami.Theme.defaultFont.family
                     font.pixelSize: Math.round(Kirigami.Theme.defaultFont.pixelSize * 1.65)
                     renderType: Text.QtRendering
                 }
@@ -467,9 +412,9 @@ Popup {
                     id: emojiHover
                     onHoveredChanged: {
                         if (hovered) {
-                            root.hoveredEmojiInfo = emojiTile.description
-                        } else if (root.hoveredEmojiInfo === emojiTile.description) {
-                            root.hoveredEmojiInfo = ""
+                            pane.hoveredEmojiInfo = emojiTile.description
+                        } else if (pane.hoveredEmojiInfo === emojiTile.description) {
+                            pane.hoveredEmojiInfo = ""
                         }
                     }
                 }
@@ -483,9 +428,10 @@ Popup {
                     function activate(button) {
                         emojiGrid.currentIndex = emojiTile.index
                         if (button === Qt.RightButton) {
-                            root.showAlternates(emojiTile.emoji, emojiTile.alternates, emojiTile)
+                            pane.showAlternates(emojiTile.emoji, emojiTile.alternates, emojiTile)
                         } else {
-                            root.selectEmoji(emojiTile.emoji, searchField.activeFocus ? searchField : emojiGrid)
+                            pane.selectEmoji(emojiTile.emoji,
+                                             pane.searchField && pane.searchField.activeFocus ? pane.searchField : emojiGrid)
                         }
                     }
 
@@ -519,85 +465,86 @@ Popup {
 
         Label {
             Layout.fillWidth: true
-            text: root.hoveredEmojiInfo.length > 0
-                  ? root.hoveredEmojiInfo
+            text: pane.hoveredEmojiInfo.length > 0
+                  ? pane.hoveredEmojiInfo
                   : Whatevr.I18n.i18nc("@info", "Right-click emoji for variants")
             color: Kirigami.Theme.disabledTextColor
             font: Kirigami.Theme.smallFont
             elide: Text.ElideRight
         }
+    }
 
-        Popup {
-            id: alternatesPopup
+    Popup {
+        id: alternatesPopup
 
-            parent: root.contentItem
-            padding: Kirigami.Units.smallSpacing
-            closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        parent: pane
+        padding: Kirigami.Units.smallSpacing
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
-            background: Rectangle {
-                Kirigami.Theme.inherit: false
-                Kirigami.Theme.colorSet: Kirigami.Theme.View
-                color: Kirigami.Theme.backgroundColor
-                radius: Kirigami.Units.cornerRadius
-                border.color: Qt.alpha(Kirigami.Theme.textColor, 0.14)
-            }
+        background: Rectangle {
+            Kirigami.Theme.inherit: false
+            Kirigami.Theme.colorSet: Kirigami.Theme.View
+            color: Kirigami.Theme.backgroundColor
+            radius: Kirigami.Units.cornerRadius
+            border.color: Qt.alpha(Kirigami.Theme.textColor, 0.14)
+        }
 
-            contentItem: RowLayout {
-                spacing: Kirigami.Units.smallSpacing / 2
+        contentItem: RowLayout {
+            spacing: Kirigami.Units.smallSpacing / 2
 
-                Repeater {
-                    model: root.activeAlternates
+            Repeater {
+                model: pane.activeAlternates
 
-                    delegate: Item {
-                        id: alternateTile
+                delegate: Item {
+                    id: alternateTile
 
-                        required property string modelData
+                    required property string modelData
 
-                        Layout.preferredWidth: root.cellSize
-                        Layout.preferredHeight: root.cellSize
+                    Layout.preferredWidth: pane.cellSize
+                    Layout.preferredHeight: pane.cellSize
 
-                        Rectangle {
-                            anchors.fill: parent
-                            radius: Kirigami.Units.cornerRadius
-                            color: alternateHover.hovered ? Qt.alpha(Kirigami.Theme.highlightColor, 0.14) : "transparent"
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: Kirigami.Units.cornerRadius
+                        color: alternateHover.hovered ? Qt.alpha(Kirigami.Theme.highlightColor, 0.14) : "transparent"
+                    }
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: alternateTile.modelData
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                        font.family: pane.emojiFontFamily.length > 0 ? pane.emojiFontFamily : Kirigami.Theme.defaultFont.family
+                        font.pixelSize: Math.round(Kirigami.Theme.defaultFont.pixelSize * 1.65)
+                        renderType: Text.QtRendering
+                    }
+
+                    HoverHandler {
+                        id: alternateHover
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        acceptedButtons: Qt.LeftButton
+                        hoverEnabled: false
+                        preventStealing: false
+
+                        function activate() {
+                            alternatesPopup.close()
+                            pane.selectEmoji(alternateTile.modelData,
+                                             pane.searchField && pane.searchField.activeFocus ? pane.searchField : emojiGrid)
                         }
 
-                        Text {
-                            anchors.centerIn: parent
-                            text: alternateTile.modelData
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                            font.family: root.emojiFontFamily.length > 0 ? root.emojiFontFamily : Kirigami.Theme.defaultFont.family
-                            font.pixelSize: Math.round(Kirigami.Theme.defaultFont.pixelSize * 1.65)
-                            renderType: Text.QtRendering
+                        onPressed: mouse => {
+                            mouse.accepted = true
                         }
-
-                        HoverHandler {
-                            id: alternateHover
+                        onClicked: mouse => {
+                            activate()
+                            mouse.accepted = true
                         }
-
-                        MouseArea {
-                            anchors.fill: parent
-                            acceptedButtons: Qt.LeftButton
-                            hoverEnabled: false
-                            preventStealing: false
-
-                            function activate() {
-                                alternatesPopup.close()
-                                root.selectEmoji(alternateTile.modelData, searchField.activeFocus ? searchField : emojiGrid)
-                            }
-
-                            onPressed: mouse => {
-                                mouse.accepted = true
-                            }
-                            onClicked: mouse => {
-                                activate()
-                                mouse.accepted = true
-                            }
-                            onDoubleClicked: mouse => {
-                                activate()
-                                mouse.accepted = true
-                            }
+                        onDoubleClicked: mouse => {
+                            activate()
+                            mouse.accepted = true
                         }
                     }
                 }

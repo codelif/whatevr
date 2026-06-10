@@ -179,8 +179,53 @@ func toProtoDaemonEvent(event app.DaemonEvent) *pb.DaemonEvent {
 				AvatarUpdated: &pb.AvatarUpdated{Avatar: toProtoAvatar(event.Avatar)},
 			},
 		}
+	case app.DaemonEventStickerLibraryChanged:
+		return &pb.DaemonEvent{
+			Payload: &pb.DaemonEvent_StickerLibraryChanged{
+				StickerLibraryChanged: &pb.StickerLibraryChanged{Source: toProtoStickerSource(event.StickerSource)},
+			},
+		}
+	case app.DaemonEventStickerDownloadChanged:
+		return &pb.DaemonEvent{
+			Payload: &pb.DaemonEvent_StickerDownloadChanged{
+				StickerDownloadChanged: &pb.StickerDownloadChanged{
+					Sticker:   toProtoSticker(event.StickerDownload.Sticker),
+					ErrorText: event.StickerDownload.ErrorText,
+				},
+			},
+		}
 	default:
 		return nil
+	}
+}
+
+func toProtoSticker(sticker app.Sticker) *pb.Sticker {
+	return &pb.Sticker{
+		CacheKey:          sticker.CacheKey,
+		LocalPath:         sticker.LocalPath,
+		MimeType:          sticker.MimeType,
+		IsAnimated:        sticker.IsAnimated,
+		Width:             sticker.Width,
+		Height:            sticker.Height,
+		Emojis:            sticker.Emojis,
+		AccessibilityText: sticker.AccessibilityText,
+		PackId:            sticker.PackID,
+		IsFavorite:        sticker.IsFavorite,
+		LastUsedUnix:      sticker.LastUsedUnix,
+		Weight:            sticker.Weight,
+	}
+}
+
+func toProtoStickerSource(source app.StickerSource) pb.StickerSource {
+	switch source {
+	case app.StickerSourceRecent:
+		return pb.StickerSource_STICKER_SOURCE_RECENT
+	case app.StickerSourceFavorite:
+		return pb.StickerSource_STICKER_SOURCE_FAVORITE
+	case app.StickerSourceAll:
+		return pb.StickerSource_STICKER_SOURCE_ALL
+	default:
+		return pb.StickerSource_STICKER_SOURCE_UNSPECIFIED
 	}
 }
 
