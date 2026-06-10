@@ -17,6 +17,7 @@ Item {
     // The shell's shared search field, for ↑-from-grid focus handoff.
     property Item searchField: null
     property var activeAlternates: []
+    property var pendingRecentEmoji: []
     property string activeBaseEmoji: ""
     property string hoveredEmojiInfo: ""
     property bool preparing: false
@@ -76,7 +77,37 @@ Item {
         gridFadeOut.start()
     }
 
+    function viewingRecentCategory() {
+        return Whatevr.AppController.emojiModel.selectedGroup === "Recent"
+               && Whatevr.AppController.emojiModel.searchQuery.length === 0
+    }
+
+    function queueRecentEmoji(emoji) {
+        const pending = pane.pendingRecentEmoji.slice()
+        const existing = pending.indexOf(emoji)
+        if (existing >= 0) {
+            pending.splice(existing, 1)
+        }
+        pending.push(emoji)
+        pane.pendingRecentEmoji = pending
+    }
+
+    function flushPendingRecentEmoji() {
+        if (pane.pendingRecentEmoji.length === 0) {
+            return
+        }
+
+        const pending = pane.pendingRecentEmoji
+        pane.pendingRecentEmoji = []
+        for (let i = pending.length - 1; i >= 0; --i) {
+            Whatevr.AppController.addRecentEmoji(pending[i])
+        }
+    }
+
     function applySearchFilter(query) {
+        if (query.length > 0) {
+            pane.flushPendingRecentEmoji()
+        }
         if (gridFadeOut.running) {
             gridFadeOut.stop()
         }
@@ -139,6 +170,7 @@ Item {
 
     function prepareForOpen() {
         pane.preparing = true
+        pane.pendingRecentEmoji = []
         alternatesPopup.close()
         pane.activeAlternates = []
         pane.activeBaseEmoji = ""
@@ -153,15 +185,24 @@ Item {
     }
 
     function reset() {
+        pane.flushPendingRecentEmoji()
         alternatesPopup.close()
         pane.hoveredEmojiInfo = ""
+    }
+
+    function prepareForModeSwitch() {
+        pane.flushPendingRecentEmoji()
     }
 
     function selectEmoji(emoji, focusTarget) {
         if (emoji.length === 0) {
             return
         }
-        Whatevr.AppController.addRecentEmoji(emoji)
+        if (pane.viewingRecentCategory()) {
+            pane.queueRecentEmoji(emoji)
+        } else {
+            Whatevr.AppController.addRecentEmoji(emoji)
+        }
         pane.emojiSelected(emoji)
         if (focusTarget) {
             focusTarget.forceActiveFocus(Qt.PopupFocusReason)
@@ -244,6 +285,9 @@ Item {
 
                 TapHandler {
                     onTapped: {
+                        if (categoryButton.modelData !== "Recent") {
+                            pane.flushPendingRecentEmoji()
+                        }
                         pane.preparing = true
                         if (pane.searchField) {
                             pane.searchField.clear()

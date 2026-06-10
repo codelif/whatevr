@@ -50,6 +50,9 @@ Popup {
         if (!preparing && root.mode === newMode) {
             return
         }
+        if (!preparing && root.mode === "emoji" && newMode !== "emoji") {
+            emojiPane.prepareForModeSwitch()
+        }
         root.mode = newMode
         pickerSettings.lastMode = newMode
         if (!preparing) {
