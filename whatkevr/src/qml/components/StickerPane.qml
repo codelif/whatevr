@@ -283,13 +283,17 @@ Item {
             currentIndex: pane.storeOpen ? 1 : 0
 
             // Page 0: sticker grid.
+            Item {
+
             GridView {
                 id: stickerGrid
 
+                anchors.fill: parent
                 clip: true
                 reuseItems: true
                 cacheBuffer: pane.cellSize * 6
                 boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.vertical: DiscreetScrollBar {}
                 model: pane.stickers.stickerModel
                 cellWidth: Math.max(pane.cellSize, Math.floor(width / Math.max(1, Math.floor(width / pane.cellSize))))
                 cellHeight: pane.cellSize
@@ -469,6 +473,13 @@ Item {
                 }
             }
 
+            KineticWheelScroller {
+                anchors.fill: stickerGrid
+                target: stickerGrid
+                wheelStep: Kirigami.Units.gridUnit * 4
+            }
+            }
+
             // Page 1: store browser.
             ColumnLayout {
                 spacing: Kirigami.Units.smallSpacing
@@ -493,14 +504,18 @@ Item {
                     }
                 }
 
+                Item {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+
                 ListView {
                     id: packList
 
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
+                    anchors.fill: parent
                     clip: true
                     reuseItems: true
                     boundsBehavior: Flickable.StopAtBounds
+                    ScrollBar.vertical: DiscreetScrollBar {}
                     model: pane.stickers.packModel
                     spacing: Kirigami.Units.smallSpacing / 2
 
@@ -593,6 +608,13 @@ Item {
                         anchors.centerIn: parent
                         running: packList.count === 0 && pane.stickers.packsLoading
                     }
+                }
+
+                KineticWheelScroller {
+                    anchors.fill: packList
+                    target: packList
+                    wheelStep: Kirigami.Units.gridUnit * 4
+                }
                 }
             }
         }
