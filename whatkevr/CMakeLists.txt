@@ -179,7 +179,9 @@ qt_add_resources(whatkevr emoji_metadata
     PREFIX /
     FILES
         data/emoji/emoji_17_0_ordering.json
+        data/emoji/emoji_keywords_en.json
         data/emoji/LICENSE.googlefonts-emoji-metadata
+        data/emoji/LICENSE.emojilib
         data/icons/checkmark-bold.svg
 )
 

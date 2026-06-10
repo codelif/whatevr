@@ -23,6 +23,12 @@ Frame {
     property bool replyToOutgoing: false
     readonly property bool replying: replyToMessageId.length > 0
 
+    // Inline `:keyword` emoji suggestion state.
+    property var suggestionResults: []
+    property int suggestionIndex: 0
+    property int suggestionStart: -1
+    readonly property bool suggestionsActive: suggestionBar.visible && root.suggestionResults.length > 0
+
     signal sendTextRequested(string text, string replyToMessageId)
     signal sendImageRequested(string fileUrl, string caption, string replyToMessageId)
     signal composingChanged(bool composing)
@@ -60,6 +66,8 @@ Frame {
         root.sendTextRequested(text, root.replyToMessageId)
         root.replyConsumed()
         input.clear()
+        root.hideSuggestions()
+        emojiPicker.close()
     }
 
     function forceInputFocus() {
@@ -77,6 +85,88 @@ Frame {
             input.forceActiveFocus(Qt.OtherFocusReason)
         }
         input.insert(input.cursorPosition, text)
+    }
+
+    // Returns { start, query } for the `:keyword` token immediately before the
+    // cursor, or null when there is no open token (no colon, a closing colon, a
+    // space, or a colon that is part of something like "12:30").
+    function activeEmojiQuery() {
+        const pos = input.cursorPosition
+        const before = input.getText(0, pos)
+        const colon = before.lastIndexOf(":")
+        if (colon < 0) {
+            return null
+        }
+        const token = before.substring(colon + 1)
+        if (!/^[a-z0-9_+-]+$/i.test(token)) {
+            return null
+        }
+        if (colon > 0) {
+            const prev = before.charAt(colon - 1)
+            if (/[a-z0-9_+-]/i.test(prev)) {
+                return null
+            }
+        }
+        return { start: colon, query: token }
+    }
+
+    function updateEmojiSuggestions() {
+        if (!root.enabledForChat) {
+            root.hideSuggestions()
+            return
+        }
+        const match = root.activeEmojiQuery()
+        if (!match || match.query.length < 2) {
+            root.hideSuggestions()
+            return
+        }
+        const results = Whatevr.AppController.emojiModel.searchEmoji(match.query, 40)
+        if (!results || results.length === 0) {
+            root.hideSuggestions()
+            return
+        }
+        root.suggestionStart = match.start
+        root.suggestionResults = results
+        root.suggestionIndex = 0
+        suggestionBar.visible = true
+        suggestionList.positionViewAtBeginning()
+    }
+
+    function hideSuggestions() {
+        if (!suggestionBar.visible && root.suggestionResults.length === 0) {
+            return
+        }
+        suggestionBar.visible = false
+        root.suggestionResults = []
+        root.suggestionIndex = 0
+        root.suggestionStart = -1
+    }
+
+    function cycleSuggestion(delta) {
+        const count = root.suggestionResults.length
+        if (count === 0) {
+            return
+        }
+        root.suggestionIndex = ((root.suggestionIndex + delta) % count + count) % count
+        suggestionList.positionViewAtIndex(root.suggestionIndex, ListView.Contain)
+    }
+
+    function acceptSuggestion(index) {
+        const item = root.suggestionResults[index]
+        if (!item || root.suggestionStart < 0) {
+            root.hideSuggestions()
+            return
+        }
+        // Capture locals first: input.remove() fires onTextChanged synchronously,
+        // which re-enters updateEmojiSuggestions()/hideSuggestions() and resets
+        // suggestionStart to -1 before the insert below would run.
+        const start = root.suggestionStart
+        const end = input.cursorPosition
+        const emoji = item.emoji
+        input.remove(start, end)
+        input.insert(start, emoji)
+        Whatevr.AppController.emojiModel.addRecentEmoji(emoji)
+        root.hideSuggestions()
     }
 
     function updateComposerOverlayRect() {
@@ -176,6 +266,7 @@ Frame {
         if (!enabledForChat) {
             root.setComposing(false)
             emojiPicker.close()
+            root.hideSuggestions()
             root.clearReplyRequested()
         }
     }
@@ -208,6 +299,96 @@ Frame {
             fillColor: Qt.alpha(Kirigami.Theme.textColor, 0.045)
             borderColor: Qt.alpha(Kirigami.Theme.textColor, 0.09)
             onCloseRequested: root.clearReplyRequested()
+        }
+
+        Item {
+            id: suggestionBar
+
+            visible: false
+            clip: true
+            Layout.fillWidth: true
+            Layout.preferredHeight: visible ? Kirigami.Units.gridUnit * 2.2 : 0
+
+            Rectangle {
+                anchors.fill: parent
+                radius: Kirigami.Units.smallSpacing
+                color: Qt.alpha(Kirigami.Theme.textColor, 0.045)
+                border.width: 1
+                border.color: Qt.alpha(Kirigami.Theme.textColor, 0.09)
+
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.margins: Kirigami.Units.smallSpacing / 2
+                    spacing: Kirigami.Units.smallSpacing
+
+                    ListView {
+                        id: suggestionList
+
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        orientation: ListView.Horizontal
+                        clip: true
+                        boundsBehavior: Flickable.StopAtBounds
+                        model: root.suggestionResults
+                        currentIndex: root.suggestionIndex
+                        spacing: Kirigami.Units.smallSpacing / 2
+
+                        delegate: Item {
+                            id: suggestionCell
+
+                            required property int index
+                            required property var modelData
+
+                            height: suggestionList.height
+                            width: height
+
+                            Rectangle {
+                                anchors.fill: parent
+                                anchors.margins: 1
+                                radius: Kirigami.Units.smallSpacing
+                                color: suggestionCell.index === root.suggestionIndex
+                                       ? Qt.alpha(Kirigami.Theme.highlightColor, 0.22)
+                                       : "transparent"
+                                border.width: suggestionCell.index === root.suggestionIndex ? 1 : 0
+                                border.color: Qt.alpha(Kirigami.Theme.highlightColor, 0.6)
+                            }
+
+                            Text {
+                                anchors.centerIn: parent
+                                text: suggestionCell.modelData.emoji
+                                font.family: Whatevr.AppController.emojiModel.emojiFontFamily
+                                font.pixelSize: Math.round(suggestionCell.height * 0.55)
+                                renderType: Text.QtRendering
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+
+                            TapHandler {
+                                onTapped: root.acceptSuggestion(suggestionCell.index)
+                            }
+
+                            HoverHandler {
+                                onHoveredChanged: if (hovered) root.suggestionIndex = suggestionCell.index
+                            }
+                        }
+                    }
+
+                    Label {
+                        Layout.fillHeight: true
+                        Layout.maximumWidth: Kirigami.Units.gridUnit * 9
+                        verticalAlignment: Text.AlignVCenter
+                        visible: text.length > 0
+                        elide: Text.ElideRight
+                        color: Kirigami.Theme.disabledTextColor
+                        font.family: Kirigami.Theme.smallFont.family
+                        font.pixelSize: Kirigami.Theme.smallFont.pixelSize
+                        text: {
+                            const item = root.suggestionResults[root.suggestionIndex]
+                            return item ? ":" + item.shortcode + ":" : ""
+                        }
+                    }
+                }
+            }
         }
 
         RowLayout {
@@ -265,9 +446,18 @@ Frame {
                     selectByMouse: true
                     verticalAlignment: TextEdit.AlignVCenter
 
-                    onTextChanged: root.noteDraftActivity()
+                    onTextChanged: {
+                        root.noteDraftActivity()
+                        root.updateEmojiSuggestions()
+                    }
+                    onCursorPositionChanged: root.updateEmojiSuggestions()
 
                     Keys.onReturnPressed: event => {
+                        if (root.suggestionsActive) {
+                            root.acceptSuggestion(root.suggestionIndex)
+                            event.accepted = true
+                            return
+                        }
                         if (event.modifiers & Qt.ShiftModifier) {
                             event.accepted = false
                             return
@@ -277,6 +467,19 @@ Frame {
                     }
 
                     Keys.onPressed: event => {
+                        if (event.key === Qt.Key_Escape && root.suggestionsActive) {
+                            root.hideSuggestions()
+                            event.accepted = true
+                            return
+                        }
+
+                        if ((event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab)
+                                && root.suggestionsActive) {
+                            root.cycleSuggestion(event.key === Qt.Key_Backtab ? -1 : 1)
+                            event.accepted = true
+                            return
+                        }
+
                         if (event.matches(StandardKey.Paste)) {
                             if (Whatevr.AppController.sendClipboardImage(root.inputPlainText(), root.replyToMessageId)) {
                                 event.accepted = true

@@ -5,6 +5,7 @@
 #include <QList>
 #include <QString>
 #include <QStringList>
+#include <QVariantList>
 
 #include <cstdint>
 
@@ -49,6 +50,9 @@ public:
     Q_INVOKABLE [[nodiscard]] QString emojiAt(int row) const;
     Q_INVOKABLE void setFilter(const QString &query, const QString &group);
     Q_INVOKABLE QString groupIconName(const QString &group) const;
+    // Non-mutating shortcode search for the composer's inline `:keyword` bar.
+    // Returns up to `limit` maps of {emoji, shortcode}, prefix matches first.
+    Q_INVOKABLE [[nodiscard]] QVariantList searchEmoji(const QString &query, int limit) const;
 
 Q_SIGNALS:
     void filterChanged();
@@ -61,6 +65,7 @@ private:
         QStringList shortcodes;
         QStringList emoticons;
         QStringList alternates;
+        QStringList keywords;   // lowercased: cleaned shortcodes + emojilib keywords
         QString searchText;
         bool animated = false;
         bool directional = false;
@@ -70,10 +75,13 @@ private:
     static QString emojiFromCodepoints(const QList<int> &codepoints);
     static QString resolveEmojiFontFamily();
     static QString normalisedQuery(QString query);
+    static QHash<QString, QStringList> loadKeywordIndex();
 
     void loadMetadata();
     void loadRecents();
     void saveRecents() const;
+    void loadUsage();
+    void saveUsage() const;
     void rebuildRows();
     [[nodiscard]] QVariant itemData(const EmojiItem &item, int role) const;
 
@@ -81,6 +89,7 @@ private:
     QList<EmojiItem> m_recentItems;
     QList<int> m_rows;
     QHash<QString, QList<int>> m_rowsByGroup;
+    QHash<QString, int> m_emojiUsage;
     QStringList m_groups;
     QStringList m_recentEmoji;
     QString m_emojiFontFamily;
