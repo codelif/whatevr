@@ -19,6 +19,27 @@
   </provides>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.3.0" date="2026-06-10">
+      <description>
+        <p>Lots of goodies!!</p>
+        <p>Lots of optimizations as well as new features</p>
+        <p>New stuff:</p>
+        <ul>
+          <li>You can send stickers now, fully featured sticker pane</li>
+          <li>Scrolling is now smoother and more kinetic, should feel natural</li>
+          <li>Emojis in recent tab will update their positions *after* its closed</li>
+          <li>You can press escape at various places to close various panes (panes, replies, chats)</li>
+          <li>Inline Emoji Selector: you can use Dicord-like syntax :sobs to search for emojis in the composer</li>
+        </ul>
+        <p>Fixed stuff:</p>
+        <ul>
+          <li>Fixed a bug with stale sockets causing UI to show incorrect daemon state</li>
+          <li>Fixed scroll bar being stuck after scrolling a few pixels</li>
+          <li>Fixed same seconds messages having wrong ordering sometimes</li>
+          <li>Improved UI performance and history sync performance</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.2.0" date="2026-06-09">
       <description>
         <p>Lots of fixes! and some redesigns!</p>
