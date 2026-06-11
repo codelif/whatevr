@@ -165,6 +165,7 @@ qt_add_qml_module(whatkevr
         src/qml/components/StickerPane.qml
         src/qml/components/MessageView.qml
         src/qml/components/MessageComposer.qml
+        src/qml/components/CenteredDialog.qml
         src/qml/components/MessageInfoDialog.qml
         src/qml/components/ForwardChatPickerDialog.qml
         src/qml/pages/LoginPage.qml

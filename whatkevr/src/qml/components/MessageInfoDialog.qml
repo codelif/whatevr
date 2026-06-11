@@ -9,7 +9,7 @@ import Whatevr as Whatevr
 // Delivery/read details for one of our own messages: sent/delivered/read rows
 // for direct chats, per-member sections (Read by / Delivered to / Pending) for
 // groups. Data arrives asynchronously via AppController.requestMessageInfo.
-Kirigami.Dialog {
+CenteredDialog {
     id: root
 
     property string messageId: ""

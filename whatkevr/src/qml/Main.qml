@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls as QQC2
 import org.kde.kirigami as Kirigami
 import Whatevr as Whatevr
 
@@ -41,6 +42,12 @@ Kirigami.ApplicationWindow {
                                                   : Kirigami.ApplicationHeaderStyle.NoNavigationButtons
 
     function appMode() {
+        // Initial pre-status window: show a neutral splash, not the daemon-status
+        // page, so a normal sub-second connect doesn't flash "Connecting to
+        // whatevrd" (which reads as the not-running screen).
+        if (Whatevr.AppController.starting) {
+            return "starting"
+        }
         if (Whatevr.AppController.loginRequired) {
             return "login"
         }
@@ -60,6 +67,21 @@ Kirigami.ApplicationWindow {
         id: statusPageComponent
 
         StatusPage {}
+    }
+
+    // Neutral loading page for the brief initial connect, so cold start never
+    // flashes the daemon-status page before the chat shell appears.
+    Component {
+        id: splashPageComponent
+
+        Kirigami.Page {
+            padding: 0
+
+            QQC2.BusyIndicator {
+                anchors.centerIn: parent
+                running: true
+            }
+        }
     }
 
     Component {
@@ -185,6 +207,9 @@ Kirigami.ApplicationWindow {
         }
 
         switch (nextMode) {
+        case "starting":
+            resetToPage(nextMode, splashPageComponent)
+            break
         case "login":
             resetToPage(nextMode, loginPageComponent)
             break

@@ -326,6 +326,18 @@ AppController::AppController(QObject *parent)
     m_retryTimer->setSingleShot(true);
     connect(m_retryTimer, &QTimer::timeout, this, &AppController::refresh);
 
+    m_startupGraceTimer = new QTimer(this);
+    m_startupGraceTimer->setSingleShot(true);
+    m_startupGraceTimer->setInterval(1000);
+    connect(m_startupGraceTimer, &QTimer::timeout, this, [this]() {
+        m_startupGrace = false;
+        // If the grace window elapsed without connecting, surface the real
+        // state (likely "not running") now instead of waiting on a retry tick.
+        if (m_phase != Phase::Connected) {
+            refresh();
+        }
+    });
+
     setupSocketWatcher();
 
     m_qrTimer = new QTimer(this);
@@ -465,6 +477,14 @@ QString AppController::actionError() const
 bool AppController::loginRequired() const
 {
     return m_loginRequired;
+}
+
+bool AppController::starting() const
+{
+    // The initial window between launch and the first status reply, before we
+    // know anything about the daemon. The shell routes this to a neutral splash
+    // so a normal (sub-second) connect never flashes the daemon-status page.
+    return m_startupGrace && !m_hasStatus;
 }
 
 bool AppController::shellVisible() const
@@ -708,6 +728,12 @@ void AppController::refresh()
     // directly instead of building a channel and hanging on "Connecting"; the
     // file watcher (and retry timer) reconnect once the socket appears.
     if (!daemonSocketExists()) {
+        // During the cold-start grace window the daemon may simply not have
+        // created its socket yet; stay on "Connecting" instead of flashing
+        // "not running". The socket watcher reconnects the moment it appears.
+        if (deferStartupConnect()) {
+            return;
+        }
         enterNotRunning();
         return;
     }
@@ -736,6 +762,9 @@ void AppController::probeAndConnect()
         });
         connect(m_probeSocket, &QLocalSocket::errorOccurred, this, [this](QLocalSocket::LocalSocketError) {
             m_probeSocket->abort();
+            if (deferStartupConnect()) {
+                return;
+            }
             enterNotRunning();
         });
     }
@@ -757,6 +786,24 @@ void AppController::startSession()
     ensureFrontendSession();
     ensureDaemonStream();
     ensureLoginStream();
+}
+
+// While the daemon is first coming up, the socket can be missing, the liveness
+// probe can be refused, and the freshly built channel's RPCs can come back
+// Unavailable for a beat — all transient. Treat them as "still connecting" and
+// retry during the grace window so the UI never flashes the "not running" page
+// before the first successful connect. Cleared the moment a status arrives.
+bool AppController::deferStartupConnect()
+{
+    if (!m_startupGrace) {
+        return false;
+    }
+    m_phase = Phase::Connecting;
+    clearBanner();
+    emitStateChanged();
+    refreshSocketWatch();
+    scheduleRetry(250);
+    return true;
 }
 
 // Drop to the "whatevrd isn't running" page and arm a retry. Shared by the
@@ -1251,6 +1298,7 @@ void AppController::logout()
 
 void AppController::bootstrap()
 {
+    m_startupGraceTimer->start();
     refresh();
 }
 
@@ -1480,13 +1528,20 @@ void AppController::revokeMessage(const QString &messageId)
     RevokeMessageRequest request;
     request.setMessageId(messageId);
 
-    m_revokeMessageReply = m_sendClient->RevokeMessage(request);
-    auto *replyPtr = m_revokeMessageReply.get();
-    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr](const QGrpcStatus &status) {
-        if (m_revokeMessageReply.get() != replyPtr) {
+    auto reply = m_sendClient->RevokeMessage(request);
+    auto *replyPtr = reply.get();
+    // Keyed per message so a multi-select revoke keeps every in-flight call
+    // alive; a single shared reply would be overwritten on each loop iteration
+    // and only the last message would actually be revoked.
+    m_revokeMessageReplies.insert(messageId, std::move(reply));
+
+    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, messageId](const QGrpcStatus &status) {
+        auto it = m_revokeMessageReplies.find(messageId);
+        if (it == m_revokeMessageReplies.end() || it.value().get() != replyPtr) {
             return;
         }
-        const auto reply = std::move(m_revokeMessageReply);
+        const auto reply = it.value();
+        m_revokeMessageReplies.erase(it);
         if (!status.isOk()) {
             Q_EMIT messageActionFailed(status.message().isEmpty() ? i18nc("@info", "Unable to delete the message for everyone") : status.message());
             return;
@@ -1509,19 +1564,35 @@ void AppController::forwardMessage(const QString &messageId, const QStringList &
     request.setSourceMessageId(messageId);
     request.setTargetChatIds(chatIds);
 
-    m_forwardMessageReply = m_sendClient->ForwardMessage(request);
-    auto *replyPtr = m_forwardMessageReply.get();
-    const int chatCount = static_cast<int>(chatIds.size());
-    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, chatCount](const QGrpcStatus &status) {
-        if (m_forwardMessageReply.get() != replyPtr) {
+    // A multi-select forward dispatches one call per selected message in a
+    // synchronous loop, so the hash is empty only at the start of a batch.
+    // Track the batch there so the "Forwarded to N chats" toast fires once for
+    // the whole selection instead of once per message.
+    if (m_forwardMessageReplies.isEmpty()) {
+        m_forwardBatchChatCount = static_cast<int>(chatIds.size());
+        m_forwardBatchFailed = false;
+    }
+
+    auto reply = m_sendClient->ForwardMessage(request);
+    auto *replyPtr = reply.get();
+    m_forwardMessageReplies.insert(messageId, std::move(reply));
+
+    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, messageId](const QGrpcStatus &status) {
+        auto it = m_forwardMessageReplies.find(messageId);
+        if (it == m_forwardMessageReplies.end() || it.value().get() != replyPtr) {
             return;
         }
-        m_forwardMessageReply.reset();
+        m_forwardMessageReplies.erase(it);
         if (!status.isOk()) {
-            Q_EMIT messageActionFailed(status.message().isEmpty() ? i18nc("@info", "Unable to forward the message") : status.message());
-            return;
+            if (!m_forwardBatchFailed) {
+                m_forwardBatchFailed = true;
+                Q_EMIT messageActionFailed(status.message().isEmpty() ? i18nc("@info", "Unable to forward the message") : status.message());
+            }
         }
-        Q_EMIT messageForwarded(chatCount);
+        // Report success once, after the last message in the batch settles.
+        if (m_forwardMessageReplies.isEmpty() && !m_forwardBatchFailed) {
+            Q_EMIT messageForwarded(m_forwardBatchChatCount);
+        }
     });
 }
 
@@ -2234,6 +2305,12 @@ void AppController::handleTransportFailure(const QString &context, const QString
     // there: present it as "not running" (with start instructions) rather than a
     // generic error banner.
     if (code == QtGrpc::StatusCode::Unavailable || !daemonSocketExists()) {
+        // A warm-up Unavailable on the just-built channel before the first
+        // successful status is transient — keep "Connecting" and retry rather
+        // than flashing "not running".
+        if (deferStartupConnect()) {
+            return;
+        }
         enterNotRunning();
         return;
     }
@@ -2259,6 +2336,13 @@ void AppController::handleTransportFailure(const QString &context, const QString
 
 void AppController::applyStatusResponse(const GetStatusResponse &status)
 {
+    // First successful status: the startup window is over, so later drops surface
+    // immediately as "not running"/error instead of being deferred as warm-up.
+    m_startupGrace = false;
+    if (m_startupGraceTimer) {
+        m_startupGraceTimer->stop();
+    }
+
     m_hasStatus = true;
     m_phase = Phase::Connected;
     m_actionError.clear();

@@ -8,7 +8,7 @@ import Whatevr as Whatevr
 
 // Multi-select chat picker for forwarding messages. The daemon accepts at
 // most five target chats per forward, mirroring WhatsApp.
-Kirigami.Dialog {
+CenteredDialog {
     id: root
 
     readonly property int maxTargets: 5

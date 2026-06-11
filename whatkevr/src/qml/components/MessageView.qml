@@ -666,7 +666,13 @@ Item {
     ListView {
         id: list
 
-        anchors.fill: parent
+        // Pin to the bottom and only grow as tall as the content until it
+        // overflows the viewport. A BottomToTop ListView otherwise parks short
+        // content at the top, leaving a gap above the composer.
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        height: Math.min(contentHeight, parent.height)
         clip: true
 
         // Newest at the bottom; older history stacks upward off the top edge.
@@ -1343,6 +1349,12 @@ Item {
 
     Kirigami.PromptDialog {
         id: deleteConfirmDialog
+
+        // PromptDialog inherits Kirigami.Dialog's self-referential `y` centring,
+        // which loops against QQuickPopup's height fitting. Centre on the stable
+        // implicitHeight instead, mirroring CenteredDialog (which this can't
+        // derive from, being a PromptDialog rather than a plain Dialog).
+        y: parent ? Math.round((parent.height - implicitHeight) / 2) : 0
 
         property var messageIds: []
         property bool forEveryone: false
