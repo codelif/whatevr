@@ -1129,6 +1129,11 @@ Item {
 
         parent: list
 
+        // No exit animation: right-clicking another message dismisses the open
+        // menu and reopens it at the new position in the same press; a fading
+        // copy left at the old spot reads as a second menu flashing.
+        exit: Transition {}
+
         function openFor(snapshot, x, y) {
             ctx = snapshot
             ctxStickerFavorite = ctxIsSticker && ctxMediaCacheKey.length > 0

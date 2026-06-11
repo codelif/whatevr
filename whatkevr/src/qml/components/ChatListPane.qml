@@ -117,6 +117,12 @@ Kirigami.Page {
 
                     parent: chatList
 
+                    // No exit animation: right-clicking another row dismisses the
+                    // open menu and reopens it at the new position in the same
+                    // press, and a fading copy left at the old spot reads as a
+                    // second menu flashing. Closing instantly removes the ghost.
+                    exit: Transition {}
+
                     MenuItem {
                         text: chatList.contextChatPinned
                               ? Whatevr.I18n.i18nc("@action:menu", "Unpin chat")

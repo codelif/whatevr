@@ -12,6 +12,11 @@ Kirigami.Dialog {
     id: root
 
     readonly property int maxTargets: 5
+    // Fixed content width used for both the dialog's preferredWidth and the
+    // ListView's implicitWidth. Pointing the ListView at root.preferredWidth fed
+    // the dialog's own size back into its content's implicit size, destabilising
+    // the dialog's centred geometry (binding loop on Kirigami Dialog's `y`).
+    readonly property real pickerWidth: Kirigami.Units.gridUnit * 22
 
     property var messageIds: []
     property var selectedChatIds: ({})
@@ -22,7 +27,7 @@ Kirigami.Dialog {
 
     title: Whatevr.I18n.i18nc("@title:dialog", "Forward to…")
     standardButtons: Kirigami.Dialog.Cancel
-    preferredWidth: Kirigami.Units.gridUnit * 22
+    preferredWidth: root.pickerWidth
     preferredHeight: Kirigami.Units.gridUnit * 26
 
     function openFor(ids) {
@@ -73,7 +78,7 @@ Kirigami.Dialog {
     ListView {
         id: chatList
 
-        implicitWidth: root.preferredWidth
+        implicitWidth: root.pickerWidth
         implicitHeight: Kirigami.Units.gridUnit * 20
         clip: true
         model: Whatevr.AppController.chatListModel

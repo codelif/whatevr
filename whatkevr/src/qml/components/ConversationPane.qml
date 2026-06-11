@@ -262,18 +262,11 @@ Kirigami.Page {
         },
         Kirigami.Action {
             icon.name: "mail-forward-symbolic"
-            text: Whatevr.I18n.i18nc("@action:button forward selected messages", "Forward")
+            text: Whatevr.I18n.i18nc("@action:button forward selected messages", "Forward…")
             displayHint: Kirigami.DisplayHint.KeepVisible
             enabled: messageView.selectedCount > 0
                      && messageView.selectionRevision >= 0 && !messageView.selectionHasRevoked()
             onTriggered: messageView.openForwardPicker(messageView.selectedMessageIdList())
-        },
-        Kirigami.Action {
-            icon.name: "edit-delete-symbolic"
-            text: Whatevr.I18n.i18nc("@action:button delete selected messages locally", "Delete")
-            displayHint: Kirigami.DisplayHint.KeepVisible
-            enabled: messageView.selectedCount > 0
-            onTriggered: messageView.confirmDeleteSelection(false)
         },
         Kirigami.Action {
             icon.name: "mail-replied-symbolic"
@@ -313,8 +306,15 @@ Kirigami.Page {
             displayHint: Kirigami.DisplayHint.AlwaysHide
         },
         Kirigami.Action {
+            icon.name: "edit-delete-symbolic"
+            text: Whatevr.I18n.i18nc("@action:button delete selected messages locally", "Delete for Me…")
+            displayHint: Kirigami.DisplayHint.AlwaysHide
+            enabled: messageView.selectedCount > 0
+            onTriggered: messageView.confirmDeleteSelection(false)
+        },
+        Kirigami.Action {
             icon.name: "edit-delete-remove-symbolic"
-            text: Whatevr.I18n.i18nc("@action:button WhatsApp revoke of all selected", "Delete for Everyone")
+            text: Whatevr.I18n.i18nc("@action:button WhatsApp revoke of all selected", "Delete for Everyone…")
             displayHint: Kirigami.DisplayHint.AlwaysHide
             enabled: messageView.selectionRevision >= 0 && messageView.canRevokeSelection()
             onTriggered: messageView.confirmDeleteSelection(true)

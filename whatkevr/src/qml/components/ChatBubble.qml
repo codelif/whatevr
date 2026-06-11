@@ -11,6 +11,15 @@ Item {
     Kirigami.Theme.inherit: false
     Kirigami.Theme.colorSet: Kirigami.Theme.View
 
+    // Always-active highlight: Kirigami.Theme.highlightColor follows the
+    // window's active/inactive palette group and greys out when the window
+    // loses focus, so accent surfaces (bubble fill, read ticks) read from this
+    // instead to stay vivid regardless of focus.
+    SystemPalette {
+        id: activePalette
+        colorGroup: SystemPalette.Active
+    }
+
     property string messageId: ""
     property string body: ""
     property string layoutBody: ""
@@ -437,7 +446,7 @@ Item {
     // light tones for contrast; otherwise the muted theme colours are used.
     readonly property color footerTextColor: imageOnly ? "white" : Kirigami.Theme.disabledTextColor
     readonly property color statusTickColor: statusIsRead
-        ? (imageOnly ? Qt.lighter(Kirigami.Theme.highlightColor, 1.4) : Kirigami.Theme.highlightColor)
+        ? (imageOnly ? Qt.lighter(activePalette.highlight, 1.4) : activePalette.highlight)
         : (imageOnly ? "white" : Kirigami.Theme.disabledTextColor)
     readonly property color statusSingleColor: statusIsFailed
         ? Kirigami.Theme.negativeTextColor
@@ -662,7 +671,7 @@ Item {
         corners.bottomRightRadius: root.outgoing && !root.groupEnd ? bubbleRadius * 0.45 : bubbleRadius
 
         color: root.outgoing
-                ? Qt.alpha(Kirigami.Theme.highlightColor, 0.30)
+                ? Qt.alpha(activePalette.highlight, 0.30)
                 : Kirigami.Theme.backgroundColor
         border.color: Qt.alpha(Kirigami.Theme.textColor, root.outgoing ? 0.05 : 0.12)
         border.width: 1
@@ -801,12 +810,21 @@ Item {
                     Image {
                         id: img
 
+                        // Latched readiness, set from onStatusChanged rather than
+                        // read off `status` inside the source binding (which would
+                        // make source depend on its own load state and loop). Reset
+                        // when the underlying file changes on delegate reuse.
+                        property bool everDecoded: false
+                        readonly property string targetPath: root.mediaLocalPath
+                        onTargetPathChanged: everDecoded = false
+                        onStatusChanged: if (status === Image.Ready) everDecoded = true
+
                         anchors.fill: parent
                         visible: false
                         // Hold the full-res decode while flinging (unless it is
                         // already decoded), letting the thumbnail carry the scroll.
                         source: root.mediaSourceActive && mediaSlot.visible && root.hasLocalImage
-                                && (!root.fastFlicking || status === Image.Ready)
+                                && (!root.fastFlicking || img.everDecoded)
                                 ? Qt.resolvedUrl("file://" + root.mediaLocalPath) : ""
                         asynchronous: true
                         cache: true

@@ -6,6 +6,11 @@ import Whatevr as Whatevr
 Control {
     id: root
 
+    SystemPalette {
+        id: activePalette
+        colorGroup: SystemPalette.Active
+    }
+
     property string senderName: ""
     property string body: ""
     property string mediaKind: ""
@@ -13,7 +18,9 @@ Control {
     property string targetMessageId: ""
     property bool outgoing: false
     property bool showCloseButton: false
-    property color accentColor: Kirigami.Theme.highlightColor
+    // Always-active highlight so the reply accent stays vivid when the window
+    // is unfocused (Kirigami.Theme.highlightColor greys out on focus loss).
+    property color accentColor: activePalette.highlight
     property color fillColor: Qt.alpha(Kirigami.Theme.textColor, 0.055)
     property color borderColor: Qt.alpha(Kirigami.Theme.textColor, 0.08)
 
