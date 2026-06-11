@@ -748,6 +748,22 @@ QStringList MessageListModel::allMessageIds() const
     return ids;
 }
 
+QStringList MessageListModel::messageIdsForDay(const QString &messageId) const
+{
+    const int row = indexOf(messageId);
+    if (row < 0) {
+        return {};
+    }
+    const int dayNumber = m_messages.at(row).dayNumber;
+    QStringList ids;
+    for (const auto &message : m_messages) {
+        if (message.dayNumber == dayNumber && !message.id.isEmpty()) {
+            ids.append(message.id);
+        }
+    }
+    return ids;
+}
+
 bool MessageListModel::updateSenderAvatar(const QString &senderId, const QString &avatarLocalPath)
 {
     if (senderId.isEmpty() || senderId == QStringLiteral("me")) {

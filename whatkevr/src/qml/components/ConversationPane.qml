@@ -256,12 +256,14 @@ Kirigami.Page {
             icon.name: "edit-copy-symbolic"
             text: Whatevr.I18n.i18nc("@action:button copy selected messages", "Copy")
             enabled: messageView.selectedCount > 0
+                     && messageView.selectionRevision >= 0 && !messageView.selectionHasRevoked()
             onTriggered: messageView.copySelectedMessages(false)
         },
         Kirigami.Action {
             icon.name: "mail-forward-symbolic"
             text: Whatevr.I18n.i18nc("@action:button forward selected messages", "Forward")
             enabled: messageView.selectedCount > 0
+                     && messageView.selectionRevision >= 0 && !messageView.selectionHasRevoked()
             onTriggered: messageView.openForwardPicker(messageView.selectedMessageIdList())
         },
         Kirigami.Action {
@@ -275,6 +277,8 @@ Kirigami.Page {
             text: Whatevr.I18n.i18nc("@action:button reply to the selected message", "Reply")
             displayHint: Kirigami.DisplayHint.AlwaysHide
             enabled: messageView.selectedCount === 1
+                     && messageView.singleSelectedSnapshot
+                     && !messageView.singleSelectedSnapshot.isRevoked
             onTriggered: {
                 messageView.replyToSnapshot(messageView.singleSelectedSnapshot)
                 messageView.clearSelection()
@@ -285,6 +289,7 @@ Kirigami.Page {
             text: Whatevr.I18n.i18nc("@action:button", "Copy as Markdown")
             displayHint: Kirigami.DisplayHint.AlwaysHide
             enabled: messageView.selectedCount > 0
+                     && messageView.selectionRevision >= 0 && !messageView.selectionHasRevoked()
             onTriggered: messageView.copySelectedMessages(true)
         },
         Kirigami.Action {

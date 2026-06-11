@@ -104,6 +104,9 @@ public:
     // menu, selection toolbar) don't need per-role model plumbing.
     [[nodiscard]] Q_INVOKABLE QVariantMap messageSnapshot(const QString &messageId) const;
     [[nodiscard]] Q_INVOKABLE QStringList allMessageIds() const;
+    // All message ids sharing the same calendar day as the given message, used
+    // to toggle a whole day's selection from its date separator pill.
+    [[nodiscard]] Q_INVOKABLE QStringList messageIdsForDay(const QString &messageId) const;
 
 Q_SIGNALS:
     // Emitted whenever replaceMessages() swaps in a new displayed set without going

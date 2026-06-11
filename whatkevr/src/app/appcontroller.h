@@ -223,6 +223,9 @@ Q_SIGNALS:
     // info: status, sentTsUnix, deliveredTsUnix, readTsUnix, isGroup, and
     // receipts (list of maps with jid/displayName/avatarLocalPath/timestamps).
     void messageInfoReceived(const QString &messageId, const QVariantMap &info);
+    // Emitted when a message-info request could not be fulfilled, so the dialog
+    // can stop waiting and surface the reason instead of spinning forever.
+    void messageInfoFailed(const QString &messageId, const QString &errorText);
     void messageActionFailed(const QString &errorText);
     void messageForwarded(int chatCount);
 

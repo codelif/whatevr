@@ -918,21 +918,36 @@ func (c *Client) SetStickerFavorite(ctx context.Context, cacheKey, messageID str
 	}
 
 	cacheKey = strings.TrimSpace(cacheKey)
+	messageID = strings.TrimSpace(messageID)
 	var message appstore.Message
 	haveMessage := false
-	if cacheKey == "" && strings.TrimSpace(messageID) != "" {
-		var err error
-		message, err = c.store.GetMessage(ctx, strings.TrimSpace(messageID))
+	// Lazily load the source message; idempotent so it can be called both to
+	// resolve a missing cache key and, later, to build a library row for a
+	// received sticker that isn't stored yet.
+	loadMessage := func() error {
+		if haveMessage || messageID == "" {
+			return nil
+		}
+		msg, err := c.store.GetMessage(ctx, messageID)
 		if err != nil {
+			return err
+		}
+		if msg.MediaKind != appstore.MediaKindSticker {
+			return grpcstatus.Error(codes.InvalidArgument, "message is not a sticker")
+		}
+		message = msg
+		haveMessage = true
+		return nil
+	}
+	if cacheKey == "" {
+		if err := loadMessage(); err != nil {
 			return appstore.Sticker{}, err
 		}
-		if message.MediaKind != appstore.MediaKindSticker {
-			return appstore.Sticker{}, grpcstatus.Error(codes.InvalidArgument, "message is not a sticker")
-		}
-		haveMessage = true
-		cacheKey = message.MediaCacheKey
-		if cacheKey == "" {
-			cacheKey, _ = appstore.StickerCacheKeyFromPayload(message.MediaPayload)
+		if haveMessage {
+			cacheKey = message.MediaCacheKey
+			if cacheKey == "" {
+				cacheKey, _ = appstore.StickerCacheKeyFromPayload(message.MediaPayload)
+			}
 		}
 	}
 	if cacheKey == "" {
@@ -946,7 +961,12 @@ func (c *Client) SetStickerFavorite(ctx context.Context, cacheKey, messageID str
 	if !ok {
 		// Not in the library yet (a sticker someone sent us): build the row
 		// from the message payload — the same shape incoming app-state
-		// favorites are stored in — plus the already-downloaded file.
+		// favorites are stored in — plus the already-downloaded file. The
+		// caller usually supplies the cache key directly, so the message may
+		// not have been loaded yet.
+		if err := loadMessage(); err != nil {
+			return appstore.Sticker{}, err
+		}
 		if !haveMessage || len(message.MediaPayload) == 0 {
 			return appstore.Sticker{}, grpcstatus.Error(codes.NotFound, "sticker is not available")
 		}

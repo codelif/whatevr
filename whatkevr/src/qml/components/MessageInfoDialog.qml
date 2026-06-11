@@ -15,6 +15,7 @@ Kirigami.Dialog {
     property string messageId: ""
     property var info: null
     property bool loading: false
+    property string errorText: ""
 
     readonly property bool infoValid: info !== null
     readonly property bool isGroup: infoValid && Boolean(info.isGroup)
@@ -32,6 +33,7 @@ Kirigami.Dialog {
     function openFor(id) {
         messageId = id
         info = null
+        errorText = ""
         loading = true
         Whatevr.AppController.requestMessageInfo(id)
         open()
@@ -75,6 +77,14 @@ Kirigami.Dialog {
             }
             root.info = receivedInfo
             root.loading = false
+        }
+
+        function onMessageInfoFailed(id, error) {
+            if (id !== root.messageId) {
+                return
+            }
+            root.loading = false
+            root.errorText = error
         }
     }
 
@@ -175,6 +185,10 @@ Kirigami.Dialog {
     }
 
     ColumnLayout {
+        // Kirigami.Dialog does not give a bare Layout a width, which collapses
+        // the fillWidth rows and leaves the dialog body blank; pin it to the
+        // dialog's preferred width like the other dialogs do.
+        implicitWidth: root.preferredWidth
         spacing: Kirigami.Units.smallSpacing
 
         BusyIndicator {
@@ -182,6 +196,14 @@ Kirigami.Dialog {
             running: visible
             Layout.alignment: Qt.AlignHCenter
             Layout.margins: Kirigami.Units.largeSpacing
+        }
+
+        Label {
+            visible: root.errorText.length > 0
+            text: root.errorText
+            wrapMode: Text.Wrap
+            color: Kirigami.Theme.negativeTextColor
+            Layout.fillWidth: true
         }
 
         StatusRow {

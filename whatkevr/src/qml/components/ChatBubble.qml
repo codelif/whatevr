@@ -88,6 +88,9 @@ Item {
     // Position is in this delegate's coordinates; the view maps it.
     signal contextMenuRequested(real posX, real posY)
     signal selectionToggleRequested()
+    // Clicking this row's date-separator pill while in selection mode toggles
+    // the whole day's selection.
+    signal daySelectionToggleRequested()
 
     onClearSelectionGenerationChanged: {
         if (activeSelectionMessageId.length !== 0 && activeSelectionMessageId === messageId) {
@@ -539,9 +542,11 @@ Item {
         onClicked: root.selectionToggleRequested()
     }
 
-    // Selection tint over the whole row.
+    // Selection tint over the message row, excluding the date-pill region at
+    // the top so the day separator is never highlighted as selected.
     Rectangle {
         anchors.fill: parent
+        anchors.topMargin: root.dateSeparatorHeight
         z: 6
         visible: root.selectionModeActive && root.selected
         color: Qt.alpha(Kirigami.Theme.highlightColor, 0.14)
@@ -1676,6 +1681,23 @@ Item {
         sourceComponent: DateSeparatorPill {
             text: root.dateSeparatorText
         }
+    }
+
+    // While selecting, clicking the day pill toggles that whole day's
+    // selection. Sits above the full-row selection surface (z:10) so the pill
+    // gets the click instead of toggling just this message. The pill itself is
+    // never given a selected/highlighted state.
+    MouseArea {
+        visible: root.selectionModeActive && root.showDateSeparator
+        enabled: visible
+        z: 12
+        x: dateSeparatorLoader.x
+        y: dateSeparatorLoader.y
+        width: dateSeparatorLoader.width
+        height: dateSeparatorLoader.height
+        acceptedButtons: Qt.LeftButton
+        cursorShape: Qt.PointingHandCursor
+        onClicked: root.daySelectionToggleRequested()
     }
 
 }
