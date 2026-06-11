@@ -115,9 +115,9 @@ type DaemonEvent struct {
 	// MessageDeleted payload (the row is gone, so only ids survive).
 	DeletedChatID    string
 	DeletedMessageID string
-	RetryAttempt   int32
-	NextRetryUnix  int64
-	CanReconnect   bool
+	RetryAttempt     int32
+	NextRetryUnix    int64
+	CanReconnect     bool
 
 	HistorySync     HistorySyncEvent
 	MediaDownload   MediaDownloadEvent
