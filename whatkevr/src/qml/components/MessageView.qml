@@ -277,8 +277,19 @@ Item {
         }
     }
 
+    function canReplyToSnapshot(snapshot) {
+        if (!snapshot || !snapshot.messageId || snapshot.isRevoked) {
+            return false
+        }
+        return String(snapshot.text || "").length > 0
+               || String(snapshot.mediaKind || "").length > 0
+               || String(snapshot.mediaMimeType || "").length > 0
+               || String(snapshot.mediaLocalPath || "").length > 0
+               || String(snapshot.mediaCacheKey || "").length > 0
+    }
+
     function replyToSnapshot(snapshot) {
-        if (!snapshot) {
+        if (!canReplyToSnapshot(snapshot)) {
             return
         }
         const senderName = snapshot.isOutgoing
@@ -1113,6 +1124,7 @@ Item {
         readonly property bool ctxIsImage: !ctxIsSticker && (ctxMediaKind === "image" || ctxMediaMimeType.startsWith("image/"))
         readonly property bool ctxHasMediaFile: ctxMediaLocalPath.length > 0
         readonly property bool ctxHasText: ctxText.length > 0 && !ctxIsRevoked
+        readonly property bool ctxCanReply: root.canReplyToSnapshot(ctx)
         readonly property bool ctxCanRevoke: root.canRevokeSnapshot(ctx)
 
         parent: list
@@ -1158,7 +1170,7 @@ Item {
         MenuItem {
             icon.name: "mail-replied-symbolic"
             text: Whatevr.I18n.i18nc("@action:inmenu", "Reply")
-            visible: !messageContextMenu.ctxIsRevoked
+            visible: messageContextMenu.ctxCanReply
             onTriggered: root.replyToSnapshot(messageContextMenu.ctx)
         }
 

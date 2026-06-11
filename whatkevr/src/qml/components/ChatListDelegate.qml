@@ -51,8 +51,7 @@ ItemDelegate {
         z: 1
 
         onPressed: mouse => {
-            const pos = root.mapToItem(ListView.view, mouse.x, mouse.y)
-            root.contextMenuRequested(root.chatId, root.isPinned, pos.x, pos.y)
+            root.contextMenuRequested(root.chatId, root.isPinned, mouse.x, mouse.y)
             mouse.accepted = true
         }
     }

@@ -220,6 +220,7 @@ Q_SIGNALS:
     void messageJumpUnavailable(const QString &messageId);
     void mediaDownloadChanged(const QString &messageId);
     void mediaDownloadFailed(const QString &messageId, const QString &errorText);
+    void senderAvatarUpdated(const QString &senderId, const QString &avatarLocalPath);
     // info: status, sentTsUnix, deliveredTsUnix, readTsUnix, isGroup, and
     // receipts (list of maps with jid/displayName/avatarLocalPath/timestamps).
     void messageInfoReceived(const QString &messageId, const QVariantMap &info);

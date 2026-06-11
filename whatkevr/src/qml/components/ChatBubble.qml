@@ -108,6 +108,14 @@ Item {
     property real listWidth: 0
     readonly property bool showDateSeparator: dateSeparatorText.length > 0
     readonly property bool hasReplyPreview: replyToMessageId.length > 0
+    readonly property bool canReply: messageId.length > 0
+                                     && !isRevoked
+                                     && (body.length > 0
+                                         || mediaKind.length > 0
+                                         || mediaMimeType.length > 0
+                                         || mediaLocalPath.length > 0
+                                         || mediaThumbnailLocalPath.length > 0
+                                         || mediaCacheKey.length > 0)
     readonly property real dateSeparatorHeight: showDateSeparator
         ? dateSeparatorLoader.height + Kirigami.Units.largeSpacing
         : 0
@@ -332,7 +340,7 @@ Item {
     }
 
     function requestReply() {
-        if (root.messageId.length === 0) {
+        if (!root.canReply) {
             return
         }
         root.triggerReplyGlow()
@@ -497,7 +505,7 @@ Item {
         acceptedButtons: Qt.LeftButton
         enabled: !root.selectionModeActive
         onDoubleTapped: {
-            if (root.messageId.length > 0) {
+            if (root.canReply) {
                 root.requestReply()
             }
         }
@@ -1564,7 +1572,7 @@ Item {
     // pays for the button, only the rows the pointer actually visits do.
     Loader {
         anchors.fill: parent
-        active: root.hoverLatched && root.messageId.length > 0 && !root.pooled
+        active: root.hoverLatched && root.canReply && !root.pooled
         z: 8
 
         sourceComponent: Item {

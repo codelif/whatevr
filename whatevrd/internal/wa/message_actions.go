@@ -105,16 +105,98 @@ func (c *Client) GetMessageInfo(ctx context.Context, messageID string) (app.Mess
 }
 
 func (c *Client) participantDisplay(ctx context.Context, jid string) (string, string) {
-	name, avatar, err := c.store.SenderDisplay(ctx, jid)
-	if err != nil {
-		c.log.Warnf("Failed to load sender display for %s: %v", jid, err)
-	}
-	if name == "" {
-		if parsed, parseErr := types.ParseJID(jid); parseErr == nil {
-			name = c.senderName(ctx, parsed)
+	ids := c.participantDisplayIDs(ctx, jid)
+	fallbackName := ""
+	for _, id := range ids {
+		name, avatar, err := c.store.SenderDisplay(ctx, id)
+		if err != nil {
+			c.log.Warnf("Failed to load sender display for %s: %v", id, err)
+			continue
+		}
+		if fallbackName == "" && name != "" {
+			fallbackName = name
+		}
+		if avatar != "" {
+			if name == "" {
+				name = fallbackName
+			}
+			if name == "" {
+				name = c.senderNameForParticipantID(ctx, id)
+			}
+			return name, avatar
 		}
 	}
-	return name, avatar
+
+	for _, id := range ids {
+		c.refreshAvatarIfDue(ctx, appstore.AvatarSubject{Kind: appstore.AvatarSubjectSender, ID: id})
+	}
+
+	if fallbackName == "" {
+		for _, id := range ids {
+			if name := c.senderNameForParticipantID(ctx, id); name != "" {
+				fallbackName = name
+				break
+			}
+		}
+	}
+	return fallbackName, ""
+}
+
+func (c *Client) participantDisplayIDs(ctx context.Context, jid string) []string {
+	seen := make(map[string]bool, 4)
+	ids := make([]string, 0, 4)
+	addID := func(id string) {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[id] {
+			return
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	addJID := func(jid types.JID) {
+		if jid.IsEmpty() {
+			return
+		}
+		addID(bareAvatarJID(jid).String())
+	}
+
+	trimmed := strings.TrimSpace(jid)
+	addID(trimmed)
+	parsed, err := types.ParseJID(trimmed)
+	if err != nil {
+		return ids
+	}
+
+	parsed = bareAvatarJID(parsed)
+	normalized := bareAvatarJID(c.normalizeJIDForChat(ctx, parsed))
+	addJID(parsed)
+	addJID(normalized)
+
+	client := c.currentClient()
+	if client == nil || client.Store == nil || client.Store.LIDs == nil {
+		return ids
+	}
+	for _, candidate := range []types.JID{parsed, normalized} {
+		switch candidate.Server {
+		case types.DefaultUserServer:
+			if lid, err := client.Store.LIDs.GetLIDForPN(ctx, candidate); err == nil {
+				addJID(lid)
+			}
+		case types.HiddenUserServer:
+			if pn, err := client.Store.LIDs.GetPNForLID(ctx, candidate); err == nil {
+				addJID(pn)
+			}
+		}
+	}
+	return ids
+}
+
+func (c *Client) senderNameForParticipantID(ctx context.Context, id string) string {
+	parsed, err := types.ParseJID(id)
+	if err != nil {
+		return ""
+	}
+	return c.senderName(ctx, parsed)
 }
 
 // DeleteMessageForMe removes a message from the local store only.

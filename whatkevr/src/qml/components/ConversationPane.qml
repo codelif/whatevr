@@ -255,6 +255,7 @@ Kirigami.Page {
         Kirigami.Action {
             icon.name: "edit-copy-symbolic"
             text: Whatevr.I18n.i18nc("@action:button copy selected messages", "Copy")
+            displayHint: Kirigami.DisplayHint.KeepVisible
             enabled: messageView.selectedCount > 0
                      && messageView.selectionRevision >= 0 && !messageView.selectionHasRevoked()
             onTriggered: messageView.copySelectedMessages(false)
@@ -262,6 +263,7 @@ Kirigami.Page {
         Kirigami.Action {
             icon.name: "mail-forward-symbolic"
             text: Whatevr.I18n.i18nc("@action:button forward selected messages", "Forward")
+            displayHint: Kirigami.DisplayHint.KeepVisible
             enabled: messageView.selectedCount > 0
                      && messageView.selectionRevision >= 0 && !messageView.selectionHasRevoked()
             onTriggered: messageView.openForwardPicker(messageView.selectedMessageIdList())
@@ -269,6 +271,7 @@ Kirigami.Page {
         Kirigami.Action {
             icon.name: "edit-delete-symbolic"
             text: Whatevr.I18n.i18nc("@action:button delete selected messages locally", "Delete")
+            displayHint: Kirigami.DisplayHint.KeepVisible
             enabled: messageView.selectedCount > 0
             onTriggered: messageView.confirmDeleteSelection(false)
         },
@@ -278,19 +281,11 @@ Kirigami.Page {
             displayHint: Kirigami.DisplayHint.AlwaysHide
             enabled: messageView.selectedCount === 1
                      && messageView.singleSelectedSnapshot
-                     && !messageView.singleSelectedSnapshot.isRevoked
+                     && messageView.canReplyToSnapshot(messageView.singleSelectedSnapshot)
             onTriggered: {
                 messageView.replyToSnapshot(messageView.singleSelectedSnapshot)
                 messageView.clearSelection()
             }
-        },
-        Kirigami.Action {
-            icon.name: "text-markdown-symbolic"
-            text: Whatevr.I18n.i18nc("@action:button", "Copy as Markdown")
-            displayHint: Kirigami.DisplayHint.AlwaysHide
-            enabled: messageView.selectedCount > 0
-                     && messageView.selectionRevision >= 0 && !messageView.selectionHasRevoked()
-            onTriggered: messageView.copySelectedMessages(true)
         },
         Kirigami.Action {
             icon.name: "documentinfo-symbolic"
@@ -302,11 +297,31 @@ Kirigami.Page {
             onTriggered: messageView.openMessageInfo(String(messageView.singleSelectedSnapshot.messageId))
         },
         Kirigami.Action {
+            separator: true
+            displayHint: Kirigami.DisplayHint.AlwaysHide
+        },
+        Kirigami.Action {
+            icon.name: "text-markdown-symbolic"
+            text: Whatevr.I18n.i18nc("@action:button", "Copy as Markdown")
+            displayHint: Kirigami.DisplayHint.AlwaysHide
+            enabled: messageView.selectedCount > 0
+                     && messageView.selectionRevision >= 0 && !messageView.selectionHasRevoked()
+            onTriggered: messageView.copySelectedMessages(true)
+        },
+        Kirigami.Action {
+            separator: true
+            displayHint: Kirigami.DisplayHint.AlwaysHide
+        },
+        Kirigami.Action {
             icon.name: "edit-delete-remove-symbolic"
             text: Whatevr.I18n.i18nc("@action:button WhatsApp revoke of all selected", "Delete for Everyone")
             displayHint: Kirigami.DisplayHint.AlwaysHide
             enabled: messageView.selectionRevision >= 0 && messageView.canRevokeSelection()
             onTriggered: messageView.confirmDeleteSelection(true)
+        },
+        Kirigami.Action {
+            separator: true
+            displayHint: Kirigami.DisplayHint.AlwaysHide
         },
         Kirigami.Action {
             icon.name: "edit-select-all-symbolic"

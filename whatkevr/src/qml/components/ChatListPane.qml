@@ -83,6 +83,8 @@ Kirigami.Page {
                 ScrollBar.vertical: DiscreetScrollBar {}
 
                 delegate: ChatListDelegate {
+                    id: chatDelegate
+
                     required property var model
 
                     chatId: String(model.chatId || "")
@@ -94,20 +96,21 @@ Kirigami.Page {
                     initials: String(model.initials || "?")
                     unreadCount: Number(model.unreadCount || 0)
                     isPinned: Boolean(model.isPinned || false)
-					current: Whatevr.AppController.selectedChatId === chatId
-					onSelected: id => {
-						Whatevr.AppController.selectChat(id)
-						root.chatSelected(id)
-					}
-					onPinToggled: (id, pinned) => Whatevr.AppController.setChatPinned(id, pinned)
+                    current: Whatevr.AppController.selectedChatId === chatId
+                    onSelected: id => {
+                        Whatevr.AppController.selectChat(id)
+                        root.chatSelected(id)
+                    }
+                    onPinToggled: (id, pinned) => Whatevr.AppController.setChatPinned(id, pinned)
                     onContextMenuRequested: (id, pinned, x, y) => {
                         chatList.contextChatId = id
                         chatList.contextChatPinned = pinned
-                        chatContextMenu.x = x
-                        chatContextMenu.y = y
+                        const pos = chatDelegate.mapToItem(chatContextMenu.parent, x, y)
+                        chatContextMenu.x = pos.x
+                        chatContextMenu.y = pos.y
                         chatContextMenu.open()
                     }
-				}
+                }
 
                 Menu {
                     id: chatContextMenu
