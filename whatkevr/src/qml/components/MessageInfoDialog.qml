@@ -22,7 +22,6 @@ Kirigami.Dialog {
     readonly property var receipts: infoValid && info.receipts ? info.receipts : []
     readonly property var readBy: receipts.filter(r => Number(r.readTsUnix) > 0)
     readonly property var deliveredTo: receipts.filter(r => Number(r.readTsUnix) <= 0 && Number(r.deliveredTsUnix) > 0)
-    readonly property var pendingFor: receipts.filter(r => Number(r.deliveredTsUnix) <= 0)
 
     title: Whatevr.I18n.i18nc("@title:dialog delivery details of a message", "Message Info")
     standardButtons: Kirigami.Dialog.Close
@@ -238,7 +237,7 @@ Kirigami.Dialog {
 
         StatusRow {
             visible: root.infoValid
-            iconName: "clock"
+            iconName: "qrc:/data/icons/checkmark-bold.svg"
             label: Whatevr.I18n.i18nc("@label time the message was sent", "Sent")
             value: root.infoValid ? root.formatTimestamp(root.info.sentTsUnix) : "—"
         }
@@ -287,20 +286,6 @@ Kirigami.Dialog {
                 required property var modelData
                 receipt: modelData
                 timestampKey: "deliveredTsUnix"
-            }
-        }
-
-        SectionHeading {
-            visible: root.isGroup && root.pendingFor.length > 0
-            iconName: "clock"
-            label: Whatevr.I18n.i18nc("@title group members still waiting for the message", "Pending %1", root.pendingFor.length)
-        }
-
-        Repeater {
-            model: root.isGroup ? root.pendingFor : []
-            delegate: ParticipantRow {
-                required property var modelData
-                receipt: modelData
             }
         }
 

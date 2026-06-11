@@ -69,7 +69,7 @@ ItemDelegate {
         anchors.bottomMargin: Kirigami.Units.smallSpacing / 2
         radius: Kirigami.Units.cornerRadius
         color: root.highlighted
-               ? Qt.alpha(Kirigami.Theme.highlightColor, 0.14)
+               ? Qt.alpha(activePalette.highlight, 0.14)
                : (root.hovered ? Qt.alpha(Kirigami.Theme.textColor, 0.05) : "transparent")
     }
 
