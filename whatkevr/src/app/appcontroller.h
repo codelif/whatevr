@@ -84,6 +84,7 @@ class AppController final : public QObject
     Q_PROPERTY(QString actionError READ actionError NOTIFY stateChanged FINAL)
     Q_PROPERTY(QString connectionPhase READ connectionPhase NOTIFY stateChanged FINAL)
     Q_PROPERTY(bool loginRequired READ loginRequired NOTIFY stateChanged FINAL)
+    Q_PROPERTY(bool starting READ starting NOTIFY stateChanged FINAL)
     Q_PROPERTY(bool shellVisible READ shellVisible NOTIFY stateChanged FINAL)
     Q_PROPERTY(bool qrAvailable READ qrAvailable NOTIFY stateChanged FINAL)
     Q_PROPERTY(QString statusTitle READ statusTitle NOTIFY stateChanged FINAL)
@@ -139,6 +140,7 @@ public:
     [[nodiscard]] QString actionError() const;
     [[nodiscard]] QString connectionPhase() const;
     [[nodiscard]] bool loginRequired() const;
+    [[nodiscard]] bool starting() const;
     [[nodiscard]] bool shellVisible() const;
     [[nodiscard]] bool qrAvailable() const;
     [[nodiscard]] QString statusTitle() const;
@@ -256,6 +258,11 @@ private:
     void ensureDaemonStream();
     void ensureLoginStream();
     void scheduleRetry(int delayMs = 2000);
+    // While the startup grace is active, hold the UI on "Connecting" and retry
+    // instead of dropping to "not running" — covers the not-yet-created socket,
+    // a refused liveness probe, and an Unavailable RPC during channel warm-up.
+    // Returns true if the caller should defer (and must not call enterNotRunning).
+    [[nodiscard]] bool deferStartupConnect();
     void handleTransportFailure(const QString &context, const QString &message, QtGrpc::StatusCode code = QtGrpc::StatusCode::Unknown);
     [[nodiscard]] bool daemonSocketExists() const;
     void applyStatusResponse(const whatevr::v1::GetStatusResponse &status);
@@ -371,8 +378,10 @@ private:
     QHash<QString, std::shared_ptr<QGrpcCallReply>> m_mediaDownloadReplies;
     QSet<QString> m_mediaDownloadingMessageIds;
     std::unique_ptr<QGrpcCallReply> m_messageInfoReply;
-    std::unique_ptr<QGrpcCallReply> m_revokeMessageReply;
-    std::unique_ptr<QGrpcCallReply> m_forwardMessageReply;
+    QHash<QString, std::shared_ptr<QGrpcCallReply>> m_revokeMessageReplies;
+    QHash<QString, std::shared_ptr<QGrpcCallReply>> m_forwardMessageReplies;
+    int m_forwardBatchChatCount = 0;
+    bool m_forwardBatchFailed = false;
     QHash<QString, std::shared_ptr<QGrpcCallReply>> m_deleteMessageReplies;
     std::unique_ptr<QGrpcCallReply> m_logoutReply;
     std::unique_ptr<QGrpcServerStream> m_frontendSessionStream;
@@ -381,6 +390,10 @@ private:
     QFileSystemWatcher *m_socketWatcher = nullptr;
     QLocalSocket *m_probeSocket = nullptr;
     QTimer *m_retryTimer = nullptr;
+    // Cold-start grace: stay on "Connecting" rather than flashing "not running"
+    // while the daemon socket may still be appearing right after launch.
+    QTimer *m_startupGraceTimer = nullptr;
+    bool m_startupGrace = true;
     QTimer *m_qrTimer = nullptr;
     QTimer *m_selectedChatReloadTimer = nullptr;
     QTimer *m_updateSessionStateTimer = nullptr;
