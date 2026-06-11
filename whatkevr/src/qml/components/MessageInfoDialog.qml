@@ -17,6 +17,13 @@ Kirigami.Dialog {
     property bool loading: false
     property string errorText: ""
 
+    // Always-active highlight so the read ticks stay vivid when the window is
+    // unfocused (Kirigami.Theme.highlightColor greys out on focus loss).
+    SystemPalette {
+        id: activePalette
+        colorGroup: SystemPalette.Active
+    }
+
     readonly property bool infoValid: info !== null
     readonly property bool isGroup: infoValid && Boolean(info.isGroup)
     readonly property var receipts: infoValid && info.receipts ? info.receipts : []
@@ -117,6 +124,44 @@ Kirigami.Dialog {
         }
     }
 
+    // Sent shows a single tick, delivered/read show overlapping double ticks,
+    // mirroring the bubble footer. A fixed width is reserved for the second
+    // tick so single- and double-tick rows keep their labels aligned.
+    component DeliveryTicks: Item {
+        id: ticks
+
+        property string iconName: ""
+        property color iconColor: Kirigami.Theme.disabledTextColor
+        property bool doubleTick: false
+        property real iconSize: Kirigami.Units.iconSizes.small
+        readonly property real tickOffset: Math.round(iconSize * 0.36)
+
+        visible: iconName.length > 0
+        implicitWidth: iconSize + tickOffset
+        implicitHeight: iconSize
+
+        Kirigami.Icon {
+            x: 0
+            anchors.verticalCenter: parent.verticalCenter
+            source: ticks.iconName
+            width: ticks.iconSize
+            height: ticks.iconSize
+            color: ticks.iconColor
+            isMask: true
+        }
+
+        Kirigami.Icon {
+            visible: ticks.doubleTick
+            x: ticks.tickOffset
+            anchors.verticalCenter: parent.verticalCenter
+            source: ticks.iconName
+            width: ticks.iconSize
+            height: ticks.iconSize
+            color: ticks.iconColor
+            isMask: true
+        }
+    }
+
     component StatusRow: RowLayout {
         id: statusRow
 
@@ -124,17 +169,17 @@ Kirigami.Dialog {
         required property string value
         property string iconName: ""
         property color iconColor: Kirigami.Theme.disabledTextColor
+        property bool doubleTick: false
 
         Layout.fillWidth: true
         spacing: Kirigami.Units.largeSpacing
 
-        Kirigami.Icon {
-            visible: statusRow.iconName.length > 0
-            source: statusRow.iconName
-            Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
-            Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
-            color: statusRow.iconColor
-            isMask: true
+        DeliveryTicks {
+            iconName: statusRow.iconName
+            iconColor: statusRow.iconColor
+            doubleTick: statusRow.doubleTick
+            Layout.preferredWidth: implicitWidth
+            Layout.preferredHeight: implicitHeight
         }
 
         Label {
@@ -192,18 +237,18 @@ Kirigami.Dialog {
         required property string label
         property string iconName: ""
         property color iconColor: Kirigami.Theme.disabledTextColor
+        property bool doubleTick: false
 
         Layout.fillWidth: true
         Layout.topMargin: Kirigami.Units.largeSpacing
         spacing: Kirigami.Units.smallSpacing
 
-        Kirigami.Icon {
-            visible: sectionHeading.iconName.length > 0
-            source: sectionHeading.iconName
-            Layout.preferredWidth: Kirigami.Units.iconSizes.small
-            Layout.preferredHeight: Kirigami.Units.iconSizes.small
-            color: sectionHeading.iconColor
-            isMask: true
+        DeliveryTicks {
+            iconName: sectionHeading.iconName
+            iconColor: sectionHeading.iconColor
+            doubleTick: sectionHeading.doubleTick
+            Layout.preferredWidth: implicitWidth
+            Layout.preferredHeight: implicitHeight
         }
 
         Kirigami.Heading {
@@ -245,6 +290,7 @@ Kirigami.Dialog {
         StatusRow {
             visible: root.infoValid && !root.isGroup
             iconName: "qrc:/data/icons/checkmark-bold.svg"
+            doubleTick: true
             label: Whatevr.I18n.i18nc("@label time the message was delivered", "Delivered")
             value: root.infoValid ? root.formatTimestamp(root.info.deliveredTsUnix) : "—"
         }
@@ -252,16 +298,18 @@ Kirigami.Dialog {
         StatusRow {
             visible: root.infoValid && !root.isGroup
             iconName: "qrc:/data/icons/checkmark-bold.svg"
-            iconColor: Kirigami.Theme.highlightColor
+            doubleTick: true
+            iconColor: activePalette.highlight
             label: Whatevr.I18n.i18nc("@label time the message was read", "Read")
             value: root.infoValid ? root.formatTimestamp(root.info.readTsUnix) : "—"
         }
 
-        // Group sections: read / delivered / pending member lists.
+        // Group sections: read / delivered member lists.
         SectionHeading {
             visible: root.isGroup && root.readBy.length > 0
             iconName: "qrc:/data/icons/checkmark-bold.svg"
-            iconColor: Kirigami.Theme.highlightColor
+            doubleTick: true
+            iconColor: activePalette.highlight
             label: Whatevr.I18n.i18nc("@title group members who read the message", "Read by %1", root.readBy.length)
         }
 
@@ -277,6 +325,7 @@ Kirigami.Dialog {
         SectionHeading {
             visible: root.isGroup && root.deliveredTo.length > 0
             iconName: "qrc:/data/icons/checkmark-bold.svg"
+            doubleTick: true
             label: Whatevr.I18n.i18nc("@title group members the message reached", "Delivered to %1", root.deliveredTo.length)
         }
 
