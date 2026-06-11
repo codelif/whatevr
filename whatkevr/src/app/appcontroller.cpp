@@ -1542,11 +1542,13 @@ void AppController::requestMessageInfo(const QString &messageId)
         }
         const auto reply = std::move(m_messageInfoReply);
         if (!status.isOk()) {
-            Q_EMIT messageActionFailed(status.message().isEmpty() ? i18nc("@info", "Unable to load message info") : status.message());
+            Q_EMIT messageInfoFailed(messageId,
+                                     status.message().isEmpty() ? i18nc("@info", "Unable to load message info") : status.message());
             return;
         }
         const auto response = reply->read<whatevr::v1::GetMessageInfoResponse>();
         if (!response) {
+            Q_EMIT messageInfoFailed(messageId, i18nc("@info", "Unable to load message info"));
             return;
         }
 

@@ -216,6 +216,45 @@ Item {
         return Object.keys(selectedIds)
     }
 
+    // Toggle the selection of every message sharing the day of `messageId`,
+    // invoked by clicking a date separator pill while in selection mode. If all
+    // of that day's messages are already selected they are deselected, else the
+    // whole day is added to the selection.
+    function toggleDaySelection(messageId) {
+        if (!list.model || typeof list.model.messageIdsForDay !== "function") {
+            return
+        }
+        const ids = list.model.messageIdsForDay(messageId)
+        if (ids.length === 0) {
+            return
+        }
+        let allSelected = true
+        for (const id of ids) {
+            if (selectedIds[id] !== true) {
+                allSelected = false
+                break
+            }
+        }
+        const next = Object.assign({}, selectedIds)
+        for (const id of ids) {
+            if (allSelected) {
+                if (next[id] === true) {
+                    delete next[id]
+                    selectedCount = Math.max(0, selectedCount - 1)
+                }
+            } else if (next[id] !== true) {
+                next[id] = true
+                selectedCount += 1
+            }
+        }
+        selectedIds = next
+        selectionRevision += 1
+        selectionActive = selectedCount > 0
+        if (selectionActive) {
+            clearMessageSelection()
+        }
+    }
+
     function copySelectedMessages(asMarkdown) {
         if (!list.model || typeof list.model.copyTextForMessages !== "function") {
             return
@@ -282,6 +321,18 @@ Item {
             }
         }
         return true
+    }
+
+    // Whether any selected message is a deleted (revoked) tombstone, which
+    // cannot be replied to, copied or forwarded.
+    function selectionHasRevoked() {
+        for (const id of selectedMessageIdList()) {
+            const snapshot = messageSnapshot(id)
+            if (snapshot && snapshot.isRevoked) {
+                return true
+            }
+        }
+        return false
     }
 
     function openForwardPicker(messageIds) {
@@ -765,6 +816,7 @@ Item {
             onReadMoreRequested: messageId => root.expandMessageText(messageId)
             onContextMenuRequested: (posX, posY) => root.openContextMenu(messageDelegate, posX, posY)
             onSelectionToggleRequested: root.toggleSelected(messageDelegate.messageId)
+            onDaySelectionToggleRequested: root.toggleDaySelection(messageDelegate.messageId)
 
             ListView.onPooled: {
                 pooledByListView = true
