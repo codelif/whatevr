@@ -68,6 +68,32 @@ Kirigami.Dialog {
         return initials.length > 0 ? initials : "?"
     }
 
+    function updateReceiptAvatar(senderId, avatarLocalPath) {
+        if (!infoValid || !info.receipts || senderId.length === 0) {
+            return
+        }
+
+        let changed = false
+        const nextReceipts = []
+        for (const receipt of info.receipts) {
+            if (String(receipt.jid || "") === senderId
+                    && String(receipt.avatarLocalPath || "") !== avatarLocalPath) {
+                const nextReceipt = Object.assign({}, receipt)
+                nextReceipt.avatarLocalPath = avatarLocalPath
+                nextReceipts.push(nextReceipt)
+                changed = true
+            } else {
+                nextReceipts.push(receipt)
+            }
+        }
+
+        if (changed) {
+            const nextInfo = Object.assign({}, info)
+            nextInfo.receipts = nextReceipts
+            info = nextInfo
+        }
+    }
+
     Connections {
         target: Whatevr.AppController
 
@@ -85,6 +111,10 @@ Kirigami.Dialog {
             }
             root.loading = false
             root.errorText = error
+        }
+
+        function onSenderAvatarUpdated(senderId, avatarLocalPath) {
+            root.updateReceiptAvatar(senderId, avatarLocalPath)
         }
     }
 

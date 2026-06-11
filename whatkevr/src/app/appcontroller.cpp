@@ -2398,6 +2398,7 @@ void AppController::applyAvatarUpdated(const AvatarUpdated &update)
                 }
             }
         }
+        Q_EMIT senderAvatarUpdated(id, localPath);
         break;
     default:
         break;

@@ -6,8 +6,10 @@ import (
 	"testing"
 	"time"
 
+	"go.mau.fi/whatsmeow"
 	waCommon "go.mau.fi/whatsmeow/proto/waCommon"
 	waE2E "go.mau.fi/whatsmeow/proto/waE2E"
+	waStore "go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	waLog "go.mau.fi/whatsmeow/util/log"
@@ -16,6 +18,50 @@ import (
 	"whatevrd/internal/app"
 	appstore "whatevrd/internal/store"
 )
+
+type testLIDStore struct {
+	lidByPN map[string]types.JID
+	pnByLID map[string]types.JID
+}
+
+func (s *testLIDStore) PutManyLIDMappings(ctx context.Context, mappings []waStore.LIDMapping) error {
+	for _, mapping := range mappings {
+		if err := s.PutLIDMapping(ctx, mapping.LID, mapping.PN); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *testLIDStore) PutLIDMapping(_ context.Context, lid, pn types.JID) error {
+	if s.lidByPN == nil {
+		s.lidByPN = make(map[string]types.JID)
+	}
+	if s.pnByLID == nil {
+		s.pnByLID = make(map[string]types.JID)
+	}
+	s.lidByPN[pn.String()] = lid
+	s.pnByLID[lid.String()] = pn
+	return nil
+}
+
+func (s *testLIDStore) GetPNForLID(_ context.Context, lid types.JID) (types.JID, error) {
+	return s.pnByLID[lid.String()], nil
+}
+
+func (s *testLIDStore) GetLIDForPN(_ context.Context, pn types.JID) (types.JID, error) {
+	return s.lidByPN[pn.String()], nil
+}
+
+func (s *testLIDStore) GetManyLIDsForPNs(_ context.Context, pns []types.JID) (map[types.JID]types.JID, error) {
+	out := make(map[types.JID]types.JID, len(pns))
+	for _, pn := range pns {
+		if lid, ok := s.lidByPN[pn.String()]; ok {
+			out[pn] = lid
+		}
+	}
+	return out, nil
+}
 
 func newReceiptTestClient(t *testing.T) (*Client, *appstore.DB) {
 	t.Helper()
@@ -119,6 +165,46 @@ func TestAggregateGroupStatusPlayedCountsAsRead(t *testing.T) {
 	}
 	if status != appstore.StatusRead {
 		t.Fatalf("aggregate after played = %q, want read", status)
+	}
+}
+
+func TestGetMessageInfoUsesParticipantAvatarFromLIDAlias(t *testing.T) {
+	c, db := newReceiptTestClient(t)
+	ctx := context.Background()
+	messageID := seedGroupMessage(t, db, appstore.StatusSent)
+	pn := types.NewJID("1111", types.DefaultUserServer)
+	lid := types.NewJID("aaaa", types.HiddenUserServer)
+
+	lids := &testLIDStore{}
+	if err := lids.PutLIDMapping(ctx, lid, pn); err != nil {
+		t.Fatalf("put lid mapping: %v", err)
+	}
+	c.client = &whatsmeow.Client{Store: &waStore.Device{LIDs: lids}}
+
+	if err := db.ReplaceGroupParticipants(ctx, "group@g.us", []string{pn.String()}); err != nil {
+		t.Fatalf("participants: %v", err)
+	}
+	c.markGroupParticipantsFresh("group@g.us")
+	if err := db.UpdateSenderName(ctx, lid.String(), "Alice"); err != nil {
+		t.Fatalf("sender name: %v", err)
+	}
+	if err := db.UpdateSenderAvatar(ctx, lid.String(), "pic-1", "/tmp/alice.jpg"); err != nil {
+		t.Fatalf("sender avatar: %v", err)
+	}
+
+	info, err := c.GetMessageInfo(ctx, messageID)
+	if err != nil {
+		t.Fatalf("message info: %v", err)
+	}
+	if len(info.Receipts) != 1 {
+		t.Fatalf("receipt count = %d, want 1", len(info.Receipts))
+	}
+	receipt := info.Receipts[0]
+	if receipt.JID != pn.String() {
+		t.Fatalf("receipt jid = %q, want %q", receipt.JID, pn.String())
+	}
+	if receipt.DisplayName != "Alice" || receipt.AvatarLocalPath != "/tmp/alice.jpg" {
+		t.Fatalf("receipt display = %q, avatar = %q", receipt.DisplayName, receipt.AvatarLocalPath)
 	}
 }
 
