@@ -19,6 +19,27 @@
   </provides>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.4.0" date="2026-06-12">
+      <description>
+        <p><em>I react to Context Menus</em> Again lots of stuff</p>
+        <p>New stuff:</p>
+        <ul>
+          <li>You can now right click on messages to see a context menu, showing various actions like forward, delete, copy (text, as markdown, image, links), select, message delivery info</li>
+          <li>You can select multiple message and do grouped actions on them</li>
+          <li>Messages can now receive reactions and user can send reactions and view them</li>
+          <li>Opening an unread message will open it at the starting of the last read message</li>
+          <li>If chat receives a message it will only be marked read when user scrolls down to it</li>
+          <li>Chat list now shows when somebody is typing</li>
+        </ul>
+        <p>Fixed stuff:</p>
+        <ul>
+          <li>Favourited sticker from other devices will now automatically show up in favourites</li>
+          <li>Accent color won't dull now for lots of elements when unfocusing the window</li>
+          <li>Fixed a bug where small chats where being stuck to the top instead of bottom</li>
+          <li>Lots of small fixes</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.3.1" date="2026-06-10">
       <description>
         <p><em>Stickers! Stickers! Stickers!</em></p>
