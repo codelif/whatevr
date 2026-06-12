@@ -814,7 +814,14 @@ Item {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        height: Math.min(contentHeight, parent.height)
+        // Delayed: resizing the view triggers a layout pass that revises the
+        // contentHeight estimate, so a direct binding re-enters itself while
+        // delegates churn during a scroll. Coalescing the write through the
+        // event queue breaks that cycle.
+        Binding on height {
+            value: Math.min(list.contentHeight, list.parent.height)
+            delayed: true
+        }
         clip: true
 
         // Newest at the bottom; older history stacks upward off the top edge.

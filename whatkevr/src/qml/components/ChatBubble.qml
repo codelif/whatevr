@@ -1352,12 +1352,21 @@ Item {
         Image {
             id: staticSticker
 
+            // Latched readiness, set from onStatusChanged rather than read off
+            // `status` inside the source binding (which would make source depend
+            // on its own load state and loop). Reset when the underlying file
+            // changes on delegate reuse.
+            property bool everDecoded: false
+            readonly property string targetPath: root.mediaLocalPath
+            onTargetPathChanged: everDecoded = false
+            onStatusChanged: if (status === Image.Ready) everDecoded = true
+
             anchors.fill: parent
             visible: root.isRenderableStickerImage && root.hasLocalSticker && !root.isAnimatedSticker
             opacity: status === Image.Ready ? 1 : 0
             // Defer the decode while flinging unless it is already decoded.
             source: root.mediaSourceActive && stickerSlot.visible && visible
-                    && (!root.fastFlicking || status === Image.Ready)
+                    && (!root.fastFlicking || everDecoded)
                     ? Qt.resolvedUrl("file://" + root.mediaLocalPath) : ""
             fillMode: Image.PreserveAspectFit
             asynchronous: true
@@ -1370,12 +1379,19 @@ Item {
         AnimatedImage {
             id: animatedSticker
 
+            // Same latch as staticSticker: keeps `status` out of the source
+            // binding so it cannot loop on its own load state.
+            property bool everDecoded: false
+            readonly property string targetPath: root.mediaLocalPath
+            onTargetPathChanged: everDecoded = false
+            onStatusChanged: if (status === AnimatedImage.Ready) everDecoded = true
+
             anchors.fill: parent
             visible: root.isRenderableStickerImage && root.hasLocalSticker && root.isAnimatedSticker
             playing: root.animationActive && visible && status === AnimatedImage.Ready
             // Defer the (heavy, multi-frame) decode while flinging unless ready.
             source: root.mediaSourceActive && stickerSlot.visible && visible
-                    && (!root.fastFlicking || status === AnimatedImage.Ready)
+                    && (!root.fastFlicking || everDecoded)
                     ? Qt.resolvedUrl("file://" + root.mediaLocalPath) : ""
             fillMode: Image.PreserveAspectFit
             asynchronous: true
@@ -1388,11 +1404,18 @@ Item {
         Whatevr.RlottieSticker {
             id: lottieSticker
 
+            // Same latch as staticSticker: keeps `status` out of the source
+            // binding so it cannot loop on its own load state.
+            property bool everDecoded: false
+            readonly property string targetPath: root.mediaLocalPath
+            onTargetPathChanged: everDecoded = false
+            onStatusChanged: if (status === Whatevr.RlottieSticker.Ready) everDecoded = true
+
             anchors.fill: parent
             visible: root.isLottieSticker && root.hasLocalSticker
             // Defer the JSON load + first rasterisation while flinging unless ready.
             source: root.mediaSourceActive && stickerSlot.visible && visible
-                    && (!root.fastFlicking || status === Whatevr.RlottieSticker.Ready)
+                    && (!root.fastFlicking || everDecoded)
                     ? Qt.resolvedUrl("file://" + root.mediaLocalPath) : ""
             playing: root.animationActive && visible
             // Rasterise at device resolution (capped) rather than a fixed 2.5×;
