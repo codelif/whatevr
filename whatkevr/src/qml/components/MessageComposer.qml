@@ -372,21 +372,6 @@ Frame {
                             }
                         }
                     }
-
-                    Label {
-                        Layout.fillHeight: true
-                        Layout.maximumWidth: Kirigami.Units.gridUnit * 9
-                        verticalAlignment: Text.AlignVCenter
-                        visible: text.length > 0
-                        elide: Text.ElideRight
-                        color: Kirigami.Theme.disabledTextColor
-                        font.family: Kirigami.Theme.smallFont.family
-                        font.pixelSize: Kirigami.Theme.smallFont.pixelSize
-                        text: {
-                            const item = root.suggestionResults[root.suggestionIndex]
-                            return item ? ":" + item.shortcode + ":" : ""
-                        }
-                    }
                 }
             }
         }
