@@ -163,8 +163,8 @@ qt_add_qml_module(whatkevr
         src/qml/components/QuickReactionBar.qml
         src/qml/components/QuickReactionPopup.qml
         src/qml/components/ReactionEmojiPopup.qml
-        src/qml/components/ReactionPill.qml
-        src/qml/components/ReactionDetailsPopup.qml
+        src/qml/components/ReactionRow.qml
+        src/qml/components/ReactionDetailsDialog.qml
         src/qml/components/ExpressionPicker.qml
         src/qml/components/EmojiPane.qml
         src/qml/components/StickerPane.qml

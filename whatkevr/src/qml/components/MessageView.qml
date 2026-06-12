@@ -400,13 +400,12 @@ Item {
         quickReactionPopup.openFor(delegate.messageId, currentUserReaction(snapshot), pos.x, pos.y)
     }
 
-    function openReactionDetails(delegate, posX, posY) {
+    function openReactionDetails(delegate) {
         const snapshot = messageSnapshot(delegate.messageId)
         if (!snapshot || !snapshot.reactions || snapshot.reactions.length === 0) {
             return
         }
-        const pos = delegate.mapToItem(list, posX, posY)
-        reactionDetailsPopup.openFor(snapshot.reactions, delegate.messageId, pos.x, pos.y)
+        reactionDetailsDialog.openFor(snapshot.reactions, delegate.messageId)
     }
 
     function openReactionPicker(messageId) {
@@ -895,7 +894,8 @@ Item {
             onReadMoreRequested: messageId => root.expandMessageText(messageId)
             onContextMenuRequested: (posX, posY) => root.openContextMenu(messageDelegate, posX, posY)
             onReactionPickerRequested: (posX, posY) => root.openQuickReactions(messageDelegate, posX, posY)
-            onReactionDetailsRequested: (posX, posY) => root.openReactionDetails(messageDelegate, posX, posY)
+            onReactionToggleRequested: emoji => root.reactToMessage(messageDelegate.messageId, emoji)
+            onReactionDetailsRequested: root.openReactionDetails(messageDelegate)
             onSelectionToggleRequested: root.toggleSelected(messageDelegate.messageId)
             onDaySelectionToggleRequested: root.toggleDaySelection(messageDelegate.messageId)
 
@@ -1560,9 +1560,7 @@ Item {
         }
     }
 
-    ReactionDetailsPopup {
-        id: reactionDetailsPopup
-
-        parent: list
+    ReactionDetailsDialog {
+        id: reactionDetailsDialog
     }
 }
