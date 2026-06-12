@@ -8,7 +8,6 @@
 #include <QVariantAnimation>
 #include <QtQml/qqmlregistration.h>
 
-#include <cstdint>
 #include <memory>
 
 namespace rlottie {
@@ -49,7 +48,7 @@ class RlottieStickerItem : public QQuickItem
     Q_PROPERTY(Status status READ status NOTIFY statusChanged)
 
 public:
-    enum class Status : std::uint8_t {
+    enum class Status {
         Null,
         Loading,
         Ready,
