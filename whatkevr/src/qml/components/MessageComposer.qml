@@ -76,6 +76,22 @@ Frame {
         }
     }
 
+    // Guards the programmatic setText() below so the resulting onTextChanged is
+    // not mistaken for the user typing (which would emit a composing presence).
+    property bool restoringText: false
+
+    // Replace the composer contents wholesale (used to restore a per-contact draft
+    // when switching chats). Resets transient suggestion/composing state so the
+    // restored text doesn't carry the previous chat's activity over.
+    function setText(text) {
+        root.restoringText = true
+        input.text = text || ""
+        input.cursorPosition = input.length
+        root.restoringText = false
+        root.hideSuggestions()
+        root.setComposing(false)
+    }
+
     function focusAndInsertText(text, focusInput) {
         if (!root.visible || !input.enabled || text.length === 0) {
             return
@@ -432,6 +448,11 @@ Frame {
                     verticalAlignment: TextEdit.AlignVCenter
 
                     onTextChanged: {
+                        // Restoring a draft programmatically must not be reported
+                        // to the contact as live typing.
+                        if (root.restoringText) {
+                            return
+                        }
                         root.noteDraftActivity()
                         root.updateEmojiSuggestions()
                     }
@@ -470,6 +491,8 @@ Frame {
                                 event.accepted = true
                                 root.setComposing(false)
                                 root.replyConsumed()
+                                input.clear()
+                                root.hideSuggestions()
                             }
                             return
                         }
@@ -646,6 +669,8 @@ Frame {
             root.setComposing(false)
             root.sendImageRequested(file, root.inputPlainText(), root.replyToMessageId)
             root.replyConsumed()
+            input.clear()
+            root.hideSuggestions()
         }
     }
 }

@@ -196,6 +196,11 @@ public:
     Q_INVOKABLE [[nodiscard]] int previousGraphemeBoundary(const QString &text, int cursorPosition) const;
     Q_INVOKABLE bool sendClipboardImage(const QString &caption = QString(), const QString &replyToMessageId = QString());
     Q_INVOKABLE void setChatPinned(const QString &chatId, bool pinned);
+    // Per-contact composer draft (pass-through to ChatListModel). QML commits the
+    // outgoing chat's composer text on every chat switch/close and restores the
+    // incoming chat's draft.
+    Q_INVOKABLE void setChatDraft(const QString &chatId, const QString &text);
+    Q_INVOKABLE [[nodiscard]] QString chatDraft(const QString &chatId) const;
     Q_INVOKABLE void setSelectedChatComposing(bool composing);
     Q_INVOKABLE void downloadMessageMedia(const QString &messageId);
     Q_INVOKABLE [[nodiscard]] bool isMessageMediaDownloading(const QString &messageId) const;

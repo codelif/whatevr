@@ -1,6 +1,7 @@
 #include "chatlistmodel.h"
 
 #include <QCollator>
+#include <QDateTime>
 #include <QFileInfo>
 
 #include "whatevr/v1/whatevr.qpb.h"
@@ -54,6 +55,10 @@ QVariant ChatListModel::data(const QModelIndex &index, int role) const
         return chat.initials;
     case IsTypingRole:
         return chat.isTyping;
+    case HasDraftRole:
+        return chat.hasDraft;
+    case DraftTextRole:
+        return chat.draftText;
     default:
         return {};
     }
@@ -75,6 +80,8 @@ QHash<int, QByteArray> ChatListModel::roleNames() const
         {AvatarLocalPathRole, "avatarLocalPath"},
         {InitialsRole, "initials"},
         {IsTypingRole, "isTyping"},
+        {HasDraftRole, "hasDraft"},
+        {DraftTextRole, "draftText"},
     };
 }
 
@@ -88,6 +95,7 @@ void ChatListModel::replaceChats(const QList<whatevr::v1::Chat> &chats)
         if (existingIndex >= 0) {
             item.isTyping = m_chats.at(existingIndex).isTyping;
         }
+        applyDraft(item);
         next.append(std::move(item));
     }
 
@@ -136,6 +144,7 @@ void ChatListModel::upsertChat(const whatevr::v1::Chat &chat, const QString &pre
     } else if (hasPreservedTyping) {
         item.isTyping = preservedTyping;
     }
+    applyDraft(item);
 
     if (existingIndex < 0) {
         const int insertIndex = sortedInsertIndex(item);
@@ -192,6 +201,78 @@ bool ChatListModel::setChatTyping(const QString &chatId, bool typing)
     const QModelIndex changedIndex = index(chatIndex, 0);
     Q_EMIT dataChanged(changedIndex, changedIndex, {IsTypingRole});
     return true;
+}
+
+void ChatListModel::setChatDraft(const QString &chatId, const QString &text)
+{
+    if (chatId.isEmpty()) {
+        return;
+    }
+
+    const QString trimmed = text.trimmed();
+    const bool had = m_drafts.contains(chatId);
+    if (trimmed.isEmpty()) {
+        if (!had) {
+            return;
+        }
+        m_drafts.remove(chatId);
+    } else {
+        if (had && m_drafts.value(chatId).text == text) {
+            return;
+        }
+        // Stamp "now" so a (re)created draft floats to the top of its section.
+        m_drafts.insert(chatId, Draft {text, QDateTime::currentSecsSinceEpoch()});
+    }
+
+    const int chatIndex = indexOf(chatId);
+    if (chatIndex < 0) {
+        // The chat is not in the list yet; applyDraft() will pick it up when it
+        // is inserted via upsertChat/replaceChats.
+        return;
+    }
+
+    // m_chats[chatIndex] still holds its old (in-order) draft state, so the
+    // binary search in sortedInsertIndex finds the new position correctly —
+    // mirrors the move pattern in upsertChat().
+    ChatItem updated = m_chats.at(chatIndex);
+    applyDraft(updated);
+    const QList<int> roles {HasDraftRole, DraftTextRole, LastMessageRole};
+
+    const int insertIndex = sortedInsertIndex(updated, chatIndex);
+    if (insertIndex == chatIndex) {
+        m_chats[chatIndex] = std::move(updated);
+        const QModelIndex changedIndex = index(chatIndex, 0);
+        Q_EMIT dataChanged(changedIndex, changedIndex, roles);
+        return;
+    }
+
+    const int destinationRow = insertIndex > chatIndex ? insertIndex + 1 : insertIndex;
+    beginMoveRows(QModelIndex(), chatIndex, chatIndex, QModelIndex(), destinationRow);
+    m_chats.move(chatIndex, insertIndex);
+    endMoveRows();
+    reindexRange(std::min(chatIndex, insertIndex), std::max(chatIndex, insertIndex));
+    m_chats[insertIndex] = std::move(updated);
+    const QModelIndex changedIndex = index(insertIndex, 0);
+    Q_EMIT dataChanged(changedIndex, changedIndex, roles);
+}
+
+QString ChatListModel::chatDraft(const QString &chatId) const
+{
+    return m_drafts.value(chatId).text;
+}
+
+void ChatListModel::applyDraft(ChatItem &item) const
+{
+    const auto it = m_drafts.constFind(item.id);
+    if (it != m_drafts.constEnd()) {
+        item.hasDraft = true;
+        item.draftText = it->text;
+        item.draftTimeUnix = it->timeUnix;
+    } else {
+        item.hasDraft = false;
+        item.draftText.clear();
+        item.draftTimeUnix = 0;
+    }
 }
 
 QString ChatListModel::chatName(const QString &chatId) const
@@ -258,6 +339,9 @@ ChatListModel::ChatItem ChatListModel::fromProto(const whatevr::v1::Chat &chat)
         .updatedAtUnix = chat.updatedAtUnix(),
         .avatarLocalPath = chat.avatarLocalPath(),
         .isTyping = false,
+        .hasDraft = false,
+        .draftText = {},
+        .draftTimeUnix = 0,
     };
     item.displayName = displayName(item);
     item.initials = initialsForName(item.displayName);
@@ -317,7 +401,10 @@ bool ChatListModel::sameChatData(const ChatItem &left, const ChatItem &right)
         && left.isPinned == right.isPinned
         && left.pinnedOrder == right.pinnedOrder
         && left.avatarLocalPath == right.avatarLocalPath
-        && left.isTyping == right.isTyping;
+        && left.isTyping == right.isTyping
+        && left.hasDraft == right.hasDraft
+        && left.draftText == right.draftText
+        && left.draftTimeUnix == right.draftTimeUnix;
 }
 
 bool ChatListModel::sortBefore(const ChatItem &left, const ChatItem &right)
@@ -328,8 +415,15 @@ bool ChatListModel::sortBefore(const ChatItem &left, const ChatItem &right)
     if (left.isPinned && left.pinnedOrder != right.pinnedOrder) {
         return left.pinnedOrder > right.pinnedOrder;
     }
-    if (left.lastMessageTimeUnix != right.lastMessageTimeUnix) {
-        return left.lastMessageTimeUnix > right.lastMessageTimeUnix;
+    // A draft acts like a brand-new message: order by the draft time when set
+    // (always >= last-message time), so an unsent draft floats to the top of its
+    // section without disturbing the real last-message timestamp underneath.
+    const qint64 leftTime = left.hasDraft ? qMax(left.draftTimeUnix, left.lastMessageTimeUnix)
+                                          : left.lastMessageTimeUnix;
+    const qint64 rightTime = right.hasDraft ? qMax(right.draftTimeUnix, right.lastMessageTimeUnix)
+                                            : right.lastMessageTimeUnix;
+    if (leftTime != rightTime) {
+        return leftTime > rightTime;
     }
     return left.displayName.localeAwareCompare(right.displayName) < 0;
 }

@@ -97,6 +97,8 @@ Kirigami.Page {
                     unreadCount: Number(model.unreadCount || 0)
                     isPinned: Boolean(model.isPinned || false)
                     isTyping: Boolean(model.isTyping || false)
+                    hasDraft: Boolean(model.hasDraft || false)
+                    draftText: String(model.draftText || "")
                     current: Whatevr.AppController.selectedChatId === chatId
                     onSelected: id => {
                         Whatevr.AppController.selectChat(id)

@@ -16,15 +16,31 @@ ItemDelegate {
     property int unreadCount: 0
     property bool isPinned: false
     property bool isTyping: false
+    property bool hasDraft: false
+    property string draftText: ""
     property bool current: false
     readonly property bool hasLastMessage: lastMessage.length > 0
     readonly property bool lastMessageIsOutgoing: lastMessageDirection === 2
-    readonly property bool showDeliveryStatus: hasLastMessage && lastMessageIsOutgoing && !isTyping
-    readonly property string previewText: isTyping
-                                          ? Whatevr.I18n.i18nc("@info chat presence", "typing...")
-                                          : (hasLastMessage
-                                             ? lastMessage.replace(/[\r\n]+/g, " ")
-                                             : Whatevr.I18n.i18nc("@info", "No messages yet"))
+    // A live "typing…" takes priority over a stored draft, which in turn replaces
+    // the last-message preview; delivery ticks are hidden in both overlay states.
+    readonly property bool showDraft: hasDraft && !isTyping
+    readonly property bool showDeliveryStatus: hasLastMessage && lastMessageIsOutgoing && !isTyping && !showDraft
+    function escapeHtml(value) {
+        return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    }
+    readonly property string previewText: {
+        if (isTyping) {
+            return Whatevr.I18n.i18nc("@info chat presence", "typing...")
+        }
+        if (showDraft) {
+            const prefix = Whatevr.I18n.i18nc("@info draft message prefix in chat list", "Draft:")
+            return "<font color=\"" + Kirigami.Theme.negativeTextColor + "\">" + prefix + "</font> "
+                   + escapeHtml(draftText.replace(/[\r\n]+/g, " "))
+        }
+        return hasLastMessage
+               ? lastMessage.replace(/[\r\n]+/g, " ")
+               : Whatevr.I18n.i18nc("@info", "No messages yet")
+    }
     readonly property real deliveryIconSize: Kirigami.Units.iconSizes.small
     readonly property real deliveryDoubleTickOffset: deliveryIconSize * 0.4
     readonly property bool deliveryStatusIsDoubleTick: lastMessageStatus === 3 || lastMessageStatus === 4
@@ -239,6 +255,9 @@ ItemDelegate {
                     anchors.right: parent.right
                     anchors.verticalCenter: parent.verticalCenter
                     text: root.previewText
+                    // The draft variant carries an inline-coloured "Draft:" prefix;
+                    // plain previews stay PlainText so stray markup renders literally.
+                    textFormat: root.showDraft ? Text.StyledText : Text.PlainText
                     elide: Text.ElideRight
                     maximumLineCount: 1
                     color: root.isTyping

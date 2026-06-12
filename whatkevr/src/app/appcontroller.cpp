@@ -1024,6 +1024,7 @@ void AppController::sendText(const QString &text, const QString &replyToMessageI
     }
 
     setChatComposing(m_selectedChatId, false);
+    m_chatListModel->setChatDraft(m_selectedChatId, QString());
     dismissUnreadAnchor();
 
     SendTextRequest request;
@@ -1078,6 +1079,7 @@ void AppController::sendImage(const QString &fileUrl, const QString &caption, co
     }
 
     setChatComposing(m_selectedChatId, false);
+    m_chatListModel->setChatDraft(m_selectedChatId, QString());
     dismissUnreadAnchor();
 
     SendMediaRequest request;
@@ -2182,6 +2184,19 @@ void AppController::setChatPinned(const QString &chatId, bool pinned)
             emitStateChanged();
         }
     });
+}
+
+void AppController::setChatDraft(const QString &chatId, const QString &text)
+{
+    if (chatId.isEmpty()) {
+        return;
+    }
+    m_chatListModel->setChatDraft(chatId, text);
+}
+
+QString AppController::chatDraft(const QString &chatId) const
+{
+    return m_chatListModel->chatDraft(chatId);
 }
 
 void AppController::setChatComposing(const QString &chatId, bool composing)
