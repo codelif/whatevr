@@ -1024,6 +1024,7 @@ void AppController::sendText(const QString &text, const QString &replyToMessageI
     }
 
     setChatComposing(m_selectedChatId, false);
+    dismissUnreadAnchor();
 
     SendTextRequest request;
     request.setChatId(m_selectedChatId);
@@ -1077,6 +1078,7 @@ void AppController::sendImage(const QString &fileUrl, const QString &caption, co
     }
 
     setChatComposing(m_selectedChatId, false);
+    dismissUnreadAnchor();
 
     SendMediaRequest request;
     request.setChatId(m_selectedChatId);
@@ -1589,6 +1591,7 @@ void AppController::sendReaction(const QString &messageId, const QString &emoji)
     if (!m_sendClient || messageId.isEmpty()) {
         return;
     }
+    dismissUnreadAnchor();
 
     SendReactionRequest request;
     request.setMessageId(messageId);
@@ -2069,6 +2072,18 @@ void AppController::resolveUnreadAnchor(bool authoritative)
     m_unreadAnchorCount = m_selectedChatUnreadSnapshot;
     m_unreadAnchorResolved = true;
     Q_EMIT unreadAnchorChanged();
+}
+
+void AppController::dismissUnreadAnchor()
+{
+    const bool changed = !m_unreadAnchorMessageId.isEmpty() || m_unreadAnchorCount != 0;
+    m_selectedChatUnreadSnapshot = 0;
+    m_unreadAnchorMessageId.clear();
+    m_unreadAnchorCount = 0;
+    m_unreadAnchorResolved = true;
+    if (changed) {
+        Q_EMIT unreadAnchorChanged();
+    }
 }
 
 void AppController::sendSelectedChatReadIfActive()
@@ -2697,6 +2712,7 @@ void AppController::applyMessageEvent(const whatevr::v1::Message &message)
     if (message.chatId() != m_selectedChatId) {
         return;
     }
+    dismissUnreadAnchor();
     if (m_displayedMessagesChatId != message.chatId()) {
         return;
     }
@@ -2728,7 +2744,11 @@ void AppController::applyMessageDeleted(const QString &chatId, const QString &me
         }
     }
 
-    if (chatId != m_selectedChatId || m_displayedMessagesChatId != chatId) {
+    if (chatId != m_selectedChatId) {
+        return;
+    }
+    dismissUnreadAnchor();
+    if (m_displayedMessagesChatId != chatId) {
         return;
     }
     const bool wasEmpty = m_messageListModel->isEmpty();
