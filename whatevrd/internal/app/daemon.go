@@ -250,6 +250,10 @@ type MediaDownloadEvent struct {
 	ChatID      string
 	Downloading bool
 	ErrorText   string
+	// Streamed download progress; TotalBytes is 0 when the media metadata
+	// does not carry a file length.
+	ReceivedBytes uint64
+	TotalBytes    uint64
 }
 
 type Chat struct {
@@ -615,8 +619,8 @@ func (d *Daemon) PublishCachedChatPresence(chatID string) bool {
 	return true
 }
 
-func (d *Daemon) PublishMediaDownloadChanged(messageID, chatID string, downloading bool, errorText string) {
-	evt := MediaDownloadEvent{MessageID: messageID, ChatID: chatID, Downloading: downloading, ErrorText: errorText}
+func (d *Daemon) PublishMediaDownloadChanged(messageID, chatID string, downloading bool, errorText string, receivedBytes, totalBytes uint64) {
+	evt := MediaDownloadEvent{MessageID: messageID, ChatID: chatID, Downloading: downloading, ErrorText: errorText, ReceivedBytes: receivedBytes, TotalBytes: totalBytes}
 	d.subMu.Lock()
 	if downloading {
 		d.mediaDownloads[messageID] = evt

@@ -84,6 +84,11 @@ namespace {
 AppController *s_appControllerInstance = nullptr;
 
 constexpr int kMessageLimit = MessageListModel::MaximumMessageCount;
+// Hard GetMessages page cap enforced by the daemon (rpc normalizePage).
+constexpr int kServerMessageLimit = 200;
+// Extra already-read messages requested above an unread region so the unread
+// divider opens with a little context above it.
+constexpr int kUnreadContextMessages = 12;
 constexpr int kCachedChatLimit = 32;
 constexpr int kCachedMessagesPerChatLimit = kMessageLimit * 4;
 
@@ -380,9 +385,9 @@ AppController::AppController(QObject *parent)
         if (state != Qt::ApplicationActive && !m_localComposingChatId.isEmpty()) {
             setChatComposing(m_localComposingChatId, false);
         }
-        if (state == Qt::ApplicationActive) {
-            requestSelectedChatReadIfActive();
-        }
+        // Becoming active does not mark the selected chat read by itself any
+        // more; MessageView re-evaluates visibility of the unread region on
+        // activation and calls markSelectedChatViewed() when appropriate.
     });
 
     QTimer::singleShot(0, this, &AppController::bootstrap);
@@ -702,6 +707,21 @@ bool AppController::hasSelectedChat() const
     return !m_selectedChatId.isEmpty();
 }
 
+int AppController::selectedChatUnreadCount() const
+{
+    return m_selectedChatUnreadCount;
+}
+
+QString AppController::unreadAnchorMessageId() const
+{
+    return m_unreadAnchorMessageId;
+}
+
+int AppController::unreadAnchorCount() const
+{
+    return m_unreadAnchorCount;
+}
+
 bool AppController::historySyncVisible() const
 {
     return m_historySyncVisible;
@@ -867,11 +887,20 @@ void AppController::selectChat(const QString &chatId)
     m_jumpToMessageChatId.clear();
     m_jumpToMessageId.clear();
     m_jumpToMessageReply.reset();
+    // Capture the unread state as it was at open: the divider anchor derives
+    // from this snapshot and stays put even as the badge later clears or new
+    // messages arrive while the chat stays open.
+    m_selectedChatUnreadSnapshot = chatId.isEmpty() ? 0 : m_chatListModel->chatUnreadCount(chatId);
+    m_unreadAnchorMessageId.clear();
+    m_unreadAnchorCount = 0;
+    m_unreadAnchorResolved = false;
+    Q_EMIT unreadAnchorChanged();
     updateSelectedChatData();
     const bool restoredMessages = restoreCachedMessages(chatId);
     if (restoredMessages) {
         m_messagesLoading = false;
         m_messagesLoadingChatId.clear();
+        resolveUnreadAnchor(false);
     }
     Q_EMIT selectionChanged();
     Q_EMIT messagesChanged();
@@ -881,7 +910,6 @@ void AppController::selectChat(const QString &chatId)
     if (!m_selectedChatId.isEmpty()) {
         requestSelectedChatPresence();
         requestMessages(m_selectedChatId);
-        requestSelectedChatReadIfActive();
     }
 }
 
@@ -1852,9 +1880,18 @@ void AppController::requestMessages(const QString &chatId)
         m_olderMessagesReply.reset();
     }
 
+    // A chat opened with more unread messages than one page holds gets a
+    // larger first page (capped by the daemon's 200-message limit), so the
+    // unread divider anchor — and some context above it — is actually loaded.
+    int limit = kMessageLimit;
+    if (chatId == m_selectedChatId && !m_unreadAnchorResolved
+        && m_selectedChatUnreadSnapshot + kUnreadContextMessages > kMessageLimit) {
+        limit = qMin(kServerMessageLimit, m_selectedChatUnreadSnapshot + kUnreadContextMessages);
+    }
+
     GetMessagesRequest request;
     request.setChatId(chatId);
-    request.setLimit(kMessageLimit);
+    request.setLimit(limit);
 
     m_messagesLoading = true;
     m_olderMessagesLoading = false;
@@ -1869,7 +1906,7 @@ void AppController::requestMessages(const QString &chatId)
     m_messagesReply = m_chatClient->GetMessages(request);
     auto *reply = m_messagesReply.get();
 
-    connect(reply, &QGrpcCallReply::finished, this, [this, reply, chatId](const QGrpcStatus &status) {
+    connect(reply, &QGrpcCallReply::finished, this, [this, reply, chatId, limit](const QGrpcStatus &status) {
         if (m_messagesReply.get() != reply) {
             return;
         }
@@ -1904,11 +1941,12 @@ void AppController::requestMessages(const QString &chatId)
             visibleMessages = mergeMessages(cached->messages, response->messages());
         }
 
-        cacheMessages(chatId, visibleMessages, response->messages().size() >= kMessageLimit);
+        cacheMessages(chatId, visibleMessages, response->messages().size() >= limit);
         if (m_selectedChatId == chatId) {
             m_displayedMessagesChatId = chatId;
             m_messageListModel->replaceMessages(visibleMessages);
-            m_canLoadOlderMessages = response->messages().size() >= kMessageLimit;
+            m_canLoadOlderMessages = response->messages().size() >= limit;
+            resolveUnreadAnchor(true);
         }
         Q_EMIT messagesChanged();
     });
@@ -1988,8 +2026,49 @@ void AppController::requestSelectedChatReadIfActive()
         return;
     }
 
+    // The view re-reports visibility on every scroll frame while the badge is
+    // up; restarting the debounce each time would push the send out forever.
+    if (m_markChatReadTimer->isActive() && m_pendingMarkChatReadId == m_selectedChatId) {
+        return;
+    }
+
     m_pendingMarkChatReadId = m_selectedChatId;
     m_markChatReadTimer->start();
+}
+
+void AppController::markSelectedChatViewed()
+{
+    requestSelectedChatReadIfActive();
+}
+
+void AppController::resolveUnreadAnchor(bool authoritative)
+{
+    if (m_unreadAnchorResolved || m_selectedChatId.isEmpty() || m_displayedMessagesChatId != m_selectedChatId) {
+        return;
+    }
+    if (m_selectedChatUnreadSnapshot <= 0) {
+        m_unreadAnchorResolved = true;
+        return;
+    }
+
+    bool complete = false;
+    const QString anchor = m_messageListModel->unreadAnchorCandidate(m_selectedChatUnreadSnapshot, &complete);
+    if (anchor.isEmpty()) {
+        // Badge is up but no incoming message is loaded (e.g. all unread were
+        // since deleted). The fresh response is the final word: stop looking.
+        m_unreadAnchorResolved = authoritative;
+        return;
+    }
+    if (!complete && !authoritative) {
+        // The cached window may be missing part of the unread region; wait for
+        // the (possibly enlarged) network page before placing the divider.
+        return;
+    }
+
+    m_unreadAnchorMessageId = anchor;
+    m_unreadAnchorCount = m_selectedChatUnreadSnapshot;
+    m_unreadAnchorResolved = true;
+    Q_EMIT unreadAnchorChanged();
 }
 
 void AppController::sendSelectedChatReadIfActive()
@@ -2581,7 +2660,9 @@ void AppController::applyMediaDownloadChanged(const MediaDownloadChanged &downlo
     }
 
     const QString errorText = download.downloading() ? QString() : download.errorText();
-    m_messageListModel->setMediaDownloadState(messageId, download.downloading(), errorText);
+    m_messageListModel->setMediaDownloadState(messageId, download.downloading(), errorText,
+                                              static_cast<qint64>(download.receivedBytes()),
+                                              static_cast<qint64>(download.totalBytes()));
 
     if (wasDownloading != download.downloading()) {
         Q_EMIT mediaDownloadChanged(messageId);
@@ -2630,9 +2711,9 @@ void AppController::applyMessageEvent(const whatevr::v1::Message &message)
     if (wasEmpty) {
         Q_EMIT messagesChanged();
     }
-    if (message.direction() == whatevr::v1::MessageDirectionGadget::MessageDirection::MESSAGE_DIRECTION_INCOMING) {
-        requestSelectedChatReadIfActive();
-    }
+    // Incoming messages no longer mark the chat read here; MessageView calls
+    // markSelectedChatViewed() once the user is actually viewing the unread
+    // region (WhatsApp behaviour).
 }
 
 void AppController::applyMessageDeleted(const QString &chatId, const QString &messageId)
@@ -2978,11 +3059,13 @@ void AppController::updateSelectedChatData()
         m_selectedChatComposing = false;
         m_selectedChatAvailability = 0;
         m_selectedChatLastSeenUnix = 0;
+        m_selectedChatUnreadCount = 0;
         return;
     }
 
     m_selectedChatName = m_chatListModel->chatName(m_selectedChatId);
     m_selectedChatAvatarLocalPath = m_chatListModel->chatAvatarLocalPath(m_selectedChatId);
     m_selectedChatIsGroup = m_chatListModel->chatIsGroup(m_selectedChatId);
+    m_selectedChatUnreadCount = m_chatListModel->chatUnreadCount(m_selectedChatId);
     m_messageListModel->setGroupChat(m_selectedChatIsGroup);
 }

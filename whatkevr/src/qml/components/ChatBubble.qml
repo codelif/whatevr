@@ -66,6 +66,12 @@ Item {
     property bool fastFlicking: false
     property bool mediaDownloading: false
     property string mediaDownloadError: ""
+    // Download progress 0..1 while bytes are streaming; -1 when the total size
+    // is unknown (falls back to the indeterminate spinner).
+    property real mediaDownloadProgress: -1
+    // Number shown in the "N unread messages" divider above this message; 0
+    // hides the divider. Set only on the unread-anchor row.
+    property int unreadSeparatorCount: 0
     property int clearSelectionGeneration: 0
     property string activeSelectionMessageId: ""
     property string replyToMessageId: ""
@@ -138,6 +144,10 @@ Item {
     readonly property real dateSeparatorHeight: showDateSeparator
         ? dateSeparatorLoader.height + Kirigami.Units.largeSpacing
         : 0
+    readonly property bool showUnreadSeparator: unreadSeparatorCount > 0
+    readonly property real unreadSeparatorHeight: showUnreadSeparator
+        ? unreadSeparatorLoader.height + Kirigami.Units.largeSpacing
+        : 0
     readonly property real outerMargin: Kirigami.Units.largeSpacing
     readonly property real innerPadding: Kirigami.Units.largeSpacing
     readonly property real senderAvatarSize: Kirigami.Units.gridUnit * 1.65
@@ -152,7 +162,7 @@ Item {
     readonly property real bodyPointSize: Kirigami.Theme.defaultFont.pointSize > 0
         ? Kirigami.Theme.defaultFont.pointSize
         : 10
-    readonly property real messageBaseY: dateSeparatorHeight + (senderHeaderHeight > 0 ? senderHeaderHeight + Kirigami.Units.smallSpacing / 2 : 0)
+    readonly property real messageBaseY: dateSeparatorHeight + unreadSeparatorHeight + (senderHeaderHeight > 0 ? senderHeaderHeight + Kirigami.Units.smallSpacing / 2 : 0)
     readonly property real replyGlowPadding: Kirigami.Units.smallSpacing
     property real replyGlowOpacity: 0
 
@@ -903,12 +913,20 @@ Item {
 
                         BusyIndicator {
                             anchors.horizontalCenter: parent.horizontalCenter
-                            visible: root.mediaDownloading
-                                     || (!root.hasLocalImage && root.hasThumbnailImage && thumb.status === Image.Loading)
+                            visible: (root.mediaDownloading && root.mediaDownloadProgress < 0)
+                                     || (!root.mediaDownloading && !root.hasLocalImage && root.hasThumbnailImage && thumb.status === Image.Loading)
                                      || (root.hasLocalImage && img.status === Image.Loading)
                             running: visible
                             implicitWidth: Kirigami.Units.gridUnit * 2
                             implicitHeight: Kirigami.Units.gridUnit * 2
+                        }
+
+                        ProgressCircle {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            visible: root.mediaDownloading && root.mediaDownloadProgress >= 0
+                            progress: Math.max(0, root.mediaDownloadProgress)
+                            width: Kirigami.Units.gridUnit * 2
+                            height: width
                         }
 
                         Button {
@@ -1418,14 +1436,22 @@ Item {
 
                 BusyIndicator {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    visible: root.mediaDownloading
-                             || (!root.hasLocalSticker && root.hasThumbnailImage && stickerThumb.status === Image.Loading)
+                    visible: (root.mediaDownloading && root.mediaDownloadProgress < 0)
+                             || (!root.mediaDownloading && !root.hasLocalSticker && root.hasThumbnailImage && stickerThumb.status === Image.Loading)
                              || (root.hasLocalSticker && (staticSticker.status === Image.Loading
                                                           || animatedSticker.status === AnimatedImage.Loading
                                                           || lottieSticker.status === Whatevr.RlottieSticker.Loading))
                     running: visible
                     implicitWidth: Kirigami.Units.gridUnit * 1.75
                     implicitHeight: implicitWidth
+                }
+
+                ProgressCircle {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    visible: root.mediaDownloading && root.mediaDownloadProgress >= 0
+                    progress: Math.max(0, root.mediaDownloadProgress)
+                    width: Kirigami.Units.gridUnit * 1.75
+                    height: width
                 }
 
                 Button {
@@ -1747,6 +1773,21 @@ Item {
 
         sourceComponent: DateSeparatorPill {
             text: root.dateSeparatorText
+        }
+    }
+
+    // "N unread messages" divider, loaded only on the unread-anchor row. Sits
+    // below the day pill when both are present.
+    Loader {
+        id: unreadSeparatorLoader
+
+        active: root.showUnreadSeparator
+        x: root.outerMargin
+        y: root.dateSeparatorHeight + Kirigami.Units.largeSpacing / 2
+        width: Math.max(0, root.width - root.outerMargin * 2)
+
+        sourceComponent: UnreadSeparator {
+            count: root.unreadSeparatorCount
         }
     }
 

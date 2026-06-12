@@ -172,10 +172,12 @@ func toProtoDaemonEvent(event app.DaemonEvent) *pb.DaemonEvent {
 		return &pb.DaemonEvent{
 			Payload: &pb.DaemonEvent_MediaDownloadChanged{
 				MediaDownloadChanged: &pb.MediaDownloadChanged{
-					MessageId:   event.MediaDownload.MessageID,
-					ChatId:      event.MediaDownload.ChatID,
-					Downloading: event.MediaDownload.Downloading,
-					ErrorText:   event.MediaDownload.ErrorText,
+					MessageId:     event.MediaDownload.MessageID,
+					ChatId:        event.MediaDownload.ChatID,
+					Downloading:   event.MediaDownload.Downloading,
+					ErrorText:     event.MediaDownload.ErrorText,
+					ReceivedBytes: event.MediaDownload.ReceivedBytes,
+					TotalBytes:    event.MediaDownload.TotalBytes,
 				},
 			},
 		}

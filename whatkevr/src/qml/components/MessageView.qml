@@ -82,6 +82,16 @@ Item {
     property string pendingJumpMessageId: ""
     property double pendingJumpDeadlineMs: 0
 
+    // Unread divider anchor for the open chat (AppController resolves it once
+    // per chat open; it stays put until the chat is switched).
+    readonly property string unreadAnchorMessageId: Whatevr.AppController.unreadAnchorMessageId
+    readonly property int unreadAnchorCount: Whatevr.AppController.unreadAnchorCount
+    // Set on the first genuine user scroll after a chat opens; a late-arriving
+    // unread anchor must not yank the viewport away from where the user went.
+    property bool userScrolledSinceOpen: false
+    // The viewport was already placed at the unread divider for this open.
+    property bool unreadAnchorPositioned: false
+
     signal loadOlderMessagesRequested()
     signal conversationFocusRequested()
     signal typeIntoComposerRequested(string text)
@@ -466,6 +476,65 @@ Item {
         atNewest = true
     }
 
+    // Place the unread divider at the top of the viewport (WhatsApp's chat-open
+    // position) so the unread messages run downward from it. Returns false when
+    // there is no anchor to position at, letting callers fall back to the
+    // bottom of the chat.
+    function positionAtUnreadAnchor() {
+        if (unreadAnchorMessageId.length === 0 || !list.model || typeof list.model.indexOf !== "function") {
+            return false
+        }
+        const index = list.model.indexOf(unreadAnchorMessageId)
+        if (index < 0 || index >= list.count) {
+            return false
+        }
+        programmaticScroll = true
+        floatingDateActive = false
+        floatingDateIdleTimer.stop()
+        kineticWheelScroller.stopKinetic()
+        list.cancelFlick()
+        // BottomToTop list: "End" is the visual top edge.
+        list.positionViewAtIndex(index, ListView.End)
+        list.forceLayout()
+        unreadAnchorPositioned = true
+        pendingNewestMessageCount = 0
+        Qt.callLater(() => {
+            root.programmaticScroll = false
+            root.updateScrollState()
+            root.maybeMarkViewedRead()
+        })
+        return true
+    }
+
+    // Single decision point for clearing a chat's unread state, mirroring how
+    // WhatsApp operates: everything is marked read at once, but only while the
+    // user is genuinely looking at the unread region — window focused, this
+    // chat open, and the viewport overlapping the rows below the divider (or
+    // parked at the newest message for unread that arrived while open).
+    function maybeMarkViewedRead() {
+        if (chatId.length === 0 || list.count === 0 || !visible) {
+            return
+        }
+        if (Whatevr.AppController.selectedChatId !== chatId
+                || Whatevr.AppController.selectedChatUnreadCount <= 0
+                || Qt.application.state !== Qt.ApplicationActive) {
+            return
+        }
+
+        // The unread region spans rows 0..anchorIndex (index 0 is newest).
+        // Without a locatable anchor only the newest row counts as "viewing".
+        let regionTop = 0
+        if (unreadAnchorMessageId.length > 0 && list.model && typeof list.model.indexOf === "function") {
+            const anchorIndex = list.model.indexOf(unreadAnchorMessageId)
+            if (anchorIndex >= 0) {
+                regionTop = anchorIndex
+            }
+        }
+        if (atNewest || (bottomVisibleIndex >= 0 && bottomVisibleIndex <= regionTop)) {
+            Whatevr.AppController.markSelectedChatViewed()
+        }
+    }
+
     function showReferencedMessageUnavailable() {
         const window = ApplicationWindow.window
         if (window && typeof window.showPassiveNotification === "function") {
@@ -657,6 +726,8 @@ Item {
                 && hi >= list.count - 1 - prefetchRowThreshold) {
             loadOlderMessagesRequested()
         }
+
+        maybeMarkViewedRead()
     }
 
     // Reveal the floating date pill on genuine user scrolling (the kinetic
@@ -671,6 +742,7 @@ Item {
             return
         }
         lastScrollY = list.contentY
+        userScrolledSinceOpen = true
         if (floatingDateText.length > 0) {
             floatingDateActive = true
             floatingDateIdleTimer.restart()
@@ -683,7 +755,12 @@ Item {
         bottomVisibleIndex = -1
         topRowFraction = 0
         if (pendingJumpMessageId.length === 0) {
-            scrollToNewest()
+            // A chat with unread messages opens at the unread divider instead
+            // of the newest message; updateScrollState then recomputes
+            // followNewest/atNewest from the real viewport.
+            if (userScrolledSinceOpen || !positionAtUnreadAnchor()) {
+                scrollToNewest()
+            }
         } else {
             programmaticScroll = true
             floatingDateActive = false
@@ -692,11 +769,6 @@ Item {
         floatingDateActive = false
         floatingDateIdleTimer.stop()
         openingChat = false
-        if (pendingJumpMessageId.length === 0) {
-            followNewest = true
-            atNewest = true
-            pendingNewestMessageCount = 0
-        }
         Qt.callLater(updateScrollState)
     }
 
@@ -709,6 +781,8 @@ Item {
         pendingNewestMessageCount = 0
         atNewest = true
         followNewest = true
+        userScrolledSinceOpen = false
+        unreadAnchorPositioned = false
         if (chatId.length === 0) {
             openingChat = false
         } else {
@@ -877,6 +951,9 @@ Item {
             fastFlicking: list.fastFlicking
             mediaDownloading: Boolean(model.mediaDownloading)
             mediaDownloadError: String(model.mediaDownloadError || "")
+            mediaDownloadProgress: model.mediaDownloadProgress !== undefined ? Number(model.mediaDownloadProgress) : -1
+            unreadSeparatorCount: root.unreadAnchorMessageId.length > 0 && messageId === root.unreadAnchorMessageId
+                                  ? root.unreadAnchorCount : 0
             replyToMessageId: String(model.replyToMessageId || "")
             replyToSenderName: String(model.replyToSenderName || "")
             replyToText: String(model.replyToText || "")
@@ -964,6 +1041,30 @@ Item {
             Qt.callLater(root.scrollToNewest)
         }
 
+        function onUnreadAnchorChanged() {
+            // The anchor can resolve after the chat already opened from the
+            // message cache (the divider position needed the fresh page). Move
+            // there as long as the user hasn't taken over scrolling.
+            if (root.chatId.length === 0
+                    || Whatevr.AppController.unreadAnchorMessageId.length === 0
+                    || root.unreadAnchorPositioned
+                    || root.userScrolledSinceOpen
+                    || root.pendingJumpMessageId.length > 0) {
+                return
+            }
+            Qt.callLater(() => {
+                if (!root.userScrolledSinceOpen && root.pendingJumpMessageId.length === 0) {
+                    root.positionAtUnreadAnchor()
+                }
+            })
+        }
+
+        function onSelectionChanged() {
+            // Follows the live unread badge: unread arriving while the user is
+            // parked at the bottom of the open chat should clear right away.
+            root.maybeMarkViewedRead()
+        }
+
         function onMessageJumpReady(messageId) {
             root.jumpToLoadedMessage(messageId)
         }
@@ -974,6 +1075,16 @@ Item {
             }
             root.finishPendingJump()
             root.showReferencedMessageUnavailable()
+        }
+    }
+
+    Connections {
+        target: Qt.application
+
+        function onStateChanged() {
+            // Window (re)gaining focus is what turns "unread region visible"
+            // into "actually being viewed".
+            root.maybeMarkViewedRead()
         }
     }
 

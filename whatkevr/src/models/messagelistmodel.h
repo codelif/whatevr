@@ -72,6 +72,7 @@ public:
         MediaCacheKeyRole,
         IsRevokedRole,
         ReactionsRole,
+        MediaDownloadProgressRole,
     };
     Q_ENUM(Role)
 
@@ -91,7 +92,14 @@ public:
     void upsertMessage(const whatevr::v1::Message &message);
     bool removeMessage(const QString &messageId);
     bool updateSenderAvatar(const QString &senderId, const QString &avatarLocalPath);
-    bool setMediaDownloadState(const QString &messageId, bool downloading, const QString &errorText = QString());
+    bool setMediaDownloadState(const QString &messageId, bool downloading, const QString &errorText = QString(),
+                               qint64 receivedBytes = 0, qint64 totalBytes = 0);
+    // Oldest message of the chat's unread region, derived by counting the
+    // `unreadCount` most recent incoming, non-revoked messages (the daemon's
+    // badge counts exactly those). `complete` reports whether the loaded
+    // window actually covered unreadCount such messages; when it did not, the
+    // returned id is the oldest qualifying message that is loaded.
+    [[nodiscard]] QString unreadAnchorCandidate(int unreadCount, bool *complete = nullptr) const;
     // Optimistically apply the viewer's reaction to a message so the pill updates
     // before the daemon round-trips. Drops any existing fromMe reaction and, when
     // emoji is non-empty, appends a fromMe entry. Returns the previous reactions
@@ -179,6 +187,10 @@ private:
         bool isRevoked = false;
         bool mediaDownloading = false;
         QString mediaDownloadError;
+        // Streamed download progress; totalBytes 0 means unknown size and the
+        // progress role reports -1 (indeterminate).
+        qint64 mediaDownloadReceivedBytes = 0;
+        qint64 mediaDownloadTotalBytes = 0;
         QString replyToMessageId;
         QString replyToSenderId;
         QString replyToSenderName;

@@ -5,6 +5,7 @@ import (
 	"context"
 	"image"
 	"image/png"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -239,6 +240,45 @@ func TestResolveCachedStickerMediaUpdatesReturnedMessages(t *testing.T) {
 	messages := client.ResolveCachedStickerMedia(ctx, []appstore.Message{current.Message})
 	if got := messages[0].MediaLocalPath; got != cachedPath {
 		t.Fatalf("resolved MediaLocalPath = %q, want %q", got, cachedPath)
+	}
+}
+
+// Guards the download-progress plumbing against the io.Copy fast path:
+// whatsmeow streams the HTTP body with io.Copy(file, io.TeeReader(...)), and
+// io.Copy prefers the destination's ReaderFrom. The ReadFrom promoted from the
+// embedded *os.File would bypass Write entirely, so mediaProgressFile must
+// override it to keep counting bytes.
+func TestMediaProgressFileCountsBytesThroughIoCopy(t *testing.T) {
+	file, err := os.CreateTemp(t.TempDir(), "part")
+	if err != nil {
+		t.Fatalf("create temp file: %v", err)
+	}
+	defer file.Close()
+
+	var lastReported uint64
+	progress := &mediaProgressFile{
+		File: file,
+		report: func(received uint64) {
+			lastReported = received
+		},
+	}
+
+	data := bytes.Repeat([]byte{7}, 100*1024)
+	// TeeReader implements neither WriterTo nor ReaderFrom, forcing io.Copy
+	// onto the destination's ReadFrom — the exact shape whatsmeow uses.
+	source := io.TeeReader(bytes.NewReader(data), io.Discard)
+	n, err := io.Copy(progress, source)
+	if err != nil {
+		t.Fatalf("io.Copy() error = %v", err)
+	}
+	if n != int64(len(data)) {
+		t.Fatalf("io.Copy() copied %d bytes, want %d", n, len(data))
+	}
+	if progress.position != int64(len(data)) {
+		t.Fatalf("progress position = %d, want %d", progress.position, len(data))
+	}
+	if lastReported == 0 {
+		t.Fatal("progress was never reported during the copy")
 	}
 }
 

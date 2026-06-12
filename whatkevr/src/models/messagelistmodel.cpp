@@ -283,6 +283,10 @@ QVariant MessageListModel::data(const QModelIndex &index, int role) const
         return message.isRevoked;
     case ReactionsRole:
         return message.reactions;
+    case MediaDownloadProgressRole:
+        return message.mediaDownloadTotalBytes > 0
+            ? qMin<qreal>(1.0, static_cast<qreal>(message.mediaDownloadReceivedBytes) / static_cast<qreal>(message.mediaDownloadTotalBytes))
+            : -1.0;
     default:
         return {};
     }
@@ -341,6 +345,7 @@ QHash<int, QByteArray> MessageListModel::roleNames() const
         {MediaCacheKeyRole, "mediaCacheKey"},
         {IsRevokedRole, "isRevoked"},
         {ReactionsRole, "reactions"},
+        {MediaDownloadProgressRole, "mediaDownloadProgress"},
     };
 }
 
@@ -355,6 +360,8 @@ void MessageListModel::replaceMessages(const QList<whatevr::v1::Message> &messag
             const auto &existing = m_messages.at(existingIndex);
             item.mediaDownloading = existing.mediaDownloading;
             item.mediaDownloadError = existing.mediaDownloadError;
+            item.mediaDownloadReceivedBytes = existing.mediaDownloadReceivedBytes;
+            item.mediaDownloadTotalBytes = existing.mediaDownloadTotalBytes;
             if (item.text == existing.text) {
                 transplantParsedState(item, existing);
             }
@@ -534,6 +541,8 @@ void MessageListModel::appendOlderMessages(const QList<whatevr::v1::Message> &me
                 const auto &existing = m_messages.at(existingIndex);
                 updated.mediaDownloading = existing.mediaDownloading;
                 updated.mediaDownloadError = existing.mediaDownloadError;
+                updated.mediaDownloadReceivedBytes = existing.mediaDownloadReceivedBytes;
+                updated.mediaDownloadTotalBytes = existing.mediaDownloadTotalBytes;
                 if (updated.text == existing.text) {
                     transplantParsedState(updated, existing);
                 }
@@ -602,6 +611,8 @@ void MessageListModel::upsertMessage(const whatevr::v1::Message &message)
         const auto &existing = m_messages.at(existingIndex);
         updated.mediaDownloading = existing.mediaDownloading;
         updated.mediaDownloadError = existing.mediaDownloadError;
+        updated.mediaDownloadReceivedBytes = existing.mediaDownloadReceivedBytes;
+        updated.mediaDownloadTotalBytes = existing.mediaDownloadTotalBytes;
         if (updated.text == existing.text) {
             transplantParsedState(updated, existing);
         }
@@ -795,23 +806,64 @@ bool MessageListModel::updateSenderAvatar(const QString &senderId, const QString
     return changed;
 }
 
-bool MessageListModel::setMediaDownloadState(const QString &messageId, bool downloading, const QString &errorText)
+bool MessageListModel::setMediaDownloadState(const QString &messageId, bool downloading, const QString &errorText,
+                                             qint64 receivedBytes, qint64 totalBytes)
 {
     const int messageIndex = indexOf(messageId);
     if (messageIndex < 0) {
         return false;
     }
 
+    // Progress only exists while a download is running; a final (or error)
+    // event resets it so a later retry starts from an empty bar.
+    if (!downloading) {
+        receivedBytes = 0;
+        totalBytes = 0;
+    }
+
     auto &message = m_messages[messageIndex];
-    if (message.mediaDownloading == downloading && message.mediaDownloadError == errorText) {
+    if (message.mediaDownloading == downloading && message.mediaDownloadError == errorText
+        && message.mediaDownloadReceivedBytes == receivedBytes && message.mediaDownloadTotalBytes == totalBytes) {
         return false;
     }
 
     message.mediaDownloading = downloading;
     message.mediaDownloadError = errorText;
+    message.mediaDownloadReceivedBytes = receivedBytes;
+    message.mediaDownloadTotalBytes = totalBytes;
     const QModelIndex changedIndex = index(messageIndex, 0);
-    Q_EMIT dataChanged(changedIndex, changedIndex, {MediaDownloadingRole, MediaDownloadErrorRole});
+    Q_EMIT dataChanged(changedIndex, changedIndex, {MediaDownloadingRole, MediaDownloadErrorRole, MediaDownloadProgressRole});
     return true;
+}
+
+QString MessageListModel::unreadAnchorCandidate(int unreadCount, bool *complete) const
+{
+    if (complete != nullptr) {
+        *complete = false;
+    }
+    if (unreadCount <= 0) {
+        return {};
+    }
+
+    // Messages are newest-first; the unread incoming messages are by
+    // definition the most recent ones. Revoked tombstones are skipped because
+    // the daemon removes them from the badge count.
+    QString anchor;
+    int counted = 0;
+    for (const auto &message : m_messages) {
+        if (message.direction != static_cast<int>(whatevr::v1::MessageDirectionGadget::MessageDirection::MESSAGE_DIRECTION_INCOMING)
+            || message.isRevoked) {
+            continue;
+        }
+        anchor = message.id;
+        if (++counted >= unreadCount) {
+            if (complete != nullptr) {
+                *complete = true;
+            }
+            break;
+        }
+    }
+    return anchor;
 }
 
 QVariantList MessageListModel::applyOptimisticReaction(const QString &messageId, const QString &emoji)

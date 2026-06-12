@@ -115,6 +115,9 @@ class AppController final : public QObject
     Q_PROPERTY(QString selectedChatAvatarLocalPath READ selectedChatAvatarLocalPath NOTIFY selectionChanged FINAL)
     Q_PROPERTY(QString selectedChatPresenceText READ selectedChatPresenceText NOTIFY selectionChanged FINAL)
     Q_PROPERTY(bool hasSelectedChat READ hasSelectedChat NOTIFY selectionChanged FINAL)
+    Q_PROPERTY(int selectedChatUnreadCount READ selectedChatUnreadCount NOTIFY selectionChanged FINAL)
+    Q_PROPERTY(QString unreadAnchorMessageId READ unreadAnchorMessageId NOTIFY unreadAnchorChanged FINAL)
+    Q_PROPERTY(int unreadAnchorCount READ unreadAnchorCount NOTIFY unreadAnchorChanged FINAL)
     Q_PROPERTY(bool historySyncVisible READ historySyncVisible NOTIFY historySyncChanged FINAL)
     Q_PROPERTY(int historySyncPercent READ historySyncPercent NOTIFY historySyncChanged FINAL)
     Q_PROPERTY(QString historySyncTitle READ historySyncTitle NOTIFY historySyncChanged FINAL)
@@ -171,6 +174,9 @@ public:
     [[nodiscard]] QString selectedChatAvatarLocalPath() const;
     [[nodiscard]] QString selectedChatPresenceText() const;
     [[nodiscard]] bool hasSelectedChat() const;
+    [[nodiscard]] int selectedChatUnreadCount() const;
+    [[nodiscard]] QString unreadAnchorMessageId() const;
+    [[nodiscard]] int unreadAnchorCount() const;
     [[nodiscard]] bool historySyncVisible() const;
     [[nodiscard]] int historySyncPercent() const;
     [[nodiscard]] QString historySyncTitle() const;
@@ -202,6 +208,10 @@ public:
     // Sends (emoji non-empty) or removes (emoji empty) our reaction on a message.
     Q_INVOKABLE void sendReaction(const QString &messageId, const QString &emoji);
     Q_INVOKABLE void requestMessageInfo(const QString &messageId);
+    // Reports that the user is actually looking at the selected chat's unread
+    // messages (window focused, unread region scrolled into view). This is the
+    // only path that marks a chat read — opening a chat alone no longer does.
+    Q_INVOKABLE void markSelectedChatViewed();
     Q_INVOKABLE void logout();
 
     // Entry points for single-instance activation / deep links. handleCommandLine
@@ -218,6 +228,8 @@ Q_SIGNALS:
     void messagesChanged();
     void composerChanged();
     void selectionChanged();
+    // The unread divider anchor for the selected chat was set or cleared.
+    void unreadAnchorChanged();
     void historySyncChanged();
     void outgoingMessageAddedToSelectedChat();
     void messageJumpReady(const QString &messageId);
@@ -289,6 +301,11 @@ private:
     void updateSelectedChatData();
     void cacheMessages(const QString &chatId, const QList<whatevr::v1::Message> &messages, bool canLoadOlderMessages);
     bool restoreCachedMessages(const QString &chatId);
+    // Computes the unread divider anchor from the displayed messages once per
+    // chat open. Non-authoritative calls (cached messages) only accept an
+    // anchor when the window provably covers the whole unread region; the
+    // authoritative call (fresh GetMessages response) takes the best match.
+    void resolveUnreadAnchor(bool authoritative);
     void scheduleSelectedChatMessageReload(const QString &chatId);
     void tryApplyPendingDeepLink();
 
@@ -331,6 +348,16 @@ private:
     QString m_selectedChatName;
     QString m_selectedChatAvatarLocalPath;
     bool m_selectedChatIsGroup = false;
+    // Live unread badge of the selected chat (follows ChatUpdated events).
+    int m_selectedChatUnreadCount = 0;
+    // Unread state captured when the chat was opened: the badge snapshot, the
+    // resulting divider anchor, and whether resolution already happened. The
+    // anchor stays put for the whole time the chat is open (WhatsApp keeps the
+    // divider until you leave the chat), even after the badge clears.
+    int m_selectedChatUnreadSnapshot = 0;
+    QString m_unreadAnchorMessageId;
+    int m_unreadAnchorCount = 0;
+    bool m_unreadAnchorResolved = false;
     QString m_frontendSessionId;
     bool m_selectedChatComposing = false;
     int m_selectedChatAvailability = 0;

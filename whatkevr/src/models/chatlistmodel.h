@@ -44,6 +44,7 @@ public:
     [[nodiscard]] QString chatName(const QString &chatId) const;
     [[nodiscard]] QString chatAvatarLocalPath(const QString &chatId) const;
     [[nodiscard]] bool chatIsGroup(const QString &chatId) const;
+    [[nodiscard]] int chatUnreadCount(const QString &chatId) const;
     [[nodiscard]] int indexOf(const QString &chatId) const;
     [[nodiscard]] bool isEmpty() const;
 
