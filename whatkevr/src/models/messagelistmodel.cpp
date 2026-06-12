@@ -727,17 +727,22 @@ QVariantMap MessageListModel::messageSnapshot(const QString &messageId) const
     }
     const auto &message = m_messages.at(row);
     ensurePreviewParsed(message);
-    // hasRichText in the cache only covers the displayed (possibly collapsed)
-    // text; "Copy as Markdown" must reflect the full text.
+    // hasRichText/richText in the cache only cover the displayed (possibly
+    // collapsed) text; "Copy as Markdown" and the full-message dialog must
+    // reflect the full text, so parse it on demand when it was collapsed.
     bool hasMarkup = message.hasRichText;
+    QString fullRichText = message.richText;
     if (message.textTruncated && !message.fullMarkupParsed) {
-        hasMarkup = parseWhatsAppMessageMarkup(message.text).hasRichText;
+        const auto markup = parseWhatsAppMessageMarkup(message.text);
+        hasMarkup = markup.hasRichText;
+        fullRichText = markup.richText;
     }
     return {
         {QStringLiteral("messageId"), message.id},
         {QStringLiteral("text"), message.text},
         {QStringLiteral("textPreview"), message.textPreview},
         {QStringLiteral("hasRichText"), hasMarkup},
+        {QStringLiteral("richText"), fullRichText},
         {QStringLiteral("links"), message.links},
         {QStringLiteral("senderName"), message.senderDisplayName},
         {QStringLiteral("isOutgoing"), isOutgoing(message)},

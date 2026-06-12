@@ -19,6 +19,10 @@ Kirigami.Page {
         }
         return !window.chatSingleColumnLayout || root.isCurrentPage
     }
+    // The chat whose draft is currently loaded in the composer. Tracked so a
+    // chat switch/close can stash the outgoing chat's text and restore the
+    // incoming chat's draft (the composer otherwise keeps its text across chats).
+    property string composerChatId: ""
     property string replyChatId: ""
     property string replyToMessageId: ""
     property string replyToSenderName: ""
@@ -146,7 +150,17 @@ Kirigami.Page {
         target: Whatevr.AppController
 
         function onSelectionChanged() {
-            if (root.replyChatId.length > 0 && root.replyChatId !== Whatevr.AppController.selectedChatId) {
+            const newChatId = Whatevr.AppController.selectedChatId
+            // selectionChanged also fires for presence/avatar updates of the same
+            // chat; only react when the open chat actually changed.
+            if (newChatId !== root.composerChatId) {
+                // Stash the previous chat's composer text as its draft, then load
+                // the new chat's draft. setChatDraft ignores empty ids/text.
+                Whatevr.AppController.setChatDraft(root.composerChatId, composer.inputPlainText())
+                composer.setText(Whatevr.AppController.chatDraft(newChatId))
+                root.composerChatId = newChatId
+            }
+            if (root.replyChatId.length > 0 && root.replyChatId !== newChatId) {
                 root.clearReplyTarget()
             }
         }

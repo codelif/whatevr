@@ -166,6 +166,14 @@ Item {
         return snapshot && snapshot.messageId ? snapshot : null
     }
 
+    function openMessageContent(messageId) {
+        const snapshot = messageSnapshot(messageId)
+        if (!snapshot) {
+            return
+        }
+        messageContentDialog.openFor(snapshot)
+    }
+
     function isSelected(messageId) {
         return selectedIds[messageId] === true
     }
@@ -968,7 +976,7 @@ Item {
             onTypeIntoComposerRequested: text => root.typeIntoComposerRequested(text)
             onReplyRequested: (messageId, senderName, text, mediaKind, mediaMimeType, outgoing) => root.replyToMessageRequested(messageId, senderName, text, mediaKind, mediaMimeType, outgoing)
             onReplyPreviewActivated: messageId => root.jumpToReplyTarget(messageId)
-            onReadMoreRequested: messageId => root.expandMessageText(messageId)
+            onReadMoreRequested: messageId => root.openMessageContent(messageId)
             onContextMenuRequested: (posX, posY) => root.openContextMenu(messageDelegate, posX, posY)
             onReactionPickerRequested: (posX, posY) => root.openQuickReactions(messageDelegate, posX, posY)
             onReactionToggleRequested: emoji => root.reactToMessage(messageDelegate.messageId, emoji)
@@ -1673,5 +1681,9 @@ Item {
 
     ReactionDetailsDialog {
         id: reactionDetailsDialog
+    }
+
+    MessageContentDialog {
+        id: messageContentDialog
     }
 }
