@@ -191,6 +191,15 @@ bool ChatListModel::chatIsGroup(const QString &chatId) const
     return m_chats.at(index).isGroup;
 }
 
+int ChatListModel::chatUnreadCount(const QString &chatId) const
+{
+    const int index = indexOf(chatId);
+    if (index < 0) {
+        return 0;
+    }
+    return m_chats.at(index).unreadCount;
+}
+
 int ChatListModel::indexOf(const QString &chatId) const
 {
     return m_chatIndexById.value(chatId, -1);

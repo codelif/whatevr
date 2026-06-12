@@ -219,6 +219,10 @@ message MediaDownloadChanged {
   string chat_id = 2;
   bool downloading = 3;
   string error_text = 4;
+  // Streamed download progress. total_bytes comes from the media metadata's
+  // file length and is 0 when unknown (clients show an indeterminate spinner).
+  uint64 received_bytes = 5;
+  uint64 total_bytes = 6;
 }
 
 message ConnectionChanged {

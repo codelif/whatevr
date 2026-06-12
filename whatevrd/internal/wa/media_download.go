@@ -102,54 +102,31 @@ func (c *Client) DownloadMessageMedia(ctx context.Context, messageID string) (ap
 		return updated, nil
 	}
 
-	c.daemon.PublishMediaDownloadChanged(message.ID, message.ChatID, true, "")
-	defer func() {
-		errorText := ""
-		if state.err != nil {
-			errorText = state.err.Error()
-		}
-		c.daemon.PublishMediaDownloadChanged(message.ID, message.ChatID, false, errorText)
-	}()
-
 	media, err := downloadableMediaMessage(message)
 	if err != nil {
 		state.err = err
 		return appstore.Message{}, state.err
 	}
 
+	totalBytes := media.GetFileLength()
+	if totalBytes > maxOutboundMediaBytes {
+		state.err = grpcstatus.Errorf(codes.ResourceExhausted, "media size must be between 1 byte and %d MiB", maxOutboundMediaBytes/(1024*1024))
+		return appstore.Message{}, state.err
+	}
+
+	c.daemon.PublishMediaDownloadChanged(message.ID, message.ChatID, true, "", 0, totalBytes)
+	defer func() {
+		errorText := ""
+		if state.err != nil {
+			errorText = state.err.Error()
+		}
+		c.daemon.PublishMediaDownloadChanged(message.ID, message.ChatID, false, errorText, 0, totalBytes)
+	}()
+
 	client := c.currentClient()
 	if client == nil || !client.IsLoggedIn() || !client.IsConnected() {
 		state.err = grpcstatus.Error(codes.Unavailable, "WhatsApp is not connected")
 		return appstore.Message{}, state.err
-	}
-
-	data, err := client.Download(ctx, media)
-	if err != nil {
-		if staleMediaDownloadError(err) {
-			message, err = c.refreshMediaForDownload(ctx, client, message, media)
-			if err != nil {
-				state.err = err
-				return appstore.Message{}, state.err
-			}
-			media, err = downloadableMediaMessage(message)
-			if err != nil {
-				state.err = err
-				return appstore.Message{}, state.err
-			}
-			data, err = client.Download(ctx, media)
-		}
-		if err != nil {
-			state.err = grpcstatus.Errorf(codes.Unavailable, "download media: %v", err)
-			return appstore.Message{}, state.err
-		}
-	}
-	if len(data) == 0 || len(data) > maxOutboundMediaBytes {
-		state.err = grpcstatus.Errorf(codes.ResourceExhausted, "media size must be between 1 byte and %d MiB", maxOutboundMediaBytes/(1024*1024))
-		return appstore.Message{}, state.err
-	}
-	var mediaWidth, mediaHeight int32
-	if message.MediaKind == appstore.MediaKindImage {
-		mediaWidth, mediaHeight = decodedImageDimensions(data)
 	}
 
 	mediaDir := filepath.Join(c.paths.MediaCacheDir, "messages", message.ChatID)
@@ -167,8 +144,77 @@ func (c *Client) DownloadMessageMedia(ctx context.Context, messageID string) (ap
 		fileName = stickerKey + mediaExtension(message.MediaMimeType)
 	}
 	localPath := filepath.Join(mediaDir, fileName)
-	if err := writeFileAtomic(localPath, data, 0o600); err != nil {
-		state.err = grpcstatus.Errorf(codes.Internal, "write media cache file: %v", err)
+	partPath := localPath + ".part"
+
+	partFile, err := os.OpenFile(partPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		state.err = grpcstatus.Errorf(codes.Internal, "create media cache file: %v", err)
+		return appstore.Message{}, state.err
+	}
+	partOpen := true
+	defer func() {
+		if partOpen {
+			partFile.Close()
+		}
+		if state.err != nil {
+			os.Remove(partPath)
+		}
+	}()
+
+	progress := &mediaProgressFile{
+		File: partFile,
+		report: func(receivedBytes uint64) {
+			c.daemon.PublishMediaDownloadChanged(message.ID, message.ChatID, true, "", receivedBytes, totalBytes)
+		},
+	}
+	if err := client.DownloadToFile(ctx, media, progress); err != nil {
+		if staleMediaDownloadError(err) {
+			message, err = c.refreshMediaForDownload(ctx, client, message, media)
+			if err != nil {
+				state.err = err
+				return appstore.Message{}, state.err
+			}
+			media, err = downloadableMediaMessage(message)
+			if err != nil {
+				state.err = err
+				return appstore.Message{}, state.err
+			}
+			if _, err = partFile.Seek(0, io.SeekStart); err == nil {
+				if err = partFile.Truncate(0); err == nil {
+					progress.position = 0
+					err = client.DownloadToFile(ctx, media, progress)
+				}
+			}
+		}
+		if err != nil {
+			state.err = grpcstatus.Errorf(codes.Unavailable, "download media: %v", err)
+			return appstore.Message{}, state.err
+		}
+	}
+
+	fileInfo, err := partFile.Stat()
+	if err != nil {
+		state.err = grpcstatus.Errorf(codes.Internal, "stat media cache file: %v", err)
+		return appstore.Message{}, state.err
+	}
+	if fileInfo.Size() == 0 || fileInfo.Size() > maxOutboundMediaBytes {
+		state.err = grpcstatus.Errorf(codes.ResourceExhausted, "media size must be between 1 byte and %d MiB", maxOutboundMediaBytes/(1024*1024))
+		return appstore.Message{}, state.err
+	}
+	var mediaWidth, mediaHeight int32
+	if message.MediaKind == appstore.MediaKindImage {
+		if _, err := partFile.Seek(0, io.SeekStart); err == nil {
+			mediaWidth, mediaHeight = decodedImageDimensionsFromReader(partFile)
+		}
+	}
+	if err := partFile.Close(); err != nil {
+		partOpen = false
+		state.err = grpcstatus.Errorf(codes.Internal, "close media cache file: %v", err)
+		return appstore.Message{}, state.err
+	}
+	partOpen = false
+	if err := os.Rename(partPath, localPath); err != nil {
+		state.err = grpcstatus.Errorf(codes.Internal, "store media cache file: %v", err)
 		return appstore.Message{}, state.err
 	}
 	if isWhatsAppAnimatedSticker(message.MediaMimeType) {
@@ -189,8 +235,79 @@ func (c *Client) DownloadMessageMedia(ctx context.Context, messageID string) (ap
 	return updated, nil
 }
 
+// mediaProgressFile wraps the media cache file handed to whatsmeow's
+// DownloadToFile. The HTTP body is streamed in through sequential Write calls,
+// so counting those gives live download progress; the later in-place
+// decryption pass uses WriteAt and is intentionally not counted. Seeks reset
+// the counter so whatsmeow's rewind-and-retry path restarts the progress
+// honestly instead of double-counting.
+type mediaProgressFile struct {
+	*os.File
+	position   int64
+	lastReport time.Time
+	lastSeen   uint64
+	report     func(receivedBytes uint64)
+}
+
+const mediaProgressReportInterval = 150 * time.Millisecond
+
+func (p *mediaProgressFile) Write(data []byte) (int, error) {
+	n, err := p.File.Write(data)
+	p.position += int64(n)
+	if p.report != nil && p.position > 0 {
+		received := uint64(p.position)
+		now := time.Now()
+		if received != p.lastSeen && now.Sub(p.lastReport) >= mediaProgressReportInterval {
+			p.lastReport = now
+			p.lastSeen = received
+			p.report(received)
+		}
+	}
+	return n, err
+}
+
+// ReadFrom must be overridden: io.Copy prefers the destination's ReaderFrom,
+// and the one promoted from the embedded *os.File would stream the whole HTTP
+// body kernel-side without ever hitting Write — no progress would be reported.
+// Looping through Write keeps the counting (and its throttling) in one place.
+func (p *mediaProgressFile) ReadFrom(reader io.Reader) (int64, error) {
+	buf := make([]byte, 32*1024)
+	var total int64
+	for {
+		n, readErr := reader.Read(buf)
+		if n > 0 {
+			written, writeErr := p.Write(buf[:n])
+			total += int64(written)
+			if writeErr != nil {
+				return total, writeErr
+			}
+			if written < n {
+				return total, io.ErrShortWrite
+			}
+		}
+		if readErr == io.EOF {
+			return total, nil
+		}
+		if readErr != nil {
+			return total, readErr
+		}
+	}
+}
+
+func (p *mediaProgressFile) Seek(offset int64, whence int) (int64, error) {
+	pos, err := p.File.Seek(offset, whence)
+	if err == nil {
+		p.position = pos
+	}
+	return pos, err
+}
+
 func decodedImageDimensions(data []byte) (int32, int32) {
-	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	return decodedImageDimensionsFromReader(bytes.NewReader(data))
+}
+
+func decodedImageDimensionsFromReader(reader io.Reader) (int32, int32) {
+	cfg, _, err := image.DecodeConfig(reader)
 	if err != nil || cfg.Width <= 0 || cfg.Height <= 0 || cfg.Width > maxInt32 || cfg.Height > maxInt32 {
 		return 0, 0
 	}

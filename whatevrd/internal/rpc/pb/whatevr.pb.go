@@ -1442,11 +1442,15 @@ func (x *ChatPresenceChanged) GetLastSeenUnix() int64 {
 }
 
 type MediaDownloadChanged struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	MessageId     string                 `protobuf:"bytes,1,opt,name=message_id,json=messageId,proto3" json:"message_id,omitempty"`
-	ChatId        string                 `protobuf:"bytes,2,opt,name=chat_id,json=chatId,proto3" json:"chat_id,omitempty"`
-	Downloading   bool                   `protobuf:"varint,3,opt,name=downloading,proto3" json:"downloading,omitempty"`
-	ErrorText     string                 `protobuf:"bytes,4,opt,name=error_text,json=errorText,proto3" json:"error_text,omitempty"`
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	MessageId   string                 `protobuf:"bytes,1,opt,name=message_id,json=messageId,proto3" json:"message_id,omitempty"`
+	ChatId      string                 `protobuf:"bytes,2,opt,name=chat_id,json=chatId,proto3" json:"chat_id,omitempty"`
+	Downloading bool                   `protobuf:"varint,3,opt,name=downloading,proto3" json:"downloading,omitempty"`
+	ErrorText   string                 `protobuf:"bytes,4,opt,name=error_text,json=errorText,proto3" json:"error_text,omitempty"`
+	// Streamed download progress. total_bytes comes from the media metadata's
+	// file length and is 0 when unknown (clients show an indeterminate spinner).
+	ReceivedBytes uint64 `protobuf:"varint,5,opt,name=received_bytes,json=receivedBytes,proto3" json:"received_bytes,omitempty"`
+	TotalBytes    uint64 `protobuf:"varint,6,opt,name=total_bytes,json=totalBytes,proto3" json:"total_bytes,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1507,6 +1511,20 @@ func (x *MediaDownloadChanged) GetErrorText() string {
 		return x.ErrorText
 	}
 	return ""
+}
+
+func (x *MediaDownloadChanged) GetReceivedBytes() uint64 {
+	if x != nil {
+		return x.ReceivedBytes
+	}
+	return 0
+}
+
+func (x *MediaDownloadChanged) GetTotalBytes() uint64 {
+	if x != nil {
+		return x.TotalBytes
+	}
+	return 0
 }
 
 type ConnectionChanged struct {
@@ -5368,14 +5386,17 @@ const file_whatevr_proto_rawDesc = "" +
 	"\tsender_id\x18\x02 \x01(\tR\bsenderId\x12!\n" +
 	"\fis_composing\x18\x03 \x01(\bR\visComposing\x12C\n" +
 	"\favailability\x18\x04 \x01(\x0e2\x1f.whatevr.v1.ContactAvailabilityR\favailability\x12$\n" +
-	"\x0elast_seen_unix\x18\x05 \x01(\x03R\flastSeenUnix\"\x8f\x01\n" +
+	"\x0elast_seen_unix\x18\x05 \x01(\x03R\flastSeenUnix\"\xd7\x01\n" +
 	"\x14MediaDownloadChanged\x12\x1d\n" +
 	"\n" +
 	"message_id\x18\x01 \x01(\tR\tmessageId\x12\x17\n" +
 	"\achat_id\x18\x02 \x01(\tR\x06chatId\x12 \n" +
 	"\vdownloading\x18\x03 \x01(\bR\vdownloading\x12\x1d\n" +
 	"\n" +
-	"error_text\x18\x04 \x01(\tR\terrorText\"\x9e\x02\n" +
+	"error_text\x18\x04 \x01(\tR\terrorText\x12%\n" +
+	"\x0ereceived_bytes\x18\x05 \x01(\x04R\rreceivedBytes\x12\x1f\n" +
+	"\vtotal_bytes\x18\x06 \x01(\x04R\n" +
+	"totalBytes\"\x9e\x02\n" +
 	"\x11ConnectionChanged\x12-\n" +
 	"\x05state\x18\x01 \x01(\x0e2\x17.whatevr.v1.DaemonStateR\x05state\x12\x16\n" +
 	"\x06detail\x18\x02 \x01(\tR\x06detail\x12\x1a\n" +
