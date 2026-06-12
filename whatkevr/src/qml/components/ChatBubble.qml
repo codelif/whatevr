@@ -98,8 +98,10 @@ Item {
     // Open the quick-reaction bar / picker for this message. Position is in this
     // delegate's coordinates; the view maps it.
     signal reactionPickerRequested(real posX, real posY)
-    // Open the reactor list for this message's reaction pill.
-    signal reactionDetailsRequested(real posX, real posY)
+    // Toggle the viewer's own reaction with this emoji (chip click).
+    signal reactionToggleRequested(string emoji)
+    // Open the reactor list dialog for this message's reactions.
+    signal reactionDetailsRequested()
     signal replyPreviewActivated(string messageId)
     signal readMoreRequested(string messageId)
     // Position is in this delegate's coordinates; the view maps it.
@@ -490,16 +492,16 @@ Item {
         : bubble.y + bubble.height
 
     readonly property bool hasReactions: reactions !== undefined && reactions !== null && reactions.length > 0
-    // The reaction pill overlaps the bubble's bottom edge; only the portion that
-    // hangs below needs reserving so it never clips into the next row.
-    readonly property real reactionOverhang: hasReactions
-        ? Math.round(reactionPill.height * 0.55 + Kirigami.Units.smallSpacing / 2)
+    // The reaction chip row sits in its own band below the bubble; reserve its
+    // full height plus the gap above it so it never clips into the next row.
+    readonly property real reactionRowReserve: hasReactions
+        ? Math.round(reactionRow.height + Kirigami.Units.smallSpacing / 2)
         : 0
 
     width: listWidth
     height: (frameless
         ? stickerFooter.y + stickerFooter.height
-        : bubble.y + bubble.height) + reactionOverhang + (groupEnd ? Kirigami.Units.smallSpacing : Kirigami.Units.smallSpacing / 4)
+        : bubble.y + bubble.height) + reactionRowReserve + (groupEnd ? Kirigami.Units.smallSpacing : Kirigami.Units.smallSpacing / 4)
 
     HoverHandler {
         id: rowHoverHandler
@@ -1668,20 +1670,28 @@ Item {
         }
     }
 
-    // Reaction pill, hung off the bubble's bottom-left corner, overlapping the
-    // bottom edge. The time+ticks footer always sits at the bottom-right inner
-    // corner, so anchoring left (for both directions) keeps the pill clear of
-    // the timestamp it would otherwise cover on outgoing messages.
-    ReactionPill {
-        id: reactionPill
+    // Reaction chips in their own band below the bubble, aligned with the
+    // bubble's edge (left for incoming, right for outgoing via the row's
+    // layoutDirection). The row is capped at the bubble's width so many
+    // reactions wrap instead of widening past the message; the floor keeps a
+    // couple of chips per line on very narrow bubbles. Sits above the
+    // context-menu surface (z:9) so chips own their clicks, but is disabled in
+    // selection mode so the covering toggle surface wins there.
+    ReactionRow {
+        id: reactionRow
 
         reactions: root.reactions
         visible: root.hasReactions
-        z: 7
-        x: Math.round(root.replyGlowLeft + Kirigami.Units.smallSpacing)
-        y: Math.round(root.replyGlowBottom - height * 0.45)
+        enabled: !root.selectionModeActive
+        z: 10
+        width: Math.max(root.replyGlowRight - root.replyGlowLeft,
+                        Kirigami.Units.gridUnit * 8)
+        layoutDirection: root.outgoing ? Qt.RightToLeft : Qt.LeftToRight
+        x: Math.round(root.outgoing ? root.replyGlowRight - width : root.replyGlowLeft)
+        y: Math.round(root.replyGlowBottom + Kirigami.Units.smallSpacing / 2)
 
-        onClicked: root.reactionDetailsRequested(reactionPill.x, reactionPill.y + reactionPill.height)
+        onToggleRequested: emoji => root.reactionToggleRequested(emoji)
+        onDetailsRequested: root.reactionDetailsRequested()
     }
 
     // Sender header (group chats, first message of a sender group) is loaded
