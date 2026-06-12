@@ -2637,6 +2637,10 @@ void AppController::applyAvatarUpdated(const AvatarUpdated &update)
 void AppController::applyChatPresenceChanged(const ChatPresenceChanged &presence)
 {
     const int availability = static_cast<int>(presence.availability());
+    if (availability == 0) {
+        m_chatListModel->setChatTyping(presence.chatId(), presence.isComposing());
+    }
+
     if (presence.chatId() != m_selectedChatId) {
         return;
     }

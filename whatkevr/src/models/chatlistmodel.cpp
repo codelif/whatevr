@@ -52,6 +52,8 @@ QVariant ChatListModel::data(const QModelIndex &index, int role) const
         return chat.avatarLocalPath;
     case InitialsRole:
         return chat.initials;
+    case IsTypingRole:
+        return chat.isTyping;
     default:
         return {};
     }
@@ -72,6 +74,7 @@ QHash<int, QByteArray> ChatListModel::roleNames() const
         {PinnedOrderRole, "pinnedOrder"},
         {AvatarLocalPathRole, "avatarLocalPath"},
         {InitialsRole, "initials"},
+        {IsTypingRole, "isTyping"},
     };
 }
 
@@ -80,7 +83,12 @@ void ChatListModel::replaceChats(const QList<whatevr::v1::Chat> &chats)
     QList<ChatItem> next;
     next.reserve(chats.size());
     for (const auto &chat : chats) {
-        next.append(fromProto(chat));
+        ChatItem item = fromProto(chat);
+        const int existingIndex = indexOf(item.id);
+        if (existingIndex >= 0) {
+            item.isTyping = m_chats.at(existingIndex).isTyping;
+        }
+        next.append(std::move(item));
     }
 
     std::sort(next.begin(), next.end(), sortBefore);
@@ -105,9 +113,14 @@ void ChatListModel::replaceChats(const QList<whatevr::v1::Chat> &chats)
 
 void ChatListModel::upsertChat(const whatevr::v1::Chat &chat, const QString &previousChatId)
 {
+    bool preservedTyping = false;
+    bool hasPreservedTyping = false;
+
     if (!previousChatId.isEmpty()) {
         const int previousIndex = indexOf(previousChatId);
         if (previousIndex >= 0) {
+            preservedTyping = m_chats.at(previousIndex).isTyping;
+            hasPreservedTyping = true;
             beginRemoveRows(QModelIndex(), previousIndex, previousIndex);
             m_chats.removeAt(previousIndex);
             endRemoveRows();
@@ -116,8 +129,13 @@ void ChatListModel::upsertChat(const whatevr::v1::Chat &chat, const QString &pre
         }
     }
 
-    const ChatItem item = fromProto(chat);
+    ChatItem item = fromProto(chat);
     const int existingIndex = indexOf(item.id);
+    if (existingIndex >= 0) {
+        item.isTyping = m_chats.at(existingIndex).isTyping;
+    } else if (hasPreservedTyping) {
+        item.isTyping = preservedTyping;
+    }
 
     if (existingIndex < 0) {
         const int insertIndex = sortedInsertIndex(item);
@@ -161,6 +179,18 @@ bool ChatListModel::updateAvatar(const QString &chatId, const QString &avatarLoc
     m_chats[chatIndex].avatarLocalPath = avatarLocalPath;
     const QModelIndex changedIndex = index(chatIndex, 0);
     Q_EMIT dataChanged(changedIndex, changedIndex, {AvatarLocalPathRole});
+    return true;
+}
+
+bool ChatListModel::setChatTyping(const QString &chatId, bool typing)
+{
+    const int chatIndex = indexOf(chatId);
+    if (chatIndex < 0 || m_chats.at(chatIndex).isTyping == typing) {
+        return false;
+    }
+    m_chats[chatIndex].isTyping = typing;
+    const QModelIndex changedIndex = index(chatIndex, 0);
+    Q_EMIT dataChanged(changedIndex, changedIndex, {IsTypingRole});
     return true;
 }
 
@@ -227,6 +257,7 @@ ChatListModel::ChatItem ChatListModel::fromProto(const whatevr::v1::Chat &chat)
         .pinnedOrder = chat.pinnedOrder(),
         .updatedAtUnix = chat.updatedAtUnix(),
         .avatarLocalPath = chat.avatarLocalPath(),
+        .isTyping = false,
     };
     item.displayName = displayName(item);
     item.initials = initialsForName(item.displayName);
@@ -285,7 +316,8 @@ bool ChatListModel::sameChatData(const ChatItem &left, const ChatItem &right)
         && left.isGroup == right.isGroup
         && left.isPinned == right.isPinned
         && left.pinnedOrder == right.pinnedOrder
-        && left.avatarLocalPath == right.avatarLocalPath;
+        && left.avatarLocalPath == right.avatarLocalPath
+        && left.isTyping == right.isTyping;
 }
 
 bool ChatListModel::sortBefore(const ChatItem &left, const ChatItem &right)
