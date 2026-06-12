@@ -102,6 +102,7 @@ service SendService {
   rpc SendMedia(SendMediaRequest) returns (SendMediaResponse);
   rpc RevokeMessage(RevokeMessageRequest) returns (RevokeMessageResponse);
   rpc ForwardMessage(ForwardMessageRequest) returns (ForwardMessageResponse);
+  rpc SendReaction(SendReactionRequest) returns (SendReactionResponse);
 }
 
 service StickerService {
@@ -408,6 +409,18 @@ message ForwardMessageResponse {
   repeated Message messages = 1;
 }
 
+message SendReactionRequest {
+  string chat_id = 1;
+  string message_id = 2;
+  // The reaction emoji; an empty string removes our existing reaction.
+  string emoji = 3;
+}
+
+message SendReactionResponse {
+  // The reaction's target message, reloaded with its updated reaction set.
+  Message message = 1;
+}
+
 message SetStickerFavoriteRequest {
   // Either the sticker's cache key or a sticker message id to resolve it from.
   string cache_key = 1;
@@ -575,6 +588,18 @@ message Message {
   // True when the message was deleted for everyone; content fields are
   // cleared and clients render a tombstone.
   bool is_revoked = 20;
+  // Emoji reactions on this message, one per reactor (latest wins). Empty
+  // when nobody has reacted.
+  repeated Reaction reactions = 21;
+}
+
+message Reaction {
+  string emoji = 1;
+  string sender_id = 2;
+  string sender_name = 3;
+  int64 timestamp_unix = 4;
+  // True when this reaction is our own (lets clients highlight and toggle it).
+  bool from_me = 5;
 }
 
 message MessageReply {

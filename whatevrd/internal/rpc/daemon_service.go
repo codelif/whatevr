@@ -358,6 +358,15 @@ func toProtoMessage(message app.Message) *pb.Message {
 			Direction:     toProtoMessageDirection(message.ReplyTo.Direction),
 		}
 	}
+	for _, reaction := range message.Reactions {
+		protoMessage.Reactions = append(protoMessage.Reactions, &pb.Reaction{
+			Emoji:         reaction.Emoji,
+			SenderId:      reaction.SenderID,
+			SenderName:    reaction.SenderName,
+			TimestampUnix: reaction.TimestampUnix,
+			FromMe:        reaction.FromMe,
+		})
+	}
 	return protoMessage
 }
 

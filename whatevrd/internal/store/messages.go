@@ -49,6 +49,7 @@ type Message struct {
 	LastSendError           string
 	NextSendAttempt         int64
 	ReplyTo                 MessageReply
+	Reactions               []Reaction
 }
 
 type MessageReply struct {
@@ -639,6 +640,9 @@ func (db *DB) ListMessages(ctx context.Context, chatID string, limit int, before
 	if err != nil {
 		return nil, err
 	}
+	if err := attachReactions(ctx, db.reader(), messages); err != nil {
+		return nil, err
+	}
 
 	reverseMessages(messages)
 	return messages, nil
@@ -725,7 +729,14 @@ func (db *DB) listMessagesAroundSide(ctx context.Context, chatID string, timesta
 	}
 	defer rows.Close()
 
-	return scanMessageRows(rows, limit)
+	messages, err := scanMessageRows(rows, limit)
+	if err != nil {
+		return nil, err
+	}
+	if err := attachReactions(ctx, db.reader(), messages); err != nil {
+		return nil, err
+	}
+	return messages, nil
 }
 
 func (db *DB) messageCursor(ctx context.Context, id string) (int64, int64, error) {
@@ -737,8 +748,13 @@ func (db *DB) messageCursor(ctx context.Context, id string) (int64, int64, error
 
 func (db *DB) GetMessage(ctx context.Context, id string) (Message, error) {
 	var message Message
-	err := getMessageRow(ctx, db.conn, id, &message)
-	return message, err
+	if err := getMessageRow(ctx, db.conn, id, &message); err != nil {
+		return message, err
+	}
+	if err := attachReactionsOne(ctx, db.reader(), &message); err != nil {
+		return message, err
+	}
+	return message, nil
 }
 
 func (db *DB) ListPendingOutgoingMessages(ctx context.Context, limit int, now time.Time) ([]Message, error) {
@@ -903,6 +919,11 @@ func (db *DB) MarkMessageRevoked(ctx context.Context, id string) (Message, Chat,
 			media_cache_key = ''
 		WHERE id = ?
 	`, id); err != nil {
+		return Message{}, Chat{}, false, err
+	}
+
+	// A deleted-for-everyone message drops its reactions along with its content.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM message_reactions WHERE message_id = ?`, id); err != nil {
 		return Message{}, Chat{}, false, err
 	}
 

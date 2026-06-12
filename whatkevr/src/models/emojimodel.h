@@ -47,6 +47,9 @@ public:
     [[nodiscard]] bool loaded() const;
 
     Q_INVOKABLE void addRecentEmoji(const QString &emoji);
+    // Up to `limit` most-recently-used emoji, newest first; used to surface the
+    // user's last-used reaction in the quick-reaction bar.
+    Q_INVOKABLE [[nodiscard]] QStringList recentEmoji(int limit) const;
     Q_INVOKABLE [[nodiscard]] QString emojiAt(int row) const;
     Q_INVOKABLE void setFilter(const QString &query, const QString &group);
     Q_INVOKABLE QString groupIconName(const QString &group) const;

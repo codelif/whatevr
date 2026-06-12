@@ -67,6 +67,8 @@ using whatevr::v1::DeleteMessageForMeRequest;
 using whatevr::v1::GetMessageInfoRequest;
 using whatevr::v1::RevokeMessageRequest;
 using whatevr::v1::RevokeMessageResponse;
+using whatevr::v1::SendReactionRequest;
+using whatevr::v1::SendReactionResponse;
 using whatevr::v1::ForwardMessageRequest;
 using whatevr::v1::HoldSessionRequest;
 using whatevr::v1::SendMediaRequest;
@@ -1549,6 +1551,48 @@ void AppController::revokeMessage(const QString &messageId)
         if (const auto response = reply->read<RevokeMessageResponse>()) {
             // The event stream tombstones it too; applying directly avoids a
             // visible delay between the menu action and the bubble change.
+            applyMessageEvent(response->message());
+        }
+    });
+}
+
+void AppController::sendReaction(const QString &messageId, const QString &emoji)
+{
+    if (!m_sendClient || messageId.isEmpty()) {
+        return;
+    }
+
+    SendReactionRequest request;
+    request.setMessageId(messageId);
+    request.setEmoji(emoji);
+
+    // Reflect the reaction in the UI immediately; the daemon round-trip then
+    // confirms it (success path applies the authoritative message) or the error
+    // path reverts to this captured state.
+    const QVariantList previousReactions = m_messageListModel->applyOptimisticReaction(messageId, emoji);
+
+    auto reply = m_sendClient->SendReaction(request);
+    auto *replyPtr = reply.get();
+    // Keyed per message so reacting to several messages in quick succession keeps
+    // each in-flight call alive (mirrors revokeMessage).
+    m_reactionReplies.insert(messageId, std::move(reply));
+
+    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, messageId, previousReactions](const QGrpcStatus &status) {
+        auto it = m_reactionReplies.find(messageId);
+        if (it == m_reactionReplies.end() || it.value().get() != replyPtr) {
+            return;
+        }
+        const auto reply = it.value();
+        m_reactionReplies.erase(it);
+        if (!status.isOk()) {
+            // Roll back the optimistic update so the pill reflects reality again.
+            m_messageListModel->restoreReactions(messageId, previousReactions);
+            Q_EMIT messageActionFailed(status.message().isEmpty() ? i18nc("@info", "Unable to react to the message") : status.message());
+            return;
+        }
+        if (const auto response = reply->read<SendReactionResponse>()) {
+            // The event stream also delivers this update; applying directly avoids
+            // a visible delay between tapping the emoji and the pill appearing.
             applyMessageEvent(response->message());
         }
     });

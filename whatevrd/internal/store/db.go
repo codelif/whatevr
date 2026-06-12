@@ -9,7 +9,7 @@ import (
 	"github.com/mattn/go-sqlite3"
 )
 
-const schemaVersion = 3
+const schemaVersion = 4
 const SQLiteDriverName = "whatevrd-sqlite"
 
 // SQLiteReadDriverName backs the read-only connection pool. Its ConnectHook
@@ -204,6 +204,17 @@ func (db *DB) migrate(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_messages_chat_timestamp_id ON messages(chat_id, timestamp DESC, id DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_chat_read_candidates ON messages(chat_id, direction, is_read, timestamp ASC, id ASC)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_sender_chat ON messages(sender_id, chat_id)`,
+		`CREATE TABLE IF NOT EXISTS message_reactions (
+			message_id TEXT NOT NULL,
+			sender_id TEXT NOT NULL,
+			emoji TEXT NOT NULL,
+			sender_name TEXT NOT NULL DEFAULT '',
+			timestamp INTEGER NOT NULL DEFAULT 0,
+			from_me INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY (message_id, sender_id),
+			FOREIGN KEY(message_id) REFERENCES messages(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_message_reactions_message ON message_reactions(message_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_chats_last_message_time ON chats(last_message_time DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_chats_list_order ON chats((CASE WHEN is_pinned != 0 THEN 0 ELSE 1 END), pinned_order DESC, last_message_time DESC, id ASC)`,
 		`CREATE TABLE IF NOT EXISTS senders (

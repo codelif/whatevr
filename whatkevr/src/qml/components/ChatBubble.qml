@@ -50,6 +50,9 @@ Item {
     property int mediaIntrinsicHeight: 0
     property bool mediaAnimated: false
     property bool isRevoked: false
+    // Reactions on this message: list of {emoji, senderId, senderName, fromMe}
+    // maps (MessageListModel ReactionsRole).
+    property var reactions: []
     // Multi-message selection (top-bar actions). While the mode is active a
     // covering handler turns every click into a toggle and swallows the
     // bubble's normal interactions (links, text selection, reply).
@@ -92,6 +95,11 @@ Item {
     signal messageSelectionClaimed(string messageId)
     signal typeIntoComposerRequested(string text)
     signal replyRequested(string messageId, string senderName, string text, string mediaKind, string mediaMimeType, bool outgoing)
+    // Open the quick-reaction bar / picker for this message. Position is in this
+    // delegate's coordinates; the view maps it.
+    signal reactionPickerRequested(real posX, real posY)
+    // Open the reactor list for this message's reaction pill.
+    signal reactionDetailsRequested(real posX, real posY)
     signal replyPreviewActivated(string messageId)
     signal readMoreRequested(string messageId)
     // Position is in this delegate's coordinates; the view maps it.
@@ -481,10 +489,17 @@ Item {
                    stickerFooter.y + stickerFooter.height)
         : bubble.y + bubble.height
 
+    readonly property bool hasReactions: reactions !== undefined && reactions !== null && reactions.length > 0
+    // The reaction pill overlaps the bubble's bottom edge; only the portion that
+    // hangs below needs reserving so it never clips into the next row.
+    readonly property real reactionOverhang: hasReactions
+        ? Math.round(reactionPill.height * 0.55 + Kirigami.Units.smallSpacing / 2)
+        : 0
+
     width: listWidth
     height: (frameless
         ? stickerFooter.y + stickerFooter.height
-        : bubble.y + bubble.height) + (groupEnd ? Kirigami.Units.smallSpacing : Kirigami.Units.smallSpacing / 4)
+        : bubble.y + bubble.height) + reactionOverhang + (groupEnd ? Kirigami.Units.smallSpacing : Kirigami.Units.smallSpacing / 4)
 
     HoverHandler {
         id: rowHoverHandler
@@ -1614,16 +1629,16 @@ Item {
                                            Math.min(Kirigami.Units.gridUnit * 1.45,
                                                     visualHeight - Kirigami.Units.smallSpacing)))
                 height: width
-                icon.name: "edit-undo"
+                icon.name: "smiley-add-symbolic"
                 // Set both dimensions to the constant directly; binding icon.height to
                 // icon.width loops through the control's implicit-size machinery.
                 icon.width: Kirigami.Units.iconSizes.smallMedium
                 icon.height: Kirigami.Units.iconSizes.smallMedium
-                text: Whatevr.I18n.i18nc("@action:button", "Reply")
+                text: Whatevr.I18n.i18nc("@action:button", "React")
                 display: AbstractButton.IconOnly
                 focusPolicy: Qt.NoFocus
                 hoverEnabled: true
-                onClicked: root.requestReply()
+                onClicked: root.reactionPickerRequested(x + width / 2, y)
 
                 contentItem: Item {
                     Kirigami.Icon {
@@ -1651,6 +1666,22 @@ Item {
                 }
             }
         }
+    }
+
+    // Reaction pill, hung off the bubble's bottom-left corner, overlapping the
+    // bottom edge. The time+ticks footer always sits at the bottom-right inner
+    // corner, so anchoring left (for both directions) keeps the pill clear of
+    // the timestamp it would otherwise cover on outgoing messages.
+    ReactionPill {
+        id: reactionPill
+
+        reactions: root.reactions
+        visible: root.hasReactions
+        z: 7
+        x: Math.round(root.replyGlowLeft + Kirigami.Units.smallSpacing)
+        y: Math.round(root.replyGlowBottom - height * 0.45)
+
+        onClicked: root.reactionDetailsRequested(reactionPill.x, reactionPill.y + reactionPill.height)
     }
 
     // Sender header (group chats, first message of a sender group) is loaded

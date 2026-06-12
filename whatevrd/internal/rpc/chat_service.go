@@ -326,7 +326,25 @@ func toAppMessage(message appstore.Message) app.Message {
 			MediaMimeType: message.ReplyTo.MediaMimeType,
 			Direction:     message.ReplyTo.Direction,
 		},
+		Reactions: toAppReactions(message.Reactions),
 	}
+}
+
+func toAppReactions(reactions []appstore.Reaction) []app.Reaction {
+	if len(reactions) == 0 {
+		return nil
+	}
+	out := make([]app.Reaction, len(reactions))
+	for i, reaction := range reactions {
+		out[i] = app.Reaction{
+			Emoji:         reaction.Emoji,
+			SenderID:      reaction.SenderID,
+			SenderName:    reaction.SenderName,
+			TimestampUnix: reaction.TimestampUnix,
+			FromMe:        reaction.FromMe,
+		}
+	}
+	return out
 }
 
 func toAppAvatar(avatar appstore.Avatar) app.Avatar {

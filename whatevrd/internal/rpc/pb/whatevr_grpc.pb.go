@@ -899,6 +899,7 @@ const (
 	SendService_SendMedia_FullMethodName      = "/whatevr.v1.SendService/SendMedia"
 	SendService_RevokeMessage_FullMethodName  = "/whatevr.v1.SendService/RevokeMessage"
 	SendService_ForwardMessage_FullMethodName = "/whatevr.v1.SendService/ForwardMessage"
+	SendService_SendReaction_FullMethodName   = "/whatevr.v1.SendService/SendReaction"
 )
 
 // SendServiceClient is the client API for SendService service.
@@ -909,6 +910,7 @@ type SendServiceClient interface {
 	SendMedia(ctx context.Context, in *SendMediaRequest, opts ...grpc.CallOption) (*SendMediaResponse, error)
 	RevokeMessage(ctx context.Context, in *RevokeMessageRequest, opts ...grpc.CallOption) (*RevokeMessageResponse, error)
 	ForwardMessage(ctx context.Context, in *ForwardMessageRequest, opts ...grpc.CallOption) (*ForwardMessageResponse, error)
+	SendReaction(ctx context.Context, in *SendReactionRequest, opts ...grpc.CallOption) (*SendReactionResponse, error)
 }
 
 type sendServiceClient struct {
@@ -959,6 +961,16 @@ func (c *sendServiceClient) ForwardMessage(ctx context.Context, in *ForwardMessa
 	return out, nil
 }
 
+func (c *sendServiceClient) SendReaction(ctx context.Context, in *SendReactionRequest, opts ...grpc.CallOption) (*SendReactionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SendReactionResponse)
+	err := c.cc.Invoke(ctx, SendService_SendReaction_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SendServiceServer is the server API for SendService service.
 // All implementations must embed UnimplementedSendServiceServer
 // for forward compatibility.
@@ -967,6 +979,7 @@ type SendServiceServer interface {
 	SendMedia(context.Context, *SendMediaRequest) (*SendMediaResponse, error)
 	RevokeMessage(context.Context, *RevokeMessageRequest) (*RevokeMessageResponse, error)
 	ForwardMessage(context.Context, *ForwardMessageRequest) (*ForwardMessageResponse, error)
+	SendReaction(context.Context, *SendReactionRequest) (*SendReactionResponse, error)
 	mustEmbedUnimplementedSendServiceServer()
 }
 
@@ -988,6 +1001,9 @@ func (UnimplementedSendServiceServer) RevokeMessage(context.Context, *RevokeMess
 }
 func (UnimplementedSendServiceServer) ForwardMessage(context.Context, *ForwardMessageRequest) (*ForwardMessageResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ForwardMessage not implemented")
+}
+func (UnimplementedSendServiceServer) SendReaction(context.Context, *SendReactionRequest) (*SendReactionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SendReaction not implemented")
 }
 func (UnimplementedSendServiceServer) mustEmbedUnimplementedSendServiceServer() {}
 func (UnimplementedSendServiceServer) testEmbeddedByValue()                     {}
@@ -1082,6 +1098,24 @@ func _SendService_ForwardMessage_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SendService_SendReaction_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SendReactionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SendServiceServer).SendReaction(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SendService_SendReaction_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SendServiceServer).SendReaction(ctx, req.(*SendReactionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SendService_ServiceDesc is the grpc.ServiceDesc for SendService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1104,6 +1138,10 @@ var SendService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ForwardMessage",
 			Handler:    _SendService_ForwardMessage_Handler,
+		},
+		{
+			MethodName: "SendReaction",
+			Handler:    _SendService_SendReaction_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

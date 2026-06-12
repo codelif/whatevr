@@ -288,6 +288,7 @@ type Message struct {
 	MediaCacheKey           string
 	IsRevoked               bool
 	ReplyTo                 MessageReply
+	Reactions               []Reaction
 }
 
 type MessageReply struct {
@@ -298,6 +299,14 @@ type MessageReply struct {
 	MediaKind     string
 	MediaMimeType string
 	Direction     string
+}
+
+type Reaction struct {
+	Emoji         string
+	SenderID      string
+	SenderName    string
+	TimestampUnix int64
+	FromMe        bool
 }
 
 // ParticipantReceipt is one group member's receipt state for a message; zero
