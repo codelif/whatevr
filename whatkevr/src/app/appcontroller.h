@@ -306,6 +306,7 @@ private:
     // anchor when the window provably covers the whole unread region; the
     // authoritative call (fresh GetMessages response) takes the best match.
     void resolveUnreadAnchor(bool authoritative);
+    void dismissUnreadAnchor();
     void scheduleSelectedChatMessageReload(const QString &chatId);
     void tryApplyPendingDeepLink();
 
@@ -352,8 +353,7 @@ private:
     int m_selectedChatUnreadCount = 0;
     // Unread state captured when the chat was opened: the badge snapshot, the
     // resulting divider anchor, and whether resolution already happened. The
-    // anchor stays put for the whole time the chat is open (WhatsApp keeps the
-    // divider until you leave the chat), even after the badge clears.
+    // anchor can be cleared early by live activity in the selected chat.
     int m_selectedChatUnreadSnapshot = 0;
     QString m_unreadAnchorMessageId;
     int m_unreadAnchorCount = 0;
