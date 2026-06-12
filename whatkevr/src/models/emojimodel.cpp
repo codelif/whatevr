@@ -144,6 +144,14 @@ void EmojiModel::addRecentEmoji(const QString &emoji)
     Q_EMIT loadedChanged();
 }
 
+QStringList EmojiModel::recentEmoji(int limit) const
+{
+    if (limit <= 0 || m_recentEmoji.isEmpty()) {
+        return {};
+    }
+    return m_recentEmoji.mid(0, qMin(limit, static_cast<int>(m_recentEmoji.size())));
+}
+
 QString EmojiModel::emojiAt(int row) const
 {
     if (row < 0 || row >= m_rows.size()) {

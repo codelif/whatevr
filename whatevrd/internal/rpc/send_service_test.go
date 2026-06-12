@@ -42,6 +42,10 @@ func (f *fakeSendController) ForwardMessage(context.Context, string, []string) (
 	return nil, nil
 }
 
+func (f *fakeSendController) SendReaction(context.Context, string, string) (appstore.Message, error) {
+	return appstore.Message{}, nil
+}
+
 func TestSendTextAllowsNativeSizedMessage(t *testing.T) {
 	sender := &fakeSendController{}
 	service := NewSendService(sender)

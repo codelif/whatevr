@@ -25,6 +25,7 @@ type SendController interface {
 	SendMedia(context.Context, string, string, string, string) (appstore.SavedTextMessage, error)
 	RevokeMessage(context.Context, string) (appstore.Message, error)
 	ForwardMessage(context.Context, string, []string) ([]appstore.SavedTextMessage, error)
+	SendReaction(context.Context, string, string) (appstore.Message, error)
 }
 
 type SendService struct {
@@ -99,6 +100,24 @@ func (s *SendService) RevokeMessage(ctx context.Context, req *pb.RevokeMessageRe
 		return nil, err
 	}
 	return &pb.RevokeMessageResponse{Message: toProtoMessage(toAppMessage(message))}, nil
+}
+
+func (s *SendService) SendReaction(ctx context.Context, req *pb.SendReactionRequest) (*pb.SendReactionResponse, error) {
+	if s.sender == nil {
+		return nil, status.Error(codes.Unimplemented, "send controller is not available")
+	}
+	if strings.TrimSpace(req.GetMessageId()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "message_id is required")
+	}
+
+	message, err := s.sender.SendReaction(ctx, strings.TrimSpace(req.GetMessageId()), req.GetEmoji())
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, status.Error(codes.NotFound, "message not found")
+		}
+		return nil, err
+	}
+	return &pb.SendReactionResponse{Message: toProtoMessage(toAppMessage(message))}, nil
 }
 
 func (s *SendService) ForwardMessage(ctx context.Context, req *pb.ForwardMessageRequest) (*pb.ForwardMessageResponse, error) {

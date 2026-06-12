@@ -359,6 +359,67 @@ Item {
         messageContextMenu.openFor(snapshot, pos.x, pos.y)
     }
 
+    // The viewer's own reaction emoji on a message, or "" if they haven't reacted.
+    function currentUserReaction(snapshot) {
+        if (!snapshot || !snapshot.reactions) {
+            return ""
+        }
+        for (let i = 0; i < snapshot.reactions.length; ++i) {
+            if (snapshot.reactions[i].fromMe) {
+                return String(snapshot.reactions[i].emoji || "")
+            }
+        }
+        return ""
+    }
+
+    // Adds, replaces, or (when emoji repeats the current one, or is empty)
+    // removes the viewer's reaction on a message.
+    function reactToMessage(messageId, emoji) {
+        if (messageId.length === 0) {
+            return
+        }
+        if (emoji.length === 0) {
+            Whatevr.AppController.sendReaction(messageId, "")
+            return
+        }
+        const current = currentUserReaction(messageSnapshot(messageId))
+        if (current === emoji) {
+            Whatevr.AppController.sendReaction(messageId, "")
+        } else {
+            Whatevr.AppController.sendReaction(messageId, emoji)
+            Whatevr.AppController.emojiModel.addRecentEmoji(emoji)
+        }
+    }
+
+    function openQuickReactions(delegate, posX, posY) {
+        const snapshot = messageSnapshot(delegate.messageId)
+        if (!snapshot || snapshot.isRevoked) {
+            return
+        }
+        const pos = delegate.mapToItem(list, posX, posY)
+        quickReactionPopup.openFor(delegate.messageId, currentUserReaction(snapshot), pos.x, pos.y)
+    }
+
+    function openReactionDetails(delegate, posX, posY) {
+        const snapshot = messageSnapshot(delegate.messageId)
+        if (!snapshot || !snapshot.reactions || snapshot.reactions.length === 0) {
+            return
+        }
+        const pos = delegate.mapToItem(list, posX, posY)
+        reactionDetailsPopup.openFor(snapshot.reactions, delegate.messageId, pos.x, pos.y)
+    }
+
+    function openReactionPicker(messageId) {
+        if (messageId.length === 0) {
+            return
+        }
+        reactionEmojiPopup.targetMessageId = messageId
+        reactionEmojiPopup.x = Math.round((list.width - reactionEmojiPopup.width) / 2)
+        reactionEmojiPopup.y = Math.round((list.height - reactionEmojiPopup.height) / 2)
+        reactionEmojiPopup.prepareForOpen()
+        reactionEmojiPopup.open()
+    }
+
     function clearMessageSelection() {
         activeSelectionMessageId = ""
         clearSelectionGeneration += 1
@@ -823,6 +884,7 @@ Item {
             replyToMediaKind: String(model.replyToMediaKind || "")
             replyToMediaMimeType: String(model.replyToMediaMimeType || "")
             replyToOutgoing: Boolean(model.replyToIsOutgoing)
+            reactions: model.reactions
             clearSelectionGeneration: root.clearSelectionGeneration
             activeSelectionMessageId: root.activeSelectionMessageId
             onConversationFocusRequested: root.conversationFocusRequested()
@@ -832,6 +894,8 @@ Item {
             onReplyPreviewActivated: messageId => root.jumpToReplyTarget(messageId)
             onReadMoreRequested: messageId => root.expandMessageText(messageId)
             onContextMenuRequested: (posX, posY) => root.openContextMenu(messageDelegate, posX, posY)
+            onReactionPickerRequested: (posX, posY) => root.openQuickReactions(messageDelegate, posX, posY)
+            onReactionDetailsRequested: (posX, posY) => root.openReactionDetails(messageDelegate, posX, posY)
             onSelectionToggleRequested: root.toggleSelected(messageDelegate.messageId)
             onDaySelectionToggleRequested: root.toggleDaySelection(messageDelegate.messageId)
 
@@ -1134,6 +1198,15 @@ Item {
         readonly property bool ctxCanRevoke: root.canRevokeSnapshot(ctx)
 
         parent: list
+        // The KDE desktop style uses different menu frame metrics per axis.
+        // Keep this app menu compact and visually even around all edges.
+        readonly property real framePadding: Kirigami.Units.smallSpacing
+        readonly property real horizontalFramePadding: framePadding
+        readonly property real verticalFramePadding: framePadding
+        topPadding: verticalFramePadding
+        bottomPadding: verticalFramePadding
+        leftPadding: horizontalFramePadding
+        rightPadding: horizontalFramePadding
 
         // No exit animation: right-clicking another message dismisses the open
         // menu and reopens it at the new position in the same press; a fading
@@ -1176,6 +1249,51 @@ Item {
                         Whatevr.AppController.stickers.isStickerFavorite(messageContextMenu.ctxMediaCacheKey)
                 }
             }
+        }
+
+        // Quick-reaction row: tapping an emoji reacts immediately; the inner
+        // TapHandlers grab the press so this MenuItem never triggers itself.
+        MenuItem {
+            id: reactionRowItem
+
+            visible: !messageContextMenu.ctxIsRevoked
+            height: visible ? reactionRow.implicitHeight : 0
+            padding: 0
+            topPadding: 0
+            bottomPadding: 0
+            leftPadding: 0
+            rightPadding: 0
+            focusPolicy: Qt.NoFocus
+            // Report only the bar's natural minimal width so the menu width is
+            // governed by the (usually wider) text rows; the bar then stretches
+            // to fill it via fillWidth, instead of forcing the menu over-wide.
+            implicitWidth: reactionRow.contentWidth
+
+            background: Rectangle {
+                color: "transparent"
+            }
+
+            contentItem: QuickReactionBar {
+                id: reactionRow
+
+                fillWidth: reactionRowItem.width
+                contentPadding: Math.max(1, Math.round(Kirigami.Units.smallSpacing / 2))
+                emojiBottomMargin: 0
+                currentEmoji: messageContextMenu.ctxValid ? root.currentUserReaction(messageContextMenu.ctx) : ""
+                onReacted: emoji => {
+                    root.reactToMessage(messageContextMenu.ctxMessageId, emoji)
+                    messageContextMenu.close()
+                }
+                onPickerRequested: {
+                    const targetId = messageContextMenu.ctxMessageId
+                    messageContextMenu.close()
+                    root.openReactionPicker(targetId)
+                }
+            }
+        }
+
+        MenuSeparator {
+            visible: !messageContextMenu.ctxIsRevoked
         }
 
         MenuItem {
@@ -1233,6 +1351,14 @@ Item {
 
             title: Whatevr.I18n.i18nc("@action:inmenu submenu of the message's links", "Copy Link")
             icon.name: "edit-link-symbolic"
+
+            readonly property real framePadding: Kirigami.Units.smallSpacing
+            readonly property real horizontalFramePadding: framePadding
+            readonly property real verticalFramePadding: framePadding
+            topPadding: verticalFramePadding
+            bottomPadding: verticalFramePadding
+            leftPadding: horizontalFramePadding
+            rightPadding: horizontalFramePadding
 
             MenuItem {
                 text: Whatevr.I18n.i18nc("@action:inmenu", "Copy All Links")
@@ -1410,5 +1536,33 @@ Item {
             }
             root.clearSelection()
         }
+    }
+
+    QuickReactionPopup {
+        id: quickReactionPopup
+
+        parent: list
+
+        onReacted: (messageId, emoji) => root.reactToMessage(messageId, emoji)
+        onPickerRequested: (messageId, currentEmoji) => root.openReactionPicker(messageId)
+    }
+
+    ReactionEmojiPopup {
+        id: reactionEmojiPopup
+
+        property string targetMessageId: ""
+
+        parent: list
+
+        onEmojiSelected: emoji => {
+            root.reactToMessage(reactionEmojiPopup.targetMessageId, emoji)
+            close()
+        }
+    }
+
+    ReactionDetailsPopup {
+        id: reactionDetailsPopup
+
+        parent: list
     }
 }

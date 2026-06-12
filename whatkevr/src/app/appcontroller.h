@@ -199,6 +199,8 @@ public:
     Q_INVOKABLE void deleteMessageForMe(const QString &messageId);
     Q_INVOKABLE void revokeMessage(const QString &messageId);
     Q_INVOKABLE void forwardMessage(const QString &messageId, const QStringList &chatIds);
+    // Sends (emoji non-empty) or removes (emoji empty) our reaction on a message.
+    Q_INVOKABLE void sendReaction(const QString &messageId, const QString &emoji);
     Q_INVOKABLE void requestMessageInfo(const QString &messageId);
     Q_INVOKABLE void logout();
 
@@ -380,6 +382,7 @@ private:
     std::unique_ptr<QGrpcCallReply> m_messageInfoReply;
     QHash<QString, std::shared_ptr<QGrpcCallReply>> m_revokeMessageReplies;
     QHash<QString, std::shared_ptr<QGrpcCallReply>> m_forwardMessageReplies;
+    QHash<QString, std::shared_ptr<QGrpcCallReply>> m_reactionReplies;
     int m_forwardBatchChatCount = 0;
     bool m_forwardBatchFailed = false;
     QHash<QString, std::shared_ptr<QGrpcCallReply>> m_deleteMessageReplies;

@@ -7,6 +7,8 @@
 #include <QString>
 #include <QStringList>
 #include <QTimer>
+#include <QVariant>
+#include <QVariantList>
 
 #include <cstdint>
 
@@ -69,6 +71,7 @@ public:
         HasLinksRole,
         MediaCacheKeyRole,
         IsRevokedRole,
+        ReactionsRole,
     };
     Q_ENUM(Role)
 
@@ -89,6 +92,12 @@ public:
     bool removeMessage(const QString &messageId);
     bool updateSenderAvatar(const QString &senderId, const QString &avatarLocalPath);
     bool setMediaDownloadState(const QString &messageId, bool downloading, const QString &errorText = QString());
+    // Optimistically apply the viewer's reaction to a message so the pill updates
+    // before the daemon round-trips. Drops any existing fromMe reaction and, when
+    // emoji is non-empty, appends a fromMe entry. Returns the previous reactions
+    // list so the caller can revert with restoreReactions() if the call fails.
+    QVariantList applyOptimisticReaction(const QString &messageId, const QString &emoji);
+    void restoreReactions(const QString &messageId, const QVariantList &reactions);
     [[nodiscard]] QStringList uniqueIncomingSenderIds() const;
     void setGroupChat(bool groupChat);
     [[nodiscard]] bool isEmpty() const;
@@ -177,6 +186,9 @@ private:
         QString replyToMediaKind;
         QString replyToMediaMimeType;
         int replyToDirection = 0;
+        // Each entry is a QVariantMap {emoji, senderId, senderName, fromMe}.
+        // Aggregation into pills is done in QML.
+        QVariantList reactions;
     };
 
     static MessageItem fromProto(const whatevr::v1::Message &message);

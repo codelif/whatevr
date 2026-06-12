@@ -281,6 +281,8 @@ QVariant MessageListModel::data(const QModelIndex &index, int role) const
         return message.mediaCacheKey;
     case IsRevokedRole:
         return message.isRevoked;
+    case ReactionsRole:
+        return message.reactions;
     default:
         return {};
     }
@@ -338,6 +340,7 @@ QHash<int, QByteArray> MessageListModel::roleNames() const
         {HasLinksRole, "hasLinks"},
         {MediaCacheKeyRole, "mediaCacheKey"},
         {IsRevokedRole, "isRevoked"},
+        {ReactionsRole, "reactions"},
     };
 }
 
@@ -733,6 +736,7 @@ QVariantMap MessageListModel::messageSnapshot(const QString &messageId) const
         {QStringLiteral("mediaLocalPath"), message.mediaLocalPath},
         {QStringLiteral("mediaCacheKey"), message.mediaCacheKey},
         {QStringLiteral("isRevoked"), message.isRevoked},
+        {QStringLiteral("reactions"), message.reactions},
     };
 }
 
@@ -808,6 +812,51 @@ bool MessageListModel::setMediaDownloadState(const QString &messageId, bool down
     const QModelIndex changedIndex = index(messageIndex, 0);
     Q_EMIT dataChanged(changedIndex, changedIndex, {MediaDownloadingRole, MediaDownloadErrorRole});
     return true;
+}
+
+QVariantList MessageListModel::applyOptimisticReaction(const QString &messageId, const QString &emoji)
+{
+    const int messageIndex = indexOf(messageId);
+    if (messageIndex < 0) {
+        return {};
+    }
+
+    auto &message = m_messages[messageIndex];
+    const QVariantList previous = message.reactions;
+
+    QVariantList updated;
+    updated.reserve(previous.size() + 1);
+    for (const auto &entry : previous) {
+        // Drop the viewer's existing reaction; everyone else's stays put.
+        if (!entry.toMap().value(QStringLiteral("fromMe")).toBool()) {
+            updated.append(entry);
+        }
+    }
+    if (!emoji.isEmpty()) {
+        updated.append(QVariantMap {
+            {QStringLiteral("emoji"), emoji},
+            {QStringLiteral("senderId"), QString()},
+            {QStringLiteral("senderName"), QString()},
+            {QStringLiteral("fromMe"), true},
+        });
+    }
+
+    message.reactions = updated;
+    const QModelIndex changedIndex = index(messageIndex, 0);
+    Q_EMIT dataChanged(changedIndex, changedIndex, {ReactionsRole});
+    return previous;
+}
+
+void MessageListModel::restoreReactions(const QString &messageId, const QVariantList &reactions)
+{
+    const int messageIndex = indexOf(messageId);
+    if (messageIndex < 0) {
+        return;
+    }
+
+    m_messages[messageIndex].reactions = reactions;
+    const QModelIndex changedIndex = index(messageIndex, 0);
+    Q_EMIT dataChanged(changedIndex, changedIndex, {ReactionsRole});
 }
 
 QStringList MessageListModel::uniqueIncomingSenderIds() const
@@ -941,6 +990,14 @@ MessageListModel::MessageItem MessageListModel::fromProto(const whatevr::v1::Mes
     item.replyToMediaKind = replyTo.mediaKind();
     item.replyToMediaMimeType = replyTo.mediaMimeType();
     item.replyToDirection = static_cast<int>(replyTo.direction());
+    for (const auto &reaction : message.reactions()) {
+        item.reactions.append(QVariantMap {
+            {QStringLiteral("emoji"), reaction.emoji()},
+            {QStringLiteral("senderId"), reaction.senderId()},
+            {QStringLiteral("senderName"), reaction.senderName()},
+            {QStringLiteral("fromMe"), reaction.fromMe()},
+        });
+    }
     // Revoked rows arrive with cleared content; substitute the tombstone here
     // so layout measurement, previews and copy all see the displayed string.
     if (item.isRevoked) {
@@ -1186,7 +1243,8 @@ bool MessageListModel::sameMessageData(const MessageItem &left, const MessageIte
         && left.replyToText == right.replyToText
         && left.replyToMediaKind == right.replyToMediaKind
         && left.replyToMediaMimeType == right.replyToMediaMimeType
-        && left.replyToDirection == right.replyToDirection;
+        && left.replyToDirection == right.replyToDirection
+        && left.reactions == right.reactions;
 }
 
 bool MessageListModel::isOutgoing(const MessageItem &message) const

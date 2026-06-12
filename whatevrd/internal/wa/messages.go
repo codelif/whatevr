@@ -155,6 +155,7 @@ func (c *Client) processHistorySyncData(ctx context.Context, data *waHistorySync
 			id            string
 			historyStatus string
 			isMedia       bool
+			reactions     []*waWeb.Reaction
 		}
 		pending := make([]historySaveItem, 0, len(conv.GetMessages()))
 		for _, msg := range conv.GetMessages() {
@@ -186,6 +187,7 @@ func (c *Client) processHistorySyncData(ctx context.Context, data *waHistorySync
 					item:          appstore.MessageSaveItem{Text: &input},
 					id:            input.ID,
 					historyStatus: opts.historyStatus,
+					reactions:     webMsg.GetReactions(),
 				})
 			} else if mediaInput, ok := c.mediaMessageInput(ctx, parsedEvt, opts); ok {
 				input := mediaInput
@@ -194,6 +196,7 @@ func (c *Client) processHistorySyncData(ctx context.Context, data *waHistorySync
 					id:            input.ID,
 					historyStatus: opts.historyStatus,
 					isMedia:       true,
+					reactions:     webMsg.GetReactions(),
 				})
 			}
 			publishProcessingProgress(false)
@@ -223,6 +226,9 @@ func (c *Client) processHistorySyncData(ctx context.Context, data *waHistorySync
 				return
 			}
 			entry := pending[i]
+			if len(entry.reactions) > 0 {
+				c.saveHistoryReactions(ctx, entry.id, chatID, chatJID.Server == types.GroupServer, entry.reactions)
+			}
 			if !saved.Inserted {
 				if entry.historyStatus != "" {
 					c.maybeUpdateStatusFromHistory(ctx, entry.id, entry.historyStatus)
@@ -296,6 +302,9 @@ func (c *Client) handleMessage(ctx context.Context, evt *events.Message, offline
 		return
 	}
 	if c.handleRevokeMessage(ctx, evt, offlineSync) {
+		return
+	}
+	if c.handleReaction(ctx, evt, offlineSync) {
 		return
 	}
 	source := sourceLive
@@ -1232,7 +1241,25 @@ func toDaemonMessage(message appstore.Message) app.Message {
 			MediaMimeType: message.ReplyTo.MediaMimeType,
 			Direction:     message.ReplyTo.Direction,
 		},
+		Reactions: toDaemonReactions(message.Reactions),
 	}
+}
+
+func toDaemonReactions(reactions []appstore.Reaction) []app.Reaction {
+	if len(reactions) == 0 {
+		return nil
+	}
+	out := make([]app.Reaction, len(reactions))
+	for i, reaction := range reactions {
+		out[i] = app.Reaction{
+			Emoji:         reaction.Emoji,
+			SenderID:      reaction.SenderID,
+			SenderName:    reaction.SenderName,
+			TimestampUnix: reaction.TimestampUnix,
+			FromMe:        reaction.FromMe,
+		}
+	}
+	return out
 }
 
 func toDaemonChat(chat appstore.Chat) app.Chat {

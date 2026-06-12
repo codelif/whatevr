@@ -116,6 +116,11 @@ Kirigami.Page {
                     id: chatContextMenu
 
                     parent: chatList
+                    readonly property real framePadding: Kirigami.Units.smallSpacing
+                    topPadding: framePadding
+                    bottomPadding: framePadding
+                    leftPadding: framePadding
+                    rightPadding: framePadding
 
                     // No exit animation: right-clicking another row dismisses the
                     // open menu and reopens it at the new position in the same
