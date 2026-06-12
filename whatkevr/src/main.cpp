@@ -1,4 +1,5 @@
 #include <QApplication>
+#include <QLoggingCategory>
 #include <QPixmapCache>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
@@ -16,6 +17,9 @@ int main(int argc, char *argv[])
 {
     KLocalizedString::setApplicationDomain("whatkevr");
     QQuickStyle::setStyle(QStringLiteral("org.kde.desktop"));
+    // Some incoming media carries malformed ICC profile descriptions; Qt warns
+    // on every decode and there is nothing we can do about the files.
+    QLoggingCategory::setFilterRules(QStringLiteral("qt.gui.icc.warning=false"));
 
     QApplication app(argc, argv);
     // The default 10 MB pixmap cache is easily exhausted by a screenful of
