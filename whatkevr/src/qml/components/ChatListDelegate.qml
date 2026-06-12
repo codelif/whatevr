@@ -15,10 +15,16 @@ ItemDelegate {
     property string initials: "?"
     property int unreadCount: 0
     property bool isPinned: false
+    property bool isTyping: false
     property bool current: false
     readonly property bool hasLastMessage: lastMessage.length > 0
     readonly property bool lastMessageIsOutgoing: lastMessageDirection === 2
-    readonly property bool showDeliveryStatus: hasLastMessage && lastMessageIsOutgoing
+    readonly property bool showDeliveryStatus: hasLastMessage && lastMessageIsOutgoing && !isTyping
+    readonly property string previewText: isTyping
+                                          ? Whatevr.I18n.i18nc("@info chat presence", "typing...")
+                                          : (hasLastMessage
+                                             ? lastMessage.replace(/[\r\n]+/g, " ")
+                                             : Whatevr.I18n.i18nc("@info", "No messages yet"))
     readonly property real deliveryIconSize: Kirigami.Units.iconSizes.small
     readonly property real deliveryDoubleTickOffset: deliveryIconSize * 0.4
     readonly property bool deliveryStatusIsDoubleTick: lastMessageStatus === 3 || lastMessageStatus === 4
@@ -232,12 +238,12 @@ ItemDelegate {
                     anchors.leftMargin: deliveryStatus.visible ? Kirigami.Units.smallSpacing : 0
                     anchors.right: parent.right
                     anchors.verticalCenter: parent.verticalCenter
-                    text: root.hasLastMessage
-                          ? root.lastMessage.replace(/[\r\n]+/g, " ")
-                          : Whatevr.I18n.i18nc("@info", "No messages yet")
+                    text: root.previewText
                     elide: Text.ElideRight
                     maximumLineCount: 1
-                    color: root.unreadCount > 0 ? Kirigami.Theme.textColor : Kirigami.Theme.disabledTextColor
+                    color: root.isTyping
+                           ? activePalette.highlight
+                           : (root.unreadCount > 0 ? Kirigami.Theme.textColor : Kirigami.Theme.disabledTextColor)
                     opacity: root.unreadCount > 0 ? 0.84 : 1.0
                 }
             }

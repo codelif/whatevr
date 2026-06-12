@@ -29,6 +29,7 @@ public:
         PinnedOrderRole,
         AvatarLocalPathRole,
         InitialsRole,
+        IsTypingRole,
     };
     Q_ENUM(Role)
 
@@ -41,6 +42,7 @@ public:
     void replaceChats(const QList<whatevr::v1::Chat> &chats);
     void upsertChat(const whatevr::v1::Chat &chat, const QString &previousChatId = QString());
     bool updateAvatar(const QString &chatId, const QString &avatarLocalPath);
+    bool setChatTyping(const QString &chatId, bool typing);
     [[nodiscard]] QString chatName(const QString &chatId) const;
     [[nodiscard]] QString chatAvatarLocalPath(const QString &chatId) const;
     [[nodiscard]] bool chatIsGroup(const QString &chatId) const;
@@ -64,6 +66,7 @@ private:
         quint32 pinnedOrder = 0;
         qint64 updatedAtUnix = 0;
         QString avatarLocalPath;
+        bool isTyping = false;
     };
 
     static ChatItem fromProto(const whatevr::v1::Chat &chat);
