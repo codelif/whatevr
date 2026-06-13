@@ -188,6 +188,10 @@ Kirigami.Page {
                         chatList.contextChatPinned = pinned
                         chatList.contextChatArchived = archived
                         chatList.contextChatMuted = muted
+                        // Collapse the hidden mute/unmute row before open() so the
+                        // menu is sized correctly on the first frame (doing it in
+                        // onAboutToShow lands a frame late, leaving a stray scrollbar).
+                        chatContextMenu.refreshMuteItems()
                         const pos = chatDelegate.mapToItem(chatContextMenu.parent, x, y)
                         chatContextMenu.x = pos.x
                         chatContextMenu.y = pos.y
@@ -207,25 +211,41 @@ Kirigami.Page {
 
                     // The MenuItem QQC2 auto-generates for the Mute submenu does
                     // not honour the submenu's own `visible` binding, so capture
-                    // it and toggle visibility on open (mirrors MessageView's
-                    // pin submenu). Otherwise Mute and Unmute both show.
+                    // it and toggle on open (mirrors MessageView's pin submenu).
+                    // Hidden items must also collapse their implicitHeight — the
+                    // menu sums implicitHeight (not height), so a merely
+                    // invisible row still inflates the menu and adds a scrollbar.
                     property Item muteSubMenuItem: null
+                    property real menuRowHeight: 0
+
+                    function refreshMuteItems() {
+                        const muted = chatList.contextChatMuted
+                        unmuteItem.visible = muted
+                        unmuteItem.implicitHeight = muted ? menuRowHeight : 0
+                        if (muteSubMenuItem) {
+                            muteSubMenuItem.visible = !muted
+                            muteSubMenuItem.implicitHeight = muted ? 0 : menuRowHeight
+                        }
+                    }
 
                     Component.onCompleted: {
+                        menuRowHeight = unmuteItem.implicitHeight
                         for (let i = 0; i < count; ++i) {
                             const item = itemAt(i)
                             if (item && item.subMenu === muteDurationSubMenu) {
                                 muteSubMenuItem = item
-                                item.visible = false
                                 break
                             }
                         }
+                        refreshMuteItems()
                     }
 
                     onAboutToShow: {
-                        if (muteSubMenuItem) {
-                            muteSubMenuItem.visible = !chatList.contextChatMuted
-                        }
+                        refreshMuteItems()
+                        // heightRatio is stale after the imperative implicitHeight
+                        // toggle above; relayout the body so no scrollbar flashes.
+                        if (contentItem)
+                            contentItem.forceLayout()
                     }
 
                     // No exit animation: right-clicking another row dismisses the
@@ -251,12 +271,12 @@ Kirigami.Page {
                     }
 
                     MenuItem {
+                        id: unmuteItem
+
                         text: Whatevr.I18n.i18nc("@action:menu", "Unmute chat")
                         icon.name: "notifications-symbolic"
-                        visible: chatList.contextChatMuted
-                        // A hidden MenuItem still reserves its height, overflowing
-                        // the menu and adding a stray scrollbar; collapse it.
-                        height: visible ? implicitHeight : 0
+                        // visible / implicitHeight are driven imperatively by
+                        // chatContextMenu.refreshMuteItems() (see above).
                         onTriggered: Whatevr.AppController.setChatMuted(chatList.contextChatId, false, 0)
                     }
 
@@ -265,8 +285,10 @@ Kirigami.Page {
 
                         title: Whatevr.I18n.i18nc("@action:inmenu mute a chat", "Mute")
                         icon.name: "notifications-disabled-symbolic"
-                        // Hidden once the chat is muted; the Unmute item shows instead.
-                        visible: !chatList.contextChatMuted
+                        // Row visibility is driven imperatively via the captured
+                        // generated MenuItem (refreshMuteItems). A `visible` binding
+                        // here would not hide the row and, since a Menu is a Popup,
+                        // would auto-open this submenu on first show.
 
                         readonly property real framePadding: Kirigami.Units.smallSpacing
                         topPadding: framePadding
