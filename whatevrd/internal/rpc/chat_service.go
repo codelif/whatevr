@@ -47,6 +47,11 @@ type ChatActionController interface {
 	ResolveCachedStickerMedia(context.Context, []appstore.Message) []appstore.Message
 	GetMessageInfo(context.Context, string) (app.MessageInfo, error)
 	DeleteMessageForMe(context.Context, string) error
+	CheckPhoneOnWhatsApp(context.Context, string) (app.PhoneCheck, error)
+	EnsureDirectChat(context.Context, string) (appstore.Chat, error)
+	GetContactInfo(context.Context, string) (app.ContactInfo, error)
+	GetGroupInfo(context.Context, string) (app.GroupInfo, error)
+	FetchProfilePicture(context.Context, string) (string, error)
 }
 
 type ChatService struct {
@@ -404,6 +409,108 @@ func (s *ChatService) SearchMessages(ctx context.Context, req *pb.SearchMessages
 	}
 	resp.HasMore = len(results) == limit
 	return resp, nil
+}
+
+func (s *ChatService) CheckPhoneOnWhatsApp(ctx context.Context, req *pb.CheckPhoneOnWhatsAppRequest) (*pb.CheckPhoneOnWhatsAppResponse, error) {
+	if s.actions == nil {
+		return nil, status.Error(codes.Unimplemented, "contact lookup is not available")
+	}
+	if strings.TrimSpace(req.GetPhone()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "phone is required")
+	}
+	check, err := s.actions.CheckPhoneOnWhatsApp(ctx, req.GetPhone())
+	if err != nil {
+		return nil, status.Error(codes.Unavailable, err.Error())
+	}
+	return &pb.CheckPhoneOnWhatsAppResponse{
+		Registered:  check.Registered,
+		Jid:         check.JID,
+		DisplayName: check.DisplayName,
+		IsBusiness:  check.IsBusiness,
+		Phone:       check.Phone,
+	}, nil
+}
+
+func (s *ChatService) EnsureDirectChat(ctx context.Context, req *pb.EnsureDirectChatRequest) (*pb.EnsureDirectChatResponse, error) {
+	if s.actions == nil {
+		return nil, status.Error(codes.Unimplemented, "contact lookup is not available")
+	}
+	if strings.TrimSpace(req.GetJid()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "jid is required")
+	}
+	chat, err := s.actions.EnsureDirectChat(ctx, req.GetJid())
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	return &pb.EnsureDirectChatResponse{Chat: toProtoChat(toAppChat(chat))}, nil
+}
+
+func (s *ChatService) GetContactInfo(ctx context.Context, req *pb.GetContactInfoRequest) (*pb.GetContactInfoResponse, error) {
+	if s.actions == nil {
+		return nil, status.Error(codes.Unimplemented, "contact lookup is not available")
+	}
+	if strings.TrimSpace(req.GetJid()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "jid is required")
+	}
+	info, err := s.actions.GetContactInfo(ctx, req.GetJid())
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	return &pb.GetContactInfoResponse{
+		Jid:             info.JID,
+		PhoneNumber:     info.PhoneNumber,
+		SavedName:       info.SavedName,
+		PushName:        info.PushName,
+		BusinessName:    info.BusinessName,
+		AvatarLocalPath: info.AvatarLocalPath,
+		IsBusiness:      info.IsBusiness,
+		StatusText:      info.StatusText,
+	}, nil
+}
+
+func (s *ChatService) GetGroupInfo(ctx context.Context, req *pb.GetGroupInfoRequest) (*pb.GetGroupInfoResponse, error) {
+	if s.actions == nil {
+		return nil, status.Error(codes.Unimplemented, "group lookup is not available")
+	}
+	if strings.TrimSpace(req.GetChatId()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "chat_id is required")
+	}
+	info, err := s.actions.GetGroupInfo(ctx, req.GetChatId())
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	resp := &pb.GetGroupInfoResponse{
+		Subject:         info.Subject,
+		Description:     info.Description,
+		AvatarLocalPath: info.AvatarLocalPath,
+		CreatedUnix:     info.CreatedUnix,
+		Members:         make([]*pb.GroupMember, 0, len(info.Members)),
+	}
+	for _, member := range info.Members {
+		resp.Members = append(resp.Members, &pb.GroupMember{
+			Jid:             member.JID,
+			DisplayName:     member.DisplayName,
+			PhoneNumber:     member.PhoneNumber,
+			AvatarLocalPath: member.AvatarLocalPath,
+			IsAdmin:         member.IsAdmin,
+			IsSuperAdmin:    member.IsSuperAdmin,
+		})
+	}
+	return resp, nil
+}
+
+func (s *ChatService) FetchProfilePicture(ctx context.Context, req *pb.FetchProfilePictureRequest) (*pb.FetchProfilePictureResponse, error) {
+	if s.actions == nil {
+		return nil, status.Error(codes.Unimplemented, "profile pictures are not available")
+	}
+	if strings.TrimSpace(req.GetJid()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "jid is required")
+	}
+	localPath, err := s.actions.FetchProfilePicture(ctx, req.GetJid())
+	if err != nil {
+		return nil, status.Error(codes.Unavailable, err.Error())
+	}
+	return &pb.FetchProfilePictureResponse{LocalPath: localPath}, nil
 }
 
 func normalizePage(limit int32, offset int32, defaultLimit int, maxLimit int) (int, int, error) {

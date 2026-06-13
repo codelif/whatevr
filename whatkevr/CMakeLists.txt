@@ -85,6 +85,8 @@ qt_add_executable(whatkevr
     src/app/stickercontroller.h
     src/models/chatlistmodel.cpp
     src/models/chatlistmodel.h
+    src/models/chatlistfiltermodel.cpp
+    src/models/chatlistfiltermodel.h
     src/models/emojimodel.cpp
     src/models/emojimodel.h
     src/models/messagelistmodel.cpp
@@ -142,6 +144,7 @@ configure_file(
 target_include_directories(whatkevr PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/models
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
     ${CMAKE_CURRENT_SOURCE_DIR}/src/util
 )
@@ -162,6 +165,8 @@ qt_add_qml_module(whatkevr
         src/qml/components/ChatListPane.qml
         src/qml/components/ConversationPane.qml
         src/qml/components/StarredMessagesPage.qml
+        src/qml/components/ContactInfoDialog.qml
+        src/qml/components/ProfilePictureViewer.qml
         src/qml/components/SearchResultDelegate.qml
         src/qml/components/SearchHighlight.js
         src/qml/components/PinnedMessagesBanner.qml

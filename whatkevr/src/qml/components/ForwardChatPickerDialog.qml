@@ -30,11 +30,17 @@ CenteredDialog {
     preferredWidth: root.pickerWidth
     preferredHeight: Kirigami.Units.gridUnit * 26
 
+    // Kirigami.Dialog wraps content in a QQC2.ScrollView with its own vertical
+    // scrollbar; our chat ListView already scrolls, so suppress the dialog's
+    // duplicate bar (otherwise the whole interface scrolls as one).
+    Component.onCompleted: contentItem.ScrollBar.vertical.policy = ScrollBar.AlwaysOff
+
     function openFor(ids) {
         messageIds = ids
         selectedChatIds = ({})
         selectedChatCount = 0
         selectionRevision += 1
+        searchField.text = ""
         open()
     }
 
@@ -75,56 +81,79 @@ CenteredDialog {
         }
     ]
 
-    ListView {
-        id: chatList
+    Whatevr.ChatListFilterModel {
+        id: chatFilterModel
+        sourceModel: Whatevr.AppController.chatListModel
+        filterText: searchField.text
+    }
 
+    ColumnLayout {
+        // Pin the content width like the other in-app dialogs; Kirigami.Dialog
+        // does not give a bare content item a width on its own.
         implicitWidth: root.pickerWidth
-        implicitHeight: Kirigami.Units.gridUnit * 20
-        clip: true
-        model: Whatevr.AppController.chatListModel
-        reuseItems: true
+        spacing: Kirigami.Units.smallSpacing
 
-        delegate: ItemDelegate {
-            id: chatDelegate
+        Kirigami.SearchField {
+            id: searchField
+            Layout.fillWidth: true
+            placeholderText: Whatevr.I18n.i18nc("@info:placeholder", "Search chats…")
+        }
 
-            required property var model
+        ListView {
+            id: chatList
 
-            readonly property string chatId: String(model.chatId || "")
-            readonly property bool selected: root.selectionRevision >= 0 && root.isChatSelected(chatId)
-            readonly property bool selectable: selected || root.selectedChatCount < root.maxTargets
+            Layout.fillWidth: true
+            // Bounded height so this ListView (not the dialog's outer
+            // ScrollView) owns the scrolling; the search field and footer stay
+            // fixed and only the chat list scrolls.
+            Layout.preferredHeight: Kirigami.Units.gridUnit * 20
+            clip: true
+            model: chatFilterModel
+            reuseItems: true
+            ScrollBar.vertical: DiscreetScrollBar {}
 
-            width: ListView.view.width
-            enabled: selectable
-            onClicked: root.toggleChat(chatId)
+            delegate: ItemDelegate {
+                id: chatDelegate
 
-            contentItem: RowLayout {
-                spacing: Kirigami.Units.smallSpacing
+                required property var model
 
-                CheckBox {
-                    checked: chatDelegate.selected
-                    enabled: chatDelegate.selectable
-                    onToggled: root.toggleChat(chatDelegate.chatId)
-                }
+                readonly property string chatId: String(model.chatId || "")
+                readonly property bool selected: root.selectionRevision >= 0 && root.isChatSelected(chatId)
+                readonly property bool selectable: selected || root.selectedChatCount < root.maxTargets
 
-                AvatarImage {
-                    Layout.preferredWidth: Kirigami.Units.gridUnit * 1.65
-                    Layout.preferredHeight: Kirigami.Units.gridUnit * 1.65
-                    avatarLocalPath: String(chatDelegate.model.avatarLocalPath || "")
-                    initials: String(chatDelegate.model.initials || "?")
-                }
+                width: ListView.view.width
+                enabled: selectable
+                onClicked: root.toggleChat(chatId)
 
-                Label {
-                    text: String(chatDelegate.model.name || "")
-                    elide: Text.ElideRight
-                    Layout.fillWidth: true
-                }
+                contentItem: RowLayout {
+                    spacing: Kirigami.Units.smallSpacing
 
-                Kirigami.Icon {
-                    visible: Boolean(chatDelegate.model.isGroup)
-                    source: "system-users-symbolic"
-                    Layout.preferredWidth: Kirigami.Units.iconSizes.small
-                    Layout.preferredHeight: Kirigami.Units.iconSizes.small
-                    color: Kirigami.Theme.disabledTextColor
+                    CheckBox {
+                        checked: chatDelegate.selected
+                        enabled: chatDelegate.selectable
+                        onToggled: root.toggleChat(chatDelegate.chatId)
+                    }
+
+                    AvatarImage {
+                        Layout.preferredWidth: Kirigami.Units.gridUnit * 1.65
+                        Layout.preferredHeight: Kirigami.Units.gridUnit * 1.65
+                        avatarLocalPath: String(chatDelegate.model.avatarLocalPath || "")
+                        initials: String(chatDelegate.model.initials || "?")
+                    }
+
+                    Label {
+                        text: String(chatDelegate.model.name || "")
+                        elide: Text.ElideRight
+                        Layout.fillWidth: true
+                    }
+
+                    Kirigami.Icon {
+                        visible: Boolean(chatDelegate.model.isGroup)
+                        source: "system-users-symbolic"
+                        Layout.preferredWidth: Kirigami.Units.iconSizes.small
+                        Layout.preferredHeight: Kirigami.Units.iconSizes.small
+                        color: Kirigami.Theme.disabledTextColor
+                    }
                 }
             }
         }

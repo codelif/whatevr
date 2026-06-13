@@ -426,9 +426,15 @@ Kirigami.Page {
                     required property string section
 
                     width: ListView.view ? ListView.view.width : 0
-                    text: section === "message"
-                          ? Whatevr.I18n.i18nc("@title:group search results", "Messages")
-                          : Whatevr.I18n.i18nc("@title:group search results", "Chats")
+                    text: {
+                        if (section === "message") {
+                            return Whatevr.I18n.i18nc("@title:group search results", "Messages")
+                        }
+                        if (section === "number") {
+                            return Whatevr.I18n.i18nc("@title:group search results", "Phone number")
+                        }
+                        return Whatevr.I18n.i18nc("@title:group search results", "Chats")
+                    }
                 }
 
                 delegate: SearchResultDelegate {
@@ -444,6 +450,8 @@ Kirigami.Page {
                     senderName: String(model.senderName || "")
                     timeText: String(model.timeText || "")
                     isOutgoing: Boolean(model.isOutgoing || false)
+                    jid: String(model.jid || "")
+                    registered: Boolean(model.registered || false)
 
                     onChatActivated: id => {
                         Whatevr.AppController.selectChat(id)
@@ -454,6 +462,10 @@ Kirigami.Page {
                         Whatevr.AppController.showMessageInChat(cId, mId)
                         root.hideSearch()
                         root.chatSelected(cId)
+                    }
+                    onNumberActivated: jidArg => {
+                        Whatevr.AppController.startDirectChat(jidArg)
+                        root.hideSearch()
                     }
                 }
 

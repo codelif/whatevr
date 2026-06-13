@@ -20,10 +20,11 @@ class SearchResultsModel final : public QAbstractListModel
     Q_OBJECT
     Q_PROPERTY(int chatCount READ chatCount NOTIFY countsChanged FINAL)
     Q_PROPERTY(int messageCount READ messageCount NOTIFY countsChanged FINAL)
+    Q_PROPERTY(int numberCount READ numberCount NOTIFY countsChanged FINAL)
 
 public:
     enum Role : std::uint16_t {
-        // "chat" or "message"; drives the ListView section header.
+        // "number", "chat" or "message"; drives the ListView section header.
         KindRole = Qt::UserRole + 1,
         AvatarLocalPathRole,
         InitialsRole,
@@ -40,6 +41,9 @@ public:
         TimeTextRole,
         TimestampUnixRole,
         IsOutgoingRole,
+        // Number-only: canonical JID and whether the number is on WhatsApp.
+        JidRole,
+        RegisteredRole,
     };
     Q_ENUM(Role)
 
@@ -51,9 +55,14 @@ public:
 
     [[nodiscard]] int chatCount() const;
     [[nodiscard]] int messageCount() const;
+    [[nodiscard]] int numberCount() const;
 
     void setChats(const QList<whatevr::v1::Chat> &chats);
     void setMessages(const QList<whatevr::v1::MessageSearchResult> &results);
+    // Set (or clear, when jid and phone are both empty) the single phone-number
+    // result shown above chat/message matches when the query is a number.
+    void setNumber(const QString &jid, const QString &phone, const QString &displayName, bool registered);
+    void clearNumber();
     void clear();
 
 Q_SIGNALS:
@@ -62,19 +71,23 @@ Q_SIGNALS:
 private:
     struct Row {
         bool isMessage = false;
-        QString avatarLocalPath;
-        QString initials;
-        QString title;
-        QString subtitle;
+        bool isNumber = false;
+        QString avatarLocalPath {};
+        QString initials {};
+        QString title {};
+        QString subtitle {};
         bool isGroup = false;
-        QString chatId;
-        QString messageId;
-        QString senderName;
-        QString timeText;
+        QString chatId {};
+        QString messageId {};
+        QString senderName {};
+        QString timeText {};
         qint64 timestampUnix = 0;
         bool isOutgoing = false;
+        QString jid {};
+        bool registered = false;
     };
 
+    QList<Row> m_number;
     QList<Row> m_chats;
     QList<Row> m_messages;
 };

@@ -504,6 +504,11 @@ const (
 	ChatService_ListPinnedMessages_FullMethodName    = "/whatevr.v1.ChatService/ListPinnedMessages"
 	ChatService_SearchChats_FullMethodName           = "/whatevr.v1.ChatService/SearchChats"
 	ChatService_SearchMessages_FullMethodName        = "/whatevr.v1.ChatService/SearchMessages"
+	ChatService_CheckPhoneOnWhatsApp_FullMethodName  = "/whatevr.v1.ChatService/CheckPhoneOnWhatsApp"
+	ChatService_EnsureDirectChat_FullMethodName      = "/whatevr.v1.ChatService/EnsureDirectChat"
+	ChatService_GetContactInfo_FullMethodName        = "/whatevr.v1.ChatService/GetContactInfo"
+	ChatService_GetGroupInfo_FullMethodName          = "/whatevr.v1.ChatService/GetGroupInfo"
+	ChatService_FetchProfilePicture_FullMethodName   = "/whatevr.v1.ChatService/FetchProfilePicture"
 )
 
 // ChatServiceClient is the client API for ChatService service.
@@ -525,6 +530,18 @@ type ChatServiceClient interface {
 	ListPinnedMessages(ctx context.Context, in *ListPinnedMessagesRequest, opts ...grpc.CallOption) (*ListPinnedMessagesResponse, error)
 	SearchChats(ctx context.Context, in *SearchChatsRequest, opts ...grpc.CallOption) (*SearchChatsResponse, error)
 	SearchMessages(ctx context.Context, in *SearchMessagesRequest, opts ...grpc.CallOption) (*SearchMessagesResponse, error)
+	// Check whether a typed phone number is registered on WhatsApp (usync), so
+	// search can offer to start a chat with a number that isn't in any chat yet.
+	CheckPhoneOnWhatsApp(ctx context.Context, in *CheckPhoneOnWhatsAppRequest, opts ...grpc.CallOption) (*CheckPhoneOnWhatsAppResponse, error)
+	// Create-or-return the 1:1 chat row for a user JID so the frontend can open
+	// it (used by number search and the "Message" buttons in contact info).
+	EnsureDirectChat(ctx context.Context, in *EnsureDirectChatRequest, opts ...grpc.CallOption) (*EnsureDirectChatResponse, error)
+	// Full contact card for a 1:1 user: saved/push/business names, phone, avatar.
+	GetContactInfo(ctx context.Context, in *GetContactInfoRequest, opts ...grpc.CallOption) (*GetContactInfoResponse, error)
+	// Group card: subject, description, avatar and the resolved member list.
+	GetGroupInfo(ctx context.Context, in *GetGroupInfoRequest, opts ...grpc.CallOption) (*GetGroupInfoResponse, error)
+	// Fetch a full-resolution profile picture for the avatar viewer.
+	FetchProfilePicture(ctx context.Context, in *FetchProfilePictureRequest, opts ...grpc.CallOption) (*FetchProfilePictureResponse, error)
 }
 
 type chatServiceClient struct {
@@ -685,6 +702,56 @@ func (c *chatServiceClient) SearchMessages(ctx context.Context, in *SearchMessag
 	return out, nil
 }
 
+func (c *chatServiceClient) CheckPhoneOnWhatsApp(ctx context.Context, in *CheckPhoneOnWhatsAppRequest, opts ...grpc.CallOption) (*CheckPhoneOnWhatsAppResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CheckPhoneOnWhatsAppResponse)
+	err := c.cc.Invoke(ctx, ChatService_CheckPhoneOnWhatsApp_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *chatServiceClient) EnsureDirectChat(ctx context.Context, in *EnsureDirectChatRequest, opts ...grpc.CallOption) (*EnsureDirectChatResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(EnsureDirectChatResponse)
+	err := c.cc.Invoke(ctx, ChatService_EnsureDirectChat_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *chatServiceClient) GetContactInfo(ctx context.Context, in *GetContactInfoRequest, opts ...grpc.CallOption) (*GetContactInfoResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetContactInfoResponse)
+	err := c.cc.Invoke(ctx, ChatService_GetContactInfo_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *chatServiceClient) GetGroupInfo(ctx context.Context, in *GetGroupInfoRequest, opts ...grpc.CallOption) (*GetGroupInfoResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetGroupInfoResponse)
+	err := c.cc.Invoke(ctx, ChatService_GetGroupInfo_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *chatServiceClient) FetchProfilePicture(ctx context.Context, in *FetchProfilePictureRequest, opts ...grpc.CallOption) (*FetchProfilePictureResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FetchProfilePictureResponse)
+	err := c.cc.Invoke(ctx, ChatService_FetchProfilePicture_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ChatServiceServer is the server API for ChatService service.
 // All implementations must embed UnimplementedChatServiceServer
 // for forward compatibility.
@@ -704,6 +771,18 @@ type ChatServiceServer interface {
 	ListPinnedMessages(context.Context, *ListPinnedMessagesRequest) (*ListPinnedMessagesResponse, error)
 	SearchChats(context.Context, *SearchChatsRequest) (*SearchChatsResponse, error)
 	SearchMessages(context.Context, *SearchMessagesRequest) (*SearchMessagesResponse, error)
+	// Check whether a typed phone number is registered on WhatsApp (usync), so
+	// search can offer to start a chat with a number that isn't in any chat yet.
+	CheckPhoneOnWhatsApp(context.Context, *CheckPhoneOnWhatsAppRequest) (*CheckPhoneOnWhatsAppResponse, error)
+	// Create-or-return the 1:1 chat row for a user JID so the frontend can open
+	// it (used by number search and the "Message" buttons in contact info).
+	EnsureDirectChat(context.Context, *EnsureDirectChatRequest) (*EnsureDirectChatResponse, error)
+	// Full contact card for a 1:1 user: saved/push/business names, phone, avatar.
+	GetContactInfo(context.Context, *GetContactInfoRequest) (*GetContactInfoResponse, error)
+	// Group card: subject, description, avatar and the resolved member list.
+	GetGroupInfo(context.Context, *GetGroupInfoRequest) (*GetGroupInfoResponse, error)
+	// Fetch a full-resolution profile picture for the avatar viewer.
+	FetchProfilePicture(context.Context, *FetchProfilePictureRequest) (*FetchProfilePictureResponse, error)
 	mustEmbedUnimplementedChatServiceServer()
 }
 
@@ -758,6 +837,21 @@ func (UnimplementedChatServiceServer) SearchChats(context.Context, *SearchChatsR
 }
 func (UnimplementedChatServiceServer) SearchMessages(context.Context, *SearchMessagesRequest) (*SearchMessagesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SearchMessages not implemented")
+}
+func (UnimplementedChatServiceServer) CheckPhoneOnWhatsApp(context.Context, *CheckPhoneOnWhatsAppRequest) (*CheckPhoneOnWhatsAppResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CheckPhoneOnWhatsApp not implemented")
+}
+func (UnimplementedChatServiceServer) EnsureDirectChat(context.Context, *EnsureDirectChatRequest) (*EnsureDirectChatResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method EnsureDirectChat not implemented")
+}
+func (UnimplementedChatServiceServer) GetContactInfo(context.Context, *GetContactInfoRequest) (*GetContactInfoResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetContactInfo not implemented")
+}
+func (UnimplementedChatServiceServer) GetGroupInfo(context.Context, *GetGroupInfoRequest) (*GetGroupInfoResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetGroupInfo not implemented")
+}
+func (UnimplementedChatServiceServer) FetchProfilePicture(context.Context, *FetchProfilePictureRequest) (*FetchProfilePictureResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method FetchProfilePicture not implemented")
 }
 func (UnimplementedChatServiceServer) mustEmbedUnimplementedChatServiceServer() {}
 func (UnimplementedChatServiceServer) testEmbeddedByValue()                     {}
@@ -1050,6 +1144,96 @@ func _ChatService_SearchMessages_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ChatService_CheckPhoneOnWhatsApp_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CheckPhoneOnWhatsAppRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ChatServiceServer).CheckPhoneOnWhatsApp(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ChatService_CheckPhoneOnWhatsApp_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ChatServiceServer).CheckPhoneOnWhatsApp(ctx, req.(*CheckPhoneOnWhatsAppRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ChatService_EnsureDirectChat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(EnsureDirectChatRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ChatServiceServer).EnsureDirectChat(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ChatService_EnsureDirectChat_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ChatServiceServer).EnsureDirectChat(ctx, req.(*EnsureDirectChatRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ChatService_GetContactInfo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetContactInfoRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ChatServiceServer).GetContactInfo(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ChatService_GetContactInfo_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ChatServiceServer).GetContactInfo(ctx, req.(*GetContactInfoRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ChatService_GetGroupInfo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetGroupInfoRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ChatServiceServer).GetGroupInfo(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ChatService_GetGroupInfo_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ChatServiceServer).GetGroupInfo(ctx, req.(*GetGroupInfoRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ChatService_FetchProfilePicture_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FetchProfilePictureRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ChatServiceServer).FetchProfilePicture(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ChatService_FetchProfilePicture_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ChatServiceServer).FetchProfilePicture(ctx, req.(*FetchProfilePictureRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ChatService_ServiceDesc is the grpc.ServiceDesc for ChatService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1116,6 +1300,26 @@ var ChatService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SearchMessages",
 			Handler:    _ChatService_SearchMessages_Handler,
+		},
+		{
+			MethodName: "CheckPhoneOnWhatsApp",
+			Handler:    _ChatService_CheckPhoneOnWhatsApp_Handler,
+		},
+		{
+			MethodName: "EnsureDirectChat",
+			Handler:    _ChatService_EnsureDirectChat_Handler,
+		},
+		{
+			MethodName: "GetContactInfo",
+			Handler:    _ChatService_GetContactInfo_Handler,
+		},
+		{
+			MethodName: "GetGroupInfo",
+			Handler:    _ChatService_GetGroupInfo_Handler,
+		},
+		{
+			MethodName: "FetchProfilePicture",
+			Handler:    _ChatService_FetchProfilePicture_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -273,6 +273,17 @@ public:
     // and message matches. Pass an empty query (or clearSearch) to dismiss.
     Q_INVOKABLE void setSearchQuery(const QString &query);
     Q_INVOKABLE void clearSearch();
+    // Create-or-open a 1:1 chat with a user JID (from a phone-number search hit
+    // or a "Message" button in contact info), then select it and clear search.
+    Q_INVOKABLE void startDirectChat(const QString &jid);
+    // Load the full contact card for a 1:1 user; result arrives on
+    // contactInfoReceived (or contactInfoFailed).
+    Q_INVOKABLE void openContactInfo(const QString &jid);
+    // Load a group's subject/description/members; result on groupInfoReceived.
+    Q_INVOKABLE void openGroupInfo(const QString &chatId);
+    // Fetch a full-resolution profile picture for the avatar viewer; result on
+    // profilePictureReady (or profilePictureFailed).
+    Q_INVOKABLE void viewProfilePicture(const QString &jid);
     // In-chat search of the selected conversation. open/close toggle the search
     // bar; setChatSearchQuery refreshes matches (debounced) and jumps to the
     // newest; next/previous step through them.
@@ -321,6 +332,20 @@ Q_SIGNALS:
     void messageForwarded(int chatCount);
     void searchChanged();
     void chatSearchChanged();
+    // info: jid, phoneNumber, savedName, pushName, businessName,
+    // avatarLocalPath, isBusiness, statusText.
+    void contactInfoReceived(const QVariantMap &info);
+    void contactInfoFailed(const QString &jid, const QString &errorText);
+    // info: subject, description, avatarLocalPath, createdUnix, members (list of
+    // maps: jid/displayName/phoneNumber/avatarLocalPath/isAdmin/isSuperAdmin).
+    void groupInfoReceived(const QVariantMap &info);
+    void groupInfoFailed(const QString &chatId, const QString &errorText);
+    // Second-phase enrichment streamed after the initial card (see daemon's
+    // ContactInfoUpdated/GroupInfoUpdated): the dialog merges these in.
+    void contactInfoUpdated(const QString &jid, const QString &statusText);
+    void groupInfoUpdated(const QVariantMap &info);
+    void profilePictureReady(const QString &jid, const QString &localPath);
+    void profilePictureFailed(const QString &jid, const QString &errorText);
 
 private:
     void bootstrap();
@@ -364,6 +389,8 @@ private:
     void applyLoginEvent(const whatevr::v1::LoginEvent &event);
     void applyChatUpdated(const whatevr::v1::ChatUpdated &update);
     void applyAvatarUpdated(const whatevr::v1::AvatarUpdated &update);
+    void applyContactInfoUpdated(const whatevr::v1::ContactInfoUpdated &update);
+    void applyGroupInfoUpdated(const whatevr::v1::GroupInfoUpdated &update);
     void applyChatPresenceChanged(const whatevr::v1::ChatPresenceChanged &presence);
     void applyMediaDownloadChanged(const whatevr::v1::MediaDownloadChanged &download);
     void applyMessageEvent(const whatevr::v1::Message &message);
@@ -526,6 +553,11 @@ private:
     std::unique_ptr<QGrpcCallReply> m_listPinnedReply;
     std::unique_ptr<QGrpcCallReply> m_searchChatsReply;
     std::unique_ptr<QGrpcCallReply> m_searchMessagesReply;
+    std::unique_ptr<QGrpcCallReply> m_checkPhoneReply;
+    std::unique_ptr<QGrpcCallReply> m_startDirectChatReply;
+    std::unique_ptr<QGrpcCallReply> m_contactInfoReply;
+    std::unique_ptr<QGrpcCallReply> m_groupInfoReply;
+    std::unique_ptr<QGrpcCallReply> m_profilePictureReply;
     std::unique_ptr<QGrpcCallReply> m_chatSearchReply;
     int m_forwardBatchChatCount = 0;
     bool m_forwardBatchFailed = false;
