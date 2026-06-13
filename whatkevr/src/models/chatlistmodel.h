@@ -54,6 +54,13 @@ public:
     void upsertChat(const whatevr::v1::Chat &chat, const QString &previousChatId = QString());
     bool updateAvatar(const QString &chatId, const QString &avatarLocalPath);
     bool setChatTyping(const QString &chatId, bool typing);
+    // Optimistic local mutators (mirror message star/pin): apply the new state
+    // and reposition immediately, returning the previous value so the caller
+    // can revert if the daemon rejects the change. No-op returns the current
+    // value unchanged.
+    bool setChatPinnedLocal(const QString &chatId, bool pinned);
+    bool setChatArchivedLocal(const QString &chatId, bool archived);
+    bool setChatMutedLocal(const QString &chatId, bool muted);
     // Per-contact composer draft. A non-empty draft floats the chat to the top of
     // its (unpinned) section as if a new message arrived — without touching the
     // real last-message timestamp, so clearing the draft restores its position.
@@ -104,6 +111,10 @@ private:
     static bool sameChatData(const ChatItem &left, const ChatItem &right);
     static bool sortBefore(const ChatItem &left, const ChatItem &right);
     [[nodiscard]] int sortedInsertIndex(const ChatItem &item, int excludingIndex = -1) const;
+    // Writes `updated` into the row at existingIndex and moves it to its sorted
+    // position, emitting the right move/dataChanged signals (shared by the
+    // optimistic mutators above and the upsert path).
+    void repositionMutatedChat(int existingIndex, const ChatItem &updated);
     void sortChats();
     void rebuildIndex();
     void reindexRange(int firstRow, int lastRow);
