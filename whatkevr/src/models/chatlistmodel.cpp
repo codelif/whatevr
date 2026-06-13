@@ -52,6 +52,8 @@ QVariant ChatListModel::data(const QModelIndex &index, int role) const
         return chat.pinnedOrder;
     case IsArchivedRole:
         return chat.isArchived;
+    case IsMutedRole:
+        return chat.isMuted;
     case SectionRole:
         return chat.isArchived ? QStringLiteral("archived") : QStringLiteral("active");
     case AvatarLocalPathRole:
@@ -83,6 +85,7 @@ QHash<int, QByteArray> ChatListModel::roleNames() const
         {IsPinnedRole, "isPinned"},
         {PinnedOrderRole, "pinnedOrder"},
         {IsArchivedRole, "isArchived"},
+        {IsMutedRole, "isMuted"},
         {SectionRole, "chatSection"},
         {AvatarLocalPathRole, "avatarLocalPath"},
         {InitialsRole, "initials"},
@@ -355,6 +358,12 @@ int ChatListModel::archivedCount() const
 
 ChatListModel::ChatItem ChatListModel::fromProto(const whatevr::v1::Chat &chat)
 {
+    // Resolve mute expiry once here so the UI never re-evaluates it. mute_end is
+    // unix millis; -1 = forever, 0 = not muted.
+    const qint64 muteEnd = chat.muteEndTimestamp();
+    const bool muted = chat.isMuted()
+        && (muteEnd == -1 || muteEnd > QDateTime::currentMSecsSinceEpoch());
+
     ChatItem item {
         .id = chat.id_proto(),
         .name = chat.name(),
@@ -369,6 +378,7 @@ ChatListModel::ChatItem ChatListModel::fromProto(const whatevr::v1::Chat &chat)
         .isPinned = chat.isPinned(),
         .pinnedOrder = chat.pinnedOrder(),
         .isArchived = chat.isArchived(),
+        .isMuted = muted,
         .updatedAtUnix = chat.updatedAtUnix(),
         .avatarLocalPath = chat.avatarLocalPath(),
         .isTyping = false,
@@ -434,6 +444,7 @@ bool ChatListModel::sameChatData(const ChatItem &left, const ChatItem &right)
         && left.isPinned == right.isPinned
         && left.pinnedOrder == right.pinnedOrder
         && left.isArchived == right.isArchived
+        && left.isMuted == right.isMuted
         && left.avatarLocalPath == right.avatarLocalPath
         && left.isTyping == right.isTyping
         && left.hasDraft == right.hasDraft

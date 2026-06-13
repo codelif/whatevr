@@ -206,6 +206,9 @@ public:
     Q_INVOKABLE bool sendClipboardImage(const QString &caption = QString(), const QString &replyToMessageId = QString());
     Q_INVOKABLE void setChatPinned(const QString &chatId, bool pinned);
     Q_INVOKABLE void setChatArchived(const QString &chatId, bool archived);
+    // durationSecs: seconds until the mute expires; 0 with muted=true means
+    // forever. Ignored when muted=false.
+    Q_INVOKABLE void setChatMuted(const QString &chatId, bool muted, int durationSecs);
     // Per-contact composer draft (pass-through to ChatListModel). QML commits the
     // outgoing chat's composer text on every chat switch/close and restores the
     // incoming chat's draft.
@@ -449,6 +452,7 @@ private:
     std::unique_ptr<QGrpcCallReply> m_subscribeChatPresenceReply;
     QHash<QString, std::shared_ptr<QGrpcCallReply>> m_setChatPinnedReplies;
     QHash<QString, std::shared_ptr<QGrpcCallReply>> m_setChatArchivedReplies;
+    QHash<QString, std::shared_ptr<QGrpcCallReply>> m_setChatMutedReplies;
     QHash<QString, std::shared_ptr<QGrpcCallReply>> m_setChatPresenceReplies;
     std::unique_ptr<QGrpcCallReply> m_updateSessionStateReply;
     std::unique_ptr<QGrpcCallReply> m_sendTextReply;

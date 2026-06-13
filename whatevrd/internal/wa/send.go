@@ -1214,6 +1214,46 @@ func (c *Client) SetChatArchived(ctx context.Context, chatID string, archived bo
 	return updatedChat, nil
 }
 
+// SetChatMuted mutes or unmutes a chat and syncs it to the device. A zero
+// duration with muted=true means "forever" (stored as -1); otherwise the chat
+// stays muted until now+duration. Muting uses the regular_high app-state
+// collection, mirroring message starring.
+func (c *Client) SetChatMuted(ctx context.Context, chatID string, muted bool, duration time.Duration) (appstore.Chat, error) {
+	chat, err := types.ParseJID(chatID)
+	if err != nil {
+		return appstore.Chat{}, grpcstatus.Errorf(codes.InvalidArgument, "invalid chat_id: %v", err)
+	}
+	chat = c.normalizeJIDForChat(ctx, chat)
+	chatID = chat.String()
+
+	client := c.currentClient()
+	if client == nil || !client.IsLoggedIn() {
+		return appstore.Chat{}, grpcstatus.Error(codes.Unavailable, "WhatsApp client is not logged in")
+	}
+
+	if err := c.sendRegularHighAppState(ctx, client, appstate.BuildMute(chat, muted, duration)); err != nil {
+		return appstore.Chat{}, err
+	}
+
+	var muteEnd int64
+	if muted {
+		if duration > 0 {
+			muteEnd = time.Now().Add(duration).UnixMilli()
+		} else {
+			muteEnd = -1
+		}
+	}
+
+	updatedChat, changed, err := c.store.UpdateChatMuteState(ctx, chatID, muted, muteEnd)
+	if err != nil {
+		return appstore.Chat{}, err
+	}
+	if changed {
+		c.daemon.PublishChatUpdated(toDaemonChat(updatedChat))
+	}
+	return updatedChat, nil
+}
+
 func (c *Client) sendRegularLowAppState(ctx context.Context, client *whatsmeow.Client, patch appstate.PatchInfo) error {
 	c.appStateMu.Lock()
 	defer c.appStateMu.Unlock()

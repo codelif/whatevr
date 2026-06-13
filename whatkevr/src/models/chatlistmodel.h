@@ -30,6 +30,9 @@ public:
         IsPinnedRole,
         PinnedOrderRole,
         IsArchivedRole,
+        // Whether the chat's mute is currently in effect (expiry already
+        // resolved in fromProto, so QML never re-evaluates it).
+        IsMutedRole,
         // Dedicated string role for ListView.section ("archived"/"active"); a
         // bool role does not stringify reliably for section grouping.
         SectionRole,
@@ -83,6 +86,7 @@ private:
         bool isPinned = false;
         quint32 pinnedOrder = 0;
         bool isArchived = false;
+        bool isMuted = false;
         qint64 updatedAtUnix = 0;
         QString avatarLocalPath;
         bool isTyping = false;

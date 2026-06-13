@@ -83,6 +83,7 @@ Kirigami.Page {
                 property string contextChatId: ""
                 property bool contextChatPinned: false
                 property bool contextChatArchived: false
+                property bool contextChatMuted: false
                 // Whether the collapsible "Archived" section is expanded.
                 property bool archivedExpanded: false
 
@@ -171,6 +172,7 @@ Kirigami.Page {
                     unreadCount: Number(model.unreadCount || 0)
                     isPinned: Boolean(model.isPinned || false)
                     isArchived: Boolean(model.isArchived || false)
+                    isMuted: Boolean(model.isMuted || false)
                     archivedExpanded: chatList.archivedExpanded
                     isTyping: Boolean(model.isTyping || false)
                     hasDraft: Boolean(model.hasDraft || false)
@@ -181,10 +183,11 @@ Kirigami.Page {
                         root.chatSelected(id)
                     }
                     onPinToggled: (id, pinned) => Whatevr.AppController.setChatPinned(id, pinned)
-                    onContextMenuRequested: (id, pinned, archived, x, y) => {
+                    onContextMenuRequested: (id, pinned, archived, muted, x, y) => {
                         chatList.contextChatId = id
                         chatList.contextChatPinned = pinned
                         chatList.contextChatArchived = archived
+                        chatList.contextChatMuted = muted
                         const pos = chatDelegate.mapToItem(chatContextMenu.parent, x, y)
                         chatContextMenu.x = pos.x
                         chatContextMenu.y = pos.y
@@ -201,6 +204,29 @@ Kirigami.Page {
                     bottomPadding: framePadding
                     leftPadding: framePadding
                     rightPadding: framePadding
+
+                    // The MenuItem QQC2 auto-generates for the Mute submenu does
+                    // not honour the submenu's own `visible` binding, so capture
+                    // it and toggle visibility on open (mirrors MessageView's
+                    // pin submenu). Otherwise Mute and Unmute both show.
+                    property Item muteSubMenuItem: null
+
+                    Component.onCompleted: {
+                        for (let i = 0; i < count; ++i) {
+                            const item = itemAt(i)
+                            if (item && item.subMenu === muteDurationSubMenu) {
+                                muteSubMenuItem = item
+                                item.visible = false
+                                break
+                            }
+                        }
+                    }
+
+                    onAboutToShow: {
+                        if (muteSubMenuItem) {
+                            muteSubMenuItem.visible = !chatList.contextChatMuted
+                        }
+                    }
 
                     // No exit animation: right-clicking another row dismisses the
                     // open menu and reopens it at the new position in the same
@@ -222,6 +248,48 @@ Kirigami.Page {
                               : Whatevr.I18n.i18nc("@action:menu", "Archive chat")
                         icon.name: chatList.contextChatArchived ? "package-up-symbolic" : "package-down-symbolic"
                         onTriggered: Whatevr.AppController.setChatArchived(chatList.contextChatId, !chatList.contextChatArchived)
+                    }
+
+                    MenuItem {
+                        text: Whatevr.I18n.i18nc("@action:menu", "Unmute chat")
+                        icon.name: "notifications-symbolic"
+                        visible: chatList.contextChatMuted
+                        // A hidden MenuItem still reserves its height, overflowing
+                        // the menu and adding a stray scrollbar; collapse it.
+                        height: visible ? implicitHeight : 0
+                        onTriggered: Whatevr.AppController.setChatMuted(chatList.contextChatId, false, 0)
+                    }
+
+                    Menu {
+                        id: muteDurationSubMenu
+
+                        title: Whatevr.I18n.i18nc("@action:inmenu mute a chat", "Mute")
+                        icon.name: "notifications-disabled-symbolic"
+                        // Hidden once the chat is muted; the Unmute item shows instead.
+                        visible: !chatList.contextChatMuted
+
+                        readonly property real framePadding: Kirigami.Units.smallSpacing
+                        topPadding: framePadding
+                        bottomPadding: framePadding
+                        leftPadding: framePadding
+                        rightPadding: framePadding
+
+                        MenuItem {
+                            text: Whatevr.I18n.i18nc("@action:inmenu mute duration", "For 8 hours")
+                            onTriggered: Whatevr.AppController.setChatMuted(chatList.contextChatId, true, 8 * 60 * 60)
+                        }
+                        MenuItem {
+                            text: Whatevr.I18n.i18nc("@action:inmenu mute duration", "For 1 week")
+                            onTriggered: Whatevr.AppController.setChatMuted(chatList.contextChatId, true, 7 * 24 * 60 * 60)
+                        }
+                        MenuItem {
+                            text: Whatevr.I18n.i18nc("@action:inmenu mute duration", "Always")
+                            onTriggered: Whatevr.AppController.setChatMuted(chatList.contextChatId, true, 0)
+                        }
+                        MenuItem {
+                            text: Whatevr.I18n.i18nc("@action:inmenu mute for a custom duration", "Custom…")
+                            onTriggered: customMuteDialog.openFor(chatList.contextChatId)
+                        }
                     }
                 }
 
@@ -247,5 +315,66 @@ Kirigami.Page {
                 wheelStep: Kirigami.Units.gridUnit * 4
             }
         }
+    }
+
+    Kirigami.PromptDialog {
+        id: customMuteDialog
+
+        // Centre on the stable implicitHeight (see deleteConfirmDialog note).
+        y: parent ? Math.round((parent.height - implicitHeight) / 2) : 0
+
+        property string chatId: ""
+        // Seconds per unit: hours, days, weeks.
+        readonly property var unitSeconds: [60 * 60, 24 * 60 * 60, 7 * 24 * 60 * 60]
+
+        function openFor(id) {
+            chatId = id
+            amountSpin.value = 1
+            unitCombo.currentIndex = 0
+            open()
+        }
+
+        title: Whatevr.I18n.i18nc("@title:dialog", "Mute chat")
+        standardButtons: Kirigami.Dialog.Cancel
+        showCloseButton: false
+
+        contentItem: RowLayout {
+            spacing: Kirigami.Units.largeSpacing
+
+            Label {
+                text: Whatevr.I18n.i18nc("@label:spinbox mute duration", "Mute for")
+            }
+
+            SpinBox {
+                id: amountSpin
+                from: 1
+                to: 999
+                value: 1
+                editable: true
+                Layout.preferredWidth: Kirigami.Units.gridUnit * 5
+            }
+
+            ComboBox {
+                id: unitCombo
+                Layout.fillWidth: true
+                model: [
+                    Whatevr.I18n.i18nc("@item:inlistbox mute duration unit", "hours"),
+                    Whatevr.I18n.i18nc("@item:inlistbox mute duration unit", "days"),
+                    Whatevr.I18n.i18nc("@item:inlistbox mute duration unit", "weeks"),
+                ]
+            }
+        }
+
+        customFooterActions: [
+            Kirigami.Action {
+                text: Whatevr.I18n.i18nc("@action:button", "Mute")
+                icon.name: "notifications-disabled-symbolic"
+                onTriggered: {
+                    const secs = amountSpin.value * customMuteDialog.unitSeconds[unitCombo.currentIndex]
+                    Whatevr.AppController.setChatMuted(customMuteDialog.chatId, true, secs)
+                    customMuteDialog.close()
+                }
+            }
+        ]
     }
 }

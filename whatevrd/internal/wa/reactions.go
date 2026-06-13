@@ -89,7 +89,8 @@ func (c *Client) applyReaction(ctx context.Context, internalID, reactorID, react
 	c.daemon.PublishChatUpdated(toDaemonChat(chat))
 
 	if !fromMe && emoji != "" && message.Direction == appstore.DirectionOutgoing && c.notifier != nil &&
-		notificationTimestampFresh(timestamp.Unix(), time.Now()) && c.ShouldNotifyChat(chat.ID) {
+		notificationTimestampFresh(timestamp.Unix(), time.Now()) && c.ShouldNotifyChat(chat.ID) &&
+		!chatNotificationsMuted(chat.IsMuted, chat.MuteEndTimestamp) {
 		c.notifier.NotifyMessage(ctx, reactionNotification(message, reactorID, reactorName, emoji), toDaemonChat(chat))
 	}
 }

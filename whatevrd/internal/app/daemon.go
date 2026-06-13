@@ -268,6 +268,8 @@ type Chat struct {
 	IsPinned             bool
 	PinnedOrder          uint32
 	IsArchived           bool
+	IsMuted              bool
+	MuteEndTimestamp     int64
 	UpdatedAtUnix        int64
 	AvatarLocalPath      string
 }
