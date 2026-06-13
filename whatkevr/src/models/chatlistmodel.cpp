@@ -227,6 +227,90 @@ bool ChatListModel::setChatTyping(const QString &chatId, bool typing)
     return true;
 }
 
+bool ChatListModel::setChatPinnedLocal(const QString &chatId, bool pinned)
+{
+    const int i = indexOf(chatId);
+    if (i < 0) {
+        return pinned;
+    }
+    ChatItem updated = m_chats.at(i);
+    const bool previous = updated.isPinned;
+    if (previous == pinned) {
+        return previous;
+    }
+    updated.isPinned = pinned;
+    // Mirror the daemon: a fresh pin sorts above older pins, unpin clears order.
+    updated.pinnedOrder = pinned ? static_cast<quint32>(QDateTime::currentSecsSinceEpoch()) : 0;
+    repositionMutatedChat(i, updated);
+    return previous;
+}
+
+bool ChatListModel::setChatArchivedLocal(const QString &chatId, bool archived)
+{
+    const int i = indexOf(chatId);
+    if (i < 0) {
+        return archived;
+    }
+    ChatItem updated = m_chats.at(i);
+    const bool previous = updated.isArchived;
+    if (previous == archived) {
+        return previous;
+    }
+    updated.isArchived = archived;
+    // WhatsApp auto-unpins an archived chat; mirror that locally.
+    if (archived && updated.isPinned) {
+        updated.isPinned = false;
+        updated.pinnedOrder = 0;
+    }
+    repositionMutatedChat(i, updated);
+    return previous;
+}
+
+bool ChatListModel::setChatMutedLocal(const QString &chatId, bool muted)
+{
+    const int i = indexOf(chatId);
+    if (i < 0) {
+        return muted;
+    }
+    ChatItem updated = m_chats.at(i);
+    const bool previous = updated.isMuted;
+    if (previous == muted) {
+        return previous;
+    }
+    updated.isMuted = muted;
+    // Muting does not affect sort order, so this just rewrites the row in place.
+    repositionMutatedChat(i, updated);
+    return previous;
+}
+
+void ChatListModel::repositionMutatedChat(int existingIndex, const ChatItem &updated)
+{
+    const int previousArchived = archivedCount();
+    auto archivedGuard = qScopeGuard([this, previousArchived] {
+        if (previousArchived != archivedCount()) {
+            Q_EMIT archivedCountChanged();
+        }
+    });
+
+    const int insertIndex = sortedInsertIndex(updated, existingIndex);
+    if (insertIndex == existingIndex) {
+        m_chats[existingIndex] = updated;
+        const QModelIndex changedIndex = index(existingIndex, 0);
+        Q_EMIT dataChanged(changedIndex, changedIndex);
+        return;
+    }
+
+    const int destinationRow = insertIndex > existingIndex ? insertIndex + 1 : insertIndex;
+    beginMoveRows(QModelIndex(), existingIndex, existingIndex, QModelIndex(), destinationRow);
+    m_chats.move(existingIndex, insertIndex);
+    endMoveRows();
+    reindexRange(std::min(existingIndex, insertIndex), std::max(existingIndex, insertIndex));
+
+    m_chats[insertIndex] = updated;
+    const QModelIndex changedIndex = index(insertIndex, 0);
+    Q_EMIT dataChanged(changedIndex, changedIndex);
+}
+
 void ChatListModel::setChatDraft(const QString &chatId, const QString &text)
 {
     if (chatId.isEmpty()) {

@@ -2487,11 +2487,14 @@ void AppController::setChatPinned(const QString &chatId, bool pinned)
     request.setChatId(chatId);
     request.setPinned(pinned);
 
+    // Optimistic: reflect the change now; revert if the daemon rejects it.
+    const bool previousPinned = m_chatListModel->setChatPinnedLocal(chatId, pinned);
+
     auto reply = m_chatClient->SetChatPinned(request);
     auto *replyPtr = reply.get();
     m_setChatPinnedReplies.insert(chatId, std::move(reply));
 
-    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, chatId, pinned](const QGrpcStatus &status) {
+    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, chatId, pinned, previousPinned](const QGrpcStatus &status) {
         auto it = m_setChatPinnedReplies.find(chatId);
         if (it == m_setChatPinnedReplies.end() || it.value().get() != replyPtr) {
             return;
@@ -2499,6 +2502,7 @@ void AppController::setChatPinned(const QString &chatId, bool pinned)
 
         m_setChatPinnedReplies.erase(it);
         if (!status.isOk()) {
+            m_chatListModel->setChatPinnedLocal(chatId, previousPinned);
             m_bannerText = status.message().isEmpty()
                 ? (pinned ? i18nc("@info", "Unable to pin chat") : i18nc("@info", "Unable to unpin chat"))
                 : status.message();
@@ -2517,11 +2521,14 @@ void AppController::setChatArchived(const QString &chatId, bool archived)
     request.setChatId(chatId);
     request.setArchived(archived);
 
+    // Optimistic: reflect the change now; revert if the daemon rejects it.
+    const bool previousArchived = m_chatListModel->setChatArchivedLocal(chatId, archived);
+
     auto reply = m_chatClient->SetChatArchived(request);
     auto *replyPtr = reply.get();
     m_setChatArchivedReplies.insert(chatId, std::move(reply));
 
-    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, chatId, archived](const QGrpcStatus &status) {
+    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, chatId, archived, previousArchived](const QGrpcStatus &status) {
         auto it = m_setChatArchivedReplies.find(chatId);
         if (it == m_setChatArchivedReplies.end() || it.value().get() != replyPtr) {
             return;
@@ -2529,6 +2536,7 @@ void AppController::setChatArchived(const QString &chatId, bool archived)
 
         m_setChatArchivedReplies.erase(it);
         if (!status.isOk()) {
+            m_chatListModel->setChatArchivedLocal(chatId, previousArchived);
             m_bannerText = status.message().isEmpty()
                 ? (archived ? i18nc("@info", "Unable to archive chat") : i18nc("@info", "Unable to unarchive chat"))
                 : status.message();
@@ -2549,11 +2557,14 @@ void AppController::setChatMuted(const QString &chatId, bool muted, int duration
     // 0 with muted=true means "forever"; ignored by the daemon when unmuting.
     request.setMuteDurationSecs(muted ? durationSecs : 0);
 
+    // Optimistic: reflect the change now; revert if the daemon rejects it.
+    const bool previousMuted = m_chatListModel->setChatMutedLocal(chatId, muted);
+
     auto reply = m_chatClient->SetChatMuted(request);
     auto *replyPtr = reply.get();
     m_setChatMutedReplies.insert(chatId, std::move(reply));
 
-    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, chatId, muted](const QGrpcStatus &status) {
+    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, chatId, muted, previousMuted](const QGrpcStatus &status) {
         auto it = m_setChatMutedReplies.find(chatId);
         if (it == m_setChatMutedReplies.end() || it.value().get() != replyPtr) {
             return;
@@ -2561,6 +2572,7 @@ void AppController::setChatMuted(const QString &chatId, bool muted, int duration
 
         m_setChatMutedReplies.erase(it);
         if (!status.isOk()) {
+            m_chatListModel->setChatMutedLocal(chatId, previousMuted);
             m_bannerText = status.message().isEmpty()
                 ? (muted ? i18nc("@info", "Unable to mute chat") : i18nc("@info", "Unable to unmute chat"))
                 : status.message();
