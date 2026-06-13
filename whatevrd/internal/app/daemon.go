@@ -124,6 +124,11 @@ type DaemonEvent struct {
 	Avatar          Avatar
 	StickerSource   StickerSource
 	StickerDownload StickerDownloadEvent
+
+	// Second-phase enrichment for contact/group info (see ContactInfo/GroupInfo).
+	ContactInfo ContactInfo
+	GroupInfo   GroupInfo
+	GroupChatID string
 }
 
 type presenceState struct {
@@ -157,6 +162,8 @@ const (
 	DaemonEventStickerLibraryChanged
 	DaemonEventStickerDownloadChanged
 	DaemonEventMessageDeleted
+	DaemonEventContactInfoUpdated
+	DaemonEventGroupInfoUpdated
 )
 
 type StickerSource int32
@@ -337,6 +344,46 @@ type MessageInfo struct {
 	ReadTsUnix      int64
 	IsGroup         bool
 	Receipts        []ParticipantReceipt
+}
+
+// PhoneCheck reports whether a typed phone number is registered on WhatsApp.
+type PhoneCheck struct {
+	Registered  bool
+	JID         string
+	DisplayName string
+	IsBusiness  bool
+	Phone       string
+}
+
+// ContactInfo is the full contact card for a 1:1 user.
+type ContactInfo struct {
+	JID             string
+	PhoneNumber     string
+	SavedName       string
+	PushName        string
+	BusinessName    string
+	AvatarLocalPath string
+	IsBusiness      bool
+	StatusText      string
+}
+
+// GroupMember is one resolved group participant.
+type GroupMember struct {
+	JID             string
+	DisplayName     string
+	PhoneNumber     string
+	AvatarLocalPath string
+	IsAdmin         bool
+	IsSuperAdmin    bool
+}
+
+// GroupInfo is the full card for a group chat.
+type GroupInfo struct {
+	Subject         string
+	Description     string
+	AvatarLocalPath string
+	CreatedUnix     int64
+	Members         []GroupMember
 }
 
 type LoginEventKind int
@@ -640,6 +687,18 @@ func (d *Daemon) PublishMediaDownloadChanged(messageID, chatID string, downloadi
 
 func (d *Daemon) PublishAvatarUpdated(avatar Avatar) {
 	d.broadcastDaemonEvent(DaemonEvent{Kind: DaemonEventAvatarUpdated, Avatar: avatar})
+}
+
+// PublishContactInfoUpdated delivers the network-fetched status text after the
+// contact card was already returned from local data.
+func (d *Daemon) PublishContactInfoUpdated(info ContactInfo) {
+	d.broadcastDaemonEvent(DaemonEvent{Kind: DaemonEventContactInfoUpdated, ContactInfo: info})
+}
+
+// PublishGroupInfoUpdated delivers the live-fetched group fields (subject,
+// description, member roles, creation time) after the stored card was returned.
+func (d *Daemon) PublishGroupInfoUpdated(chatID string, info GroupInfo) {
+	d.broadcastDaemonEvent(DaemonEvent{Kind: DaemonEventGroupInfoUpdated, GroupChatID: chatID, GroupInfo: info})
 }
 
 func (d *Daemon) PublishStickerLibraryChanged(source StickerSource) {

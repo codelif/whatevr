@@ -68,6 +68,20 @@ Kirigami.Page {
         return initials.length > 0 ? initials : "?"
     }
 
+    // Opens the contact/group info page for the currently selected chat. Group
+    // JIDs end with "@g.us"; everything else is a 1:1 user.
+    function openChatInfo() {
+        const chatId = Whatevr.AppController.selectedChatId
+        if (chatId.length === 0) {
+            return
+        }
+        if (chatId.endsWith("@g.us")) {
+            contactInfoDialog.openFor({ isGroup: true, targetChatId: chatId })
+        } else {
+            contactInfoDialog.openFor({ isGroup: false, targetJid: chatId })
+        }
+    }
+
     function shouldTypeIntoComposer(event) {
         if (!Whatevr.AppController.hasSelectedChat || !composer.visible || !Whatevr.AppController.composerEnabled) {
             return false
@@ -259,6 +273,11 @@ Kirigami.Page {
             Layout.preferredHeight: headerTitle.avatarSize
             avatarLocalPath: Whatevr.AppController.selectedChatAvatarLocalPath
             initials: root.initialsForName(Whatevr.AppController.selectedChatName)
+
+            TapHandler {
+                enabled: Whatevr.AppController.hasSelectedChat
+                onTapped: root.openChatInfo()
+            }
         }
 
         Item {
@@ -267,6 +286,11 @@ Kirigami.Page {
             Layout.minimumWidth: 0
             Layout.alignment: Qt.AlignVCenter
             Layout.preferredHeight: headerTitle.avatarSize
+
+            TapHandler {
+                enabled: Whatevr.AppController.hasSelectedChat
+                onTapped: root.openChatInfo()
+            }
 
             Label {
                 id: titleLabel
@@ -640,6 +664,10 @@ Kirigami.Page {
             onClearEditRequested: root.clearEditTarget()
             onEditConsumed: root.clearEditTarget()
         }
+    }
+
+    ContactInfoDialog {
+        id: contactInfoDialog
     }
 
 }

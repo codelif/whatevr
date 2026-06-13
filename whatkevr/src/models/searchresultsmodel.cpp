@@ -80,7 +80,7 @@ int SearchResultsModel::rowCount(const QModelIndex &parent) const
     if (parent.isValid()) {
         return 0;
     }
-    return static_cast<int>(m_chats.size() + m_messages.size());
+    return static_cast<int>(m_number.size() + m_chats.size() + m_messages.size());
 }
 
 int SearchResultsModel::chatCount() const
@@ -93,15 +93,31 @@ int SearchResultsModel::messageCount() const
     return static_cast<int>(m_messages.size());
 }
 
+int SearchResultsModel::numberCount() const
+{
+    return static_cast<int>(m_number.size());
+}
+
 QVariant SearchResultsModel::data(const QModelIndex &index, int role) const
 {
     if (!index.isValid() || index.row() < 0 || index.row() >= rowCount()) {
         return {};
     }
-    const int row = index.row();
-    const Row &item = row < m_chats.size() ? m_chats.at(row) : m_messages.at(row - m_chats.size());
+    int row = index.row();
+    const Row *itemPtr = nullptr;
+    if (row < m_number.size()) {
+        itemPtr = &m_number.at(row);
+    } else if (row - m_number.size() < m_chats.size()) {
+        itemPtr = &m_chats.at(row - m_number.size());
+    } else {
+        itemPtr = &m_messages.at(row - m_number.size() - m_chats.size());
+    }
+    const Row &item = *itemPtr;
     switch (role) {
     case KindRole:
+        if (item.isNumber) {
+            return QStringLiteral("number");
+        }
         return item.isMessage ? QStringLiteral("message") : QStringLiteral("chat");
     case AvatarLocalPathRole:
         return item.avatarLocalPath;
@@ -125,6 +141,10 @@ QVariant SearchResultsModel::data(const QModelIndex &index, int role) const
         return item.timestampUnix;
     case IsOutgoingRole:
         return item.isOutgoing;
+    case JidRole:
+        return item.jid;
+    case RegisteredRole:
+        return item.registered;
     default:
         return {};
     }
@@ -145,6 +165,8 @@ QHash<int, QByteArray> SearchResultsModel::roleNames() const
         {TimeTextRole, "timeText"},
         {TimestampUnixRole, "timestampUnix"},
         {IsOutgoingRole, "isOutgoing"},
+        {JidRole, "jid"},
+        {RegisteredRole, "registered"},
     };
 }
 
@@ -204,12 +226,46 @@ void SearchResultsModel::setMessages(const QList<whatevr::v1::MessageSearchResul
     Q_EMIT countsChanged();
 }
 
-void SearchResultsModel::clear()
+void SearchResultsModel::setNumber(const QString &jid, const QString &phone, const QString &displayName, bool registered)
 {
-    if (m_chats.isEmpty() && m_messages.isEmpty()) {
+    QList<Row> rows;
+    const QString trimmedPhone = phone.trimmed();
+    if (!trimmedPhone.isEmpty()) {
+        const QString title = displayName.trimmed().isEmpty() ? trimmedPhone : displayName.trimmed();
+        rows.append(Row {
+            .isMessage = false,
+            .isNumber = true,
+            .initials = initialsForName(title),
+            .title = title,
+            .subtitle = trimmedPhone,
+            .jid = jid,
+            .registered = registered,
+        });
+    }
+    beginResetModel();
+    m_number = std::move(rows);
+    endResetModel();
+    Q_EMIT countsChanged();
+}
+
+void SearchResultsModel::clearNumber()
+{
+    if (m_number.isEmpty()) {
         return;
     }
     beginResetModel();
+    m_number.clear();
+    endResetModel();
+    Q_EMIT countsChanged();
+}
+
+void SearchResultsModel::clear()
+{
+    if (m_number.isEmpty() && m_chats.isEmpty() && m_messages.isEmpty()) {
+        return;
+    }
+    beginResetModel();
+    m_number.clear();
     m_chats.clear();
     m_messages.clear();
     endResetModel();

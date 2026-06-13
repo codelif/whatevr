@@ -101,6 +101,18 @@ service ChatService {
   rpc ListPinnedMessages(ListPinnedMessagesRequest) returns (ListPinnedMessagesResponse);
   rpc SearchChats(SearchChatsRequest) returns (SearchChatsResponse);
   rpc SearchMessages(SearchMessagesRequest) returns (SearchMessagesResponse);
+  // Check whether a typed phone number is registered on WhatsApp (usync), so
+  // search can offer to start a chat with a number that isn't in any chat yet.
+  rpc CheckPhoneOnWhatsApp(CheckPhoneOnWhatsAppRequest) returns (CheckPhoneOnWhatsAppResponse);
+  // Create-or-return the 1:1 chat row for a user JID so the frontend can open
+  // it (used by number search and the "Message" buttons in contact info).
+  rpc EnsureDirectChat(EnsureDirectChatRequest) returns (EnsureDirectChatResponse);
+  // Full contact card for a 1:1 user: saved/push/business names, phone, avatar.
+  rpc GetContactInfo(GetContactInfoRequest) returns (GetContactInfoResponse);
+  // Group card: subject, description, avatar and the resolved member list.
+  rpc GetGroupInfo(GetGroupInfoRequest) returns (GetGroupInfoResponse);
+  // Fetch a full-resolution profile picture for the avatar viewer.
+  rpc FetchProfilePicture(FetchProfilePictureRequest) returns (FetchProfilePictureResponse);
 }
 
 service SendService {
@@ -157,7 +169,28 @@ message DaemonEvent {
     StickerLibraryChanged sticker_library_changed = 11;
     StickerDownloadChanged sticker_download_changed = 12;
     MessageDeleted message_deleted = 13;
+    ContactInfoUpdated contact_info_updated = 14;
+    GroupInfoUpdated group_info_updated = 15;
   }
+}
+
+// Second phase of GetContactInfo: the contact card is returned immediately from
+// local data, then this event delivers the network-fetched "about"/status text
+// once it lands so the open never blocks on the round-trip.
+message ContactInfoUpdated {
+  string jid = 1;
+  string status_text = 2;
+}
+
+// Second phase of GetGroupInfo: stored subject + participants are returned
+// immediately, then this event delivers the live-fetched subject, description,
+// creation time and member roles once the network call completes.
+message GroupInfoUpdated {
+  string chat_id = 1;
+  string subject = 2;
+  string description = 3;
+  int64 created_unix = 4;
+  repeated GroupMember members = 5;
 }
 
 // Published when a message was removed locally (delete for me). Revocations
@@ -544,6 +577,86 @@ message SearchMessagesRequest {
 message SearchMessagesResponse {
   repeated MessageSearchResult results = 1;
   bool has_more = 2;
+}
+
+// Phone-number lookup for the unified search bar. phone is the raw typed
+// number (digits, optionally with a leading +); the daemon normalizes it.
+message CheckPhoneOnWhatsAppRequest {
+  string phone = 1;
+}
+
+message CheckPhoneOnWhatsAppResponse {
+  // True when the number is a registered WhatsApp account.
+  bool registered = 1;
+  // Canonical user JID for the number (set only when registered).
+  string jid = 2;
+  // Best display name we can show before any chat exists: verified business
+  // name when present, else the normalized number.
+  string display_name = 3;
+  bool is_business = 4;
+  // The normalized phone (e.g. "+14155550100") for the result label.
+  string phone = 5;
+}
+
+message EnsureDirectChatRequest {
+  string jid = 1;
+}
+
+message EnsureDirectChatResponse {
+  Chat chat = 1;
+}
+
+message GetContactInfoRequest {
+  string jid = 1;
+}
+
+message GetContactInfoResponse {
+  string jid = 1;
+  // Formatted phone number (e.g. "+1 415 555 0100") when derivable.
+  string phone_number = 2;
+  // Name from the local/synced address book (FullName, else FirstName).
+  string saved_name = 3;
+  // WhatsApp profile (push) name set by the user themselves.
+  string push_name = 4;
+  // Verified business display name, when the account is a business.
+  string business_name = 5;
+  string avatar_local_path = 6;
+  bool is_business = 7;
+  // The user's WhatsApp "about"/status text, when available.
+  string status_text = 8;
+}
+
+// One group member with the names/phone/avatar resolved the same way senders
+// are resolved elsewhere, plus admin role flags.
+message GroupMember {
+  string jid = 1;
+  string display_name = 2;
+  string phone_number = 3;
+  string avatar_local_path = 4;
+  bool is_admin = 5;
+  bool is_super_admin = 6;
+}
+
+message GetGroupInfoRequest {
+  string chat_id = 1;
+}
+
+message GetGroupInfoResponse {
+  string subject = 1;
+  string description = 2;
+  string avatar_local_path = 3;
+  int64 created_unix = 4;
+  repeated GroupMember members = 5;
+}
+
+message FetchProfilePictureRequest {
+  string jid = 1;
+}
+
+message FetchProfilePictureResponse {
+  // Local file path to the downloaded full-resolution image; empty when the
+  // subject has no profile picture or it is not accessible.
+  string local_path = 1;
 }
 
 message SetStickerFavoriteRequest {

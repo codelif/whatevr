@@ -89,6 +89,16 @@ using whatevr::v1::SearchChatsRequest;
 using whatevr::v1::SearchChatsResponse;
 using whatevr::v1::SearchMessagesRequest;
 using whatevr::v1::SearchMessagesResponse;
+using whatevr::v1::CheckPhoneOnWhatsAppRequest;
+using whatevr::v1::CheckPhoneOnWhatsAppResponse;
+using whatevr::v1::EnsureDirectChatRequest;
+using whatevr::v1::EnsureDirectChatResponse;
+using whatevr::v1::GetContactInfoRequest;
+using whatevr::v1::GetContactInfoResponse;
+using whatevr::v1::GetGroupInfoRequest;
+using whatevr::v1::GetGroupInfoResponse;
+using whatevr::v1::FetchProfilePictureRequest;
+using whatevr::v1::FetchProfilePictureResponse;
 using whatevr::v1::ForwardMessageRequest;
 using whatevr::v1::HoldSessionRequest;
 using whatevr::v1::SendMediaRequest;
@@ -114,6 +124,31 @@ constexpr int kCachedMessagesPerChatLimit = kMessageLimit * 4;
 
 using HistorySyncPhase = whatevr::v1::HistorySyncPhaseGadget::HistorySyncPhase;
 using HistorySyncType = whatevr::v1::HistorySyncTypeGadget::HistorySyncType;
+
+// A search query is treated as a phone-number lookup when, after dropping the
+// usual punctuation (spaces, dashes, parens, dots) and an optional leading '+',
+// it is all digits and within an E.164-ish length. This keeps name searches
+// (which contain letters) from hitting the network usync path.
+bool looksLikePhoneNumber(const QString &query)
+{
+    QString digits;
+    bool sawPlus = false;
+    for (int i = 0; i < query.size(); ++i) {
+        const QChar c = query.at(i);
+        if (c.isDigit()) {
+            digits.append(c);
+        } else if (c == QLatin1Char('+') && i == 0) {
+            sawPlus = true;
+        } else if (c == QLatin1Char(' ') || c == QLatin1Char('-') || c == QLatin1Char('(')
+                   || c == QLatin1Char(')') || c == QLatin1Char('.')) {
+            continue;
+        } else {
+            return false;
+        }
+    }
+    Q_UNUSED(sawPlus);
+    return digits.size() >= 7 && digits.size() <= 15;
+}
 
 bool isSupportedOutboundImageFile(const QString &filePath)
 {
@@ -2089,6 +2124,7 @@ void AppController::setSearchQuery(const QString &query)
         m_searchDebounceTimer->stop();
         m_searchChatsReply.reset();
         m_searchMessagesReply.reset();
+        m_checkPhoneReply.reset();
         m_searchResultsModel->clear();
         if (m_searchBusy) {
             m_searchBusy = false;
@@ -2163,6 +2199,189 @@ void AppController::runSearch()
             }
         });
     }
+
+    // Phone-number lookup: only when the query is numeric, so plain name
+    // searches never hit the network. Result lands above chat/message matches
+    // and does not gate the busy spinner (it is a fast secondary lookup).
+    if (looksLikePhoneNumber(query)) {
+        CheckPhoneOnWhatsAppRequest request;
+        request.setPhone(query);
+        auto reply = m_chatClient->CheckPhoneOnWhatsApp(request);
+        auto *replyPtr = reply.get();
+        m_checkPhoneReply = std::move(reply);
+        connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr](const QGrpcStatus &status) {
+            if (m_checkPhoneReply.get() != replyPtr) {
+                return;
+            }
+            const auto reply = std::move(m_checkPhoneReply);
+            if (!status.isOk()) {
+                m_searchResultsModel->clearNumber();
+                return;
+            }
+            if (const auto response = reply->read<CheckPhoneOnWhatsAppResponse>()) {
+                m_searchResultsModel->setNumber(response->jid(), response->phone(),
+                                                response->displayName(), response->registered());
+            }
+        });
+    } else {
+        m_checkPhoneReply.reset();
+        m_searchResultsModel->clearNumber();
+    }
+}
+
+void AppController::startDirectChat(const QString &jid)
+{
+    if (!m_chatClient || jid.trimmed().isEmpty()) {
+        return;
+    }
+    EnsureDirectChatRequest request;
+    request.setJid(jid);
+    auto reply = m_chatClient->EnsureDirectChat(request);
+    auto *replyPtr = reply.get();
+    m_startDirectChatReply = std::move(reply);
+    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr](const QGrpcStatus &status) {
+        if (m_startDirectChatReply.get() != replyPtr) {
+            return;
+        }
+        const auto reply = std::move(m_startDirectChatReply);
+        if (!status.isOk()) {
+            Q_EMIT messageActionFailed(status.message().isEmpty()
+                                           ? i18nc("@info", "Unable to start chat")
+                                           : status.message());
+            return;
+        }
+        const auto response = reply->read<EnsureDirectChatResponse>();
+        if (!response) {
+            Q_EMIT messageActionFailed(i18nc("@info", "Unable to start chat"));
+            return;
+        }
+        const auto chat = response->chat();
+        m_chatListModel->upsertChat(chat);
+        clearSearch();
+        selectChat(chat.id_proto());
+        // Drive column navigation the same way notification/deep-link opens do
+        // (the chat is already selected above).
+        Q_EMIT openChatRequested(chat.id_proto());
+    });
+}
+
+void AppController::openContactInfo(const QString &jid)
+{
+    if (!m_chatClient || jid.trimmed().isEmpty()) {
+        return;
+    }
+    GetContactInfoRequest request;
+    request.setJid(jid);
+    auto reply = m_chatClient->GetContactInfo(request);
+    auto *replyPtr = reply.get();
+    m_contactInfoReply = std::move(reply);
+    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, jid](const QGrpcStatus &status) {
+        if (m_contactInfoReply.get() != replyPtr) {
+            return;
+        }
+        const auto reply = std::move(m_contactInfoReply);
+        if (!status.isOk()) {
+            Q_EMIT contactInfoFailed(jid, status.message().isEmpty()
+                                              ? i18nc("@info", "Unable to load contact info")
+                                              : status.message());
+            return;
+        }
+        const auto response = reply->read<GetContactInfoResponse>();
+        if (!response) {
+            Q_EMIT contactInfoFailed(jid, i18nc("@info", "Unable to load contact info"));
+            return;
+        }
+        const QVariantMap info {
+            {QStringLiteral("jid"), response->jid()},
+            {QStringLiteral("phoneNumber"), response->phoneNumber()},
+            {QStringLiteral("savedName"), response->savedName()},
+            {QStringLiteral("pushName"), response->pushName()},
+            {QStringLiteral("businessName"), response->businessName()},
+            {QStringLiteral("avatarLocalPath"), response->avatarLocalPath()},
+            {QStringLiteral("isBusiness"), response->isBusiness()},
+            {QStringLiteral("statusText"), response->statusText()},
+        };
+        Q_EMIT contactInfoReceived(info);
+    });
+}
+
+void AppController::openGroupInfo(const QString &chatId)
+{
+    if (!m_chatClient || chatId.trimmed().isEmpty()) {
+        return;
+    }
+    GetGroupInfoRequest request;
+    request.setChatId(chatId);
+    auto reply = m_chatClient->GetGroupInfo(request);
+    auto *replyPtr = reply.get();
+    m_groupInfoReply = std::move(reply);
+    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, chatId](const QGrpcStatus &status) {
+        if (m_groupInfoReply.get() != replyPtr) {
+            return;
+        }
+        const auto reply = std::move(m_groupInfoReply);
+        if (!status.isOk()) {
+            Q_EMIT groupInfoFailed(chatId, status.message().isEmpty()
+                                               ? i18nc("@info", "Unable to load group info")
+                                               : status.message());
+            return;
+        }
+        const auto response = reply->read<GetGroupInfoResponse>();
+        if (!response) {
+            Q_EMIT groupInfoFailed(chatId, i18nc("@info", "Unable to load group info"));
+            return;
+        }
+        QVariantList members;
+        for (const auto &member : response->members()) {
+            members.append(QVariantMap {
+                {QStringLiteral("jid"), member.jid()},
+                {QStringLiteral("displayName"), member.displayName()},
+                {QStringLiteral("phoneNumber"), member.phoneNumber()},
+                {QStringLiteral("avatarLocalPath"), member.avatarLocalPath()},
+                {QStringLiteral("isAdmin"), member.isAdmin()},
+                {QStringLiteral("isSuperAdmin"), member.isSuperAdmin()},
+            });
+        }
+        const QVariantMap info {
+            {QStringLiteral("chatId"), chatId},
+            {QStringLiteral("subject"), response->subject()},
+            {QStringLiteral("description"), response->description()},
+            {QStringLiteral("avatarLocalPath"), response->avatarLocalPath()},
+            {QStringLiteral("createdUnix"), static_cast<qint64>(response->createdUnix())},
+            {QStringLiteral("members"), members},
+        };
+        Q_EMIT groupInfoReceived(info);
+    });
+}
+
+void AppController::viewProfilePicture(const QString &jid)
+{
+    if (!m_chatClient || jid.trimmed().isEmpty()) {
+        return;
+    }
+    FetchProfilePictureRequest request;
+    request.setJid(jid);
+    auto reply = m_chatClient->FetchProfilePicture(request);
+    auto *replyPtr = reply.get();
+    m_profilePictureReply = std::move(reply);
+    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, jid](const QGrpcStatus &status) {
+        if (m_profilePictureReply.get() != replyPtr) {
+            return;
+        }
+        const auto reply = std::move(m_profilePictureReply);
+        if (!status.isOk()) {
+            Q_EMIT profilePictureFailed(jid, status.message().isEmpty()
+                                                 ? i18nc("@info", "Unable to load profile picture")
+                                                 : status.message());
+            return;
+        }
+        const auto response = reply->read<FetchProfilePictureResponse>();
+        if (!response || response->localPath().isEmpty()) {
+            Q_EMIT profilePictureFailed(jid, i18nc("@info", "No profile picture available"));
+            return;
+        }
+        Q_EMIT profilePictureReady(jid, response->localPath());
+    });
 }
 
 void AppController::openChatSearch()
@@ -3099,6 +3318,12 @@ void AppController::ensureDaemonStream()
         case whatevr::v1::DaemonEvent::PayloadFields::AvatarUpdated:
             applyAvatarUpdated(event->avatarUpdated());
             break;
+        case whatevr::v1::DaemonEvent::PayloadFields::ContactInfoUpdated:
+            applyContactInfoUpdated(event->contactInfoUpdated());
+            break;
+        case whatevr::v1::DaemonEvent::PayloadFields::GroupInfoUpdated:
+            applyGroupInfoUpdated(event->groupInfoUpdated());
+            break;
         case whatevr::v1::DaemonEvent::PayloadFields::StickerLibraryChanged:
             m_stickerController->handleLibraryChanged(event->stickerLibraryChanged().source());
             break;
@@ -3376,6 +3601,34 @@ void AppController::applyAvatarUpdated(const AvatarUpdated &update)
     if (messageAvatarChanged) {
         Q_EMIT messagesChanged();
     }
+}
+
+void AppController::applyContactInfoUpdated(const whatevr::v1::ContactInfoUpdated &update)
+{
+    Q_EMIT contactInfoUpdated(update.jid(), update.statusText());
+}
+
+void AppController::applyGroupInfoUpdated(const whatevr::v1::GroupInfoUpdated &update)
+{
+    QVariantList members;
+    for (const auto &member : update.members()) {
+        members.append(QVariantMap {
+            {QStringLiteral("jid"), member.jid()},
+            {QStringLiteral("displayName"), member.displayName()},
+            {QStringLiteral("phoneNumber"), member.phoneNumber()},
+            {QStringLiteral("avatarLocalPath"), member.avatarLocalPath()},
+            {QStringLiteral("isAdmin"), member.isAdmin()},
+            {QStringLiteral("isSuperAdmin"), member.isSuperAdmin()},
+        });
+    }
+    const QVariantMap info {
+        {QStringLiteral("chatId"), update.chatId()},
+        {QStringLiteral("subject"), update.subject()},
+        {QStringLiteral("description"), update.description()},
+        {QStringLiteral("createdUnix"), static_cast<qint64>(update.createdUnix())},
+        {QStringLiteral("members"), members},
+    };
+    Q_EMIT groupInfoUpdated(info);
 }
 
 void AppController::applyChatPresenceChanged(const ChatPresenceChanged &presence)

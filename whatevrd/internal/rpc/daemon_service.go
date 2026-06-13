@@ -203,6 +203,38 @@ func toProtoDaemonEvent(event app.DaemonEvent) *pb.DaemonEvent {
 				},
 			},
 		}
+	case app.DaemonEventContactInfoUpdated:
+		return &pb.DaemonEvent{
+			Payload: &pb.DaemonEvent_ContactInfoUpdated{
+				ContactInfoUpdated: &pb.ContactInfoUpdated{
+					Jid:        event.ContactInfo.JID,
+					StatusText: event.ContactInfo.StatusText,
+				},
+			},
+		}
+	case app.DaemonEventGroupInfoUpdated:
+		members := make([]*pb.GroupMember, 0, len(event.GroupInfo.Members))
+		for _, m := range event.GroupInfo.Members {
+			members = append(members, &pb.GroupMember{
+				Jid:             m.JID,
+				DisplayName:     m.DisplayName,
+				PhoneNumber:     m.PhoneNumber,
+				AvatarLocalPath: m.AvatarLocalPath,
+				IsAdmin:         m.IsAdmin,
+				IsSuperAdmin:    m.IsSuperAdmin,
+			})
+		}
+		return &pb.DaemonEvent{
+			Payload: &pb.DaemonEvent_GroupInfoUpdated{
+				GroupInfoUpdated: &pb.GroupInfoUpdated{
+					ChatId:      event.GroupChatID,
+					Subject:     event.GroupInfo.Subject,
+					Description: event.GroupInfo.Description,
+					CreatedUnix: event.GroupInfo.CreatedUnix,
+					Members:     members,
+				},
+			},
+		}
 	default:
 		return nil
 	}
