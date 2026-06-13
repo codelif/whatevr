@@ -209,6 +209,13 @@ public:
     Q_INVOKABLE [[nodiscard]] QString toCommonMark(const QString &text) const;
     Q_INVOKABLE void deleteMessageForMe(const QString &messageId);
     Q_INVOKABLE void revokeMessage(const QString &messageId);
+    // Edits one of our own sent messages in place: a text body or a media
+    // caption. Optimistically updates the bubble, then confirms via the daemon.
+    Q_INVOKABLE void editMessage(const QString &messageId, const QString &newText);
+    // Whether a message sent at timestampUnix is still within WhatsApp's edit
+    // window, so QML can hide the Edit action once it has lapsed. The daemon
+    // remains authoritative and rejects expired edits regardless.
+    [[nodiscard]] Q_INVOKABLE bool canEditAt(qint64 timestampUnix) const;
     Q_INVOKABLE void forwardMessage(const QString &messageId, const QStringList &chatIds);
     // Sends (emoji non-empty) or removes (emoji empty) our reaction on a message.
     Q_INVOKABLE void sendReaction(const QString &messageId, const QString &emoji);
@@ -413,6 +420,7 @@ private:
     QSet<QString> m_mediaDownloadingMessageIds;
     std::unique_ptr<QGrpcCallReply> m_messageInfoReply;
     QHash<QString, std::shared_ptr<QGrpcCallReply>> m_revokeMessageReplies;
+    QHash<QString, std::shared_ptr<QGrpcCallReply>> m_editMessageReplies;
     QHash<QString, std::shared_ptr<QGrpcCallReply>> m_forwardMessageReplies;
     QHash<QString, std::shared_ptr<QGrpcCallReply>> m_reactionReplies;
     int m_forwardBatchChatCount = 0;

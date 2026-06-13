@@ -317,6 +317,7 @@ func toAppMessage(message appstore.Message) app.Message {
 		MediaAnimated:           message.MediaAnimated,
 		MediaCacheKey:           message.MediaCacheKey,
 		IsRevoked:               message.IsRevoked,
+		IsEdited:                message.IsEdited,
 		ReplyTo: app.MessageReply{
 			MessageID:     message.ReplyTo.MessageID,
 			SenderID:      message.ReplyTo.SenderID,

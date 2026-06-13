@@ -18,6 +18,12 @@ Control {
     property string targetMessageId: ""
     property bool outgoing: false
     property bool showCloseButton: false
+    // When set, the header line shows this fixed title (e.g. "Editing message")
+    // instead of the quoted sender, and an optional leading icon. Lets the
+    // composer reuse this banner for edit mode with a distinct accent.
+    property string title: ""
+    property string iconName: ""
+    property string closeButtonText: Whatevr.I18n.i18nc("@action:button", "Cancel reply")
     // Always-active highlight so the reply accent stays vivid when the window
     // is unfocused (Kirigami.Theme.highlightColor greys out on focus loss).
     property color accentColor: activePalette.highlight
@@ -46,6 +52,9 @@ Control {
     }
 
     function displaySender() {
+        if (title.length > 0) {
+            return title
+        }
         if (outgoing) {
             return Whatevr.I18n.i18nc("@label quoted own message sender", "You")
         }
@@ -98,10 +107,23 @@ Control {
 
         implicitHeight: senderLabel.implicitHeight + Kirigami.Units.smallSpacing / 3 + previewLabel.implicitHeight
 
+        Kirigami.Icon {
+            id: headerIcon
+
+            visible: root.iconName.length > 0
+            source: root.iconName
+            color: root.accentColor
+            width: visible ? Kirigami.Theme.smallFont.pointSize * 1.15 : 0
+            height: width
+            anchors.left: parent.left
+            anchors.verticalCenter: senderLabel.verticalCenter
+        }
+
         Label {
             id: senderLabel
 
-            anchors.left: parent.left
+            anchors.left: headerIcon.visible ? headerIcon.right : parent.left
+            anchors.leftMargin: headerIcon.visible ? Kirigami.Units.smallSpacing / 2 : 0
             anchors.right: closeButton.visible ? closeButton.left : parent.right
             anchors.rightMargin: closeButton.visible ? Kirigami.Units.smallSpacing / 2 : 0
             anchors.top: parent.top
@@ -116,7 +138,7 @@ Control {
         Label {
             id: previewLabel
 
-            anchors.left: parent.left
+            anchors.left: senderLabel.left
             anchors.right: senderLabel.right
             anchors.top: senderLabel.bottom
             anchors.topMargin: Kirigami.Units.smallSpacing / 3
@@ -136,7 +158,7 @@ Control {
             width: Kirigami.Units.gridUnit * 1.25
             height: width
             icon.name: "dialog-close-symbolic"
-            text: Whatevr.I18n.i18nc("@action:button", "Cancel reply")
+            text: root.closeButtonText
             display: AbstractButton.IconOnly
             focusPolicy: Qt.NoFocus
             onClicked: root.closeRequested()

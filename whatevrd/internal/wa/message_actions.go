@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/types"
 	"google.golang.org/grpc/codes"
 	grpcstatus "google.golang.org/grpc/status"
@@ -243,6 +244,56 @@ func (c *Client) RevokeMessage(ctx context.Context, messageID string) (appstore.
 	}
 
 	updated, chat, changed, err := c.store.MarkMessageRevoked(ctx, message.ID)
+	if err != nil {
+		return appstore.Message{}, err
+	}
+	if changed {
+		c.daemon.PublishMessageUpdated(toDaemonMessage(updated))
+		c.daemon.PublishChatUpdated(toDaemonChat(chat))
+	}
+	return updated, nil
+}
+
+// EditMessage edits one of our own sent messages in place: the body of a text
+// message or the caption of a media message. WhatsApp only allows editing for
+// a limited window after sending (whatsmeow.EditWindow); the server also
+// enforces this and its rejection is surfaced as the RPC error.
+func (c *Client) EditMessage(ctx context.Context, messageID, newText string) (appstore.Message, error) {
+	message, err := c.store.GetMessage(ctx, messageID)
+	if err != nil {
+		return appstore.Message{}, err
+	}
+	if message.Direction != appstore.DirectionOutgoing {
+		return appstore.Message{}, grpcstatus.Error(codes.FailedPrecondition, "only your own messages can be edited")
+	}
+	if message.IsRevoked {
+		return appstore.Message{}, grpcstatus.Error(codes.FailedPrecondition, "a deleted message cannot be edited")
+	}
+	if time.Since(time.Unix(message.TimestampUnix, 0)) > whatsmeow.EditWindow {
+		return appstore.Message{}, grpcstatus.Error(codes.FailedPrecondition, "the edit window for this message has expired")
+	}
+
+	client := c.currentClient()
+	if client == nil || !client.IsLoggedIn() {
+		return appstore.Message{}, grpcstatus.Error(codes.Unavailable, "WhatsApp client is not logged in")
+	}
+
+	chatJID, err := types.ParseJID(message.ChatID)
+	if err != nil {
+		return appstore.Message{}, grpcstatus.Errorf(codes.InvalidArgument, "invalid chat_id: %v", err)
+	}
+
+	content := c.buildEditContent(ctx, client, message, newText)
+	if content == nil {
+		return appstore.Message{}, grpcstatus.Error(codes.FailedPrecondition, "this message cannot be edited")
+	}
+
+	externalID := types.MessageID(appstore.ExternalMessageID(message.ChatID, message.ID))
+	if _, err := client.SendMessage(ctx, chatJID, client.BuildEdit(chatJID, externalID, content)); err != nil {
+		return appstore.Message{}, grpcstatus.Errorf(codes.Unknown, "edit failed: %v", err)
+	}
+
+	updated, chat, changed, err := c.store.UpdateMessageText(ctx, message.ID, newText)
 	if err != nil {
 		return appstore.Message{}, err
 	}

@@ -67,6 +67,8 @@ using whatevr::v1::DeleteMessageForMeRequest;
 using whatevr::v1::GetMessageInfoRequest;
 using whatevr::v1::RevokeMessageRequest;
 using whatevr::v1::RevokeMessageResponse;
+using whatevr::v1::EditMessageRequest;
+using whatevr::v1::EditMessageResponse;
 using whatevr::v1::SendReactionRequest;
 using whatevr::v1::SendReactionResponse;
 using whatevr::v1::ForwardMessageRequest;
@@ -1583,6 +1585,58 @@ void AppController::revokeMessage(const QString &messageId)
         if (const auto response = reply->read<RevokeMessageResponse>()) {
             // The event stream tombstones it too; applying directly avoids a
             // visible delay between the menu action and the bubble change.
+            applyMessageEvent(response->message());
+        }
+    });
+}
+
+bool AppController::canEditAt(qint64 timestampUnix) const
+{
+    // Mirrors whatsmeow.EditWindow (20 minutes); the daemon is authoritative.
+    static constexpr qint64 kEditWindowSeconds = 20 * 60;
+    if (timestampUnix <= 0) {
+        return false;
+    }
+    const qint64 nowUnix = QDateTime::currentSecsSinceEpoch();
+    return nowUnix - timestampUnix <= kEditWindowSeconds;
+}
+
+void AppController::editMessage(const QString &messageId, const QString &newText)
+{
+    if (!m_sendClient || messageId.isEmpty() || newText.trimmed().isEmpty()) {
+        return;
+    }
+
+    EditMessageRequest request;
+    request.setMessageId(messageId);
+    request.setText(newText.trimmed());
+
+    // Reflect the edit in the UI immediately; the daemon round-trip then confirms
+    // it (success applies the authoritative message) or the error path reverts to
+    // the captured original text/edited flag.
+    const bool wasEdited = m_messageListModel->messageSnapshot(messageId).value(QStringLiteral("isEdited")).toBool();
+    const QString previousText = m_messageListModel->applyOptimisticEdit(messageId, newText.trimmed());
+
+    auto reply = m_sendClient->EditMessage(request);
+    auto *replyPtr = reply.get();
+    m_editMessageReplies.insert(messageId, std::move(reply));
+
+    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, messageId, previousText, wasEdited](const QGrpcStatus &status) {
+        auto it = m_editMessageReplies.find(messageId);
+        if (it == m_editMessageReplies.end() || it.value().get() != replyPtr) {
+            return;
+        }
+        const auto reply = it.value();
+        m_editMessageReplies.erase(it);
+        if (!status.isOk()) {
+            // Roll back the optimistic update so the bubble reflects reality again.
+            m_messageListModel->restoreText(messageId, previousText, wasEdited);
+            Q_EMIT messageActionFailed(status.message().isEmpty() ? i18nc("@info", "Unable to edit the message") : status.message());
+            return;
+        }
+        if (const auto response = reply->read<EditMessageResponse>()) {
+            // The event stream also delivers this update; applying directly avoids
+            // a visible delay between saving and the bubble settling.
             applyMessageEvent(response->message());
         }
     });

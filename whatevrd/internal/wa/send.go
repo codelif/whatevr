@@ -787,6 +787,39 @@ func (c *Client) outgoingReplyParticipant(ctx context.Context, client *whatsmeow
 	return jid.String()
 }
 
+// buildEditContent assembles the replacement message body for an edit. For a
+// text message it mirrors the normal send path (Conversation, or
+// ExtendedTextMessage when a reply quote/forward context must be preserved).
+// For a media message only the caption is editable, so it reuses the persisted
+// media proto (keys/URL/thumbnail) and swaps the caption rather than
+// re-uploading. It returns nil for content that cannot be edited (e.g. a
+// sticker, which has no caption, or media whose original proto is missing).
+func (c *Client) buildEditContent(ctx context.Context, client *whatsmeow.Client, message appstore.Message, newText string) *waE2E.Message {
+	if message.MediaMimeType != "" || message.MediaLocalPath != "" {
+		if message.MediaKind != appstore.MediaKindImage {
+			return nil
+		}
+		img := &waE2E.ImageMessage{}
+		if len(message.MediaPayload) == 0 || proto.Unmarshal(message.MediaPayload, img) != nil || img.GetDirectPath() == "" {
+			return nil
+		}
+		clone := proto.Clone(img).(*waE2E.ImageMessage)
+		clone.Caption = proto.String(newText)
+		clone.ContextInfo = c.outgoingContextInfo(ctx, client, message)
+		return &waE2E.Message{ImageMessage: clone}
+	}
+
+	if contextInfo := c.outgoingContextInfo(ctx, client, message); contextInfo != nil {
+		return &waE2E.Message{
+			ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+				Text:        proto.String(newText),
+				ContextInfo: contextInfo,
+			},
+		}
+	}
+	return &waE2E.Message{Conversation: proto.String(newText)}
+}
+
 // quotedMessageFromStored rebuilds the WhatsApp message proto to embed as the
 // quoted message in a reply, reusing the full media sub-proto persisted in
 // media_payload so stickers and photos render their thumbnails on the

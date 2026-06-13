@@ -898,6 +898,7 @@ const (
 	SendService_SendText_FullMethodName       = "/whatevr.v1.SendService/SendText"
 	SendService_SendMedia_FullMethodName      = "/whatevr.v1.SendService/SendMedia"
 	SendService_RevokeMessage_FullMethodName  = "/whatevr.v1.SendService/RevokeMessage"
+	SendService_EditMessage_FullMethodName    = "/whatevr.v1.SendService/EditMessage"
 	SendService_ForwardMessage_FullMethodName = "/whatevr.v1.SendService/ForwardMessage"
 	SendService_SendReaction_FullMethodName   = "/whatevr.v1.SendService/SendReaction"
 )
@@ -909,6 +910,7 @@ type SendServiceClient interface {
 	SendText(ctx context.Context, in *SendTextRequest, opts ...grpc.CallOption) (*SendTextResponse, error)
 	SendMedia(ctx context.Context, in *SendMediaRequest, opts ...grpc.CallOption) (*SendMediaResponse, error)
 	RevokeMessage(ctx context.Context, in *RevokeMessageRequest, opts ...grpc.CallOption) (*RevokeMessageResponse, error)
+	EditMessage(ctx context.Context, in *EditMessageRequest, opts ...grpc.CallOption) (*EditMessageResponse, error)
 	ForwardMessage(ctx context.Context, in *ForwardMessageRequest, opts ...grpc.CallOption) (*ForwardMessageResponse, error)
 	SendReaction(ctx context.Context, in *SendReactionRequest, opts ...grpc.CallOption) (*SendReactionResponse, error)
 }
@@ -951,6 +953,16 @@ func (c *sendServiceClient) RevokeMessage(ctx context.Context, in *RevokeMessage
 	return out, nil
 }
 
+func (c *sendServiceClient) EditMessage(ctx context.Context, in *EditMessageRequest, opts ...grpc.CallOption) (*EditMessageResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(EditMessageResponse)
+	err := c.cc.Invoke(ctx, SendService_EditMessage_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *sendServiceClient) ForwardMessage(ctx context.Context, in *ForwardMessageRequest, opts ...grpc.CallOption) (*ForwardMessageResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ForwardMessageResponse)
@@ -978,6 +990,7 @@ type SendServiceServer interface {
 	SendText(context.Context, *SendTextRequest) (*SendTextResponse, error)
 	SendMedia(context.Context, *SendMediaRequest) (*SendMediaResponse, error)
 	RevokeMessage(context.Context, *RevokeMessageRequest) (*RevokeMessageResponse, error)
+	EditMessage(context.Context, *EditMessageRequest) (*EditMessageResponse, error)
 	ForwardMessage(context.Context, *ForwardMessageRequest) (*ForwardMessageResponse, error)
 	SendReaction(context.Context, *SendReactionRequest) (*SendReactionResponse, error)
 	mustEmbedUnimplementedSendServiceServer()
@@ -998,6 +1011,9 @@ func (UnimplementedSendServiceServer) SendMedia(context.Context, *SendMediaReque
 }
 func (UnimplementedSendServiceServer) RevokeMessage(context.Context, *RevokeMessageRequest) (*RevokeMessageResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RevokeMessage not implemented")
+}
+func (UnimplementedSendServiceServer) EditMessage(context.Context, *EditMessageRequest) (*EditMessageResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method EditMessage not implemented")
 }
 func (UnimplementedSendServiceServer) ForwardMessage(context.Context, *ForwardMessageRequest) (*ForwardMessageResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ForwardMessage not implemented")
@@ -1080,6 +1096,24 @@ func _SendService_RevokeMessage_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SendService_EditMessage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(EditMessageRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SendServiceServer).EditMessage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SendService_EditMessage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SendServiceServer).EditMessage(ctx, req.(*EditMessageRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _SendService_ForwardMessage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ForwardMessageRequest)
 	if err := dec(in); err != nil {
@@ -1134,6 +1168,10 @@ var SendService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RevokeMessage",
 			Handler:    _SendService_RevokeMessage_Handler,
+		},
+		{
+			MethodName: "EditMessage",
+			Handler:    _SendService_EditMessage_Handler,
 		},
 		{
 			MethodName: "ForwardMessage",

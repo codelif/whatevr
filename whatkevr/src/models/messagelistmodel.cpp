@@ -281,6 +281,8 @@ QVariant MessageListModel::data(const QModelIndex &index, int role) const
         return message.mediaCacheKey;
     case IsRevokedRole:
         return message.isRevoked;
+    case IsEditedRole:
+        return message.isEdited;
     case ReactionsRole:
         return message.reactions;
     case MediaDownloadProgressRole:
@@ -344,6 +346,7 @@ QHash<int, QByteArray> MessageListModel::roleNames() const
         {HasLinksRole, "hasLinks"},
         {MediaCacheKeyRole, "mediaCacheKey"},
         {IsRevokedRole, "isRevoked"},
+        {IsEditedRole, "isEdited"},
         {ReactionsRole, "reactions"},
         {MediaDownloadProgressRole, "mediaDownloadProgress"},
     };
@@ -752,6 +755,7 @@ QVariantMap MessageListModel::messageSnapshot(const QString &messageId) const
         {QStringLiteral("mediaLocalPath"), message.mediaLocalPath},
         {QStringLiteral("mediaCacheKey"), message.mediaCacheKey},
         {QStringLiteral("isRevoked"), message.isRevoked},
+        {QStringLiteral("isEdited"), message.isEdited},
         {QStringLiteral("reactions"), message.reactions},
     };
 }
@@ -916,6 +920,46 @@ void MessageListModel::restoreReactions(const QString &messageId, const QVariant
     Q_EMIT dataChanged(changedIndex, changedIndex, {ReactionsRole});
 }
 
+QString MessageListModel::applyOptimisticEdit(const QString &messageId, const QString &newText)
+{
+    const int messageIndex = indexOf(messageId);
+    if (messageIndex < 0) {
+        return {};
+    }
+
+    auto &message = m_messages[messageIndex];
+    const QString previous = message.text;
+    message.text = newText;
+    message.isEdited = true;
+    // Drop the lazily-built preview/markup caches so the new body re-parses on
+    // next access from data().
+    message.previewParsed = false;
+    message.fullMarkupParsed = false;
+
+    const QModelIndex changedIndex = index(messageIndex, 0);
+    // The body drives many derived roles (layout, preview, links, widths), so
+    // refresh the whole row rather than a narrow role set.
+    Q_EMIT dataChanged(changedIndex, changedIndex);
+    return previous;
+}
+
+void MessageListModel::restoreText(const QString &messageId, const QString &oldText, bool wasEdited)
+{
+    const int messageIndex = indexOf(messageId);
+    if (messageIndex < 0) {
+        return;
+    }
+
+    auto &message = m_messages[messageIndex];
+    message.text = oldText;
+    message.isEdited = wasEdited;
+    message.previewParsed = false;
+    message.fullMarkupParsed = false;
+
+    const QModelIndex changedIndex = index(messageIndex, 0);
+    Q_EMIT dataChanged(changedIndex, changedIndex);
+}
+
 QStringList MessageListModel::uniqueIncomingSenderIds() const
 {
     QSet<QString> seen;
@@ -1029,6 +1073,7 @@ MessageListModel::MessageItem MessageListModel::fromProto(const whatevr::v1::Mes
         .mediaHeight = message.mediaHeight(),
         .mediaAnimated = message.mediaAnimated(),
         .isRevoked = message.isRevoked(),
+        .isEdited = message.isEdited(),
         .mediaDownloading = false,
         .mediaDownloadError = {},
         .replyToMessageId = {},

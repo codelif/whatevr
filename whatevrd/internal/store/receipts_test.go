@@ -123,6 +123,65 @@ func TestMarkMessageRevokedClearsContentAndUpdatesSummary(t *testing.T) {
 	}
 }
 
+func TestUpdateMessageTextEditsBodyAndUpdatesSummary(t *testing.T) {
+	db, ctx := receiptsTestDB(t)
+	saveOutgoingGroupMessage(t, db, ctx, "msg-1")
+	const messageID = "group@g.us:msg-1"
+
+	message, chat, changed, err := db.UpdateMessageText(ctx, messageID, "edited hello")
+	if err != nil {
+		t.Fatalf("update text: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected edit to change the message")
+	}
+	if !message.IsEdited || message.Text != "edited hello" {
+		t.Fatalf("unexpected edited message: %+v", message)
+	}
+	if chat.LastMessage != "edited hello" {
+		t.Fatalf("unexpected chat summary: %q", chat.LastMessage)
+	}
+
+	// Idempotent when the text is unchanged.
+	_, _, changedAgain, err := db.UpdateMessageText(ctx, messageID, "edited hello")
+	if err != nil {
+		t.Fatalf("repeat edit: %v", err)
+	}
+	if changedAgain {
+		t.Fatal("expected repeat edit with same text to be a no-op")
+	}
+
+	// A second distinct edit still applies.
+	updated, _, changed, err := db.UpdateMessageText(ctx, messageID, "edited again")
+	if err != nil {
+		t.Fatalf("second edit: %v", err)
+	}
+	if !changed || updated.Text != "edited again" {
+		t.Fatalf("unexpected second edit: changed=%v message=%+v", changed, updated)
+	}
+}
+
+func TestUpdateMessageTextRefusesRevokedMessage(t *testing.T) {
+	db, ctx := receiptsTestDB(t)
+	saveOutgoingGroupMessage(t, db, ctx, "msg-1")
+	const messageID = "group@g.us:msg-1"
+
+	if _, _, _, err := db.MarkMessageRevoked(ctx, messageID); err != nil {
+		t.Fatalf("mark revoked: %v", err)
+	}
+
+	message, _, changed, err := db.UpdateMessageText(ctx, messageID, "too late")
+	if err != nil {
+		t.Fatalf("update text on revoked: %v", err)
+	}
+	if changed {
+		t.Fatal("expected editing a revoked message to be a no-op")
+	}
+	if message.Text != "" || message.IsEdited {
+		t.Fatalf("revoked message should stay tombstoned: %+v", message)
+	}
+}
+
 func TestDeleteMessageForMeRemovesRowAndReceipts(t *testing.T) {
 	db, ctx := receiptsTestDB(t)
 	saveOutgoingGroupMessage(t, db, ctx, "msg-1")

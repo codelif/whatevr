@@ -24,6 +24,7 @@ type SendController interface {
 	SendText(context.Context, string, string, string) (appstore.SavedTextMessage, error)
 	SendMedia(context.Context, string, string, string, string) (appstore.SavedTextMessage, error)
 	RevokeMessage(context.Context, string) (appstore.Message, error)
+	EditMessage(context.Context, string, string) (appstore.Message, error)
 	ForwardMessage(context.Context, string, []string) ([]appstore.SavedTextMessage, error)
 	SendReaction(context.Context, string, string) (appstore.Message, error)
 }
@@ -100,6 +101,31 @@ func (s *SendService) RevokeMessage(ctx context.Context, req *pb.RevokeMessageRe
 		return nil, err
 	}
 	return &pb.RevokeMessageResponse{Message: toProtoMessage(toAppMessage(message))}, nil
+}
+
+func (s *SendService) EditMessage(ctx context.Context, req *pb.EditMessageRequest) (*pb.EditMessageResponse, error) {
+	if s.sender == nil {
+		return nil, status.Error(codes.Unimplemented, "send controller is not available")
+	}
+	if strings.TrimSpace(req.GetMessageId()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "message_id is required")
+	}
+	text := strings.TrimSpace(req.GetText())
+	if text == "" {
+		return nil, status.Error(codes.InvalidArgument, "text is required")
+	}
+	if utf8.RuneCountInString(text) > maxSendTextRunes {
+		return nil, status.Errorf(codes.InvalidArgument, "text must be <= %d characters", maxSendTextRunes)
+	}
+
+	message, err := s.sender.EditMessage(ctx, strings.TrimSpace(req.GetMessageId()), text)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, status.Error(codes.NotFound, "message not found")
+		}
+		return nil, err
+	}
+	return &pb.EditMessageResponse{Message: toProtoMessage(toAppMessage(message))}, nil
 }
 
 func (s *SendService) SendReaction(ctx context.Context, req *pb.SendReactionRequest) (*pb.SendReactionResponse, error) {
