@@ -64,6 +64,8 @@ enum class DaemonState : int32_t;
 class ChatListModel;
 class EmojiModel;
 class MessageListModel;
+class StarredMessagesModel;
+class PinnedMessagesModel;
 class StickerController;
 
 class AppController final : public QObject
@@ -99,6 +101,8 @@ class AppController final : public QObject
     Q_PROPERTY(bool chatsLoading READ chatsLoading NOTIFY chatsChanged FINAL)
     Q_PROPERTY(bool chatsEmpty READ chatsEmpty NOTIFY chatsChanged FINAL)
     Q_PROPERTY(QAbstractItemModel *messageListModel READ messageListModel CONSTANT FINAL)
+    Q_PROPERTY(QAbstractItemModel *starredMessagesModel READ starredMessagesModel CONSTANT FINAL)
+    Q_PROPERTY(QAbstractItemModel *pinnedMessagesModel READ pinnedMessagesModel CONSTANT FINAL)
     Q_PROPERTY(QAbstractItemModel *emojiModel READ emojiModel CONSTANT FINAL)
     Q_PROPERTY(QObject *stickers READ stickers CONSTANT FINAL)
     Q_PROPERTY(bool messagesLoading READ messagesLoading NOTIFY messagesChanged FINAL)
@@ -158,6 +162,8 @@ public:
     [[nodiscard]] bool chatsLoading() const;
     [[nodiscard]] bool chatsEmpty() const;
     [[nodiscard]] QAbstractItemModel *messageListModel() const;
+    [[nodiscard]] QAbstractItemModel *starredMessagesModel() const;
+    [[nodiscard]] QAbstractItemModel *pinnedMessagesModel() const;
     [[nodiscard]] QAbstractItemModel *emojiModel() const;
     [[nodiscard]] QObject *stickers() const;
     [[nodiscard]] bool messagesLoading() const;
@@ -190,6 +196,9 @@ public:
     Q_INVOKABLE void retryMessages();
     Q_INVOKABLE void loadOlderMessages();
     Q_INVOKABLE void jumpToMessage(const QString &messageId);
+    // Opens chatId (if not already current) and scrolls to messageId once its
+    // page has loaded. Drives "Show in chat" from the starred-messages view.
+    Q_INVOKABLE void showMessageInChat(const QString &chatId, const QString &messageId);
     Q_INVOKABLE void sendText(const QString &text, const QString &replyToMessageId = QString());
     Q_INVOKABLE void sendImage(const QString &fileUrl, const QString &caption = QString(), const QString &replyToMessageId = QString());
     Q_INVOKABLE void addRecentEmoji(const QString &emoji);
@@ -219,6 +228,20 @@ public:
     Q_INVOKABLE void forwardMessage(const QString &messageId, const QStringList &chatIds);
     // Sends (emoji non-empty) or removes (emoji empty) our reaction on a message.
     Q_INVOKABLE void sendReaction(const QString &messageId, const QString &emoji);
+    // Stars or unstars a message. Optimistically flips the bubble's star icon,
+    // then confirms via the daemon (which syncs it through WhatsApp app-state).
+    Q_INVOKABLE void setMessageStarred(const QString &messageId, bool starred);
+    // Pins a message for everyone in its chat for durationSecs (24h/7d/30d), or
+    // unpins it. The daemon enforces the per-chat pin limit and reports failures
+    // through messageActionFailed.
+    Q_INVOKABLE void pinMessage(const QString &messageId, int durationSecs);
+    Q_INVOKABLE void unpinMessage(const QString &messageId);
+    // Loads the starred-messages view. chatId empty spans all chats; otherwise
+    // scopes to one conversation. Fills starredMessagesModel.
+    Q_INVOKABLE void loadStarredMessages(const QString &chatId = QString());
+    // Loads the pinned messages for a chat into pinnedMessagesModel (drives the
+    // conversation's pinned banner). Called on chat open and on pin changes.
+    Q_INVOKABLE void loadPinnedMessages(const QString &chatId);
     Q_INVOKABLE void requestMessageInfo(const QString &messageId);
     // Reports that the user is actually looking at the selected chat's unread
     // messages (window focused, unread region scrolled into view). This is the
@@ -395,6 +418,8 @@ private:
     ChatListModel *m_chatListModel = nullptr;
     EmojiModel *m_emojiModel = nullptr;
     MessageListModel *m_messageListModel = nullptr;
+    StarredMessagesModel *m_starredMessagesModel = nullptr;
+    PinnedMessagesModel *m_pinnedMessagesModel = nullptr;
     StickerController *m_stickerController = nullptr;
 
     std::shared_ptr<QAbstractGrpcChannel> m_channel;
@@ -423,6 +448,10 @@ private:
     QHash<QString, std::shared_ptr<QGrpcCallReply>> m_editMessageReplies;
     QHash<QString, std::shared_ptr<QGrpcCallReply>> m_forwardMessageReplies;
     QHash<QString, std::shared_ptr<QGrpcCallReply>> m_reactionReplies;
+    QHash<QString, std::shared_ptr<QGrpcCallReply>> m_setMessageStarredReplies;
+    QHash<QString, std::shared_ptr<QGrpcCallReply>> m_pinMessageReplies;
+    std::unique_ptr<QGrpcCallReply> m_listStarredReply;
+    std::unique_ptr<QGrpcCallReply> m_listPinnedReply;
     int m_forwardBatchChatCount = 0;
     bool m_forwardBatchFailed = false;
     QHash<QString, std::shared_ptr<QGrpcCallReply>> m_deleteMessageReplies;
@@ -442,6 +471,10 @@ private:
     QTimer *m_updateSessionStateTimer = nullptr;
     QTimer *m_markChatReadTimer = nullptr;
     QString m_pendingSelectedChatReloadId;
+    // A cross-chat "show in chat" jump deferred until the target chat's first
+    // message page lands (set by showMessageInChat, consumed in requestMessages).
+    QString m_pendingJumpChatId;
+    QString m_pendingJumpMessageId;
     QString m_localComposingChatId;
     QString m_markChatReadChatId;
     QString m_pendingMarkChatReadId;

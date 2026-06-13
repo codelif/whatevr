@@ -95,6 +95,8 @@ service ChatService {
   rpc DownloadMessageMedia(DownloadMessageMediaRequest) returns (DownloadMessageMediaResponse);
   rpc GetMessageInfo(GetMessageInfoRequest) returns (GetMessageInfoResponse);
   rpc DeleteMessageForMe(DeleteMessageForMeRequest) returns (DeleteMessageForMeResponse);
+  rpc ListStarredMessages(ListStarredMessagesRequest) returns (ListStarredMessagesResponse);
+  rpc ListPinnedMessages(ListPinnedMessagesRequest) returns (ListPinnedMessagesResponse);
 }
 
 service SendService {
@@ -104,6 +106,8 @@ service SendService {
   rpc EditMessage(EditMessageRequest) returns (EditMessageResponse);
   rpc ForwardMessage(ForwardMessageRequest) returns (ForwardMessageResponse);
   rpc SendReaction(SendReactionRequest) returns (SendReactionResponse);
+  rpc SetMessageStarred(SetMessageStarredRequest) returns (SetMessageStarredResponse);
+  rpc PinMessage(PinMessageRequest) returns (PinMessageResponse);
 }
 
 service StickerService {
@@ -437,6 +441,59 @@ message SendReactionResponse {
   Message message = 1;
 }
 
+message SetMessageStarredRequest {
+  string message_id = 1;
+  bool starred = 2;
+}
+
+message SetMessageStarredResponse {
+  // The target message, reloaded with its updated star state.
+  Message message = 1;
+}
+
+message PinMessageRequest {
+  string message_id = 1;
+  // True to pin, false to unpin. duration_secs is ignored when unpinning.
+  bool pinned = 2;
+  // Pin lifetime in seconds (e.g. 86400 / 604800 / 2592000). WhatsApp pins
+  // expire after this; the daemon stores now + duration_secs as the deadline.
+  uint32 duration_secs = 3;
+}
+
+message PinMessageResponse {
+  // The target message, reloaded with its updated pin state.
+  Message message = 1;
+}
+
+// One starred message plus its chat's display name, so the global starred
+// view can label which conversation each message belongs to.
+message StarredMessageItem {
+  Message message = 1;
+  string chat_name = 2;
+}
+
+message ListStarredMessagesRequest {
+  // Empty returns starred messages across all chats; set to scope to one chat.
+  string chat_id = 1;
+  int32 limit = 2;
+  // Keyset cursor: return starred messages strictly older than this one.
+  string before_message_id = 3;
+}
+
+message ListStarredMessagesResponse {
+  repeated StarredMessageItem items = 1;
+  bool has_more = 2;
+}
+
+message ListPinnedMessagesRequest {
+  string chat_id = 1;
+}
+
+message ListPinnedMessagesResponse {
+  // Currently-pinned (unexpired) messages, oldest pin first.
+  repeated Message messages = 1;
+}
+
 message SetStickerFavoriteRequest {
   // Either the sticker's cache key or a sticker message id to resolve it from.
   string cache_key = 1;
@@ -611,6 +668,15 @@ message Message {
   // `text` field already carries the latest content; clients show an edited
   // mark.
   bool is_edited = 22;
+  // True when this message is starred (favorited). Synced via WhatsApp
+  // app-state, so it reflects stars made on any linked device.
+  bool is_starred = 23;
+  // True when this message is currently pinned in its chat (pin-for-all and
+  // not yet expired). Derived from pinned_until_unix > now.
+  bool is_pinned = 24;
+  // Unix time when the pin expires; 0 when the message is not pinned. Clients
+  // stop showing the pin once this passes.
+  int64 pinned_until_unix = 25;
 }
 
 message Reaction {

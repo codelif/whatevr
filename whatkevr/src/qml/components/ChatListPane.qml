@@ -33,8 +33,21 @@ Kirigami.Page {
             onTriggered: Whatevr.AppController.triggerPrimaryAction()
         },
         Kirigami.Action {
+            icon.name: "starred-symbolic"
+            text: Whatevr.I18n.i18nc("@action:button open the starred-messages view", "Starred messages")
+            displayHint: Kirigami.DisplayHint.AlwaysHide
+            onTriggered: {
+                Whatevr.AppController.loadStarredMessages("")
+                applicationWindow().pageStack.layers.push(Qt.resolvedUrl("StarredMessagesPage.qml"), {
+                    chatId: "",
+                    headerTitle: Whatevr.I18n.i18nc("@title", "Starred messages")
+                })
+            }
+        },
+        Kirigami.Action {
             icon.name: "system-log-out-symbolic"
             text: Whatevr.I18n.i18nc("@action:button", "Log out")
+            displayHint: Kirigami.DisplayHint.AlwaysHide
             onTriggered: Whatevr.AppController.logout()
         }
     ]

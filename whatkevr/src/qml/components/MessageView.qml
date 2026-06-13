@@ -851,6 +851,17 @@ Item {
         }
         clip: true
 
+        // A viewport-height change (e.g. the pinned banner appearing/disappearing
+        // above us) leaves contentY untouched, so a list parked at the newest
+        // message drifts off the bottom edge. Re-pin when we were following the
+        // newest message and the user isn't mid-jump.
+        onHeightChanged: {
+            if (root.followNewest && !root.programmaticScroll
+                    && root.pendingJumpMessageId.length === 0) {
+                Qt.callLater(root.scrollToNewest)
+            }
+        }
+
         // Newest at the bottom; older history stacks upward off the top edge.
         verticalLayoutDirection: ListView.BottomToTop
 
@@ -987,6 +998,8 @@ Item {
             mediaAnimated: Boolean(model.mediaAnimated)
             isRevoked: Boolean(model.isRevoked)
             isEdited: Boolean(model.isEdited)
+            isStarred: Boolean(model.isStarred)
+            isPinned: Boolean(model.isPinned)
             selectionModeActive: root.selectionActive
             selected: root.selectionRevision >= 0 && root.isSelected(messageId)
             pooled: pooledByListView
@@ -1348,6 +1361,8 @@ Item {
         readonly property bool ctxIsImage: !ctxIsSticker && (ctxMediaKind === "image" || ctxMediaMimeType.startsWith("image/"))
         readonly property bool ctxHasMediaFile: ctxMediaLocalPath.length > 0
         readonly property bool ctxHasText: ctxText.length > 0 && !ctxIsRevoked
+        readonly property bool ctxIsStarred: ctxValid && Boolean(ctx.isStarred)
+        readonly property bool ctxIsPinned: ctxValid && Boolean(ctx.isPinned)
         readonly property bool ctxCanReply: root.canReplyToSnapshot(ctx)
         readonly property bool ctxCanRevoke: root.canRevokeSnapshot(ctx)
         readonly property bool ctxCanEdit: root.canEditSnapshot(ctx)
@@ -1581,6 +1596,54 @@ Item {
             onTriggered: Whatevr.AppController.stickers.setStickerFavorite(messageContextMenu.ctxMediaCacheKey,
                                                                            messageContextMenu.ctxMessageId,
                                                                            !messageContextMenu.ctxStickerFavorite)
+        }
+
+        MenuSeparator {
+            visible: !messageContextMenu.ctxIsRevoked
+        }
+
+        MenuItem {
+            icon.name: messageContextMenu.ctxIsStarred ? "starred-symbolic" : "non-starred-symbolic"
+            text: messageContextMenu.ctxIsStarred
+                  ? Whatevr.I18n.i18nc("@action:inmenu", "Unstar")
+                  : Whatevr.I18n.i18nc("@action:inmenu", "Star")
+            visible: !messageContextMenu.ctxIsRevoked
+            onTriggered: Whatevr.AppController.setMessageStarred(messageContextMenu.ctxMessageId,
+                                                                 !messageContextMenu.ctxIsStarred)
+        }
+
+        MenuItem {
+            icon.name: "window-unpin-symbolic"
+            text: Whatevr.I18n.i18nc("@action:inmenu unpin a message from the chat", "Unpin")
+            visible: messageContextMenu.ctxIsPinned && !messageContextMenu.ctxIsRevoked
+            onTriggered: Whatevr.AppController.unpinMessage(messageContextMenu.ctxMessageId)
+        }
+
+        Menu {
+            id: pinDurationSubMenu
+
+            title: Whatevr.I18n.i18nc("@action:inmenu pin a message in the chat", "Pin")
+            icon.name: "pin-symbolic"
+            visible: !messageContextMenu.ctxIsPinned && !messageContextMenu.ctxIsRevoked
+
+            readonly property real framePadding: Kirigami.Units.smallSpacing
+            topPadding: framePadding
+            bottomPadding: framePadding
+            leftPadding: framePadding
+            rightPadding: framePadding
+
+            MenuItem {
+                text: Whatevr.I18n.i18nc("@action:inmenu pin duration", "For 24 hours")
+                onTriggered: Whatevr.AppController.pinMessage(messageContextMenu.ctxMessageId, 24 * 60 * 60)
+            }
+            MenuItem {
+                text: Whatevr.I18n.i18nc("@action:inmenu pin duration", "For 7 days")
+                onTriggered: Whatevr.AppController.pinMessage(messageContextMenu.ctxMessageId, 7 * 24 * 60 * 60)
+            }
+            MenuItem {
+                text: Whatevr.I18n.i18nc("@action:inmenu pin duration", "For 30 days")
+                onTriggered: Whatevr.AppController.pinMessage(messageContextMenu.ctxMessageId, 30 * 24 * 60 * 60)
+            }
         }
 
         MenuSeparator {}

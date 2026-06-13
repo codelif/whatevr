@@ -292,6 +292,8 @@ type Message struct {
 	MediaCacheKey           string
 	IsRevoked               bool
 	IsEdited                bool
+	IsStarred               bool
+	PinnedUntilUnix         int64
 	ReplyTo                 MessageReply
 	Reactions               []Reaction
 }

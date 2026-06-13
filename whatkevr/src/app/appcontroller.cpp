@@ -34,6 +34,8 @@
 #include "../models/chatlistmodel.h"
 #include "../models/emojimodel.h"
 #include "../models/messagelistmodel.h"
+#include "../models/pinnedmessagesmodel.h"
+#include "../models/starredmessagesmodel.h"
 #include "stickercontroller.h"
 #include "whatevr/v1/whatevr.qpb.h"
 #include "whatevr/v1/whatevr_client.grpc.qpb.h"
@@ -71,6 +73,14 @@ using whatevr::v1::EditMessageRequest;
 using whatevr::v1::EditMessageResponse;
 using whatevr::v1::SendReactionRequest;
 using whatevr::v1::SendReactionResponse;
+using whatevr::v1::SetMessageStarredRequest;
+using whatevr::v1::SetMessageStarredResponse;
+using whatevr::v1::PinMessageRequest;
+using whatevr::v1::PinMessageResponse;
+using whatevr::v1::ListStarredMessagesRequest;
+using whatevr::v1::ListStarredMessagesResponse;
+using whatevr::v1::ListPinnedMessagesRequest;
+using whatevr::v1::ListPinnedMessagesResponse;
 using whatevr::v1::ForwardMessageRequest;
 using whatevr::v1::HoldSessionRequest;
 using whatevr::v1::SendMediaRequest;
@@ -325,6 +335,8 @@ AppController::AppController(QObject *parent)
     m_chatListModel = new ChatListModel(this);
     m_emojiModel = new EmojiModel(this);
     m_messageListModel = new MessageListModel(this);
+    m_starredMessagesModel = new StarredMessagesModel(this);
+    m_pinnedMessagesModel = new PinnedMessagesModel(this);
     m_stickerController = new StickerController(this);
     connect(m_stickerController, &StickerController::messageSent, this, [this](const whatevr::v1::Message &message) {
         applyMessageEvent(message);
@@ -620,6 +632,16 @@ QAbstractItemModel *AppController::messageListModel() const
     return m_messageListModel;
 }
 
+QAbstractItemModel *AppController::starredMessagesModel() const
+{
+    return m_starredMessagesModel;
+}
+
+QAbstractItemModel *AppController::pinnedMessagesModel() const
+{
+    return m_pinnedMessagesModel;
+}
+
 QAbstractItemModel *AppController::emojiModel() const
 {
     return m_emojiModel;
@@ -861,6 +883,13 @@ void AppController::selectChat(const QString &chatId)
         return;
     }
 
+    // Drop any deferred "show in chat" jump unless this selection is the one it
+    // asked for (showMessageInChat sets the pending target, then calls us).
+    if (chatId != m_pendingJumpChatId) {
+        m_pendingJumpChatId.clear();
+        m_pendingJumpMessageId.clear();
+    }
+
     if (!m_localComposingChatId.isEmpty()) {
         setChatComposing(m_localComposingChatId, false);
     }
@@ -909,9 +938,13 @@ void AppController::selectChat(const QString &chatId)
     Q_EMIT composerChanged();
     updateFrontendSessionState();
 
+    // Reset the pinned-message banner for the chat we're switching into; the
+    // load below repopulates it (or leaves it empty when nothing is pinned).
+    m_pinnedMessagesModel->clear();
     if (!m_selectedChatId.isEmpty()) {
         requestSelectedChatPresence();
         requestMessages(m_selectedChatId);
+        loadPinnedMessages(m_selectedChatId);
     }
 }
 
@@ -925,6 +958,27 @@ void AppController::retryMessages()
 void AppController::loadOlderMessages()
 {
     requestOlderMessages();
+}
+
+void AppController::showMessageInChat(const QString &chatId, const QString &messageId)
+{
+    const QString trimmedChat = chatId.trimmed();
+    const QString trimmedMessage = messageId.trimmed();
+    if (trimmedChat.isEmpty() || trimmedMessage.isEmpty()) {
+        return;
+    }
+
+    if (m_selectedChatId == trimmedChat) {
+        // Already open; jump straight away (loads context around it if needed).
+        jumpToMessage(trimmedMessage);
+        return;
+    }
+
+    // Defer the jump until the chat's first page lands; selectChat kicks off the
+    // load, requestMessages consumes the pending jump on success.
+    m_pendingJumpChatId = trimmedChat;
+    m_pendingJumpMessageId = trimmedMessage;
+    selectChat(trimmedChat);
 }
 
 void AppController::jumpToMessage(const QString &messageId)
@@ -1685,6 +1739,164 @@ void AppController::sendReaction(const QString &messageId, const QString &emoji)
     });
 }
 
+void AppController::setMessageStarred(const QString &messageId, bool starred)
+{
+    if (!m_sendClient || messageId.isEmpty()) {
+        return;
+    }
+
+    SetMessageStarredRequest request;
+    request.setMessageId(messageId);
+    request.setStarred(starred);
+
+    // Flip the bubble's star immediately; the daemon round-trip then confirms
+    // (applies the authoritative message) or reverts to the captured state.
+    const bool previousStarred = m_messageListModel->applyOptimisticStar(messageId, starred);
+
+    auto reply = m_sendClient->SetMessageStarred(request);
+    auto *replyPtr = reply.get();
+    m_setMessageStarredReplies.insert(messageId, std::move(reply));
+
+    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, messageId, previousStarred](const QGrpcStatus &status) {
+        auto it = m_setMessageStarredReplies.find(messageId);
+        if (it == m_setMessageStarredReplies.end() || it.value().get() != replyPtr) {
+            return;
+        }
+        const auto reply = it.value();
+        m_setMessageStarredReplies.erase(it);
+        if (!status.isOk()) {
+            m_messageListModel->restoreStar(messageId, previousStarred);
+            Q_EMIT messageActionFailed(status.message().isEmpty() ? i18nc("@info", "Unable to star the message") : status.message());
+            return;
+        }
+        if (const auto response = reply->read<SetMessageStarredResponse>()) {
+            applyMessageEvent(response->message());
+        }
+    });
+}
+
+void AppController::pinMessage(const QString &messageId, int durationSecs)
+{
+    if (!m_sendClient || messageId.isEmpty() || durationSecs <= 0) {
+        return;
+    }
+
+    PinMessageRequest request;
+    request.setMessageId(messageId);
+    request.setPinned(true);
+    request.setDurationSecs(static_cast<quint32>(durationSecs));
+
+    auto reply = m_sendClient->PinMessage(request);
+    auto *replyPtr = reply.get();
+    m_pinMessageReplies.insert(messageId, std::move(reply));
+
+    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, messageId](const QGrpcStatus &status) {
+        auto it = m_pinMessageReplies.find(messageId);
+        if (it == m_pinMessageReplies.end() || it.value().get() != replyPtr) {
+            return;
+        }
+        const auto reply = it.value();
+        m_pinMessageReplies.erase(it);
+        if (!status.isOk()) {
+            Q_EMIT messageActionFailed(status.message().isEmpty() ? i18nc("@info", "Unable to pin the message") : status.message());
+            return;
+        }
+        if (const auto response = reply->read<PinMessageResponse>()) {
+            applyMessageEvent(response->message());
+        }
+    });
+}
+
+void AppController::unpinMessage(const QString &messageId)
+{
+    if (!m_sendClient || messageId.isEmpty()) {
+        return;
+    }
+
+    PinMessageRequest request;
+    request.setMessageId(messageId);
+    request.setPinned(false);
+
+    auto reply = m_sendClient->PinMessage(request);
+    auto *replyPtr = reply.get();
+    m_pinMessageReplies.insert(messageId, std::move(reply));
+
+    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, messageId](const QGrpcStatus &status) {
+        auto it = m_pinMessageReplies.find(messageId);
+        if (it == m_pinMessageReplies.end() || it.value().get() != replyPtr) {
+            return;
+        }
+        const auto reply = it.value();
+        m_pinMessageReplies.erase(it);
+        if (!status.isOk()) {
+            Q_EMIT messageActionFailed(status.message().isEmpty() ? i18nc("@info", "Unable to unpin the message") : status.message());
+            return;
+        }
+        if (const auto response = reply->read<PinMessageResponse>()) {
+            applyMessageEvent(response->message());
+        }
+    });
+}
+
+void AppController::loadStarredMessages(const QString &chatId)
+{
+    if (!m_chatClient) {
+        return;
+    }
+
+    ListStarredMessagesRequest request;
+    request.setChatId(chatId);
+
+    auto reply = m_chatClient->ListStarredMessages(request);
+    auto *replyPtr = reply.get();
+    m_listStarredReply = std::move(reply);
+
+    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr](const QGrpcStatus &status) {
+        if (m_listStarredReply.get() != replyPtr) {
+            return;
+        }
+        const auto reply = std::move(m_listStarredReply);
+        if (!status.isOk()) {
+            Q_EMIT messageActionFailed(status.message().isEmpty() ? i18nc("@info", "Unable to load starred messages") : status.message());
+            return;
+        }
+        if (const auto response = reply->read<ListStarredMessagesResponse>()) {
+            m_starredMessagesModel->replace(response->items());
+        }
+    });
+}
+
+void AppController::loadPinnedMessages(const QString &chatId)
+{
+    if (!m_chatClient || chatId.isEmpty()) {
+        return;
+    }
+
+    ListPinnedMessagesRequest request;
+    request.setChatId(chatId);
+
+    auto reply = m_chatClient->ListPinnedMessages(request);
+    auto *replyPtr = reply.get();
+    m_listPinnedReply = std::move(reply);
+
+    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, chatId](const QGrpcStatus &status) {
+        if (m_listPinnedReply.get() != replyPtr) {
+            return;
+        }
+        const auto reply = std::move(m_listPinnedReply);
+        if (!status.isOk()) {
+            return;
+        }
+        // Ignore a stale response if the user has since switched chats.
+        if (chatId != m_selectedChatId) {
+            return;
+        }
+        if (const auto response = reply->read<ListPinnedMessagesResponse>()) {
+            m_pinnedMessagesModel->replace(response->messages());
+        }
+    });
+}
+
 void AppController::forwardMessage(const QString &messageId, const QStringList &chatIds)
 {
     if (!m_sendClient || messageId.isEmpty() || chatIds.isEmpty()) {
@@ -2006,6 +2218,14 @@ void AppController::requestMessages(const QString &chatId)
             m_messageListModel->replaceMessages(visibleMessages);
             m_canLoadOlderMessages = response->messages().size() >= limit;
             resolveUnreadAnchor(true);
+            // A deferred "show in chat" jump for this chat fires now that its
+            // first page is loaded (jumpToMessage loads around it if off-page).
+            if (m_pendingJumpChatId == chatId && !m_pendingJumpMessageId.isEmpty()) {
+                const QString pendingMessageId = m_pendingJumpMessageId;
+                m_pendingJumpChatId.clear();
+                m_pendingJumpMessageId.clear();
+                jumpToMessage(pendingMessageId);
+            }
         }
         Q_EMIT messagesChanged();
     });
@@ -2762,6 +2982,10 @@ void AppController::applyMediaDownloadChanged(const MediaDownloadChanged &downlo
 
 void AppController::applyMessageEvent(const whatevr::v1::Message &message)
 {
+    // The starred view is cross-chat, so keep it current regardless of which
+    // chat is open (e.g. a message unstarred from another conversation).
+    m_starredMessagesModel->applyMessage(message);
+
     auto cached = m_messageCache.find(message.chatId());
     if (cached != m_messageCache.end()) {
         int existingIndex = -1;
@@ -2785,6 +3009,8 @@ void AppController::applyMessageEvent(const whatevr::v1::Message &message)
     if (message.chatId() != m_selectedChatId) {
         return;
     }
+    // Keep the open chat's pinned banner live as pins come and go.
+    m_pinnedMessagesModel->applyMessage(message);
     dismissUnreadAnchor();
     if (m_displayedMessagesChatId != message.chatId()) {
         return;

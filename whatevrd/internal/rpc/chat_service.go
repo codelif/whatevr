@@ -25,6 +25,8 @@ type ChatStore interface {
 	ListChats(context.Context, int, int, string) ([]appstore.Chat, error)
 	ListMessages(context.Context, string, int, string) ([]appstore.Message, error)
 	ListMessagesAround(context.Context, string, int, string) ([]appstore.Message, error)
+	ListStarredMessages(context.Context, string, int, string) ([]appstore.StarredMessage, error)
+	ListPinnedMessages(context.Context, string) ([]appstore.Message, error)
 	MarkChatRead(context.Context, string) (appstore.Chat, error)
 }
 
@@ -263,6 +265,51 @@ func (s *ChatService) DeleteMessageForMe(ctx context.Context, req *pb.DeleteMess
 	return &pb.DeleteMessageForMeResponse{}, nil
 }
 
+func (s *ChatService) ListStarredMessages(ctx context.Context, req *pb.ListStarredMessagesRequest) (*pb.ListStarredMessagesResponse, error) {
+	if s.store == nil {
+		return nil, status.Error(codes.Unimplemented, "chat store is not available")
+	}
+	limit, _, err := normalizePage(req.GetLimit(), 0, defaultMessageLimit, maxMessageLimit)
+	if err != nil {
+		return nil, err
+	}
+
+	items, err := s.store.ListStarredMessages(ctx, strings.TrimSpace(req.GetChatId()), limit, strings.TrimSpace(req.GetBeforeMessageId()))
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &pb.ListStarredMessagesResponse{Items: make([]*pb.StarredMessageItem, 0, len(items))}
+	for _, item := range items {
+		resp.Items = append(resp.Items, &pb.StarredMessageItem{
+			Message:  toProtoMessage(toAppMessage(item.Message)),
+			ChatName: item.ChatName,
+		})
+	}
+	resp.HasMore = len(items) == limit
+	return resp, nil
+}
+
+func (s *ChatService) ListPinnedMessages(ctx context.Context, req *pb.ListPinnedMessagesRequest) (*pb.ListPinnedMessagesResponse, error) {
+	if s.store == nil {
+		return nil, status.Error(codes.Unimplemented, "chat store is not available")
+	}
+	if strings.TrimSpace(req.GetChatId()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "chat_id is required")
+	}
+
+	messages, err := s.store.ListPinnedMessages(ctx, strings.TrimSpace(req.GetChatId()))
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &pb.ListPinnedMessagesResponse{Messages: make([]*pb.Message, 0, len(messages))}
+	for _, message := range messages {
+		resp.Messages = append(resp.Messages, toProtoMessage(toAppMessage(message)))
+	}
+	return resp, nil
+}
+
 func normalizePage(limit int32, offset int32, defaultLimit int, maxLimit int) (int, int, error) {
 	if offset < 0 {
 		return 0, 0, status.Error(codes.InvalidArgument, "offset must be non-negative")
@@ -318,6 +365,8 @@ func toAppMessage(message appstore.Message) app.Message {
 		MediaCacheKey:           message.MediaCacheKey,
 		IsRevoked:               message.IsRevoked,
 		IsEdited:                message.IsEdited,
+		IsStarred:               message.IsStarred,
+		PinnedUntilUnix:         message.PinnedUntil,
 		ReplyTo: app.MessageReply{
 			MessageID:     message.ReplyTo.MessageID,
 			SenderID:      message.ReplyTo.SenderID,

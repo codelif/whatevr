@@ -298,8 +298,23 @@ Kirigami.Page {
 
     property list<Kirigami.Action> defaultActions: [
         Kirigami.Action {
+            icon.name: "starred-symbolic"
+            text: Whatevr.I18n.i18nc("@action:button starred messages in this chat", "Starred messages")
+            displayHint: Kirigami.DisplayHint.AlwaysHide
+            visible: Whatevr.AppController.hasSelectedChat
+            onTriggered: {
+                Whatevr.AppController.loadStarredMessages(Whatevr.AppController.selectedChatId)
+                applicationWindow().pageStack.layers.push(Qt.resolvedUrl("StarredMessagesPage.qml"), {
+                    chatId: Whatevr.AppController.selectedChatId,
+                    headerTitle: Whatevr.I18n.i18nc("@title starred messages in one chat",
+                                                    "Starred in %1", Whatevr.AppController.selectedChatName)
+                })
+            }
+        },
+        Kirigami.Action {
             icon.name: "dialog-close-symbolic"
             text: Whatevr.I18n.i18nc("@action:button", "Close Chat")
+            displayHint: Kirigami.DisplayHint.AlwaysHide
             visible: Whatevr.AppController.hasSelectedChat && root.closeChatActionVisible
             onTriggered: root.closeChatRequested()
         }
@@ -393,6 +408,14 @@ Kirigami.Page {
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
+
+        PinnedMessagesBanner {
+            Layout.fillWidth: true
+            visible: Whatevr.AppController.hasSelectedChat
+                     && root.messagesCurrent
+                     && count > 0
+            onMessageActivated: messageId => messageView.jumpToReplyTarget(messageId)
+        }
 
         Item {
             id: timelineArea

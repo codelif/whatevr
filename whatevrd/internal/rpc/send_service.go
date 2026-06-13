@@ -27,6 +27,8 @@ type SendController interface {
 	EditMessage(context.Context, string, string) (appstore.Message, error)
 	ForwardMessage(context.Context, string, []string) ([]appstore.SavedTextMessage, error)
 	SendReaction(context.Context, string, string) (appstore.Message, error)
+	SetMessageStarred(context.Context, string, bool) (appstore.Message, error)
+	PinMessage(context.Context, string, bool, uint32) (appstore.Message, error)
 }
 
 type SendService struct {
@@ -144,6 +146,42 @@ func (s *SendService) SendReaction(ctx context.Context, req *pb.SendReactionRequ
 		return nil, err
 	}
 	return &pb.SendReactionResponse{Message: toProtoMessage(toAppMessage(message))}, nil
+}
+
+func (s *SendService) SetMessageStarred(ctx context.Context, req *pb.SetMessageStarredRequest) (*pb.SetMessageStarredResponse, error) {
+	if s.sender == nil {
+		return nil, status.Error(codes.Unimplemented, "send controller is not available")
+	}
+	if strings.TrimSpace(req.GetMessageId()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "message_id is required")
+	}
+
+	message, err := s.sender.SetMessageStarred(ctx, strings.TrimSpace(req.GetMessageId()), req.GetStarred())
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, status.Error(codes.NotFound, "message not found")
+		}
+		return nil, err
+	}
+	return &pb.SetMessageStarredResponse{Message: toProtoMessage(toAppMessage(message))}, nil
+}
+
+func (s *SendService) PinMessage(ctx context.Context, req *pb.PinMessageRequest) (*pb.PinMessageResponse, error) {
+	if s.sender == nil {
+		return nil, status.Error(codes.Unimplemented, "send controller is not available")
+	}
+	if strings.TrimSpace(req.GetMessageId()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "message_id is required")
+	}
+
+	message, err := s.sender.PinMessage(ctx, strings.TrimSpace(req.GetMessageId()), req.GetPinned(), req.GetDurationSecs())
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, status.Error(codes.NotFound, "message not found")
+		}
+		return nil, err
+	}
+	return &pb.PinMessageResponse{Message: toProtoMessage(toAppMessage(message))}, nil
 }
 
 func (s *SendService) ForwardMessage(ctx context.Context, req *pb.ForwardMessageRequest) (*pb.ForwardMessageResponse, error) {
