@@ -348,6 +348,7 @@ func toProtoMessage(message app.Message) *pb.Message {
 		MediaAnimated:           message.MediaAnimated,
 		MediaCacheKey:           message.MediaCacheKey,
 		IsRevoked:               message.IsRevoked,
+		IsEdited:                message.IsEdited,
 	}
 	if message.ReplyTo.MessageID != "" {
 		protoMessage.ReplyTo = &pb.MessageReply{

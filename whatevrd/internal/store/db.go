@@ -388,6 +388,7 @@ func (db *DB) ensureMessageRevokedColumn(ctx context.Context) error {
 	}{
 		{"is_revoked", `ALTER TABLE messages ADD COLUMN is_revoked INTEGER NOT NULL DEFAULT 0`},
 		{"is_forwarded", `ALTER TABLE messages ADD COLUMN is_forwarded INTEGER NOT NULL DEFAULT 0`},
+		{"is_edited", `ALTER TABLE messages ADD COLUMN is_edited INTEGER NOT NULL DEFAULT 0`},
 	}
 	for _, a := range alterations {
 		if existing[a.col] {

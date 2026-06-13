@@ -71,6 +71,7 @@ public:
         HasLinksRole,
         MediaCacheKeyRole,
         IsRevokedRole,
+        IsEditedRole,
         ReactionsRole,
         MediaDownloadProgressRole,
     };
@@ -106,6 +107,12 @@ public:
     // list so the caller can revert with restoreReactions() if the call fails.
     QVariantList applyOptimisticReaction(const QString &messageId, const QString &emoji);
     void restoreReactions(const QString &messageId, const QVariantList &reactions);
+    // Optimistically apply an edit to a message's body so the bubble updates
+    // before the daemon round-trips. Sets the new text, flags it edited, and
+    // drops cached layout/markup so the new body re-renders. Returns the
+    // previous text so the caller can revert with restoreText() on failure.
+    QString applyOptimisticEdit(const QString &messageId, const QString &newText);
+    void restoreText(const QString &messageId, const QString &oldText, bool wasEdited);
     [[nodiscard]] QStringList uniqueIncomingSenderIds() const;
     void setGroupChat(bool groupChat);
     [[nodiscard]] bool isEmpty() const;
@@ -185,6 +192,7 @@ private:
         int mediaHeight = 0;
         bool mediaAnimated = false;
         bool isRevoked = false;
+        bool isEdited = false;
         bool mediaDownloading = false;
         QString mediaDownloadError;
         // Streamed download progress; totalBytes 0 means unknown size and the

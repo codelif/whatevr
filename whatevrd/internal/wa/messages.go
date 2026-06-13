@@ -304,6 +304,9 @@ func (c *Client) handleMessage(ctx context.Context, evt *events.Message, offline
 	if c.handleRevokeMessage(ctx, evt, offlineSync) {
 		return
 	}
+	if c.handleEditMessage(ctx, evt, offlineSync) {
+		return
+	}
 	if c.handleReaction(ctx, evt, offlineSync) {
 		return
 	}
@@ -350,6 +353,48 @@ func (c *Client) handleRevokeMessage(ctx context.Context, evt *events.Message, o
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			c.log.Warnf("Failed to mark message %s revoked: %v", internalID, err)
+		}
+		return true
+	}
+	if changed && !offlineSync {
+		c.daemon.PublishMessageUpdated(toDaemonMessage(message))
+		c.daemon.PublishChatUpdated(toDaemonChat(chat))
+	}
+	return true
+}
+
+// handleEditMessage intercepts "edit message" protocol messages and replaces
+// the referenced message's body/caption in place instead of ingesting the
+// protocol message as a new chat message. Returns true when the event was an
+// edit. The new content carries the original message id in its protocol key,
+// exactly as revokes do.
+func (c *Client) handleEditMessage(ctx context.Context, evt *events.Message, offlineSync bool) bool {
+	if evt == nil || evt.Message == nil {
+		return false
+	}
+	protocol := evt.Message.GetProtocolMessage()
+	if protocol == nil || protocol.GetKey() == nil {
+		return false
+	}
+	if protocol.GetType() != waE2E.ProtocolMessage_MESSAGE_EDIT {
+		return false
+	}
+
+	chatID, _ := c.internalMessageIDFromInfo(ctx, evt.Info)
+	targetID := strings.TrimSpace(protocol.GetKey().GetID())
+	if chatID == "" || targetID == "" {
+		return true
+	}
+
+	// quotedReplyPreview yields the body for a text message or the caption for a
+	// media message, which is exactly the field an edit replaces.
+	newText, _, _ := quotedReplyPreview(protocol.GetEditedMessage())
+
+	internalID := internalMessageIDForChat(chatID, types.MessageID(targetID))
+	message, chat, changed, err := c.store.UpdateMessageText(ctx, internalID, newText)
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			c.log.Warnf("Failed to apply edit to message %s: %v", internalID, err)
 		}
 		return true
 	}
@@ -1232,6 +1277,7 @@ func toDaemonMessage(message appstore.Message) app.Message {
 		MediaAnimated:           message.MediaAnimated,
 		MediaCacheKey:           message.MediaCacheKey,
 		IsRevoked:               message.IsRevoked,
+		IsEdited:                message.IsEdited,
 		ReplyTo: app.MessageReply{
 			MessageID:     message.ReplyTo.MessageID,
 			SenderID:      message.ReplyTo.SenderID,

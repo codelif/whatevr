@@ -13,6 +13,8 @@ import (
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	waLog "go.mau.fi/whatsmeow/util/log"
+	"google.golang.org/grpc/codes"
+	grpcstatus "google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
 	"whatevrd/internal/app"
@@ -253,6 +255,113 @@ func TestHandleRevokeMessageTombstonesTarget(t *testing.T) {
 	if c.handleRevokeMessage(ctx, plain, false) {
 		t.Fatal("plain message must not be treated as a revoke")
 	}
+}
+
+func TestHandleEditMessageUpdatesBody(t *testing.T) {
+	c, db := newReceiptTestClient(t)
+	ctx := context.Background()
+	messageID := seedGroupMessage(t, db, appstore.StatusSent)
+
+	chatJID, err := types.ParseJID("group@g.us")
+	if err != nil {
+		t.Fatalf("parse jid: %v", err)
+	}
+	evt := &events.Message{
+		Info: types.MessageInfo{
+			MessageSource: types.MessageSource{Chat: chatJID},
+			ID:            "edit-1",
+		},
+		Message: &waE2E.Message{
+			ProtocolMessage: &waE2E.ProtocolMessage{
+				Type: waE2E.ProtocolMessage_MESSAGE_EDIT.Enum(),
+				Key: &waCommon.MessageKey{
+					RemoteJID: proto.String("group@g.us"),
+					ID:        proto.String("msg-1"),
+				},
+				EditedMessage: &waE2E.Message{Conversation: proto.String("edited body")},
+			},
+		},
+	}
+
+	if !c.handleEditMessage(ctx, evt, false) {
+		t.Fatal("expected the edit protocol message to be intercepted")
+	}
+
+	message, err := db.GetMessage(ctx, messageID)
+	if err != nil {
+		t.Fatalf("get message: %v", err)
+	}
+	if !message.IsEdited || message.Text != "edited body" {
+		t.Fatalf("expected edited body, got %+v", message)
+	}
+
+	// A regular text message is not intercepted as an edit.
+	plain := &events.Message{
+		Info:    types.MessageInfo{MessageSource: types.MessageSource{Chat: chatJID}, ID: "plain-1"},
+		Message: &waE2E.Message{Conversation: proto.String("hi")},
+	}
+	if c.handleEditMessage(ctx, plain, false) {
+		t.Fatal("plain message must not be treated as an edit")
+	}
+}
+
+func TestEditMessageRejectsIneligibleMessages(t *testing.T) {
+	ctx := context.Background()
+
+	// Out-of-window: seedGroupMessage timestamps at 1970, far past EditWindow.
+	t.Run("expired window", func(t *testing.T) {
+		c, db := newReceiptTestClient(t)
+		messageID := seedGroupMessage(t, db, appstore.StatusSent)
+		_, err := c.EditMessage(ctx, messageID, "too late")
+		if grpcstatus.Code(err) != codes.FailedPrecondition {
+			t.Fatalf("expected FailedPrecondition, got %v", err)
+		}
+	})
+
+	t.Run("not our message", func(t *testing.T) {
+		c, db := newReceiptTestClient(t)
+		const messageID = "group@g.us:in-1"
+		if _, err := db.SaveTextMessage(ctx, appstore.TextMessageInput{
+			ID:        messageID,
+			ChatID:    "group@g.us",
+			SenderID:  "someone@s.whatsapp.net",
+			Text:      "hi",
+			Timestamp: time.Now(),
+			Direction: appstore.DirectionIncoming,
+			Status:    appstore.StatusDelivered,
+			IsGroup:   true,
+		}); err != nil {
+			t.Fatalf("save incoming: %v", err)
+		}
+		_, err := c.EditMessage(ctx, messageID, "nope")
+		if grpcstatus.Code(err) != codes.FailedPrecondition {
+			t.Fatalf("expected FailedPrecondition, got %v", err)
+		}
+	})
+
+	t.Run("revoked message", func(t *testing.T) {
+		c, db := newReceiptTestClient(t)
+		const messageID = "group@g.us:fresh-1"
+		if _, err := db.SaveTextMessage(ctx, appstore.TextMessageInput{
+			ID:        messageID,
+			ChatID:    "group@g.us",
+			SenderID:  "me",
+			Text:      "hello",
+			Timestamp: time.Now(),
+			Direction: appstore.DirectionOutgoing,
+			Status:    appstore.StatusSent,
+			IsGroup:   true,
+		}); err != nil {
+			t.Fatalf("save outgoing: %v", err)
+		}
+		if _, _, _, err := db.MarkMessageRevoked(ctx, messageID); err != nil {
+			t.Fatalf("revoke: %v", err)
+		}
+		_, err := c.EditMessage(ctx, messageID, "nope")
+		if grpcstatus.Code(err) != codes.FailedPrecondition {
+			t.Fatalf("expected FailedPrecondition, got %v", err)
+		}
+	})
 }
 
 func TestUpdateMessageStatusStaysMonotonicWithAggregate(t *testing.T) {

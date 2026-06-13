@@ -45,6 +45,7 @@ type Message struct {
 	MediaCacheKey           string
 	IsRevoked               bool
 	IsForwarded             bool
+	IsEdited                bool
 	SendAttempts            int32
 	LastSendError           string
 	NextSendAttempt         int64
@@ -606,7 +607,7 @@ func (db *DB) ListMessages(ctx context.Context, chatID string, limit int, before
 		       COALESCE(NULLIF(sa.local_path, ''), NULLIF(ca.local_path, ''), NULLIF(s.avatar_local_path, ''), NULLIF(c.avatar_local_path, ''), ''),
 		       m.text, m.timestamp, m.rowid, m.direction, m.is_read, m.status, m.media_kind, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_animated,
 		       m.reply_to_message_id, m.reply_to_sender_id, m.reply_to_sender_name, m.reply_to_text, m.reply_to_media_kind, m.reply_to_media_mime_type, m.reply_to_direction,
-		       m.send_attempts, m.last_send_error, m.next_send_attempt, m.is_revoked
+		       m.send_attempts, m.last_send_error, m.next_send_attempt, m.is_revoked, m.is_edited
 		FROM messages m
 		LEFT JOIN senders s ON s.id = m.sender_id
 		LEFT JOIN chats c ON c.id = m.sender_id
@@ -715,7 +716,7 @@ func (db *DB) listMessagesAroundSide(ctx context.Context, chatID string, timesta
 		       COALESCE(NULLIF(sa.local_path, ''), NULLIF(ca.local_path, ''), NULLIF(s.avatar_local_path, ''), NULLIF(c.avatar_local_path, ''), ''),
 		       m.text, m.timestamp, m.rowid, m.direction, m.is_read, m.status, m.media_kind, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_animated,
 		       m.reply_to_message_id, m.reply_to_sender_id, m.reply_to_sender_name, m.reply_to_text, m.reply_to_media_kind, m.reply_to_media_mime_type, m.reply_to_direction,
-		       m.send_attempts, m.last_send_error, m.next_send_attempt, m.is_revoked
+		       m.send_attempts, m.last_send_error, m.next_send_attempt, m.is_revoked, m.is_edited
 		FROM messages m
 		LEFT JOIN senders s ON s.id = m.sender_id
 		LEFT JOIN chats c ON c.id = m.sender_id
@@ -947,6 +948,59 @@ func (db *DB) MarkMessageRevoked(ctx context.Context, id string) (Message, Chat,
 		`, message.ChatID); err != nil {
 			return Message{}, Chat{}, false, err
 		}
+	}
+
+	if err := recomputeChatSummaryTx(ctx, tx, message.ChatID); err != nil {
+		return Message{}, Chat{}, false, err
+	}
+
+	updated, err := getMessageTx(ctx, tx, id)
+	if err != nil {
+		return Message{}, Chat{}, false, err
+	}
+	chat, err := getChatTx(ctx, tx, message.ChatID)
+	if err != nil {
+		return Message{}, Chat{}, false, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return Message{}, Chat{}, false, err
+	}
+	return updated, chat, true, nil
+}
+
+// UpdateMessageText replaces a message's body (the caption for media messages)
+// with newText and flags it as edited, then recomputes the chat summary so the
+// chat list preview reflects the new content. It returns the reloaded message
+// and chat plus whether anything changed. A revoked message cannot be edited,
+// and re-applying the same text on an already-edited message is a no-op; both
+// cases return changed=false.
+func (db *DB) UpdateMessageText(ctx context.Context, id, newText string) (Message, Chat, bool, error) {
+	tx, err := db.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return Message{}, Chat{}, false, err
+	}
+	defer tx.Rollback()
+
+	message, err := getMessageTx(ctx, tx, id)
+	if err != nil {
+		return Message{}, Chat{}, false, err
+	}
+	if message.IsRevoked || (message.Text == newText && message.IsEdited) {
+		chat, err := getChatTx(ctx, tx, message.ChatID)
+		if err != nil {
+			return Message{}, Chat{}, false, err
+		}
+		return message, chat, false, nil
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE messages
+		SET text = ?,
+			is_edited = 1
+		WHERE id = ?
+	`, newText, id); err != nil {
+		return Message{}, Chat{}, false, err
 	}
 
 	if err := recomputeChatSummaryTx(ctx, tx, message.ChatID); err != nil {
@@ -1228,7 +1282,7 @@ func getMessageRow(ctx context.Context, queryer interface {
 		       COALESCE(NULLIF(sa.local_path, ''), NULLIF(ca.local_path, ''), NULLIF(s.avatar_local_path, ''), NULLIF(c.avatar_local_path, ''), ''),
 		       m.text, m.timestamp, m.rowid, m.direction, m.is_read, m.status, m.media_kind, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_animated, m.media_payload, m.media_cache_key,
 		       m.reply_to_message_id, m.reply_to_sender_id, m.reply_to_sender_name, m.reply_to_text, m.reply_to_media_kind, m.reply_to_media_mime_type, m.reply_to_direction,
-		       m.send_attempts, m.last_send_error, m.next_send_attempt, m.is_revoked
+		       m.send_attempts, m.last_send_error, m.next_send_attempt, m.is_revoked, m.is_edited
 		FROM messages m
 		LEFT JOIN senders s ON s.id = m.sender_id
 		LEFT JOIN chats c ON c.id = m.sender_id
@@ -1267,6 +1321,7 @@ func getMessageRow(ctx context.Context, queryer interface {
 		&message.LastSendError,
 		&message.NextSendAttempt,
 		&message.IsRevoked,
+		&message.IsEdited,
 	)
 }
 
@@ -1362,6 +1417,7 @@ func scanMessageRows(rows *sql.Rows, capacity int) ([]Message, error) {
 			&message.LastSendError,
 			&message.NextSendAttempt,
 			&message.IsRevoked,
+			&message.IsEdited,
 		); err != nil {
 			return nil, err
 		}

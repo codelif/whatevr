@@ -291,6 +291,7 @@ type Message struct {
 	MediaAnimated           bool
 	MediaCacheKey           string
 	IsRevoked               bool
+	IsEdited                bool
 	ReplyTo                 MessageReply
 	Reactions               []Reaction
 }

@@ -38,6 +38,10 @@ func (f *fakeSendController) RevokeMessage(context.Context, string) (appstore.Me
 	return appstore.Message{}, nil
 }
 
+func (f *fakeSendController) EditMessage(context.Context, string, string) (appstore.Message, error) {
+	return appstore.Message{}, nil
+}
+
 func (f *fakeSendController) ForwardMessage(context.Context, string, []string) ([]appstore.SavedTextMessage, error) {
 	return nil, nil
 }

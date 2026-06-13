@@ -96,6 +96,7 @@ Item {
     signal conversationFocusRequested()
     signal typeIntoComposerRequested(string text)
     signal replyToMessageRequested(string messageId, string senderName, string text, string mediaKind, string mediaMimeType, bool outgoing)
+    signal editMessageRequested(string messageId, string text)
 
     onLoadingOlderMessagesChanged: {
         if (loadingOlderMessages) {
@@ -326,6 +327,32 @@ Item {
                && Boolean(snapshot.isOutgoing)
                && !snapshot.isRevoked
                && (Date.now() / 1000) - Number(snapshot.timestampUnix || 0) < revokeWindowSeconds
+    }
+
+    // Editable: our own, not deleted, still within the edit window, and either a
+    // text message or an image (whose caption can be edited). Stickers and other
+    // media have no editable caption — mirrors the daemon's buildEditContent.
+    function canEditSnapshot(snapshot) {
+        if (!snapshot || !snapshot.messageId || !snapshot.isOutgoing || snapshot.isRevoked) {
+            return false
+        }
+        if (!Whatevr.AppController.canEditAt(Number(snapshot.timestampUnix || 0))) {
+            return false
+        }
+        const mediaKind = String(snapshot.mediaKind || "")
+        const mediaMime = String(snapshot.mediaMimeType || "")
+        const isSticker = mediaKind === "sticker"
+        const isImage = !isSticker && (mediaKind === "image" || mediaMime.startsWith("image/"))
+        const hasMedia = mediaKind.length > 0 || mediaMime.length > 0
+        return (!hasMedia && String(snapshot.text || "").length > 0) || isImage
+    }
+
+    function editSnapshot(snapshot) {
+        if (!canEditSnapshot(snapshot)) {
+            return
+        }
+        // snapshot.text is the body for a text message, or the caption for media.
+        editMessageRequested(String(snapshot.messageId), String(snapshot.text || ""))
     }
 
     function openMessageInfo(messageId) {
@@ -959,6 +986,7 @@ Item {
             mediaIntrinsicHeight: Number(model.mediaHeight || 0)
             mediaAnimated: Boolean(model.mediaAnimated)
             isRevoked: Boolean(model.isRevoked)
+            isEdited: Boolean(model.isEdited)
             selectionModeActive: root.selectionActive
             selected: root.selectionRevision >= 0 && root.isSelected(messageId)
             pooled: pooledByListView
@@ -1322,6 +1350,7 @@ Item {
         readonly property bool ctxHasText: ctxText.length > 0 && !ctxIsRevoked
         readonly property bool ctxCanReply: root.canReplyToSnapshot(ctx)
         readonly property bool ctxCanRevoke: root.canRevokeSnapshot(ctx)
+        readonly property bool ctxCanEdit: root.canEditSnapshot(ctx)
 
         parent: list
         // The KDE desktop style uses different menu frame metrics per axis.
@@ -1427,6 +1456,13 @@ Item {
             text: Whatevr.I18n.i18nc("@action:inmenu", "Reply")
             visible: messageContextMenu.ctxCanReply
             onTriggered: root.replyToSnapshot(messageContextMenu.ctx)
+        }
+
+        MenuItem {
+            icon.name: "document-edit-symbolic"
+            text: Whatevr.I18n.i18nc("@action:inmenu", "Edit")
+            visible: messageContextMenu.ctxCanEdit
+            onTriggered: root.editSnapshot(messageContextMenu.ctx)
         }
 
         MenuItem {

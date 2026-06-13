@@ -101,6 +101,7 @@ service SendService {
   rpc SendText(SendTextRequest) returns (SendTextResponse);
   rpc SendMedia(SendMediaRequest) returns (SendMediaResponse);
   rpc RevokeMessage(RevokeMessageRequest) returns (RevokeMessageResponse);
+  rpc EditMessage(EditMessageRequest) returns (EditMessageResponse);
   rpc ForwardMessage(ForwardMessageRequest) returns (ForwardMessageResponse);
   rpc SendReaction(SendReactionRequest) returns (SendReactionResponse);
 }
@@ -404,6 +405,17 @@ message RevokeMessageResponse {
   Message message = 1;
 }
 
+message EditMessageRequest {
+  string message_id = 1;
+  // New body for a text message, or new caption for a media message.
+  string text = 2;
+}
+
+message EditMessageResponse {
+  // The edited message, reloaded with its new content and is_edited set.
+  Message message = 1;
+}
+
 message ForwardMessageRequest {
   string source_message_id = 1;
   repeated string target_chat_ids = 2;
@@ -595,6 +607,10 @@ message Message {
   // Emoji reactions on this message, one per reactor (latest wins). Empty
   // when nobody has reacted.
   repeated Reaction reactions = 21;
+  // True when the message has been edited (by us or another participant). The
+  // `text` field already carries the latest content; clients show an edited
+  // mark.
+  bool is_edited = 22;
 }
 
 message Reaction {

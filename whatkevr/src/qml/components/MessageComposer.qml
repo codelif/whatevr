@@ -22,6 +22,12 @@ Frame {
     property string replyToMediaMimeType: ""
     property bool replyToOutgoing: false
     readonly property bool replying: replyToMessageId.length > 0
+    // Edit-in-place state. Mirrors the reply banner but submits an edit to an
+    // existing message instead of sending a new one. editingMessageId non-empty
+    // puts the composer in edit mode.
+    property string editingMessageId: ""
+    property string editingOriginalText: ""
+    readonly property bool editing: editingMessageId.length > 0
 
     // Inline `:keyword` emoji suggestion state.
     property var suggestionResults: []
@@ -34,6 +40,21 @@ Frame {
     signal composingChanged(bool composing)
     signal clearReplyRequested()
     signal replyConsumed()
+    signal editRequested(string messageId, string text)
+    signal clearEditRequested()
+    signal editConsumed()
+
+    // Prefill with the message body on entering edit mode, clear on leaving.
+    // editingOriginalText is set before editingMessageId at the call site, so it
+    // is already current when this fires.
+    onEditingChanged: {
+        if (root.editing) {
+            root.setText(root.editingOriginalText)
+            root.forceInputFocus()
+        } else {
+            root.setText("")
+        }
+    }
 
     padding: Kirigami.Units.smallSpacing
 
@@ -63,8 +84,13 @@ Frame {
             return
         }
         root.setComposing(false)
-        root.sendTextRequested(text, root.replyToMessageId)
-        root.replyConsumed()
+        if (root.editing) {
+            root.editRequested(root.editingMessageId, text)
+            root.editConsumed()
+        } else {
+            root.sendTextRequested(text, root.replyToMessageId)
+            root.replyConsumed()
+        }
         input.clear()
         root.hideSuggestions()
         emojiPicker.close()
@@ -317,6 +343,23 @@ Frame {
             onCloseRequested: root.clearReplyRequested()
         }
 
+        // Edit banner: the reply preview reused with a distinct (neutral/amber)
+        // accent and an "Editing message" header so edit mode reads differently
+        // from a reply. Reply and edit are mutually exclusive.
+        ReplyPreview {
+            Layout.fillWidth: true
+            visible: root.editing
+            title: Whatevr.I18n.i18nc("@label composer edit banner", "Editing message")
+            iconName: "document-edit-symbolic"
+            body: root.editingOriginalText
+            showCloseButton: true
+            closeButtonText: Whatevr.I18n.i18nc("@action:button", "Cancel edit")
+            accentColor: Kirigami.Theme.neutralTextColor
+            fillColor: Qt.alpha(Kirigami.Theme.neutralTextColor, 0.07)
+            borderColor: Qt.alpha(Kirigami.Theme.neutralTextColor, 0.18)
+            onCloseRequested: root.clearEditRequested()
+        }
+
         Item {
             id: suggestionBar
 
@@ -486,7 +529,7 @@ Frame {
                             return
                         }
 
-                        if (event.matches(StandardKey.Paste)) {
+                        if (event.matches(StandardKey.Paste) && !root.editing) {
                             if (Whatevr.AppController.sendClipboardImage(root.inputPlainText(), root.replyToMessageId)) {
                                 event.accepted = true
                                 root.setComposing(false)
@@ -510,6 +553,9 @@ Frame {
             }
 
             ToolButton {
+                // Attaching media isn't part of an in-place edit (only the
+                // caption/body changes), so hide it while editing.
+                visible: !root.editing
                 icon.name: "image-x-generic-symbolic"
                 text: Whatevr.I18n.i18nc("@action:button", "Attach image")
                 display: AbstractButton.IconOnly
@@ -519,8 +565,10 @@ Frame {
             }
 
             ToolButton {
-                icon.name: "document-send-symbolic"
-                text: Whatevr.I18n.i18nc("@action:button", "Send")
+                icon.name: root.editing ? "checkmark-symbolic" : "document-send-symbolic"
+                text: root.editing
+                      ? Whatevr.I18n.i18nc("@action:button", "Save edit")
+                      : Whatevr.I18n.i18nc("@action:button", "Send")
                 display: AbstractButton.IconOnly
                 enabled: root.enabledForChat && !root.sending && input.text.trim().length > 0
                 onClicked: root.submitText()

@@ -50,6 +50,7 @@ Item {
     property int mediaIntrinsicHeight: 0
     property bool mediaAnimated: false
     property bool isRevoked: false
+    property bool isEdited: false
     // Reactions on this message: list of {emoji, senderId, senderName, fromMe}
     // maps (MessageListModel ReactionsRole).
     property var reactions: []
@@ -338,9 +339,15 @@ Item {
     readonly property real footerInset: Kirigami.Units.smallSpacing
     // Bold filled checkmark bundled with the app (Breeze's is too thin).
     readonly property url tickSource: "qrc:/data/icons/checkmark-bold.svg"
+    // A small pencil shown left of the timestamp when the message was edited.
+    readonly property bool showEditMark: isEdited && !isRevoked
+    readonly property real editMarkSize: Math.max(1, Math.round(footerMetrics.height * 0.92))
+    readonly property real editMarkReserve: showEditMark ? editMarkSize + tntSpacing : 0
     readonly property real tntWidth: Math.ceil(footerMetrics.advanceWidth
+                                               + editMarkReserve
                                                + (showStatusIcon ? statusAreaWidth + tntSpacing : 0))
-    readonly property real tntHeight: Math.ceil(Math.max(footerMetrics.height, showStatusIcon ? statusIconSize : 0))
+    readonly property real tntHeight: Math.ceil(Math.max(footerMetrics.height, showStatusIcon ? statusIconSize : 0,
+                                                         showEditMark ? editMarkSize : 0))
     readonly property bool hasBody: body.length > 0
     readonly property bool showReadMore: textTruncated && !textExpanded && hasBody
     readonly property string readMoreLabelText: Whatevr.I18n.i18nc("@action:button expand long message", "Read more")
@@ -1261,6 +1268,19 @@ Item {
                     width: Math.ceil(footerMetrics.advanceWidth)
                     horizontalAlignment: Text.AlignRight
                     font.pointSize: root.footerTimePointSize
+                }
+
+                Kirigami.Icon {
+                    id: editMark
+                    visible: root.showEditMark
+                    source: "document-edit-symbolic"
+                    anchors.right: timeLabel.left
+                    anchors.rightMargin: root.tntSpacing
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: root.editMarkSize
+                    height: root.editMarkSize
+                    color: root.footerTextColor
+                    isMask: true
                 }
             }
         }

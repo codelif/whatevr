@@ -30,6 +30,12 @@ Kirigami.Page {
     property string replyToMediaKind: ""
     property string replyToMediaMimeType: ""
     property bool replyToOutgoing: false
+    // Edit-in-place state. editingMessageId being non-empty puts the composer in
+    // edit mode (prefilled body, "Editing" banner). Reply and edit are mutually
+    // exclusive.
+    property string editChatId: ""
+    property string editingMessageId: ""
+    property string editingOriginalText: ""
 
     readonly property bool messagesCurrent: Whatevr.AppController.hasSelectedChat
                                             && Whatevr.AppController.displayedMessagesChatId === Whatevr.AppController.selectedChatId
@@ -95,6 +101,8 @@ Kirigami.Page {
         if (messageId.length === 0 || !Whatevr.AppController.hasSelectedChat) {
             return
         }
+        // Reply and edit are mutually exclusive; starting a reply cancels an edit.
+        root.clearEditTarget()
         replyChatId = Whatevr.AppController.selectedChatId
         replyToMessageId = messageId
         replyToSenderName = senderName
@@ -102,6 +110,26 @@ Kirigami.Page {
         replyToMediaKind = mediaKind
         replyToMediaMimeType = mediaMimeType
         replyToOutgoing = outgoing
+        composer.forceInputFocus()
+    }
+
+    function clearEditTarget() {
+        editChatId = ""
+        editingMessageId = ""
+        editingOriginalText = ""
+    }
+
+    function setEditTarget(messageId, text) {
+        if (messageId.length === 0 || !Whatevr.AppController.hasSelectedChat) {
+            return
+        }
+        // Reply and edit are mutually exclusive; starting an edit cancels a reply.
+        root.clearReplyTarget()
+        editChatId = Whatevr.AppController.selectedChatId
+        // Set the body before the id: the composer prefills on editingMessageId
+        // becoming non-empty and reads editingOriginalText then.
+        editingOriginalText = text
+        editingMessageId = messageId
         composer.forceInputFocus()
     }
 
@@ -116,6 +144,8 @@ Kirigami.Page {
             }
             if (messageView.selectionActive) {
                 messageView.clearSelection()
+            } else if (root.editingMessageId.length > 0) {
+                root.clearEditTarget()
             } else if (root.replyToMessageId.length > 0) {
                 root.clearReplyTarget()
             } else {
@@ -154,6 +184,13 @@ Kirigami.Page {
             // selectionChanged also fires for presence/avatar updates of the same
             // chat; only react when the open chat actually changed.
             if (newChatId !== root.composerChatId) {
+                // Cancel an in-progress edit first: it empties the composer, so
+                // stashing the old draft and loading the new one below operate on
+                // real draft text rather than the edit body (and the edit-exit
+                // doesn't clobber the incoming chat's freshly loaded draft).
+                if (root.editingMessageId.length > 0) {
+                    root.clearEditTarget()
+                }
                 // Stash the previous chat's composer text as its draft, then load
                 // the new chat's draft. setChatDraft ignores empty ids/text.
                 Whatevr.AppController.setChatDraft(root.composerChatId, composer.inputPlainText())
@@ -162,6 +199,9 @@ Kirigami.Page {
             }
             if (root.replyChatId.length > 0 && root.replyChatId !== newChatId) {
                 root.clearReplyTarget()
+            }
+            if (root.editChatId.length > 0 && root.editChatId !== newChatId) {
+                root.clearEditTarget()
             }
         }
     }
@@ -386,6 +426,7 @@ Kirigami.Page {
                 onConversationFocusRequested: root.forceActiveFocus(Qt.MouseFocusReason)
                 onTypeIntoComposerRequested: text => root.typeIntoComposer(text)
                 onReplyToMessageRequested: (messageId, senderName, text, mediaKind, mediaMimeType, outgoing) => root.setReplyTarget(messageId, senderName, text, mediaKind, mediaMimeType, outgoing)
+                onEditMessageRequested: (messageId, text) => root.setEditTarget(messageId, text)
             }
 
             BusyIndicator {
@@ -439,11 +480,16 @@ Kirigami.Page {
             replyToMediaKind: root.replyToMediaKind
             replyToMediaMimeType: root.replyToMediaMimeType
             replyToOutgoing: root.replyToOutgoing
+            editingMessageId: root.editingMessageId
+            editingOriginalText: root.editingOriginalText
             onSendTextRequested: (text, replyToMessageId) => Whatevr.AppController.sendText(text, replyToMessageId)
             onSendImageRequested: (fileUrl, caption, replyToMessageId) => Whatevr.AppController.sendImage(fileUrl, caption, replyToMessageId)
             onComposingChanged: composing => Whatevr.AppController.setSelectedChatComposing(composing)
             onClearReplyRequested: root.clearReplyTarget()
             onReplyConsumed: root.clearReplyTarget()
+            onEditRequested: (messageId, text) => Whatevr.AppController.editMessage(messageId, text)
+            onClearEditRequested: root.clearEditTarget()
+            onEditConsumed: root.clearEditTarget()
         }
     }
 
