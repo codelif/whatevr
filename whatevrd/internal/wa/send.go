@@ -42,6 +42,7 @@ type readBatch struct {
 }
 
 func (c *Client) SendText(ctx context.Context, chatID, text, replyToMessageID string) (appstore.SavedTextMessage, error) {
+	rpcArrival := time.Now()
 	client := c.currentClient()
 	if client == nil {
 		return appstore.SavedTextMessage{}, grpcstatus.Error(codes.Unavailable, "WhatsApp client is not initialized")
@@ -85,6 +86,7 @@ func (c *Client) SendText(ctx context.Context, chatID, text, replyToMessageID st
 	}
 
 	if saved.Inserted {
+		c.beginSendTiming(saved.Message.ID, rpcArrival)
 		c.log.Infof("Queued text message %s to %s", saved.Message.ID, chatID)
 		c.daemon.PublishNewMessage(toDaemonMessage(saved.Message), toDaemonChat(saved.Chat))
 	}
@@ -133,6 +135,7 @@ func (c *Client) SubscribeChatPresence(ctx context.Context, chatID string) error
 }
 
 func (c *Client) SendMedia(ctx context.Context, chatID, filePath, caption, replyToMessageID string) (appstore.SavedTextMessage, error) {
+	rpcArrival := time.Now()
 	client := c.currentClient()
 	if client == nil {
 		return appstore.SavedTextMessage{}, grpcstatus.Error(codes.Unavailable, "WhatsApp client is not initialized")
@@ -197,6 +200,7 @@ func (c *Client) SendMedia(ctx context.Context, chatID, filePath, caption, reply
 	}
 
 	if saved.Inserted {
+		c.beginSendTiming(saved.Message.ID, rpcArrival)
 		c.log.Infof("Queued media message %s to %s", saved.Message.ID, chatID)
 		c.daemon.PublishNewMessage(toDaemonMessage(saved.Message), toDaemonChat(saved.Chat))
 	}
@@ -473,6 +477,8 @@ func (c *Client) drainSendQueue(ctx context.Context) (bool, error) {
 			return true, ctx.Err()
 		}
 		if err := c.sendPendingMessage(ctx, client, message); err != nil {
+			// Drop the timing entry; the retry attempt re-times from pickup.
+			c.finishSendTiming(message.ID)
 			return true, err
 		}
 	}
@@ -481,6 +487,7 @@ func (c *Client) drainSendQueue(ctx context.Context) (bool, error) {
 }
 
 func (c *Client) sendPendingMessage(ctx context.Context, client *whatsmeow.Client, message appstore.Message) error {
+	c.markSendTiming(message.ID, func(t *sendTiming) { t.queuePickup = time.Now() })
 	targetJID, err := types.ParseJID(message.ChatID)
 	if err != nil {
 		c.markPendingMessageFailed(ctx, message.ID, "invalid chat ID")
@@ -861,17 +868,22 @@ func replyMediaSummary(mediaKind, mediaMimeType string) string {
 }
 
 func (c *Client) markPendingMessageSent(ctx context.Context, messageID string) {
+	c.markSendTiming(messageID, func(t *sendTiming) { t.ackReturn = time.Now() })
 	message, changed, err := c.store.UpdateMessageStatus(ctx, messageID, appstore.StatusSent)
 	if err != nil {
+		c.finishSendTiming(messageID)
 		c.log.Warnf("Failed to mark queued message %s sent: %v", messageID, err)
 		return
 	}
+	c.markSendTiming(messageID, func(t *sendTiming) { t.statusWrite = time.Now() })
 	if changed {
 		c.publishMessageStatusUpdated(ctx, message)
 	}
+	c.logSendTimeline(messageID, c.finishSendTiming(messageID))
 }
 
 func (c *Client) markPendingMessageFailed(ctx context.Context, messageID string, reason string) {
+	c.finishSendTiming(messageID)
 	message, changed, err := c.store.UpdateMessageStatus(ctx, messageID, appstore.StatusFailed)
 	if err != nil {
 		c.log.Warnf("Failed to mark queued message %s failed: %v", messageID, err)

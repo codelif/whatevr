@@ -90,6 +90,8 @@ type Client struct {
 
 	sendQueueMu   sync.Mutex
 	sendQueueWake chan struct{}
+	sendTimingsMu sync.Mutex
+	sendTimings   map[string]*sendTiming
 	reconnectCh   chan struct{} // supervisor wakeup: reconnect immediately
 	reconnectNow  atomic.Bool
 	eventGen      atomic.Uint64
@@ -143,8 +145,14 @@ func New(ctx context.Context, paths app.Paths, daemon *app.Daemon, store *appsto
 		sendQueueWake:    make(chan struct{}, 1),
 		reconnectCh:      make(chan struct{}, 1),
 		stickerDownloads: make(map[string]*stickerFileDownloadState),
+		sendTimings:      make(map[string]*sendTiming),
 	}
 	c.stickerDownloadSem = make(chan struct{}, stickerDownloadConcurrency)
+
+	storeLog := log.Sub("Store")
+	store.SetSlowOpLogger(func(op string, d time.Duration) {
+		storeLog.Warnf("Slow db op %s took %s", op, d.Round(time.Millisecond))
+	})
 
 	if err := c.resetClient(ctx); err != nil {
 		container.Close()

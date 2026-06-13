@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"strings"
+	"time"
 
 	"github.com/nyaruka/phonenumbers"
 )
@@ -66,6 +67,7 @@ func chatNameSourcePriority(source string) int {
 // after it (keyset pagination, stable under reordering); otherwise the legacy
 // offset is applied.
 func (db *DB) ListChats(ctx context.Context, limit, offset int, afterChatID string) ([]Chat, error) {
+	defer db.timeOp("ListChats", time.Now())
 	if limit <= 0 {
 		limit = 100
 	}
@@ -89,7 +91,7 @@ func (db *DB) ListChats(ctx context.Context, limit, offset int, afterChatID stri
 	if afterChatID != "" {
 		var bucket, pinnedOrder int64
 		var lastMessageTime int64
-		err := db.conn.QueryRowContext(ctx, `
+		err := db.reader().QueryRowContext(ctx, `
 			SELECT CASE WHEN is_pinned != 0 THEN 0 ELSE 1 END, pinned_order, last_message_time
 			FROM chats WHERE id = ?
 		`, afterChatID).Scan(&bucket, &pinnedOrder, &lastMessageTime)
@@ -124,7 +126,7 @@ func (db *DB) ListChats(ctx context.Context, limit, offset int, afterChatID stri
 		args = append(args, offset)
 	}
 
-	rows, err := db.conn.QueryContext(ctx, query, args...)
+	rows, err := db.reader().QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -185,7 +187,7 @@ func (db *DB) MarkChatRead(ctx context.Context, chatID string) (Chat, error) {
 }
 
 func (db *DB) GetChat(ctx context.Context, chatID string) (Chat, error) {
-	return getChatRow(ctx, db.conn, chatID)
+	return getChatRow(ctx, db.reader(), chatID)
 }
 
 func (db *DB) EnsureChat(ctx context.Context, chatID, name string, isGroup bool) (Chat, error) {
@@ -252,7 +254,7 @@ func (db *DB) UpdateChatPinState(ctx context.Context, chatID string, pinned bool
 
 func (db *DB) PinnedChatCountExcluding(ctx context.Context, chatID string) (int, error) {
 	var count int
-	err := db.conn.QueryRowContext(ctx, `
+	err := db.reader().QueryRowContext(ctx, `
 		SELECT COUNT(*)
 		FROM chats
 		WHERE is_pinned != 0 AND id != ?
@@ -462,7 +464,7 @@ func (db *DB) ListRawGroupChatIDs(ctx context.Context, limit int) ([]string, err
 		limit = 100
 	}
 
-	rows, err := db.conn.QueryContext(ctx, `
+	rows, err := db.reader().QueryContext(ctx, `
 		SELECT id
 		FROM chats
 		WHERE is_group = 1
@@ -492,7 +494,7 @@ func (db *DB) ListRawGroupChatIDs(ctx context.Context, limit int) ([]string, err
 }
 
 func (db *DB) ListLIDChats(ctx context.Context) ([]string, error) {
-	rows, err := db.conn.QueryContext(ctx, `
+	rows, err := db.reader().QueryContext(ctx, `
 		SELECT id FROM chats WHERE id LIKE '%@lid'
 	`)
 	if err != nil {
@@ -550,7 +552,7 @@ func (db *DB) ListSendersNeedingAvatar(ctx context.Context, limit int) ([]Sender
 	if limit <= 0 {
 		limit = 200
 	}
-	rows, err := db.conn.QueryContext(ctx, `
+	rows, err := db.reader().QueryContext(ctx, `
 		SELECT id, name, avatar_local_path, avatar_picture_id, avatar_status, avatar_checked_at
 		FROM senders
 		WHERE id != 'me' AND (avatar_picture_id = '' OR avatar_local_path = '')
@@ -578,7 +580,7 @@ func (db *DB) ListSendersForAvatarRefresh(ctx context.Context, limit int) ([]Sen
 	if limit <= 0 {
 		limit = 500
 	}
-	rows, err := db.conn.QueryContext(ctx, `
+	rows, err := db.reader().QueryContext(ctx, `
 		SELECT id, name, avatar_local_path, avatar_picture_id, avatar_status, avatar_checked_at
 		FROM senders
 		WHERE id != 'me'
@@ -604,7 +606,7 @@ func (db *DB) ListSendersForAvatarRefresh(ctx context.Context, limit int) ([]Sen
 
 func (db *DB) GetSenderProfile(ctx context.Context, senderID string) (SenderProfile, error) {
 	var sender SenderProfile
-	err := db.conn.QueryRowContext(ctx, `
+	err := db.reader().QueryRowContext(ctx, `
 		SELECT id, name, avatar_local_path, avatar_picture_id, avatar_status, avatar_checked_at
 		FROM senders
 		WHERE id = ?
@@ -616,7 +618,7 @@ func (db *DB) ListSenderProfilesByChatID(ctx context.Context, chatID string, lim
 	if limit <= 0 {
 		limit = 50
 	}
-	rows, err := db.conn.QueryContext(ctx, `
+	rows, err := db.reader().QueryContext(ctx, `
 		SELECT s.id, s.name, s.avatar_local_path, s.avatar_picture_id, s.avatar_status, s.avatar_checked_at
 		FROM senders s
 		JOIN (
@@ -681,7 +683,7 @@ func (db *DB) UpdateSenderName(ctx context.Context, senderID, name string) error
 
 func (db *DB) GetChatAvatarPictureID(ctx context.Context, chatID string) (string, error) {
 	var picID string
-	err := db.conn.QueryRowContext(ctx, `SELECT avatar_picture_id FROM chats WHERE id = ?`, chatID).Scan(&picID)
+	err := db.reader().QueryRowContext(ctx, `SELECT avatar_picture_id FROM chats WHERE id = ?`, chatID).Scan(&picID)
 	return picID, err
 }
 

@@ -56,7 +56,7 @@ func (db *DB) EnsureAvatar(ctx context.Context, subject AvatarSubject, fetchJID 
 
 func (db *DB) GetAvatar(ctx context.Context, subject AvatarSubject) (Avatar, error) {
 	var avatar Avatar
-	err := db.conn.QueryRowContext(ctx, `
+	err := db.reader().QueryRowContext(ctx, `
 		SELECT subject_kind, subject_id, fetch_jid, picture_id, local_path, status, checked_at, updated_at, next_check_at, retry_count, last_error
 		FROM avatars
 		WHERE subject_kind = ? AND subject_id = ?
@@ -84,7 +84,7 @@ func (db *DB) ListChatAvatarSubjects(ctx context.Context, limit int) ([]AvatarSu
 	if limit <= 0 {
 		limit = 100
 	}
-	rows, err := db.conn.QueryContext(ctx, `
+	rows, err := db.reader().QueryContext(ctx, `
 		SELECT id FROM chats
 		WHERE id != ''
 		ORDER BY CASE WHEN is_pinned != 0 THEN 0 ELSE 1 END, pinned_order DESC, last_message_time DESC, id ASC

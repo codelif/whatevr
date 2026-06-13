@@ -51,6 +51,7 @@ func (db *DB) UpsertMessageReceipt(ctx context.Context, messageID, chatID, parti
 	if messageID == "" || participantJID == "" {
 		return nil
 	}
+	defer db.timeOp("UpsertMessageReceipt", time.Now())
 	tsUnix := ts.Unix()
 	if ts.IsZero() || tsUnix <= 0 {
 		tsUnix = time.Now().Unix()

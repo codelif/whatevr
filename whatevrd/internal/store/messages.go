@@ -136,6 +136,7 @@ func normalizeTextMessageInput(input TextMessageInput) (TextMessageInput, error)
 }
 
 func (db *DB) SaveTextMessage(ctx context.Context, input TextMessageInput) (SavedTextMessage, error) {
+	defer db.timeOp("SaveTextMessage", time.Now())
 	input, err := normalizeTextMessageInput(input)
 	if err != nil {
 		return SavedTextMessage{}, err
@@ -291,6 +292,7 @@ func normalizeMediaMessageInput(input MediaMessageInput) (MediaMessageInput, err
 }
 
 func (db *DB) SaveMediaMessage(ctx context.Context, input MediaMessageInput) (SavedTextMessage, error) {
+	defer db.timeOp("SaveMediaMessage", time.Now())
 	input, err := normalizeMediaMessageInput(input)
 	if err != nil {
 		return SavedTextMessage{}, err
@@ -377,6 +379,7 @@ func (db *DB) SaveMessages(ctx context.Context, items []MessageSaveItem) ([]Save
 	if len(items) == 0 {
 		return nil, nil
 	}
+	defer db.timeOp("SaveMessages", time.Now())
 
 	normalized := make([]MessageSaveItem, 0, len(items))
 	for _, item := range items {
@@ -519,7 +522,7 @@ func (db *DB) LookupUndecryptableMessageTimestamp(ctx context.Context, id string
 		return time.Time{}, false, nil
 	}
 	var timestampUnix int64
-	err := db.conn.QueryRowContext(ctx, `
+	err := db.reader().QueryRowContext(ctx, `
 		SELECT timestamp
 		FROM undecryptable_messages
 		WHERE id = ?
@@ -592,6 +595,7 @@ func recomputeChatSummaryTx(ctx context.Context, tx *sql.Tx, chatID string) erro
 }
 
 func (db *DB) ListMessages(ctx context.Context, chatID string, limit int, beforeMessageID string) ([]Message, error) {
+	defer db.timeOp("ListMessages", time.Now())
 	if limit <= 0 {
 		limit = 50
 	}
@@ -630,7 +634,7 @@ func (db *DB) ListMessages(ctx context.Context, chatID string, limit int, before
 	`
 	args = append(args, limit)
 
-	rows, err := db.conn.QueryContext(ctx, query, args...)
+	rows, err := db.reader().QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -723,7 +727,7 @@ func (db *DB) listMessagesAroundSide(ctx context.Context, chatID string, timesta
 		LIMIT ?
 	`
 
-	rows, err := db.conn.QueryContext(ctx, query, chatID, timestamp, timestamp, seq, limit)
+	rows, err := db.reader().QueryContext(ctx, query, chatID, timestamp, timestamp, seq, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -742,13 +746,14 @@ func (db *DB) listMessagesAroundSide(ctx context.Context, chatID string, timesta
 func (db *DB) messageCursor(ctx context.Context, id string) (int64, int64, error) {
 	var timestamp int64
 	var seq int64
-	err := db.conn.QueryRowContext(ctx, `SELECT timestamp, rowid FROM messages WHERE id = ?`, id).Scan(&timestamp, &seq)
+	err := db.reader().QueryRowContext(ctx, `SELECT timestamp, rowid FROM messages WHERE id = ?`, id).Scan(&timestamp, &seq)
 	return timestamp, seq, err
 }
 
 func (db *DB) GetMessage(ctx context.Context, id string) (Message, error) {
+	defer db.timeOp("GetMessage", time.Now())
 	var message Message
-	if err := getMessageRow(ctx, db.conn, id, &message); err != nil {
+	if err := getMessageRow(ctx, db.reader(), id, &message); err != nil {
 		return message, err
 	}
 	if err := attachReactionsOne(ctx, db.reader(), &message); err != nil {
@@ -758,11 +763,12 @@ func (db *DB) GetMessage(ctx context.Context, id string) (Message, error) {
 }
 
 func (db *DB) ListPendingOutgoingMessages(ctx context.Context, limit int, now time.Time) ([]Message, error) {
+	defer db.timeOp("ListPendingOutgoingMessages", time.Now())
 	if limit <= 0 {
 		limit = 50
 	}
 
-	rows, err := db.conn.QueryContext(ctx, `
+	rows, err := db.reader().QueryContext(ctx, `
 		SELECT id, chat_id, sender_id, text, timestamp, direction, is_read, status, media_kind, media_mime_type, media_local_path, media_thumbnail_local_path, media_width, media_height, media_animated, media_payload, media_cache_key,
 		       reply_to_message_id, reply_to_sender_id, reply_to_sender_name, reply_to_text, reply_to_media_kind, reply_to_media_mime_type, reply_to_direction,
 		       send_attempts, last_send_error, next_send_attempt, is_forwarded
@@ -824,6 +830,7 @@ func (db *DB) ListPendingOutgoingMessages(ctx context.Context, limit int, now ti
 // UpdateMessageSendAttempt records a transient send failure so the queue
 // can skip the message until next_send_attempt.
 func (db *DB) UpdateMessageSendAttempt(ctx context.Context, id string, attempts int32, sendErr string, nextAttempt time.Time) error {
+	defer db.timeOp("UpdateMessageSendAttempt", time.Now())
 	_, err := db.conn.ExecContext(ctx, `
 		UPDATE messages
 		SET send_attempts = ?, last_send_error = ?, next_send_attempt = ?
@@ -841,6 +848,7 @@ func (db *DB) UpdateMessageStatusFromHistory(ctx context.Context, id, status str
 }
 
 func (db *DB) updateMessageStatus(ctx context.Context, id, status string, nextStatus func(string, string) (string, bool)) (Message, bool, error) {
+	defer db.timeOp("updateMessageStatus", time.Now())
 	tx, err := db.conn.BeginTx(ctx, nil)
 	if err != nil {
 		return Message{}, false, err
@@ -1080,7 +1088,7 @@ func (db *DB) DownloadedStickerPathByCacheKey(ctx context.Context, excludedMessa
 		return "", nil
 	}
 	var path string
-	err := db.conn.QueryRowContext(ctx, `
+	err := db.reader().QueryRowContext(ctx, `
 		SELECT media_local_path
 		FROM messages
 		WHERE media_kind = ? AND media_local_path != '' AND media_cache_key = ? AND id != ?
@@ -1093,7 +1101,7 @@ func (db *DB) DownloadedStickerPathByCacheKey(ctx context.Context, excludedMessa
 }
 
 func (db *DB) ListChatIDsBySenderID(ctx context.Context, senderID string) ([]string, error) {
-	rows, err := db.conn.QueryContext(ctx, `
+	rows, err := db.reader().QueryContext(ctx, `
 		SELECT DISTINCT chat_id FROM messages WHERE sender_id = ?
 	`, senderID)
 	if err != nil {
@@ -1113,7 +1121,7 @@ func (db *DB) ListChatIDsBySenderID(ctx context.Context, senderID string) ([]str
 }
 
 func (db *DB) ReadCandidatesForChat(ctx context.Context, chatID string) ([]ReadCandidate, error) {
-	rows, err := db.conn.QueryContext(ctx, `
+	rows, err := db.reader().QueryContext(ctx, `
 		SELECT id, chat_id, sender_id, timestamp
 		FROM messages
 		WHERE chat_id = ? AND direction = ? AND is_read = 0

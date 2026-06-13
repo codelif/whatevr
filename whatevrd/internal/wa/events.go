@@ -3,6 +3,7 @@ package wa
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"go.mau.fi/whatsmeow/appstate"
 	"go.mau.fi/whatsmeow/types"
@@ -12,7 +13,19 @@ import (
 	appstore "whatevrd/internal/store"
 )
 
+const slowEventHandlerThreshold = 200 * time.Millisecond
+
 func (c *Client) handleEvent(eventGen uint64, raw any) {
+	// whatsmeow dispatches events from a single queue that waits for each
+	// handler to return, so a slow handler here delays every event behind it
+	// (incoming messages, receipts, presence).
+	start := time.Now()
+	defer func() {
+		if d := time.Since(start); d > slowEventHandlerThreshold {
+			c.log.Warnf("Slow event handler: %T took %s", raw, d.Round(time.Millisecond))
+		}
+	}()
+
 	if !c.isCurrentEventGeneration(eventGen) {
 		return
 	}
