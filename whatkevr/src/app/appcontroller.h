@@ -67,6 +67,7 @@ class EmojiModel;
 class MessageListModel;
 class StarredMessagesModel;
 class PinnedMessagesModel;
+class SearchResultsModel;
 class StickerController;
 
 class AppController final : public QObject
@@ -104,6 +105,18 @@ class AppController final : public QObject
     Q_PROPERTY(QAbstractItemModel *messageListModel READ messageListModel CONSTANT FINAL)
     Q_PROPERTY(QAbstractItemModel *starredMessagesModel READ starredMessagesModel CONSTANT FINAL)
     Q_PROPERTY(QAbstractItemModel *pinnedMessagesModel READ pinnedMessagesModel CONSTANT FINAL)
+    Q_PROPERTY(QAbstractItemModel *searchResultsModel READ searchResultsModel CONSTANT FINAL)
+    // Unified chat-list search (chat names + message text across all chats).
+    Q_PROPERTY(QString searchQuery READ searchQuery NOTIFY searchChanged FINAL)
+    Q_PROPERTY(bool searchActive READ searchActive NOTIFY searchChanged FINAL)
+    Q_PROPERTY(bool searchBusy READ searchBusy NOTIFY searchChanged FINAL)
+    // In-chat search of the selected conversation, with match navigation.
+    Q_PROPERTY(bool chatSearchActive READ chatSearchActive NOTIFY chatSearchChanged FINAL)
+    Q_PROPERTY(QString chatSearchQuery READ chatSearchQuery NOTIFY chatSearchChanged FINAL)
+    Q_PROPERTY(int chatSearchMatchCount READ chatSearchMatchCount NOTIFY chatSearchChanged FINAL)
+    // 1-based position of the focused match (0 when there are none).
+    Q_PROPERTY(int chatSearchCurrentIndex READ chatSearchCurrentIndex NOTIFY chatSearchChanged FINAL)
+    Q_PROPERTY(QString chatSearchActiveMessageId READ chatSearchActiveMessageId NOTIFY chatSearchChanged FINAL)
     Q_PROPERTY(QAbstractItemModel *emojiModel READ emojiModel CONSTANT FINAL)
     Q_PROPERTY(QObject *stickers READ stickers CONSTANT FINAL)
     Q_PROPERTY(bool messagesLoading READ messagesLoading NOTIFY messagesChanged FINAL)
@@ -165,6 +178,15 @@ public:
     [[nodiscard]] QAbstractItemModel *messageListModel() const;
     [[nodiscard]] QAbstractItemModel *starredMessagesModel() const;
     [[nodiscard]] QAbstractItemModel *pinnedMessagesModel() const;
+    [[nodiscard]] QAbstractItemModel *searchResultsModel() const;
+    [[nodiscard]] QString searchQuery() const;
+    [[nodiscard]] bool searchActive() const;
+    [[nodiscard]] bool searchBusy() const;
+    [[nodiscard]] bool chatSearchActive() const;
+    [[nodiscard]] QString chatSearchQuery() const;
+    [[nodiscard]] int chatSearchMatchCount() const;
+    [[nodiscard]] int chatSearchCurrentIndex() const;
+    [[nodiscard]] QString chatSearchActiveMessageId() const;
     [[nodiscard]] QAbstractItemModel *emojiModel() const;
     [[nodiscard]] QObject *stickers() const;
     [[nodiscard]] bool messagesLoading() const;
@@ -247,6 +269,18 @@ public:
     // Loads the pinned messages for a chat into pinnedMessagesModel (drives the
     // conversation's pinned banner). Called on chat open and on pin changes.
     Q_INVOKABLE void loadPinnedMessages(const QString &chatId);
+    // Unified chat-list search. Debounced; fills searchResultsModel with chat
+    // and message matches. Pass an empty query (or clearSearch) to dismiss.
+    Q_INVOKABLE void setSearchQuery(const QString &query);
+    Q_INVOKABLE void clearSearch();
+    // In-chat search of the selected conversation. open/close toggle the search
+    // bar; setChatSearchQuery refreshes matches (debounced) and jumps to the
+    // newest; next/previous step through them.
+    Q_INVOKABLE void openChatSearch();
+    Q_INVOKABLE void closeChatSearch();
+    Q_INVOKABLE void setChatSearchQuery(const QString &query);
+    Q_INVOKABLE void chatSearchNext();
+    Q_INVOKABLE void chatSearchPrevious();
     Q_INVOKABLE void requestMessageInfo(const QString &messageId);
     // Reports that the user is actually looking at the selected chat's unread
     // messages (window focused, unread region scrolled into view). This is the
@@ -285,6 +319,8 @@ Q_SIGNALS:
     void messageInfoFailed(const QString &messageId, const QString &errorText);
     void messageActionFailed(const QString &errorText);
     void messageForwarded(int chatCount);
+    void searchChanged();
+    void chatSearchChanged();
 
 private:
     void bootstrap();
@@ -302,6 +338,9 @@ private:
     void requestChats();
     void requestMessages(const QString &chatId);
     void requestOlderMessages();
+    void runSearch();
+    void runChatSearch();
+    void resetChatSearch();
     void requestSelectedChatReadIfActive();
     void requestSelectedChatPresence();
     void setChatComposing(const QString &chatId, bool composing);
@@ -450,6 +489,7 @@ private:
     MessageListModel *m_messageListModel = nullptr;
     StarredMessagesModel *m_starredMessagesModel = nullptr;
     PinnedMessagesModel *m_pinnedMessagesModel = nullptr;
+    SearchResultsModel *m_searchResultsModel = nullptr;
     StickerController *m_stickerController = nullptr;
 
     std::shared_ptr<QAbstractGrpcChannel> m_channel;
@@ -484,6 +524,9 @@ private:
     QHash<QString, SerialSlot> m_pinMessageReplies;
     std::unique_ptr<QGrpcCallReply> m_listStarredReply;
     std::unique_ptr<QGrpcCallReply> m_listPinnedReply;
+    std::unique_ptr<QGrpcCallReply> m_searchChatsReply;
+    std::unique_ptr<QGrpcCallReply> m_searchMessagesReply;
+    std::unique_ptr<QGrpcCallReply> m_chatSearchReply;
     int m_forwardBatchChatCount = 0;
     bool m_forwardBatchFailed = false;
     QHash<QString, std::shared_ptr<QGrpcCallReply>> m_deleteMessageReplies;
@@ -511,4 +554,13 @@ private:
     QString m_markChatReadChatId;
     QString m_pendingMarkChatReadId;
     QString m_pendingDeepLinkChatId;
+
+    QString m_searchQuery;
+    bool m_searchBusy = false;
+    QTimer *m_searchDebounceTimer = nullptr;
+    bool m_chatSearchActive = false;
+    QString m_chatSearchQuery;
+    QStringList m_chatSearchMatchIds;
+    int m_chatSearchIndex = -1;
+    QTimer *m_chatSearchDebounceTimer = nullptr;
 };

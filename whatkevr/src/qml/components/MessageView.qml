@@ -527,7 +527,7 @@ Item {
         floatingDateActive = false
         floatingDateIdleTimer.stop()
         kineticWheelScroller.stopKinetic()
-        list.cancelFlick()
+        if (list.flicking) list.cancelFlick()
         // BottomToTop list: "End" is the visual top edge.
         list.positionViewAtIndex(index, ListView.End)
         list.forceLayout()
@@ -588,7 +588,7 @@ Item {
         jumpSettleTimer.stop()
         jumpTimeoutTimer.restart()
         kineticWheelScroller.stopKinetic()
-        list.cancelFlick()
+        if (list.flicking) list.cancelFlick()
     }
 
     function finishPendingJump() {
@@ -678,7 +678,7 @@ Item {
         floatingDateActive = false
         floatingDateIdleTimer.stop()
         kineticWheelScroller.stopKinetic()
-        list.cancelFlick()
+        if (list.flicking) list.cancelFlick()
         list.positionViewAtIndex(index, ListView.Center)
         list.forceLayout()
         Qt.callLater(settlePendingJump)
@@ -949,7 +949,7 @@ Item {
             running: list.flicking
             onTriggered: {
                 if (frameTime > 0.1) {
-                    list.cancelFlick()
+                    if (list.flicking) list.cancelFlick()
                 }
             }
         }
@@ -1188,7 +1188,7 @@ Item {
                     root.finishPendingJump()
                 }
                 kineticWheelScroller.stopKinetic()
-                list.cancelFlick()
+                if (list.flicking) list.cancelFlick()
             } else {
                 Qt.callLater(root.updateScrollState)
             }
@@ -1233,7 +1233,7 @@ Item {
         onClicked: {
             root.pendingNewestMessageCount = 0
             kineticWheelScroller.stopKinetic()
-            list.cancelFlick()
+            if (list.flicking) list.cancelFlick()
             root.scrollToNewest()
             root.conversationFocusRequested()
         }

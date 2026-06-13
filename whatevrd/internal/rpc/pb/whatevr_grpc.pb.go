@@ -502,6 +502,8 @@ const (
 	ChatService_DeleteMessageForMe_FullMethodName    = "/whatevr.v1.ChatService/DeleteMessageForMe"
 	ChatService_ListStarredMessages_FullMethodName   = "/whatevr.v1.ChatService/ListStarredMessages"
 	ChatService_ListPinnedMessages_FullMethodName    = "/whatevr.v1.ChatService/ListPinnedMessages"
+	ChatService_SearchChats_FullMethodName           = "/whatevr.v1.ChatService/SearchChats"
+	ChatService_SearchMessages_FullMethodName        = "/whatevr.v1.ChatService/SearchMessages"
 )
 
 // ChatServiceClient is the client API for ChatService service.
@@ -521,6 +523,8 @@ type ChatServiceClient interface {
 	DeleteMessageForMe(ctx context.Context, in *DeleteMessageForMeRequest, opts ...grpc.CallOption) (*DeleteMessageForMeResponse, error)
 	ListStarredMessages(ctx context.Context, in *ListStarredMessagesRequest, opts ...grpc.CallOption) (*ListStarredMessagesResponse, error)
 	ListPinnedMessages(ctx context.Context, in *ListPinnedMessagesRequest, opts ...grpc.CallOption) (*ListPinnedMessagesResponse, error)
+	SearchChats(ctx context.Context, in *SearchChatsRequest, opts ...grpc.CallOption) (*SearchChatsResponse, error)
+	SearchMessages(ctx context.Context, in *SearchMessagesRequest, opts ...grpc.CallOption) (*SearchMessagesResponse, error)
 }
 
 type chatServiceClient struct {
@@ -661,6 +665,26 @@ func (c *chatServiceClient) ListPinnedMessages(ctx context.Context, in *ListPinn
 	return out, nil
 }
 
+func (c *chatServiceClient) SearchChats(ctx context.Context, in *SearchChatsRequest, opts ...grpc.CallOption) (*SearchChatsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SearchChatsResponse)
+	err := c.cc.Invoke(ctx, ChatService_SearchChats_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *chatServiceClient) SearchMessages(ctx context.Context, in *SearchMessagesRequest, opts ...grpc.CallOption) (*SearchMessagesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SearchMessagesResponse)
+	err := c.cc.Invoke(ctx, ChatService_SearchMessages_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ChatServiceServer is the server API for ChatService service.
 // All implementations must embed UnimplementedChatServiceServer
 // for forward compatibility.
@@ -678,6 +702,8 @@ type ChatServiceServer interface {
 	DeleteMessageForMe(context.Context, *DeleteMessageForMeRequest) (*DeleteMessageForMeResponse, error)
 	ListStarredMessages(context.Context, *ListStarredMessagesRequest) (*ListStarredMessagesResponse, error)
 	ListPinnedMessages(context.Context, *ListPinnedMessagesRequest) (*ListPinnedMessagesResponse, error)
+	SearchChats(context.Context, *SearchChatsRequest) (*SearchChatsResponse, error)
+	SearchMessages(context.Context, *SearchMessagesRequest) (*SearchMessagesResponse, error)
 	mustEmbedUnimplementedChatServiceServer()
 }
 
@@ -726,6 +752,12 @@ func (UnimplementedChatServiceServer) ListStarredMessages(context.Context, *List
 }
 func (UnimplementedChatServiceServer) ListPinnedMessages(context.Context, *ListPinnedMessagesRequest) (*ListPinnedMessagesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListPinnedMessages not implemented")
+}
+func (UnimplementedChatServiceServer) SearchChats(context.Context, *SearchChatsRequest) (*SearchChatsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SearchChats not implemented")
+}
+func (UnimplementedChatServiceServer) SearchMessages(context.Context, *SearchMessagesRequest) (*SearchMessagesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SearchMessages not implemented")
 }
 func (UnimplementedChatServiceServer) mustEmbedUnimplementedChatServiceServer() {}
 func (UnimplementedChatServiceServer) testEmbeddedByValue()                     {}
@@ -982,6 +1014,42 @@ func _ChatService_ListPinnedMessages_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ChatService_SearchChats_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SearchChatsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ChatServiceServer).SearchChats(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ChatService_SearchChats_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ChatServiceServer).SearchChats(ctx, req.(*SearchChatsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ChatService_SearchMessages_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SearchMessagesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ChatServiceServer).SearchMessages(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ChatService_SearchMessages_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ChatServiceServer).SearchMessages(ctx, req.(*SearchMessagesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ChatService_ServiceDesc is the grpc.ServiceDesc for ChatService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1040,6 +1108,14 @@ var ChatService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListPinnedMessages",
 			Handler:    _ChatService_ListPinnedMessages_Handler,
+		},
+		{
+			MethodName: "SearchChats",
+			Handler:    _ChatService_SearchChats_Handler,
+		},
+		{
+			MethodName: "SearchMessages",
+			Handler:    _ChatService_SearchMessages_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -20,6 +20,8 @@ const (
 	maxChatLimit        = 500
 	defaultMessageLimit = 50
 	maxMessageLimit     = 200
+	defaultSearchLimit  = 30
+	maxSearchLimit      = 100
 )
 
 type ChatStore interface {
@@ -28,6 +30,8 @@ type ChatStore interface {
 	ListMessagesAround(context.Context, string, int, string) ([]appstore.Message, error)
 	ListStarredMessages(context.Context, string, int, string) ([]appstore.StarredMessage, error)
 	ListPinnedMessages(context.Context, string) ([]appstore.Message, error)
+	SearchChats(context.Context, string, int) ([]appstore.Chat, error)
+	SearchMessages(context.Context, string, string, int, string) ([]appstore.MessageSearchResult, error)
 	MarkChatRead(context.Context, string) (appstore.Chat, error)
 }
 
@@ -345,6 +349,60 @@ func (s *ChatService) ListPinnedMessages(ctx context.Context, req *pb.ListPinned
 	for _, message := range messages {
 		resp.Messages = append(resp.Messages, toProtoMessage(toAppMessage(message)))
 	}
+	return resp, nil
+}
+
+func (s *ChatService) SearchChats(ctx context.Context, req *pb.SearchChatsRequest) (*pb.SearchChatsResponse, error) {
+	if s.store == nil {
+		return nil, status.Error(codes.Unimplemented, "chat store is not available")
+	}
+	query := strings.TrimSpace(req.GetQuery())
+	if query == "" {
+		return &pb.SearchChatsResponse{}, nil
+	}
+	limit, _, err := normalizePage(req.GetLimit(), 0, defaultSearchLimit, maxSearchLimit)
+	if err != nil {
+		return nil, err
+	}
+
+	chats, err := s.store.SearchChats(ctx, query, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &pb.SearchChatsResponse{Chats: make([]*pb.Chat, 0, len(chats))}
+	for _, chat := range chats {
+		resp.Chats = append(resp.Chats, toProtoChat(toAppChat(chat)))
+	}
+	return resp, nil
+}
+
+func (s *ChatService) SearchMessages(ctx context.Context, req *pb.SearchMessagesRequest) (*pb.SearchMessagesResponse, error) {
+	if s.store == nil {
+		return nil, status.Error(codes.Unimplemented, "chat store is not available")
+	}
+	query := strings.TrimSpace(req.GetQuery())
+	if query == "" {
+		return &pb.SearchMessagesResponse{}, nil
+	}
+	limit, _, err := normalizePage(req.GetLimit(), 0, defaultSearchLimit, maxSearchLimit)
+	if err != nil {
+		return nil, err
+	}
+
+	results, err := s.store.SearchMessages(ctx, query, strings.TrimSpace(req.GetChatId()), limit, strings.TrimSpace(req.GetBeforeMessageId()))
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &pb.SearchMessagesResponse{Results: make([]*pb.MessageSearchResult, 0, len(results))}
+	for _, result := range results {
+		resp.Results = append(resp.Results, &pb.MessageSearchResult{
+			Message:  toProtoMessage(toAppMessage(result.Message)),
+			ChatName: result.ChatName,
+		})
+	}
+	resp.HasMore = len(results) == limit
 	return resp, nil
 }
 

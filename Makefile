@@ -58,6 +58,7 @@ build: build-daemon build-frontend
 build-daemon:
 	@mkdir -p $(BUILD_DIR)
 	CGO_ENABLED=1 $(GO) -C whatevrd build -trimpath -buildvcs=false \
+		-tags sqlite_fts5 \
 		-ldflags "$(GO_LDFLAGS) -s -w" \
 		-o ../$(BUILD_DIR)/whatevrd ./cmd/whatevrd
 
