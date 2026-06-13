@@ -30,6 +30,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <optional>
 
 #include "../models/chatlistmodel.h"
 #include "../models/emojimodel.h"
@@ -1786,11 +1787,22 @@ void AppController::pinMessage(const QString &messageId, int durationSecs)
     request.setPinned(true);
     request.setDurationSecs(static_cast<quint32>(durationSecs));
 
+    // Show the pin in the banner/bubble immediately; the daemon round-trip then
+    // confirms (applies the authoritative message) or reverts to the original.
+    std::optional<whatevr::v1::Message> previous;
+    whatevr::v1::Message optimistic;
+    if (findCachedMessage(messageId, optimistic)) {
+        previous = optimistic;
+        optimistic.setPinnedUntilUnix(QDateTime::currentSecsSinceEpoch() + durationSecs);
+        optimistic.setIsPinned(true);
+        applyMessageEvent(optimistic);
+    }
+
     auto reply = m_sendClient->PinMessage(request);
     auto *replyPtr = reply.get();
     m_pinMessageReplies.insert(messageId, std::move(reply));
 
-    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, messageId](const QGrpcStatus &status) {
+    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, messageId, previous](const QGrpcStatus &status) {
         auto it = m_pinMessageReplies.find(messageId);
         if (it == m_pinMessageReplies.end() || it.value().get() != replyPtr) {
             return;
@@ -1798,6 +1810,9 @@ void AppController::pinMessage(const QString &messageId, int durationSecs)
         const auto reply = it.value();
         m_pinMessageReplies.erase(it);
         if (!status.isOk()) {
+            if (previous) {
+                applyMessageEvent(*previous);
+            }
             Q_EMIT messageActionFailed(status.message().isEmpty() ? i18nc("@info", "Unable to pin the message") : status.message());
             return;
         }
@@ -1817,11 +1832,22 @@ void AppController::unpinMessage(const QString &messageId)
     request.setMessageId(messageId);
     request.setPinned(false);
 
+    // Drop the pin from the banner/bubble immediately; the daemon round-trip then
+    // confirms or reverts to the original.
+    std::optional<whatevr::v1::Message> previous;
+    whatevr::v1::Message optimistic;
+    if (findCachedMessage(messageId, optimistic)) {
+        previous = optimistic;
+        optimistic.setPinnedUntilUnix(0);
+        optimistic.setIsPinned(false);
+        applyMessageEvent(optimistic);
+    }
+
     auto reply = m_sendClient->PinMessage(request);
     auto *replyPtr = reply.get();
     m_pinMessageReplies.insert(messageId, std::move(reply));
 
-    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, messageId](const QGrpcStatus &status) {
+    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, messageId, previous](const QGrpcStatus &status) {
         auto it = m_pinMessageReplies.find(messageId);
         if (it == m_pinMessageReplies.end() || it.value().get() != replyPtr) {
             return;
@@ -1829,6 +1855,9 @@ void AppController::unpinMessage(const QString &messageId)
         const auto reply = it.value();
         m_pinMessageReplies.erase(it);
         if (!status.isOk()) {
+            if (previous) {
+                applyMessageEvent(*previous);
+            }
             Q_EMIT messageActionFailed(status.message().isEmpty() ? i18nc("@info", "Unable to unpin the message") : status.message());
             return;
         }
@@ -2978,6 +3007,21 @@ void AppController::applyMediaDownloadChanged(const MediaDownloadChanged &downlo
     if (!download.downloading() && !download.errorText().isEmpty()) {
         Q_EMIT mediaDownloadFailed(messageId, download.errorText());
     }
+}
+
+bool AppController::findCachedMessage(const QString &messageId, whatevr::v1::Message &out) const
+{
+    const auto cached = m_messageCache.constFind(m_selectedChatId);
+    if (cached == m_messageCache.constEnd()) {
+        return false;
+    }
+    for (const auto &message : cached->messages) {
+        if (message.id_proto() == messageId) {
+            out = message;
+            return true;
+        }
+    }
+    return false;
 }
 
 void AppController::applyMessageEvent(const whatevr::v1::Message &message)

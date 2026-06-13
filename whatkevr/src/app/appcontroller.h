@@ -336,6 +336,10 @@ private:
     void updateSelectedChatData();
     void cacheMessages(const QString &chatId, const QList<whatevr::v1::Message> &messages, bool canLoadOlderMessages);
     bool restoreCachedMessages(const QString &chatId);
+    // Finds a message by id in the selected chat's cache and copies it into out.
+    // Returns false when the message is not cached. Used to synthesize optimistic
+    // updates (e.g. pin/unpin) without a daemon round-trip.
+    [[nodiscard]] bool findCachedMessage(const QString &messageId, whatevr::v1::Message &out) const;
     // Computes the unread divider anchor from the displayed messages once per
     // chat open. Non-authoritative calls (cached messages) only accept an
     // anchor when the window provably covers the whole unread region; the
