@@ -61,6 +61,7 @@ using whatevr::v1::LoginEvent;
 using whatevr::v1::LoginStateChanged;
 using whatevr::v1::MarkChatReadRequest;
 using whatevr::v1::MediaDownloadChanged;
+using whatevr::v1::SetChatArchivedRequest;
 using whatevr::v1::SetChatPinnedRequest;
 using whatevr::v1::SetChatPresenceRequest;
 using whatevr::v1::SubscribeChatPresenceRequest;
@@ -382,6 +383,7 @@ AppController::AppController(QObject *parent)
         m_pendingSelectedChatReloadId.clear();
         m_messageCache.remove(chatId);
         m_messageCacheOrder.removeAll(chatId);
+        m_pinnedCache.remove(chatId);
         requestMessages(chatId);
     });
 
@@ -939,9 +941,16 @@ void AppController::selectChat(const QString &chatId)
     Q_EMIT composerChanged();
     updateFrontendSessionState();
 
-    // Reset the pinned-message banner for the chat we're switching into; the
-    // load below repopulates it (or leaves it empty when nothing is pinned).
-    m_pinnedMessagesModel->clear();
+    // Prime the pinned-message banner for the chat we're switching into. When a
+    // previous open cached its pins, restore them synchronously so the banner is
+    // present from the first frame (no late reflow / flicker); the async load
+    // below then refreshes. Only fall back to clearing when nothing is cached.
+    if (const auto cachedPins = m_pinnedCache.constFind(m_selectedChatId);
+            !m_selectedChatId.isEmpty() && cachedPins != m_pinnedCache.constEnd()) {
+        m_pinnedMessagesModel->replace(cachedPins.value());
+    } else {
+        m_pinnedMessagesModel->clear();
+    }
     if (!m_selectedChatId.isEmpty()) {
         requestSelectedChatPresence();
         requestMessages(m_selectedChatId);
@@ -1370,6 +1379,7 @@ void AppController::logout()
         m_displayedMessagesChatId.clear();
         m_messageCache.clear();
         m_messageCacheOrder.clear();
+        m_pinnedCache.clear();
         const auto downloadingIds = m_mediaDownloadingMessageIds.values();
         m_mediaDownloadingMessageIds.clear();
         m_mediaDownloadReplies.clear();
@@ -1921,7 +1931,14 @@ void AppController::loadPinnedMessages(const QString &chatId)
             return;
         }
         if (const auto response = reply->read<ListPinnedMessagesResponse>()) {
-            m_pinnedMessagesModel->replace(response->messages());
+            const auto &messages = response->messages();
+            // Skip the replace (and its modelReset/banner reflow) when the
+            // refresh matches what the cache already painted on open.
+            const auto cached = m_pinnedCache.constFind(chatId);
+            if (cached == m_pinnedCache.constEnd() || cached.value() != messages) {
+                m_pinnedCache.insert(chatId, messages);
+                m_pinnedMessagesModel->replace(messages);
+            }
         }
     });
 }
@@ -2483,6 +2500,36 @@ void AppController::setChatPinned(const QString &chatId, bool pinned)
         if (!status.isOk()) {
             m_bannerText = status.message().isEmpty()
                 ? (pinned ? i18nc("@info", "Unable to pin chat") : i18nc("@info", "Unable to unpin chat"))
+                : status.message();
+            emitStateChanged();
+        }
+    });
+}
+
+void AppController::setChatArchived(const QString &chatId, bool archived)
+{
+    if (!m_chatClient || chatId.isEmpty()) {
+        return;
+    }
+
+    SetChatArchivedRequest request;
+    request.setChatId(chatId);
+    request.setArchived(archived);
+
+    auto reply = m_chatClient->SetChatArchived(request);
+    auto *replyPtr = reply.get();
+    m_setChatArchivedReplies.insert(chatId, std::move(reply));
+
+    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, chatId, archived](const QGrpcStatus &status) {
+        auto it = m_setChatArchivedReplies.find(chatId);
+        if (it == m_setChatArchivedReplies.end() || it.value().get() != replyPtr) {
+            return;
+        }
+
+        m_setChatArchivedReplies.erase(it);
+        if (!status.isOk()) {
+            m_bannerText = status.message().isEmpty()
+                ? (archived ? i18nc("@info", "Unable to archive chat") : i18nc("@info", "Unable to unarchive chat"))
                 : status.message();
             emitStateChanged();
         }
@@ -3053,8 +3100,11 @@ void AppController::applyMessageEvent(const whatevr::v1::Message &message)
     if (message.chatId() != m_selectedChatId) {
         return;
     }
-    // Keep the open chat's pinned banner live as pins come and go.
+    // Keep the open chat's pinned banner live as pins come and go. Drop the
+    // cached pin snapshot so a later reopen refetches rather than restoring a
+    // stale set; the banner is already correct live for the open chat.
     m_pinnedMessagesModel->applyMessage(message);
+    m_pinnedCache.remove(message.chatId());
     dismissUnreadAnchor();
     if (m_displayedMessagesChatId != message.chatId()) {
         return;
@@ -3129,6 +3179,7 @@ void AppController::cacheMessages(const QString &chatId, const QList<whatevr::v1
             continue;
         }
         m_messageCache.remove(evictChatId);
+        m_pinnedCache.remove(evictChatId);
     }
 }
 
@@ -3315,6 +3366,7 @@ void AppController::applyHistoryBackfilled(const whatevr::v1::HistoryBackfilled 
 
     m_messageCache.remove(chatId);
     m_messageCacheOrder.removeAll(chatId);
+    m_pinnedCache.remove(chatId);
 }
 
 void AppController::updateQrExpiryText()

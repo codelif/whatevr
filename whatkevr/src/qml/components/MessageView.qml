@@ -858,6 +858,15 @@ Item {
         onHeightChanged: {
             if (root.followNewest && !root.programmaticScroll
                     && root.pendingJumpMessageId.length === 0) {
+                // Re-pin synchronously first so no drifted intermediate frame is
+                // painted (the late pinned-banner pop-in on first open would
+                // otherwise flash the viewport off the bottom); the deferred
+                // scrollToNewest then settles followNewest/atNewest state.
+                if (list.count > 0) {
+                    root.programmaticScroll = true
+                    list.positionViewAtBeginning()
+                    Qt.callLater(() => { root.programmaticScroll = false })
+                }
                 Qt.callLater(root.scrollToNewest)
             }
         }

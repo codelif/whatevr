@@ -267,6 +267,7 @@ type Chat struct {
 	IsGroup              bool
 	IsPinned             bool
 	PinnedOrder          uint32
+	IsArchived           bool
 	UpdatedAtUnix        int64
 	AvatarLocalPath      string
 }

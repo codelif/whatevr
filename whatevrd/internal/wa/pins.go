@@ -72,9 +72,12 @@ func (c *Client) backfillPinnedChatsFromAppState(ctx context.Context) error {
 		}
 	}
 
-	// The full regular_low snapshot also carries sticker favorites; reconcile
-	// them here so one fetch serves both features.
+	// The full regular_low snapshot also carries sticker favorites and chat
+	// archive state; reconcile them here so one fetch serves all features.
 	c.reconcileFavoriteStickersFromEvents(ctx, eventsToDispatch)
+	if err := c.reconcileArchivedChatsFromEvents(ctx, eventsToDispatch); err != nil {
+		c.log.Warnf("Failed to reconcile archived chats from app state: %v", err)
+	}
 	return c.reconcilePinnedChatsFromEvents(ctx, eventsToDispatch)
 }
 
@@ -91,7 +94,55 @@ func (c *Client) recoverPinnedChatsFromAppState(ctx context.Context) error {
 		return err
 	}
 	c.reconcileFavoriteStickersFromEvents(ctx, eventsToDispatch)
+	if err := c.reconcileArchivedChatsFromEvents(ctx, eventsToDispatch); err != nil {
+		c.log.Warnf("Failed to reconcile archived chats from app state: %v", err)
+	}
 	return c.reconcilePinnedChatsFromEvents(ctx, eventsToDispatch)
+}
+
+func (c *Client) reconcileArchivedChatsFromEvents(ctx context.Context, eventsToDispatch []any) error {
+	archived := make(map[string]struct{})
+	for chatJID := range archivedChatsFromEvents(eventsToDispatch) {
+		chatJID = c.normalizeJIDForChat(ctx, chatJID)
+		chatID := chatJID.String()
+		if chatID == "" {
+			continue
+		}
+		name, nameSource := c.displayNameForChat(ctx, chatJID, false, "", "")
+		if chatJID.Server == types.GroupServer && nameSource == "" {
+			nameSource = appstore.ChatNameSourceGroup
+		}
+		if _, err := c.store.EnsureChatWithNameSource(ctx, chatID, name, nameSource, chatJID.Server == types.GroupServer); err != nil {
+			c.log.Warnf("Failed to ensure archived chat %s: %v", chatID, err)
+			continue
+		}
+		archived[chatID] = struct{}{}
+	}
+
+	changed, err := c.store.ReconcileChatArchives(ctx, archived)
+	if err != nil {
+		return err
+	}
+	for _, chat := range changed {
+		c.daemon.PublishChatUpdated(toDaemonChat(chat))
+	}
+	return nil
+}
+
+func archivedChatsFromEvents(eventsToDispatch []any) map[types.JID]struct{} {
+	archived := make(map[types.JID]struct{})
+	for _, raw := range eventsToDispatch {
+		evt, ok := raw.(*events.Archive)
+		if !ok || evt.JID.IsEmpty() || evt.Action == nil {
+			continue
+		}
+		if evt.Action.GetArchived() {
+			archived[evt.JID] = struct{}{}
+		} else {
+			delete(archived, evt.JID)
+		}
+	}
+	return archived
 }
 
 func (c *Client) reconcilePinnedChatsFromEvents(ctx context.Context, eventsToDispatch []any) error {
@@ -174,6 +225,10 @@ func recoverRegularLowAppState(ctx context.Context, client *whatsmeow.Client) ([
 	handlerID := client.AddEventHandler(func(raw any) {
 		switch evt := raw.(type) {
 		case *events.Pin:
+			mu.Lock()
+			eventsToDispatch = append(eventsToDispatch, evt)
+			mu.Unlock()
+		case *events.Archive:
 			mu.Lock()
 			eventsToDispatch = append(eventsToDispatch, evt)
 			mu.Unlock()

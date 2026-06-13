@@ -14,6 +14,8 @@ class Chat;
 class ChatListModel final : public QAbstractListModel
 {
     Q_OBJECT
+    // Number of archived chats, for the collapsible "Archived (N)" section header.
+    Q_PROPERTY(int archivedCount READ archivedCount NOTIFY archivedCountChanged FINAL)
 
 public:
     enum Role : std::uint16_t {
@@ -27,6 +29,10 @@ public:
         IsGroupRole,
         IsPinnedRole,
         PinnedOrderRole,
+        IsArchivedRole,
+        // Dedicated string role for ListView.section ("archived"/"active"); a
+        // bool role does not stringify reliably for section grouping.
+        SectionRole,
         AvatarLocalPathRole,
         InitialsRole,
         IsTypingRole,
@@ -57,6 +63,10 @@ public:
     [[nodiscard]] int chatUnreadCount(const QString &chatId) const;
     [[nodiscard]] int indexOf(const QString &chatId) const;
     [[nodiscard]] bool isEmpty() const;
+    [[nodiscard]] int archivedCount() const;
+
+Q_SIGNALS:
+    void archivedCountChanged();
 
 private:
     struct ChatItem {
@@ -72,6 +82,7 @@ private:
         bool isGroup = false;
         bool isPinned = false;
         quint32 pinnedOrder = 0;
+        bool isArchived = false;
         qint64 updatedAtUnix = 0;
         QString avatarLocalPath;
         bool isTyping = false;

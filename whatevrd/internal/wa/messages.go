@@ -1325,6 +1325,7 @@ func toDaemonChat(chat appstore.Chat) app.Chat {
 		IsGroup:              chat.IsGroup,
 		IsPinned:             chat.IsPinned,
 		PinnedOrder:          chat.PinnedOrder,
+		IsArchived:           chat.IsArchived,
 		UpdatedAtUnix:        chat.UpdatedAt,
 		AvatarLocalPath:      chat.AvatarLocalPath,
 	}

@@ -493,6 +493,7 @@ const (
 	ChatService_GetMessages_FullMethodName           = "/whatevr.v1.ChatService/GetMessages"
 	ChatService_MarkChatRead_FullMethodName          = "/whatevr.v1.ChatService/MarkChatRead"
 	ChatService_SetChatPinned_FullMethodName         = "/whatevr.v1.ChatService/SetChatPinned"
+	ChatService_SetChatArchived_FullMethodName       = "/whatevr.v1.ChatService/SetChatArchived"
 	ChatService_SetChatPresence_FullMethodName       = "/whatevr.v1.ChatService/SetChatPresence"
 	ChatService_SubscribeChatPresence_FullMethodName = "/whatevr.v1.ChatService/SubscribeChatPresence"
 	ChatService_DownloadMessageMedia_FullMethodName  = "/whatevr.v1.ChatService/DownloadMessageMedia"
@@ -510,6 +511,7 @@ type ChatServiceClient interface {
 	GetMessages(ctx context.Context, in *GetMessagesRequest, opts ...grpc.CallOption) (*GetMessagesResponse, error)
 	MarkChatRead(ctx context.Context, in *MarkChatReadRequest, opts ...grpc.CallOption) (*MarkChatReadResponse, error)
 	SetChatPinned(ctx context.Context, in *SetChatPinnedRequest, opts ...grpc.CallOption) (*SetChatPinnedResponse, error)
+	SetChatArchived(ctx context.Context, in *SetChatArchivedRequest, opts ...grpc.CallOption) (*SetChatArchivedResponse, error)
 	SetChatPresence(ctx context.Context, in *SetChatPresenceRequest, opts ...grpc.CallOption) (*SetChatPresenceResponse, error)
 	SubscribeChatPresence(ctx context.Context, in *SubscribeChatPresenceRequest, opts ...grpc.CallOption) (*SubscribeChatPresenceResponse, error)
 	DownloadMessageMedia(ctx context.Context, in *DownloadMessageMediaRequest, opts ...grpc.CallOption) (*DownloadMessageMediaResponse, error)
@@ -561,6 +563,16 @@ func (c *chatServiceClient) SetChatPinned(ctx context.Context, in *SetChatPinned
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SetChatPinnedResponse)
 	err := c.cc.Invoke(ctx, ChatService_SetChatPinned_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *chatServiceClient) SetChatArchived(ctx context.Context, in *SetChatArchivedRequest, opts ...grpc.CallOption) (*SetChatArchivedResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetChatArchivedResponse)
+	err := c.cc.Invoke(ctx, ChatService_SetChatArchived_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -645,6 +657,7 @@ type ChatServiceServer interface {
 	GetMessages(context.Context, *GetMessagesRequest) (*GetMessagesResponse, error)
 	MarkChatRead(context.Context, *MarkChatReadRequest) (*MarkChatReadResponse, error)
 	SetChatPinned(context.Context, *SetChatPinnedRequest) (*SetChatPinnedResponse, error)
+	SetChatArchived(context.Context, *SetChatArchivedRequest) (*SetChatArchivedResponse, error)
 	SetChatPresence(context.Context, *SetChatPresenceRequest) (*SetChatPresenceResponse, error)
 	SubscribeChatPresence(context.Context, *SubscribeChatPresenceRequest) (*SubscribeChatPresenceResponse, error)
 	DownloadMessageMedia(context.Context, *DownloadMessageMediaRequest) (*DownloadMessageMediaResponse, error)
@@ -673,6 +686,9 @@ func (UnimplementedChatServiceServer) MarkChatRead(context.Context, *MarkChatRea
 }
 func (UnimplementedChatServiceServer) SetChatPinned(context.Context, *SetChatPinnedRequest) (*SetChatPinnedResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetChatPinned not implemented")
+}
+func (UnimplementedChatServiceServer) SetChatArchived(context.Context, *SetChatArchivedRequest) (*SetChatArchivedResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetChatArchived not implemented")
 }
 func (UnimplementedChatServiceServer) SetChatPresence(context.Context, *SetChatPresenceRequest) (*SetChatPresenceResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetChatPresence not implemented")
@@ -784,6 +800,24 @@ func _ChatService_SetChatPinned_Handler(srv interface{}, ctx context.Context, de
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(ChatServiceServer).SetChatPinned(ctx, req.(*SetChatPinnedRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ChatService_SetChatArchived_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetChatArchivedRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ChatServiceServer).SetChatArchived(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ChatService_SetChatArchived_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ChatServiceServer).SetChatArchived(ctx, req.(*SetChatArchivedRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -936,6 +970,10 @@ var ChatService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetChatPinned",
 			Handler:    _ChatService_SetChatPinned_Handler,
+		},
+		{
+			MethodName: "SetChatArchived",
+			Handler:    _ChatService_SetChatArchived_Handler,
 		},
 		{
 			MethodName: "SetChatPresence",

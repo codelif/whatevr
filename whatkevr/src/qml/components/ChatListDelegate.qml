@@ -15,6 +15,10 @@ ItemDelegate {
     property string initials: "?"
     property int unreadCount: 0
     property bool isPinned: false
+    property bool isArchived: false
+    // Threaded from the pane: archived rows collapse to nothing until the
+    // "Archived" section is expanded.
+    property bool archivedExpanded: false
     property bool isTyping: false
     property bool hasDraft: false
     property string draftText: ""
@@ -57,11 +61,24 @@ ItemDelegate {
 
     signal selected(string chatId)
     signal pinToggled(string chatId, bool pinned)
-    signal contextMenuRequested(string chatId, bool pinned, real x, real y)
+    signal contextMenuRequested(string chatId, bool pinned, bool archived, real x, real y)
+
+    // Archived rows stay in the model (so the section header can count them) but
+    // collapse to zero height while the "Archived" section is collapsed.
+    readonly property bool collapsed: isArchived && !archivedExpanded
+    // Expanded archived rows are indented under the "Archived" section header.
+    readonly property bool nested: isArchived && archivedExpanded
+    readonly property real nestIndent: nested ? Kirigami.Units.gridUnit * 1.3 : 0
 
     width: ListView.view ? ListView.view.width : implicitWidth
     implicitHeight: Kirigami.Units.gridUnit * 4.4
+    // Collapse to zero height (not visible:false) so the ListView still counts
+    // the row for section grouping and keeps the "Archived" header rendered.
+    height: collapsed ? 0 : implicitHeight
+    clip: collapsed
+    enabled: !collapsed
     padding: 0
+    leftPadding: nestIndent
     hoverEnabled: true
     highlighted: current
     onClicked: selected(chatId)
@@ -73,7 +90,7 @@ ItemDelegate {
         z: 1
 
         onPressed: mouse => {
-            root.contextMenuRequested(root.chatId, root.isPinned, mouse.x, mouse.y)
+            root.contextMenuRequested(root.chatId, root.isPinned, root.isArchived, mouse.x, mouse.y)
             mouse.accepted = true
         }
     }
@@ -85,7 +102,7 @@ ItemDelegate {
 
     background: Rectangle {
         anchors.fill: parent
-        anchors.leftMargin: Kirigami.Units.smallSpacing
+        anchors.leftMargin: Kirigami.Units.smallSpacing + root.nestIndent
         anchors.rightMargin: Kirigami.Units.smallSpacing
         anchors.topMargin: Kirigami.Units.smallSpacing / 2
         anchors.bottomMargin: Kirigami.Units.smallSpacing / 2

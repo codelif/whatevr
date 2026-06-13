@@ -34,6 +34,7 @@ type ChatActionController interface {
 	MarkChatRead(context.Context, string) (appstore.Chat, error)
 	RefreshLoadedChatAvatars(context.Context, string, []appstore.Message)
 	SetChatPinned(context.Context, string, bool) (appstore.Chat, error)
+	SetChatArchived(context.Context, string, bool) (appstore.Chat, error)
 	SetChatPresence(context.Context, string, bool) error
 	SubscribeChatPresence(context.Context, string) error
 	DownloadMessageMedia(context.Context, string) (appstore.Message, error)
@@ -161,6 +162,23 @@ func (s *ChatService) SetChatPinned(ctx context.Context, req *pb.SetChatPinnedRe
 		return nil, err
 	}
 	return &pb.SetChatPinnedResponse{}, nil
+}
+
+func (s *ChatService) SetChatArchived(ctx context.Context, req *pb.SetChatArchivedRequest) (*pb.SetChatArchivedResponse, error) {
+	if s.actions == nil {
+		return nil, status.Error(codes.Unimplemented, "chat action controller is not available")
+	}
+	if strings.TrimSpace(req.GetChatId()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "chat_id is required")
+	}
+
+	if _, err := s.actions.SetChatArchived(ctx, req.GetChatId(), req.GetArchived()); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, status.Error(codes.NotFound, "chat not found")
+		}
+		return nil, err
+	}
+	return &pb.SetChatArchivedResponse{}, nil
 }
 
 func (s *ChatService) SetChatPresence(ctx context.Context, req *pb.SetChatPresenceRequest) (*pb.SetChatPresenceResponse, error) {
@@ -338,6 +356,7 @@ func toAppChat(chat appstore.Chat) app.Chat {
 		IsGroup:              chat.IsGroup,
 		IsPinned:             chat.IsPinned,
 		PinnedOrder:          chat.PinnedOrder,
+		IsArchived:           chat.IsArchived,
 		UpdatedAtUnix:        chat.UpdatedAt,
 		AvatarLocalPath:      chat.AvatarLocalPath,
 	}

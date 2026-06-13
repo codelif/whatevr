@@ -10,6 +10,33 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+func TestArchivedChatsFromEvents(t *testing.T) {
+	kept := types.NewJID("111", types.DefaultUserServer)
+	unarchived := types.NewJID("222", types.DefaultUserServer)
+	ignored := types.NewJID("333", types.DefaultUserServer)
+
+	archived := archivedChatsFromEvents([]any{
+		&events.Archive{JID: kept, Action: &waSyncAction.ArchiveChatAction{Archived: proto.Bool(true)}},
+		&events.Archive{JID: unarchived, Action: &waSyncAction.ArchiveChatAction{Archived: proto.Bool(true)}},
+		&events.Archive{JID: unarchived, Action: &waSyncAction.ArchiveChatAction{Archived: proto.Bool(false)}},
+		&events.Archive{JID: ignored},
+		"not an archive",
+	})
+
+	if len(archived) != 1 {
+		t.Fatalf("len(archived) = %d, want 1", len(archived))
+	}
+	if _, ok := archived[kept]; !ok {
+		t.Fatal("kept chat was not archived")
+	}
+	if _, ok := archived[unarchived]; ok {
+		t.Fatal("unarchived chat remained archived")
+	}
+	if _, ok := archived[ignored]; ok {
+		t.Fatal("archive event with nil action was included")
+	}
+}
+
 func TestPinnedChatsFromEvents(t *testing.T) {
 	kept := types.NewJID("111", types.DefaultUserServer)
 	removed := types.NewJID("222", types.DefaultUserServer)

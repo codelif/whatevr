@@ -205,6 +205,7 @@ public:
     Q_INVOKABLE [[nodiscard]] int previousGraphemeBoundary(const QString &text, int cursorPosition) const;
     Q_INVOKABLE bool sendClipboardImage(const QString &caption = QString(), const QString &replyToMessageId = QString());
     Q_INVOKABLE void setChatPinned(const QString &chatId, bool pinned);
+    Q_INVOKABLE void setChatArchived(const QString &chatId, bool archived);
     // Per-contact composer draft (pass-through to ChatListModel). QML commits the
     // outgoing chat's composer text on every chat switch/close and restores the
     // incoming chat's draft.
@@ -419,6 +420,12 @@ private:
     QHash<QString, CachedMessages> m_messageCache;
     QStringList m_messageCacheOrder;
 
+    // Last ListPinnedMessages result per chat, so reopening a chat populates the
+    // pinned banner synchronously from cache before the async refresh lands.
+    // Without this the banner pops in late, reflowing the conversation and
+    // causing a visible flicker on open. Kept coherent with live pin changes.
+    QHash<QString, QList<whatevr::v1::Message>> m_pinnedCache;
+
     ChatListModel *m_chatListModel = nullptr;
     EmojiModel *m_emojiModel = nullptr;
     MessageListModel *m_messageListModel = nullptr;
@@ -441,6 +448,7 @@ private:
     std::unique_ptr<QGrpcCallReply> m_markChatReadReply;
     std::unique_ptr<QGrpcCallReply> m_subscribeChatPresenceReply;
     QHash<QString, std::shared_ptr<QGrpcCallReply>> m_setChatPinnedReplies;
+    QHash<QString, std::shared_ptr<QGrpcCallReply>> m_setChatArchivedReplies;
     QHash<QString, std::shared_ptr<QGrpcCallReply>> m_setChatPresenceReplies;
     std::unique_ptr<QGrpcCallReply> m_updateSessionStateReply;
     std::unique_ptr<QGrpcCallReply> m_sendTextReply;
