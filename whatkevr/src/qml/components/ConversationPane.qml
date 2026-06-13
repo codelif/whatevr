@@ -196,6 +196,14 @@ Kirigami.Page {
                 Whatevr.AppController.setChatDraft(root.composerChatId, composer.inputPlainText())
                 composer.setText(Whatevr.AppController.chatDraft(newChatId))
                 root.composerChatId = newChatId
+                // Pull keyboard focus into the conversation when a chat opens so
+                // its key handler is live immediately — Escape closes the chat and
+                // typing routes into the composer without needing a click first.
+                // (Only on a real chat change, never on presence/avatar refreshes,
+                // so focus is not yanked away mid-interaction.)
+                if (newChatId.length > 0) {
+                    root.forceActiveFocus(Qt.OtherFocusReason)
+                }
             }
             if (root.replyChatId.length > 0 && root.replyChatId !== newChatId) {
                 root.clearReplyTarget()
