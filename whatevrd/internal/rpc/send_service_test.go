@@ -50,6 +50,14 @@ func (f *fakeSendController) SendReaction(context.Context, string, string) (apps
 	return appstore.Message{}, nil
 }
 
+func (f *fakeSendController) SetMessageStarred(context.Context, string, bool) (appstore.Message, error) {
+	return appstore.Message{}, nil
+}
+
+func (f *fakeSendController) PinMessage(context.Context, string, bool, uint32) (appstore.Message, error) {
+	return appstore.Message{}, nil
+}
+
 func TestSendTextAllowsNativeSizedMessage(t *testing.T) {
 	sender := &fakeSendController{}
 	service := NewSendService(sender)

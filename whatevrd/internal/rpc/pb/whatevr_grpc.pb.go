@@ -498,6 +498,8 @@ const (
 	ChatService_DownloadMessageMedia_FullMethodName  = "/whatevr.v1.ChatService/DownloadMessageMedia"
 	ChatService_GetMessageInfo_FullMethodName        = "/whatevr.v1.ChatService/GetMessageInfo"
 	ChatService_DeleteMessageForMe_FullMethodName    = "/whatevr.v1.ChatService/DeleteMessageForMe"
+	ChatService_ListStarredMessages_FullMethodName   = "/whatevr.v1.ChatService/ListStarredMessages"
+	ChatService_ListPinnedMessages_FullMethodName    = "/whatevr.v1.ChatService/ListPinnedMessages"
 )
 
 // ChatServiceClient is the client API for ChatService service.
@@ -513,6 +515,8 @@ type ChatServiceClient interface {
 	DownloadMessageMedia(ctx context.Context, in *DownloadMessageMediaRequest, opts ...grpc.CallOption) (*DownloadMessageMediaResponse, error)
 	GetMessageInfo(ctx context.Context, in *GetMessageInfoRequest, opts ...grpc.CallOption) (*GetMessageInfoResponse, error)
 	DeleteMessageForMe(ctx context.Context, in *DeleteMessageForMeRequest, opts ...grpc.CallOption) (*DeleteMessageForMeResponse, error)
+	ListStarredMessages(ctx context.Context, in *ListStarredMessagesRequest, opts ...grpc.CallOption) (*ListStarredMessagesResponse, error)
+	ListPinnedMessages(ctx context.Context, in *ListPinnedMessagesRequest, opts ...grpc.CallOption) (*ListPinnedMessagesResponse, error)
 }
 
 type chatServiceClient struct {
@@ -613,6 +617,26 @@ func (c *chatServiceClient) DeleteMessageForMe(ctx context.Context, in *DeleteMe
 	return out, nil
 }
 
+func (c *chatServiceClient) ListStarredMessages(ctx context.Context, in *ListStarredMessagesRequest, opts ...grpc.CallOption) (*ListStarredMessagesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListStarredMessagesResponse)
+	err := c.cc.Invoke(ctx, ChatService_ListStarredMessages_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *chatServiceClient) ListPinnedMessages(ctx context.Context, in *ListPinnedMessagesRequest, opts ...grpc.CallOption) (*ListPinnedMessagesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListPinnedMessagesResponse)
+	err := c.cc.Invoke(ctx, ChatService_ListPinnedMessages_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ChatServiceServer is the server API for ChatService service.
 // All implementations must embed UnimplementedChatServiceServer
 // for forward compatibility.
@@ -626,6 +650,8 @@ type ChatServiceServer interface {
 	DownloadMessageMedia(context.Context, *DownloadMessageMediaRequest) (*DownloadMessageMediaResponse, error)
 	GetMessageInfo(context.Context, *GetMessageInfoRequest) (*GetMessageInfoResponse, error)
 	DeleteMessageForMe(context.Context, *DeleteMessageForMeRequest) (*DeleteMessageForMeResponse, error)
+	ListStarredMessages(context.Context, *ListStarredMessagesRequest) (*ListStarredMessagesResponse, error)
+	ListPinnedMessages(context.Context, *ListPinnedMessagesRequest) (*ListPinnedMessagesResponse, error)
 	mustEmbedUnimplementedChatServiceServer()
 }
 
@@ -662,6 +688,12 @@ func (UnimplementedChatServiceServer) GetMessageInfo(context.Context, *GetMessag
 }
 func (UnimplementedChatServiceServer) DeleteMessageForMe(context.Context, *DeleteMessageForMeRequest) (*DeleteMessageForMeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteMessageForMe not implemented")
+}
+func (UnimplementedChatServiceServer) ListStarredMessages(context.Context, *ListStarredMessagesRequest) (*ListStarredMessagesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListStarredMessages not implemented")
+}
+func (UnimplementedChatServiceServer) ListPinnedMessages(context.Context, *ListPinnedMessagesRequest) (*ListPinnedMessagesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListPinnedMessages not implemented")
 }
 func (UnimplementedChatServiceServer) mustEmbedUnimplementedChatServiceServer() {}
 func (UnimplementedChatServiceServer) testEmbeddedByValue()                     {}
@@ -846,6 +878,42 @@ func _ChatService_DeleteMessageForMe_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ChatService_ListStarredMessages_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListStarredMessagesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ChatServiceServer).ListStarredMessages(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ChatService_ListStarredMessages_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ChatServiceServer).ListStarredMessages(ctx, req.(*ListStarredMessagesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ChatService_ListPinnedMessages_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListPinnedMessagesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ChatServiceServer).ListPinnedMessages(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ChatService_ListPinnedMessages_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ChatServiceServer).ListPinnedMessages(ctx, req.(*ListPinnedMessagesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ChatService_ServiceDesc is the grpc.ServiceDesc for ChatService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -889,18 +957,28 @@ var ChatService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "DeleteMessageForMe",
 			Handler:    _ChatService_DeleteMessageForMe_Handler,
 		},
+		{
+			MethodName: "ListStarredMessages",
+			Handler:    _ChatService_ListStarredMessages_Handler,
+		},
+		{
+			MethodName: "ListPinnedMessages",
+			Handler:    _ChatService_ListPinnedMessages_Handler,
+		},
 	},
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "whatevr.proto",
 }
 
 const (
-	SendService_SendText_FullMethodName       = "/whatevr.v1.SendService/SendText"
-	SendService_SendMedia_FullMethodName      = "/whatevr.v1.SendService/SendMedia"
-	SendService_RevokeMessage_FullMethodName  = "/whatevr.v1.SendService/RevokeMessage"
-	SendService_EditMessage_FullMethodName    = "/whatevr.v1.SendService/EditMessage"
-	SendService_ForwardMessage_FullMethodName = "/whatevr.v1.SendService/ForwardMessage"
-	SendService_SendReaction_FullMethodName   = "/whatevr.v1.SendService/SendReaction"
+	SendService_SendText_FullMethodName          = "/whatevr.v1.SendService/SendText"
+	SendService_SendMedia_FullMethodName         = "/whatevr.v1.SendService/SendMedia"
+	SendService_RevokeMessage_FullMethodName     = "/whatevr.v1.SendService/RevokeMessage"
+	SendService_EditMessage_FullMethodName       = "/whatevr.v1.SendService/EditMessage"
+	SendService_ForwardMessage_FullMethodName    = "/whatevr.v1.SendService/ForwardMessage"
+	SendService_SendReaction_FullMethodName      = "/whatevr.v1.SendService/SendReaction"
+	SendService_SetMessageStarred_FullMethodName = "/whatevr.v1.SendService/SetMessageStarred"
+	SendService_PinMessage_FullMethodName        = "/whatevr.v1.SendService/PinMessage"
 )
 
 // SendServiceClient is the client API for SendService service.
@@ -913,6 +991,8 @@ type SendServiceClient interface {
 	EditMessage(ctx context.Context, in *EditMessageRequest, opts ...grpc.CallOption) (*EditMessageResponse, error)
 	ForwardMessage(ctx context.Context, in *ForwardMessageRequest, opts ...grpc.CallOption) (*ForwardMessageResponse, error)
 	SendReaction(ctx context.Context, in *SendReactionRequest, opts ...grpc.CallOption) (*SendReactionResponse, error)
+	SetMessageStarred(ctx context.Context, in *SetMessageStarredRequest, opts ...grpc.CallOption) (*SetMessageStarredResponse, error)
+	PinMessage(ctx context.Context, in *PinMessageRequest, opts ...grpc.CallOption) (*PinMessageResponse, error)
 }
 
 type sendServiceClient struct {
@@ -983,6 +1063,26 @@ func (c *sendServiceClient) SendReaction(ctx context.Context, in *SendReactionRe
 	return out, nil
 }
 
+func (c *sendServiceClient) SetMessageStarred(ctx context.Context, in *SetMessageStarredRequest, opts ...grpc.CallOption) (*SetMessageStarredResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetMessageStarredResponse)
+	err := c.cc.Invoke(ctx, SendService_SetMessageStarred_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sendServiceClient) PinMessage(ctx context.Context, in *PinMessageRequest, opts ...grpc.CallOption) (*PinMessageResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PinMessageResponse)
+	err := c.cc.Invoke(ctx, SendService_PinMessage_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SendServiceServer is the server API for SendService service.
 // All implementations must embed UnimplementedSendServiceServer
 // for forward compatibility.
@@ -993,6 +1093,8 @@ type SendServiceServer interface {
 	EditMessage(context.Context, *EditMessageRequest) (*EditMessageResponse, error)
 	ForwardMessage(context.Context, *ForwardMessageRequest) (*ForwardMessageResponse, error)
 	SendReaction(context.Context, *SendReactionRequest) (*SendReactionResponse, error)
+	SetMessageStarred(context.Context, *SetMessageStarredRequest) (*SetMessageStarredResponse, error)
+	PinMessage(context.Context, *PinMessageRequest) (*PinMessageResponse, error)
 	mustEmbedUnimplementedSendServiceServer()
 }
 
@@ -1020,6 +1122,12 @@ func (UnimplementedSendServiceServer) ForwardMessage(context.Context, *ForwardMe
 }
 func (UnimplementedSendServiceServer) SendReaction(context.Context, *SendReactionRequest) (*SendReactionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SendReaction not implemented")
+}
+func (UnimplementedSendServiceServer) SetMessageStarred(context.Context, *SetMessageStarredRequest) (*SetMessageStarredResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetMessageStarred not implemented")
+}
+func (UnimplementedSendServiceServer) PinMessage(context.Context, *PinMessageRequest) (*PinMessageResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PinMessage not implemented")
 }
 func (UnimplementedSendServiceServer) mustEmbedUnimplementedSendServiceServer() {}
 func (UnimplementedSendServiceServer) testEmbeddedByValue()                     {}
@@ -1150,6 +1258,42 @@ func _SendService_SendReaction_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SendService_SetMessageStarred_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetMessageStarredRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SendServiceServer).SetMessageStarred(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SendService_SetMessageStarred_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SendServiceServer).SetMessageStarred(ctx, req.(*SetMessageStarredRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SendService_PinMessage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PinMessageRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SendServiceServer).PinMessage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SendService_PinMessage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SendServiceServer).PinMessage(ctx, req.(*PinMessageRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SendService_ServiceDesc is the grpc.ServiceDesc for SendService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1180,6 +1324,14 @@ var SendService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SendReaction",
 			Handler:    _SendService_SendReaction_Handler,
+		},
+		{
+			MethodName: "SetMessageStarred",
+			Handler:    _SendService_SetMessageStarred_Handler,
+		},
+		{
+			MethodName: "PinMessage",
+			Handler:    _SendService_PinMessage_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

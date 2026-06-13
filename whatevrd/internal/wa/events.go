@@ -110,6 +110,8 @@ func (c *Client) handleEvent(eventGen uint64, raw any) {
 		c.handleMediaRetry(c.backgroundContext(), evt)
 	case *events.Pin:
 		c.handlePinEvent(c.backgroundContext(), evt)
+	case *events.Star:
+		c.handleStarEvent(c.backgroundContext(), evt)
 	case *events.JoinedGroup:
 		c.handleJoinedGroup(c.backgroundContext(), evt)
 	case *events.GroupInfo:

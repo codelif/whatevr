@@ -72,6 +72,9 @@ public:
         MediaCacheKeyRole,
         IsRevokedRole,
         IsEditedRole,
+        IsStarredRole,
+        IsPinnedRole,
+        PinnedUntilUnixRole,
         ReactionsRole,
         MediaDownloadProgressRole,
     };
@@ -107,6 +110,11 @@ public:
     // list so the caller can revert with restoreReactions() if the call fails.
     QVariantList applyOptimisticReaction(const QString &messageId, const QString &emoji);
     void restoreReactions(const QString &messageId, const QVariantList &reactions);
+    // Optimistically flip a message's star so the bubble's star icon updates
+    // before the daemon round-trips. Returns the previous starred state so the
+    // caller can revert with restoreStar() on failure.
+    bool applyOptimisticStar(const QString &messageId, bool starred);
+    void restoreStar(const QString &messageId, bool starred);
     // Optimistically apply an edit to a message's body so the bubble updates
     // before the daemon round-trips. Sets the new text, flags it edited, and
     // drops cached layout/markup so the new body re-renders. Returns the
@@ -193,6 +201,8 @@ private:
         bool mediaAnimated = false;
         bool isRevoked = false;
         bool isEdited = false;
+        bool isStarred = false;
+        qint64 pinnedUntilUnix = 0;
         bool mediaDownloading = false;
         QString mediaDownloadError;
         // Streamed download progress; totalBytes 0 means unknown size and the

@@ -283,6 +283,12 @@ QVariant MessageListModel::data(const QModelIndex &index, int role) const
         return message.isRevoked;
     case IsEditedRole:
         return message.isEdited;
+    case IsStarredRole:
+        return message.isStarred;
+    case IsPinnedRole:
+        return message.pinnedUntilUnix > QDateTime::currentSecsSinceEpoch();
+    case PinnedUntilUnixRole:
+        return message.pinnedUntilUnix;
     case ReactionsRole:
         return message.reactions;
     case MediaDownloadProgressRole:
@@ -347,6 +353,9 @@ QHash<int, QByteArray> MessageListModel::roleNames() const
         {MediaCacheKeyRole, "mediaCacheKey"},
         {IsRevokedRole, "isRevoked"},
         {IsEditedRole, "isEdited"},
+        {IsStarredRole, "isStarred"},
+        {IsPinnedRole, "isPinned"},
+        {PinnedUntilUnixRole, "pinnedUntilUnix"},
         {ReactionsRole, "reactions"},
         {MediaDownloadProgressRole, "mediaDownloadProgress"},
     };
@@ -756,6 +765,8 @@ QVariantMap MessageListModel::messageSnapshot(const QString &messageId) const
         {QStringLiteral("mediaCacheKey"), message.mediaCacheKey},
         {QStringLiteral("isRevoked"), message.isRevoked},
         {QStringLiteral("isEdited"), message.isEdited},
+        {QStringLiteral("isStarred"), message.isStarred},
+        {QStringLiteral("isPinned"), message.pinnedUntilUnix > QDateTime::currentSecsSinceEpoch()},
         {QStringLiteral("reactions"), message.reactions},
     };
 }
@@ -920,6 +931,33 @@ void MessageListModel::restoreReactions(const QString &messageId, const QVariant
     Q_EMIT dataChanged(changedIndex, changedIndex, {ReactionsRole});
 }
 
+bool MessageListModel::applyOptimisticStar(const QString &messageId, bool starred)
+{
+    const int messageIndex = indexOf(messageId);
+    if (messageIndex < 0) {
+        return false;
+    }
+
+    auto &message = m_messages[messageIndex];
+    const bool previous = message.isStarred;
+    message.isStarred = starred;
+    const QModelIndex changedIndex = index(messageIndex, 0);
+    Q_EMIT dataChanged(changedIndex, changedIndex, {IsStarredRole});
+    return previous;
+}
+
+void MessageListModel::restoreStar(const QString &messageId, bool starred)
+{
+    const int messageIndex = indexOf(messageId);
+    if (messageIndex < 0) {
+        return;
+    }
+
+    m_messages[messageIndex].isStarred = starred;
+    const QModelIndex changedIndex = index(messageIndex, 0);
+    Q_EMIT dataChanged(changedIndex, changedIndex, {IsStarredRole});
+}
+
 QString MessageListModel::applyOptimisticEdit(const QString &messageId, const QString &newText)
 {
     const int messageIndex = indexOf(messageId);
@@ -1074,6 +1112,8 @@ MessageListModel::MessageItem MessageListModel::fromProto(const whatevr::v1::Mes
         .mediaAnimated = message.mediaAnimated(),
         .isRevoked = message.isRevoked(),
         .isEdited = message.isEdited(),
+        .isStarred = message.isStarred(),
+        .pinnedUntilUnix = message.pinnedUntilUnix(),
         .mediaDownloading = false,
         .mediaDownloadError = {},
         .replyToMessageId = {},
@@ -1338,6 +1378,8 @@ bool MessageListModel::sameMessageData(const MessageItem &left, const MessageIte
         && left.mediaHeight == right.mediaHeight
         && left.mediaAnimated == right.mediaAnimated
         && left.isRevoked == right.isRevoked
+        && left.isStarred == right.isStarred
+        && left.pinnedUntilUnix == right.pinnedUntilUnix
         && left.mediaDownloading == right.mediaDownloading
         && left.mediaDownloadError == right.mediaDownloadError
         && left.replyToMessageId == right.replyToMessageId

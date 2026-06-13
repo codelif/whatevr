@@ -3,6 +3,7 @@ package rpc
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -349,6 +350,9 @@ func toProtoMessage(message app.Message) *pb.Message {
 		MediaCacheKey:           message.MediaCacheKey,
 		IsRevoked:               message.IsRevoked,
 		IsEdited:                message.IsEdited,
+		IsStarred:               message.IsStarred,
+		IsPinned:                message.PinnedUntilUnix > time.Now().Unix(),
+		PinnedUntilUnix:         message.PinnedUntilUnix,
 	}
 	if message.ReplyTo.MessageID != "" {
 		protoMessage.ReplyTo = &pb.MessageReply{

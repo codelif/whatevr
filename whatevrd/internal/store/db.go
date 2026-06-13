@@ -389,6 +389,9 @@ func (db *DB) ensureMessageRevokedColumn(ctx context.Context) error {
 		{"is_revoked", `ALTER TABLE messages ADD COLUMN is_revoked INTEGER NOT NULL DEFAULT 0`},
 		{"is_forwarded", `ALTER TABLE messages ADD COLUMN is_forwarded INTEGER NOT NULL DEFAULT 0`},
 		{"is_edited", `ALTER TABLE messages ADD COLUMN is_edited INTEGER NOT NULL DEFAULT 0`},
+		{"is_starred", `ALTER TABLE messages ADD COLUMN is_starred INTEGER NOT NULL DEFAULT 0`},
+		{"pinned_at", `ALTER TABLE messages ADD COLUMN pinned_at INTEGER NOT NULL DEFAULT 0`},
+		{"pinned_until", `ALTER TABLE messages ADD COLUMN pinned_until INTEGER NOT NULL DEFAULT 0`},
 	}
 	for _, a := range alterations {
 		if existing[a.col] {
@@ -396,6 +399,17 @@ func (db *DB) ensureMessageRevokedColumn(ctx context.Context) error {
 		}
 		if _, err := db.conn.ExecContext(ctx, a.def); err != nil {
 			return fmt.Errorf("add messages.%s: %w", a.col, err)
+		}
+	}
+
+	// These indexes reference is_starred / pinned_until, so they must be created
+	// after the ALTERs above add those columns (ensureQueryIndexes runs earlier).
+	for _, statement := range []string{
+		`CREATE INDEX IF NOT EXISTS idx_messages_chat_starred ON messages(chat_id, is_starred, timestamp DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_messages_chat_pinned ON messages(chat_id, pinned_until)`,
+	} {
+		if _, err := db.conn.ExecContext(ctx, statement); err != nil {
+			return err
 		}
 	}
 	return nil

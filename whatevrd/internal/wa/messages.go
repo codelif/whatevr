@@ -310,6 +310,9 @@ func (c *Client) handleMessage(ctx context.Context, evt *events.Message, offline
 	if c.handleReaction(ctx, evt, offlineSync) {
 		return
 	}
+	if c.handlePinInChat(ctx, evt, offlineSync) {
+		return
+	}
 	source := sourceLive
 	if offlineSync {
 		source = sourceOfflineSync
@@ -1278,6 +1281,8 @@ func toDaemonMessage(message appstore.Message) app.Message {
 		MediaCacheKey:           message.MediaCacheKey,
 		IsRevoked:               message.IsRevoked,
 		IsEdited:                message.IsEdited,
+		IsStarred:               message.IsStarred,
+		PinnedUntilUnix:         message.PinnedUntil,
 		ReplyTo: app.MessageReply{
 			MessageID:     message.ReplyTo.MessageID,
 			SenderID:      message.ReplyTo.SenderID,

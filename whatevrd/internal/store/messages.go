@@ -46,6 +46,9 @@ type Message struct {
 	IsRevoked               bool
 	IsForwarded             bool
 	IsEdited                bool
+	IsStarred               bool
+	PinnedAt                int64
+	PinnedUntil             int64
 	SendAttempts            int32
 	LastSendError           string
 	NextSendAttempt         int64
@@ -595,6 +598,23 @@ func recomputeChatSummaryTx(ctx context.Context, tx *sql.Tx, chatID string) erro
 	return err
 }
 
+// messageSelectPrefix is the SELECT + JOIN block shared by message list
+// queries. Its column order matches scanMessageRows exactly; append a WHERE /
+// ORDER BY / LIMIT clause to use it.
+const messageSelectPrefix = `
+	SELECT m.id, m.chat_id, m.sender_id,
+	       COALESCE(NULLIF(s.name, ''), NULLIF(c.name, ''), ''),
+	       COALESCE(NULLIF(sa.local_path, ''), NULLIF(ca.local_path, ''), NULLIF(s.avatar_local_path, ''), NULLIF(c.avatar_local_path, ''), ''),
+	       m.text, m.timestamp, m.rowid, m.direction, m.is_read, m.status, m.media_kind, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_animated,
+	       m.reply_to_message_id, m.reply_to_sender_id, m.reply_to_sender_name, m.reply_to_text, m.reply_to_media_kind, m.reply_to_media_mime_type, m.reply_to_direction,
+	       m.send_attempts, m.last_send_error, m.next_send_attempt, m.is_revoked, m.is_edited, m.is_starred, m.pinned_at, m.pinned_until
+	FROM messages m
+	LEFT JOIN senders s ON s.id = m.sender_id
+	LEFT JOIN chats c ON c.id = m.sender_id
+	LEFT JOIN avatars sa ON sa.subject_kind = 'sender' AND sa.subject_id = m.sender_id
+	LEFT JOIN avatars ca ON ca.subject_kind = 'chat' AND ca.subject_id = m.sender_id
+`
+
 func (db *DB) ListMessages(ctx context.Context, chatID string, limit int, beforeMessageID string) ([]Message, error) {
 	defer db.timeOp("ListMessages", time.Now())
 	if limit <= 0 {
@@ -607,7 +627,7 @@ func (db *DB) ListMessages(ctx context.Context, chatID string, limit int, before
 		       COALESCE(NULLIF(sa.local_path, ''), NULLIF(ca.local_path, ''), NULLIF(s.avatar_local_path, ''), NULLIF(c.avatar_local_path, ''), ''),
 		       m.text, m.timestamp, m.rowid, m.direction, m.is_read, m.status, m.media_kind, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_animated,
 		       m.reply_to_message_id, m.reply_to_sender_id, m.reply_to_sender_name, m.reply_to_text, m.reply_to_media_kind, m.reply_to_media_mime_type, m.reply_to_direction,
-		       m.send_attempts, m.last_send_error, m.next_send_attempt, m.is_revoked, m.is_edited
+		       m.send_attempts, m.last_send_error, m.next_send_attempt, m.is_revoked, m.is_edited, m.is_starred, m.pinned_at, m.pinned_until
 		FROM messages m
 		LEFT JOIN senders s ON s.id = m.sender_id
 		LEFT JOIN chats c ON c.id = m.sender_id
@@ -716,7 +736,7 @@ func (db *DB) listMessagesAroundSide(ctx context.Context, chatID string, timesta
 		       COALESCE(NULLIF(sa.local_path, ''), NULLIF(ca.local_path, ''), NULLIF(s.avatar_local_path, ''), NULLIF(c.avatar_local_path, ''), ''),
 		       m.text, m.timestamp, m.rowid, m.direction, m.is_read, m.status, m.media_kind, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_animated,
 		       m.reply_to_message_id, m.reply_to_sender_id, m.reply_to_sender_name, m.reply_to_text, m.reply_to_media_kind, m.reply_to_media_mime_type, m.reply_to_direction,
-		       m.send_attempts, m.last_send_error, m.next_send_attempt, m.is_revoked, m.is_edited
+		       m.send_attempts, m.last_send_error, m.next_send_attempt, m.is_revoked, m.is_edited, m.is_starred, m.pinned_at, m.pinned_until
 		FROM messages m
 		LEFT JOIN senders s ON s.id = m.sender_id
 		LEFT JOIN chats c ON c.id = m.sender_id
@@ -1022,6 +1042,204 @@ func (db *DB) UpdateMessageText(ctx context.Context, id, newText string) (Messag
 	return updated, chat, true, nil
 }
 
+// StarredMessage pairs a starred message with its chat's display name, so the
+// global starred view can label which conversation each message belongs to.
+type StarredMessage struct {
+	Message
+	ChatName string
+}
+
+// SetMessageStarred flips a message's starred flag and returns the refreshed
+// message plus whether the flag actually changed (re-applying the same state is
+// a no-op, so callers can skip publishing).
+func (db *DB) SetMessageStarred(ctx context.Context, id string, starred bool) (Message, bool, error) {
+	tx, err := db.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return Message{}, false, err
+	}
+	defer tx.Rollback()
+
+	message, err := getMessageTx(ctx, tx, id)
+	if err != nil {
+		return Message{}, false, err
+	}
+	if message.IsStarred == starred {
+		return message, false, nil
+	}
+
+	flag := 0
+	if starred {
+		flag = 1
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE messages SET is_starred = ? WHERE id = ?`, flag, id); err != nil {
+		return Message{}, false, err
+	}
+
+	updated, err := getMessageTx(ctx, tx, id)
+	if err != nil {
+		return Message{}, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Message{}, false, err
+	}
+	return updated, true, nil
+}
+
+// SetMessagePinned sets a message's pin window. pinnedUntil is the unix expiry
+// (0 unpins); pinnedAt orders pins for banner navigation. Returns the refreshed
+// message and whether anything changed.
+func (db *DB) SetMessagePinned(ctx context.Context, id string, pinnedAt, pinnedUntil int64) (Message, bool, error) {
+	tx, err := db.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return Message{}, false, err
+	}
+	defer tx.Rollback()
+
+	message, err := getMessageTx(ctx, tx, id)
+	if err != nil {
+		return Message{}, false, err
+	}
+	if message.PinnedUntil == pinnedUntil && message.PinnedAt == pinnedAt {
+		return message, false, nil
+	}
+
+	if _, err := tx.ExecContext(ctx, `UPDATE messages SET pinned_at = ?, pinned_until = ? WHERE id = ?`, pinnedAt, pinnedUntil, id); err != nil {
+		return Message{}, false, err
+	}
+
+	updated, err := getMessageTx(ctx, tx, id)
+	if err != nil {
+		return Message{}, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Message{}, false, err
+	}
+	return updated, true, nil
+}
+
+// CountActivePins returns how many messages in a chat are currently pinned
+// (and unexpired), so callers can enforce the per-chat pin limit.
+func (db *DB) CountActivePins(ctx context.Context, chatID string) (int, error) {
+	var n int
+	err := db.reader().QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM messages WHERE chat_id = ? AND pinned_until > ?
+	`, chatID, time.Now().Unix()).Scan(&n)
+	return n, err
+}
+
+// ListPinnedMessages returns a chat's currently-pinned (unexpired) messages,
+// oldest pin first, for the conversation's pinned-message banner.
+func (db *DB) ListPinnedMessages(ctx context.Context, chatID string) ([]Message, error) {
+	defer db.timeOp("ListPinnedMessages", time.Now())
+	rows, err := db.reader().QueryContext(ctx, messageSelectPrefix+`
+		WHERE m.chat_id = ? AND m.pinned_until > ?
+		ORDER BY m.pinned_at ASC, m.rowid ASC
+	`, chatID, time.Now().Unix())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	messages, err := scanMessageRows(rows, 8)
+	if err != nil {
+		return nil, err
+	}
+	if err := attachReactions(ctx, db.reader(), messages); err != nil {
+		return nil, err
+	}
+	return messages, nil
+}
+
+// ListStarredMessages returns starred messages newest first. chatID == "" spans
+// all chats; beforeMessageID is a keyset cursor for paging older results. Each
+// row carries its chat's display name for the global view.
+func (db *DB) ListStarredMessages(ctx context.Context, chatID string, limit int, beforeMessageID string) ([]StarredMessage, error) {
+	defer db.timeOp("ListStarredMessages", time.Now())
+	if limit <= 0 {
+		limit = 50
+	}
+
+	query := messageSelectPrefix + `
+		WHERE m.is_starred = 1
+	`
+	args := []any{}
+	if chatID != "" {
+		query += ` AND m.chat_id = ?`
+		args = append(args, chatID)
+	}
+	if beforeMessageID != "" {
+		beforeTimestamp, beforeSeq, err := db.messageCursor(ctx, beforeMessageID)
+		if err != nil {
+			return nil, err
+		}
+		query += ` AND (m.timestamp < ? OR (m.timestamp = ? AND m.rowid < ?))`
+		args = append(args, beforeTimestamp, beforeTimestamp, beforeSeq)
+	}
+	query += `
+		ORDER BY m.timestamp DESC, m.rowid DESC
+		LIMIT ?
+	`
+	args = append(args, limit)
+
+	rows, err := db.reader().QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	messages, err := scanMessageRows(rows, limit)
+	if err != nil {
+		return nil, err
+	}
+	if err := attachReactions(ctx, db.reader(), messages); err != nil {
+		return nil, err
+	}
+
+	names, err := db.chatNamesByID(ctx, messages)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]StarredMessage, len(messages))
+	for i, m := range messages {
+		result[i] = StarredMessage{Message: m, ChatName: names[m.ChatID]}
+	}
+	return result, nil
+}
+
+// chatNamesByID maps each message's chat_id to its chat display name in one
+// query, used to label cross-chat starred results.
+func (db *DB) chatNamesByID(ctx context.Context, messages []Message) (map[string]string, error) {
+	names := make(map[string]string)
+	if len(messages) == 0 {
+		return names, nil
+	}
+	seen := make(map[string]struct{}, len(messages))
+	ids := make([]any, 0, len(messages))
+	placeholders := make([]string, 0, len(messages))
+	for _, m := range messages {
+		if _, ok := seen[m.ChatID]; ok {
+			continue
+		}
+		seen[m.ChatID] = struct{}{}
+		ids = append(ids, m.ChatID)
+		placeholders = append(placeholders, "?")
+	}
+	rows, err := db.reader().QueryContext(ctx,
+		`SELECT id, COALESCE(NULLIF(name, ''), '') FROM chats WHERE id IN (`+strings.Join(placeholders, ",")+`)`, ids...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, name string
+		if err := rows.Scan(&id, &name); err != nil {
+			return nil, err
+		}
+		names[id] = name
+	}
+	return names, rows.Err()
+}
+
 // DeleteMessageForMe removes a message row locally (receipts cascade via FK).
 // Returns the deleted message, the refreshed chat, and whether a row existed.
 func (db *DB) DeleteMessageForMe(ctx context.Context, id string) (Message, Chat, bool, error) {
@@ -1282,7 +1500,7 @@ func getMessageRow(ctx context.Context, queryer interface {
 		       COALESCE(NULLIF(sa.local_path, ''), NULLIF(ca.local_path, ''), NULLIF(s.avatar_local_path, ''), NULLIF(c.avatar_local_path, ''), ''),
 		       m.text, m.timestamp, m.rowid, m.direction, m.is_read, m.status, m.media_kind, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_animated, m.media_payload, m.media_cache_key,
 		       m.reply_to_message_id, m.reply_to_sender_id, m.reply_to_sender_name, m.reply_to_text, m.reply_to_media_kind, m.reply_to_media_mime_type, m.reply_to_direction,
-		       m.send_attempts, m.last_send_error, m.next_send_attempt, m.is_revoked, m.is_edited
+		       m.send_attempts, m.last_send_error, m.next_send_attempt, m.is_revoked, m.is_edited, m.is_starred, m.pinned_at, m.pinned_until
 		FROM messages m
 		LEFT JOIN senders s ON s.id = m.sender_id
 		LEFT JOIN chats c ON c.id = m.sender_id
@@ -1322,6 +1540,9 @@ func getMessageRow(ctx context.Context, queryer interface {
 		&message.NextSendAttempt,
 		&message.IsRevoked,
 		&message.IsEdited,
+		&message.IsStarred,
+		&message.PinnedAt,
+		&message.PinnedUntil,
 	)
 }
 
@@ -1418,6 +1639,9 @@ func scanMessageRows(rows *sql.Rows, capacity int) ([]Message, error) {
 			&message.NextSendAttempt,
 			&message.IsRevoked,
 			&message.IsEdited,
+			&message.IsStarred,
+			&message.PinnedAt,
+			&message.PinnedUntil,
 		); err != nil {
 			return nil, err
 		}

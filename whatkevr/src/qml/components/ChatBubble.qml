@@ -51,6 +51,8 @@ Item {
     property bool mediaAnimated: false
     property bool isRevoked: false
     property bool isEdited: false
+    property bool isStarred: false
+    property bool isPinned: false
     // Reactions on this message: list of {emoji, senderId, senderName, fromMe}
     // maps (MessageListModel ReactionsRole).
     property var reactions: []
@@ -343,11 +345,24 @@ Item {
     readonly property bool showEditMark: isEdited && !isRevoked
     readonly property real editMarkSize: Math.max(1, Math.round(footerMetrics.height * 0.92))
     readonly property real editMarkReserve: showEditMark ? editMarkSize + tntSpacing : 0
+    // A small star shown left of the edit mark / timestamp when the message is
+    // starred (mirrors the edit-mark reserve so the footer width stays correct).
+    readonly property bool showStarMark: isStarred && !isRevoked
+    readonly property real starMarkSize: Math.max(1, Math.round(footerMetrics.height * 0.92))
+    readonly property real starMarkReserve: showStarMark ? starMarkSize + tntSpacing : 0
+    // A small pin shown left of the star mark when the message is pinned.
+    readonly property bool showPinMark: isPinned && !isRevoked
+    readonly property real pinMarkSize: Math.max(1, Math.round(footerMetrics.height * 0.92))
+    readonly property real pinMarkReserve: showPinMark ? pinMarkSize + tntSpacing : 0
     readonly property real tntWidth: Math.ceil(footerMetrics.advanceWidth
                                                + editMarkReserve
+                                               + starMarkReserve
+                                               + pinMarkReserve
                                                + (showStatusIcon ? statusAreaWidth + tntSpacing : 0))
     readonly property real tntHeight: Math.ceil(Math.max(footerMetrics.height, showStatusIcon ? statusIconSize : 0,
-                                                         showEditMark ? editMarkSize : 0))
+                                                         showEditMark ? editMarkSize : 0,
+                                                         showStarMark ? starMarkSize : 0,
+                                                         showPinMark ? pinMarkSize : 0))
     readonly property bool hasBody: body.length > 0
     readonly property bool showReadMore: textTruncated && !textExpanded && hasBody
     readonly property string readMoreLabelText: Whatevr.I18n.i18nc("@action:button expand long message", "Read more")
@@ -1282,6 +1297,33 @@ Item {
                     color: root.footerTextColor
                     isMask: true
                 }
+
+                Kirigami.Icon {
+                    id: starMark
+                    visible: root.showStarMark
+                    source: "starred-symbolic"
+                    anchors.right: editMark.visible ? editMark.left : timeLabel.left
+                    anchors.rightMargin: root.tntSpacing
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: root.starMarkSize
+                    height: root.starMarkSize
+                    color: root.footerTextColor
+                    isMask: true
+                }
+
+                Kirigami.Icon {
+                    id: pinMark
+                    visible: root.showPinMark
+                    source: "pin-symbolic"
+                    anchors.right: starMark.visible ? starMark.left
+                                                    : (editMark.visible ? editMark.left : timeLabel.left)
+                    anchors.rightMargin: root.tntSpacing
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: root.pinMarkSize
+                    height: root.pinMarkSize
+                    color: root.footerTextColor
+                    isMask: true
+                }
             }
         }
     }
@@ -1621,6 +1663,7 @@ Item {
             }
 
             Label {
+                id: stickerTimeLabel
                 anchors.right: stickerStatusArea.visible ? stickerStatusArea.left : parent.right
                 anchors.rightMargin: stickerStatusArea.visible ? root.tntSpacing : 0
                 anchors.verticalCenter: parent.verticalCenter
@@ -1629,6 +1672,45 @@ Item {
                 width: Math.ceil(footerMetrics.advanceWidth)
                 horizontalAlignment: Text.AlignRight
                 font.pointSize: root.footerTimePointSize
+            }
+
+            Kirigami.Icon {
+                id: stickerEditMark
+                visible: root.showEditMark
+                source: "document-edit-symbolic"
+                anchors.right: stickerTimeLabel.left
+                anchors.rightMargin: root.tntSpacing
+                anchors.verticalCenter: parent.verticalCenter
+                width: root.editMarkSize
+                height: root.editMarkSize
+                color: root.footerTextColor
+                isMask: true
+            }
+
+            Kirigami.Icon {
+                id: stickerStarMark
+                visible: root.showStarMark
+                source: "starred-symbolic"
+                anchors.right: stickerEditMark.visible ? stickerEditMark.left : stickerTimeLabel.left
+                anchors.rightMargin: root.tntSpacing
+                anchors.verticalCenter: parent.verticalCenter
+                width: root.starMarkSize
+                height: root.starMarkSize
+                color: root.footerTextColor
+                isMask: true
+            }
+
+            Kirigami.Icon {
+                visible: root.showPinMark
+                source: "pin-symbolic"
+                anchors.right: stickerStarMark.visible ? stickerStarMark.left
+                                                       : (stickerEditMark.visible ? stickerEditMark.left : stickerTimeLabel.left)
+                anchors.rightMargin: root.tntSpacing
+                anchors.verticalCenter: parent.verticalCenter
+                width: root.pinMarkSize
+                height: root.pinMarkSize
+                color: root.footerTextColor
+                isMask: true
             }
             }
         }

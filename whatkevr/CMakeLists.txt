@@ -89,6 +89,10 @@ qt_add_executable(whatkevr
     src/models/emojimodel.h
     src/models/messagelistmodel.cpp
     src/models/messagelistmodel.h
+    src/models/starredmessagesmodel.cpp
+    src/models/starredmessagesmodel.h
+    src/models/pinnedmessagesmodel.cpp
+    src/models/pinnedmessagesmodel.h
     src/models/stickermodel.cpp
     src/models/stickermodel.h
     src/models/stickerpackmodel.cpp
@@ -155,6 +159,8 @@ qt_add_qml_module(whatkevr
         src/qml/components/ChatListDelegate.qml
         src/qml/components/ChatListPane.qml
         src/qml/components/ConversationPane.qml
+        src/qml/components/StarredMessagesPage.qml
+        src/qml/components/PinnedMessagesBanner.qml
         src/qml/components/HistorySyncStrip.qml
         src/qml/components/KineticWheelScroller.qml
         src/qml/components/DiscreetScrollBar.qml
