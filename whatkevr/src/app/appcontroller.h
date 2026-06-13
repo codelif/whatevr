@@ -12,6 +12,7 @@
 #include <qqmlintegration.h>
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 
 #include <QtGrpc/qtgrpcnamespace.h>
@@ -420,6 +421,21 @@ private:
         QList<whatevr::v1::Message> messages;
         bool canLoadOlderMessages = false;
     };
+
+    // Serializes optimistic toggle requests per key: at most one in-flight gRPC
+    // call per key, with the latest follow-up stashed as a deferred closure so
+    // rapid toggles (mute->unmute) reconcile to the user's last intent instead
+    // of racing to the daemon out of order.
+    struct SerialSlot {
+        std::shared_ptr<QGrpcCallReply> inFlight;
+        std::function<void()> pending;
+        bool hasPending = false;
+    };
+    void enqueueSerial(QHash<QString, SerialSlot> &slots, const QString &key,
+                       std::function<void()> send);
+    void finishSerial(QHash<QString, SerialSlot> &slots, const QString &key);
+    [[nodiscard]] bool hasPendingSerial(const QHash<QString, SerialSlot> &slots,
+                                        const QString &key) const;
     QHash<QString, CachedMessages> m_messageCache;
     QStringList m_messageCacheOrder;
 
@@ -450,9 +466,9 @@ private:
     std::unique_ptr<QGrpcCallReply> m_jumpToMessageReply;
     std::unique_ptr<QGrpcCallReply> m_markChatReadReply;
     std::unique_ptr<QGrpcCallReply> m_subscribeChatPresenceReply;
-    QHash<QString, std::shared_ptr<QGrpcCallReply>> m_setChatPinnedReplies;
-    QHash<QString, std::shared_ptr<QGrpcCallReply>> m_setChatArchivedReplies;
-    QHash<QString, std::shared_ptr<QGrpcCallReply>> m_setChatMutedReplies;
+    QHash<QString, SerialSlot> m_setChatPinnedReplies;
+    QHash<QString, SerialSlot> m_setChatArchivedReplies;
+    QHash<QString, SerialSlot> m_setChatMutedReplies;
     QHash<QString, std::shared_ptr<QGrpcCallReply>> m_setChatPresenceReplies;
     std::unique_ptr<QGrpcCallReply> m_updateSessionStateReply;
     std::unique_ptr<QGrpcCallReply> m_sendTextReply;
@@ -463,9 +479,9 @@ private:
     QHash<QString, std::shared_ptr<QGrpcCallReply>> m_revokeMessageReplies;
     QHash<QString, std::shared_ptr<QGrpcCallReply>> m_editMessageReplies;
     QHash<QString, std::shared_ptr<QGrpcCallReply>> m_forwardMessageReplies;
-    QHash<QString, std::shared_ptr<QGrpcCallReply>> m_reactionReplies;
-    QHash<QString, std::shared_ptr<QGrpcCallReply>> m_setMessageStarredReplies;
-    QHash<QString, std::shared_ptr<QGrpcCallReply>> m_pinMessageReplies;
+    QHash<QString, SerialSlot> m_reactionReplies;
+    QHash<QString, SerialSlot> m_setMessageStarredReplies;
+    QHash<QString, SerialSlot> m_pinMessageReplies;
     std::unique_ptr<QGrpcCallReply> m_listStarredReply;
     std::unique_ptr<QGrpcCallReply> m_listPinnedReply;
     int m_forwardBatchChatCount = 0;
