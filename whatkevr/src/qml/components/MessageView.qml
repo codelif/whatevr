@@ -1356,6 +1356,11 @@ Item {
         property Item linkSubMenuItem: null
         // Likewise, submenu visibility does not reliably hide the generated row.
         property Item pinSubMenuItem: null
+        // Natural row height, captured before any row is collapsed. Hidden rows
+        // must also zero their implicitHeight: the style sums implicitHeight (not
+        // height), so a merely invisible row still inflates the menu and adds a
+        // scrollbar.
+        property real menuRowHeight: 0
 
         readonly property bool ctxValid: ctx !== null
         readonly property string ctxMessageId: ctxValid ? String(ctx.messageId) : ""
@@ -1399,11 +1404,19 @@ Item {
             ctxStickerFavorite = ctxIsSticker && ctxMediaCacheKey.length > 0
                                  && Whatevr.AppController.stickers.isStickerFavorite(ctxMediaCacheKey)
             if (linkSubMenuItem) {
-                linkSubMenuItem.visible = ctxLinks.length > 1
+                const show = ctxLinks.length > 1
+                linkSubMenuItem.visible = show
+                linkSubMenuItem.implicitHeight = show ? menuRowHeight : 0
             }
             if (pinSubMenuItem) {
-                pinSubMenuItem.visible = !ctxIsPinned && !ctxIsRevoked
+                const show = !ctxIsPinned && !ctxIsRevoked
+                pinSubMenuItem.visible = show
+                pinSubMenuItem.implicitHeight = show ? menuRowHeight : 0
             }
+            // heightRatio is stale after the imperative implicitHeight toggles
+            // above; relayout the body so no scrollbar flashes on open.
+            if (contentItem)
+                contentItem.forceLayout()
             this.x = x
             this.y = y
             open()
@@ -1418,11 +1431,22 @@ Item {
                 const item = itemAt(i)
                 if (item && item.subMenu === copyLinkSubMenu) {
                     linkSubMenuItem = item
-                    item.visible = false
                 } else if (item && item.subMenu === pinDurationSubMenu) {
                     pinSubMenuItem = item
-                    item.visible = false
                 }
+            }
+            // Capture the natural row height before collapsing any row.
+            if (pinSubMenuItem)
+                menuRowHeight = pinSubMenuItem.implicitHeight
+            else if (linkSubMenuItem)
+                menuRowHeight = linkSubMenuItem.implicitHeight
+            if (linkSubMenuItem) {
+                linkSubMenuItem.visible = false
+                linkSubMenuItem.implicitHeight = 0
+            }
+            if (pinSubMenuItem) {
+                pinSubMenuItem.visible = false
+                pinSubMenuItem.implicitHeight = 0
             }
         }
 
@@ -1640,7 +1664,10 @@ Item {
 
             title: Whatevr.I18n.i18nc("@action:inmenu pin a message in the chat", "Pin")
             icon.name: "pin-symbolic"
-            visible: !messageContextMenu.ctxIsPinned && !messageContextMenu.ctxIsRevoked
+            // Row visibility is driven imperatively via the captured generated
+            // MenuItem (openFor). A `visible` binding here would not hide the row
+            // and, since a Menu is a Popup, would auto-open this submenu on first
+            // show.
 
             readonly property real framePadding: Kirigami.Units.smallSpacing
             topPadding: framePadding
