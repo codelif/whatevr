@@ -1177,6 +1177,43 @@ func (c *Client) SetChatPinned(ctx context.Context, chatID string, pinned bool) 
 	return updatedChat, nil
 }
 
+func (c *Client) SetChatArchived(ctx context.Context, chatID string, archived bool) (appstore.Chat, error) {
+	chat, err := types.ParseJID(chatID)
+	if err != nil {
+		return appstore.Chat{}, grpcstatus.Errorf(codes.InvalidArgument, "invalid chat_id: %v", err)
+	}
+	chat = c.normalizeJIDForChat(ctx, chat)
+	chatID = chat.String()
+
+	client := c.currentClient()
+	if client == nil || !client.IsLoggedIn() {
+		return appstore.Chat{}, grpcstatus.Error(codes.Unavailable, "WhatsApp client is not logged in")
+	}
+
+	// Last-message timestamp/key are optional for BuildArchive; zero values are
+	// accepted. WhatsApp auto-unpins an archived chat, so we mirror that locally.
+	if err := c.sendRegularLowAppState(ctx, client, appstate.BuildArchive(chat, archived, time.Time{}, nil)); err != nil {
+		return appstore.Chat{}, err
+	}
+
+	if archived {
+		if unpinned, changed, err := c.store.UpdateChatPinState(ctx, chatID, false, 0); err != nil {
+			return appstore.Chat{}, err
+		} else if changed {
+			c.daemon.PublishChatUpdated(toDaemonChat(unpinned))
+		}
+	}
+
+	updatedChat, changed, err := c.store.UpdateChatArchiveState(ctx, chatID, archived)
+	if err != nil {
+		return appstore.Chat{}, err
+	}
+	if changed {
+		c.daemon.PublishChatUpdated(toDaemonChat(updatedChat))
+	}
+	return updatedChat, nil
+}
+
 func (c *Client) sendRegularLowAppState(ctx context.Context, client *whatsmeow.Client, patch appstate.PatchInfo) error {
 	c.appStateMu.Lock()
 	defer c.appStateMu.Unlock()

@@ -110,6 +110,8 @@ func (c *Client) handleEvent(eventGen uint64, raw any) {
 		c.handleMediaRetry(c.backgroundContext(), evt)
 	case *events.Pin:
 		c.handlePinEvent(c.backgroundContext(), evt)
+	case *events.Archive:
+		c.handleArchiveEvent(c.backgroundContext(), evt)
 	case *events.Star:
 		c.handleStarEvent(c.backgroundContext(), evt)
 	case *events.JoinedGroup:
@@ -161,6 +163,32 @@ func (c *Client) handlePinEvent(ctx context.Context, evt *events.Pin) {
 	chat, changed, err := c.store.UpdateChatPinState(ctx, chatID, pinned, order)
 	if err != nil {
 		c.log.Warnf("Failed to update pinned state for %s: %v", chatID, err)
+		return
+	}
+	if changed {
+		c.daemon.PublishChatUpdated(toDaemonChat(chat))
+	}
+}
+
+func (c *Client) handleArchiveEvent(ctx context.Context, evt *events.Archive) {
+	if evt == nil || evt.JID.IsEmpty() || evt.Action == nil {
+		return
+	}
+
+	chatJID := c.normalizeJIDForChat(ctx, evt.JID)
+	chatID := chatJID.String()
+	name, nameSource := c.displayNameForChat(ctx, chatJID, false, "", "")
+	if chatJID.Server == types.GroupServer && nameSource == "" {
+		nameSource = appstore.ChatNameSourceGroup
+	}
+	if _, err := c.store.EnsureChatWithNameSource(ctx, chatID, name, nameSource, chatJID.Server == types.GroupServer); err != nil {
+		c.log.Warnf("Failed to ensure archived chat %s: %v", chatID, err)
+		return
+	}
+
+	chat, changed, err := c.store.UpdateChatArchiveState(ctx, chatID, evt.Action.GetArchived())
+	if err != nil {
+		c.log.Warnf("Failed to update archive state for %s: %v", chatID, err)
 		return
 	}
 	if changed {

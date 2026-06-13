@@ -115,6 +115,101 @@ func TestReconcileChatPinsUpdatesStaleAndChangedPins(t *testing.T) {
 	}
 }
 
+func TestUpdateChatArchiveState(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	if _, err := db.EnsureChat(ctx, "chat-1", "chat-1", false); err != nil {
+		t.Fatalf("ensure chat: %v", err)
+	}
+
+	chat, changed, err := db.UpdateChatArchiveState(ctx, "chat-1", true)
+	if err != nil {
+		t.Fatalf("archive chat: %v", err)
+	}
+	if !changed || !chat.IsArchived {
+		t.Fatalf("expected chat archived, got changed=%v chat=%+v", changed, chat)
+	}
+
+	// Idempotent: archiving an already-archived chat reports no change.
+	if _, changed, err := db.UpdateChatArchiveState(ctx, "chat-1", true); err != nil {
+		t.Fatalf("re-archive chat: %v", err)
+	} else if changed {
+		t.Fatal("re-archiving an archived chat reported a change")
+	}
+
+	chat, changed, err = db.UpdateChatArchiveState(ctx, "chat-1", false)
+	if err != nil {
+		t.Fatalf("unarchive chat: %v", err)
+	}
+	if !changed || chat.IsArchived {
+		t.Fatalf("expected chat unarchived, got changed=%v chat=%+v", changed, chat)
+	}
+}
+
+func TestReconcileChatArchives(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	for _, chatID := range []string{"stale", "keep", "new"} {
+		if _, err := db.EnsureChat(ctx, chatID, chatID, false); err != nil {
+			t.Fatalf("ensure chat %s: %v", chatID, err)
+		}
+	}
+	if _, _, err := db.UpdateChatArchiveState(ctx, "stale", true); err != nil {
+		t.Fatalf("archive stale: %v", err)
+	}
+	if _, _, err := db.UpdateChatArchiveState(ctx, "keep", true); err != nil {
+		t.Fatalf("archive keep: %v", err)
+	}
+
+	changed, err := db.ReconcileChatArchives(ctx, map[string]struct{}{
+		"keep": {},
+		"new":  {},
+	})
+	if err != nil {
+		t.Fatalf("reconcile archives: %v", err)
+	}
+
+	changedByID := make(map[string]Chat, len(changed))
+	for _, chat := range changed {
+		changedByID[chat.ID] = chat
+	}
+	// "stale" must be unarchived, "new" archived; "keep" was already correct.
+	if _, ok := changedByID["stale"]; !ok {
+		t.Fatalf("expected stale chat to change: %+v", changedByID)
+	}
+	if _, ok := changedByID["new"]; !ok {
+		t.Fatalf("expected new chat to change: %+v", changedByID)
+	}
+	if _, ok := changedByID["keep"]; ok {
+		t.Fatal("unchanged archived chat was returned as changed")
+	}
+
+	stale, err := db.GetChat(ctx, "stale")
+	if err != nil {
+		t.Fatalf("get stale: %v", err)
+	}
+	if stale.IsArchived {
+		t.Fatalf("stale chat remained archived: %+v", stale)
+	}
+	newChat, err := db.GetChat(ctx, "new")
+	if err != nil {
+		t.Fatalf("get new: %v", err)
+	}
+	if !newChat.IsArchived {
+		t.Fatalf("new chat was not archived: %+v", newChat)
+	}
+}
+
 func TestListChatsKeysetPagination(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))

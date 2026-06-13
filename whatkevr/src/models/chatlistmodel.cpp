@@ -3,6 +3,7 @@
 #include <QCollator>
 #include <QDateTime>
 #include <QFileInfo>
+#include <QScopeGuard>
 
 #include "whatevr/v1/whatevr.qpb.h"
 
@@ -49,6 +50,10 @@ QVariant ChatListModel::data(const QModelIndex &index, int role) const
         return chat.isPinned;
     case PinnedOrderRole:
         return chat.pinnedOrder;
+    case IsArchivedRole:
+        return chat.isArchived;
+    case SectionRole:
+        return chat.isArchived ? QStringLiteral("archived") : QStringLiteral("active");
     case AvatarLocalPathRole:
         return chat.avatarLocalPath;
     case InitialsRole:
@@ -77,6 +82,8 @@ QHash<int, QByteArray> ChatListModel::roleNames() const
         {IsGroupRole, "isGroup"},
         {IsPinnedRole, "isPinned"},
         {PinnedOrderRole, "pinnedOrder"},
+        {IsArchivedRole, "isArchived"},
+        {SectionRole, "chatSection"},
         {AvatarLocalPathRole, "avatarLocalPath"},
         {InitialsRole, "initials"},
         {IsTypingRole, "isTyping"},
@@ -87,6 +94,13 @@ QHash<int, QByteArray> ChatListModel::roleNames() const
 
 void ChatListModel::replaceChats(const QList<whatevr::v1::Chat> &chats)
 {
+    const int previousArchived = archivedCount();
+    auto archivedGuard = qScopeGuard([this, previousArchived] {
+        if (previousArchived != archivedCount()) {
+            Q_EMIT archivedCountChanged();
+        }
+    });
+
     QList<ChatItem> next;
     next.reserve(chats.size());
     for (const auto &chat : chats) {
@@ -121,6 +135,13 @@ void ChatListModel::replaceChats(const QList<whatevr::v1::Chat> &chats)
 
 void ChatListModel::upsertChat(const whatevr::v1::Chat &chat, const QString &previousChatId)
 {
+    const int previousArchived = archivedCount();
+    auto archivedGuard = qScopeGuard([this, previousArchived] {
+        if (previousArchived != archivedCount()) {
+            Q_EMIT archivedCountChanged();
+        }
+    });
+
     bool preservedTyping = false;
     bool hasPreservedTyping = false;
 
@@ -321,6 +342,17 @@ bool ChatListModel::isEmpty() const
     return m_chats.isEmpty();
 }
 
+int ChatListModel::archivedCount() const
+{
+    int count = 0;
+    for (const auto &chat : m_chats) {
+        if (chat.isArchived) {
+            ++count;
+        }
+    }
+    return count;
+}
+
 ChatListModel::ChatItem ChatListModel::fromProto(const whatevr::v1::Chat &chat)
 {
     ChatItem item {
@@ -336,6 +368,7 @@ ChatListModel::ChatItem ChatListModel::fromProto(const whatevr::v1::Chat &chat)
         .isGroup = chat.isGroup(),
         .isPinned = chat.isPinned(),
         .pinnedOrder = chat.pinnedOrder(),
+        .isArchived = chat.isArchived(),
         .updatedAtUnix = chat.updatedAtUnix(),
         .avatarLocalPath = chat.avatarLocalPath(),
         .isTyping = false,
@@ -400,6 +433,7 @@ bool ChatListModel::sameChatData(const ChatItem &left, const ChatItem &right)
         && left.isGroup == right.isGroup
         && left.isPinned == right.isPinned
         && left.pinnedOrder == right.pinnedOrder
+        && left.isArchived == right.isArchived
         && left.avatarLocalPath == right.avatarLocalPath
         && left.isTyping == right.isTyping
         && left.hasDraft == right.hasDraft
@@ -409,6 +443,11 @@ bool ChatListModel::sameChatData(const ChatItem &left, const ChatItem &right)
 
 bool ChatListModel::sortBefore(const ChatItem &left, const ChatItem &right)
 {
+    // Archived chats float above every non-archived chat (the collapsible
+    // "Archived" section lives at the top of the list).
+    if (left.isArchived != right.isArchived) {
+        return left.isArchived;
+    }
     if (left.isPinned != right.isPinned) {
         return left.isPinned;
     }

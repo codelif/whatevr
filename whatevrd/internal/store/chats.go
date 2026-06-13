@@ -21,6 +21,7 @@ type Chat struct {
 	IsGroup              bool
 	IsPinned             bool
 	PinnedOrder          uint32
+	IsArchived           bool
 	UpdatedAt            int64
 	AvatarLocalPath      string
 	AvatarPictureID      string
@@ -76,7 +77,7 @@ func (db *DB) ListChats(ctx context.Context, limit, offset int, afterChatID stri
 	}
 
 	const selectColumns = `
-		SELECT c.id, c.name, c.name_source, c.last_message, c.last_message_time, c.last_message_direction, c.last_message_status, c.unread_count, c.is_group, c.is_pinned, c.pinned_order, c.updated_at,
+		SELECT c.id, c.name, c.name_source, c.last_message, c.last_message_time, c.last_message_direction, c.last_message_status, c.unread_count, c.is_group, c.is_pinned, c.pinned_order, c.updated_at, c.is_archived,
 		       COALESCE(NULLIF(a.local_path, ''), c.avatar_local_path), COALESCE(NULLIF(a.picture_id, ''), c.avatar_picture_id), COALESCE(NULLIF(a.status, ''), c.avatar_status), COALESCE(NULLIF(a.checked_at, 0), c.avatar_checked_at)
 		FROM chats c
 		LEFT JOIN avatars a ON a.subject_kind = 'chat' AND a.subject_id = c.id
@@ -250,6 +251,96 @@ func (db *DB) UpdateChatPinState(ctx context.Context, chatID string, pinned bool
 		return Chat{}, false, err
 	}
 	return chat, true, nil
+}
+
+func (db *DB) UpdateChatArchiveState(ctx context.Context, chatID string, archived bool) (Chat, bool, error) {
+	if chatID == "" {
+		return Chat{}, false, nil
+	}
+
+	result, err := db.conn.ExecContext(ctx, `
+		UPDATE chats
+		SET is_archived = ?
+		WHERE id = ? AND is_archived != ?
+	`, boolToInt(archived), chatID, boolToInt(archived))
+	if err != nil {
+		return Chat{}, false, err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return Chat{}, false, err
+	}
+	if rowsAffected == 0 {
+		return Chat{}, false, nil
+	}
+
+	chat, err := db.GetChat(ctx, chatID)
+	if err != nil {
+		return Chat{}, false, err
+	}
+	return chat, true, nil
+}
+
+// ReconcileChatArchives sets is_archived to match the given set of archived chat
+// IDs exactly (chats not in the set are unarchived), returning the rows that
+// changed. Mirrors ReconcileChatPins; used when a full app-state sync lands.
+func (db *DB) ReconcileChatArchives(ctx context.Context, archived map[string]struct{}) ([]Chat, error) {
+	tx, err := db.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.QueryContext(ctx, `SELECT id, is_archived FROM chats`)
+	if err != nil {
+		return nil, err
+	}
+
+	current := make(map[string]bool)
+	for rows.Next() {
+		var id string
+		var isArchived int
+		if err := rows.Scan(&id, &isArchived); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		current[id] = isArchived != 0
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	changedIDs := make([]string, 0)
+	for id, isArchived := range current {
+		_, shouldArchive := archived[id]
+		if isArchived == shouldArchive {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE chats SET is_archived = ? WHERE id = ?
+		`, boolToInt(shouldArchive), id); err != nil {
+			return nil, err
+		}
+		changedIDs = append(changedIDs, id)
+	}
+
+	changed := make([]Chat, 0, len(changedIDs))
+	for _, id := range changedIDs {
+		chat, err := getChatTx(ctx, tx, id)
+		if err != nil {
+			return nil, err
+		}
+		changed = append(changed, chat)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return changed, nil
 }
 
 func (db *DB) PinnedChatCountExcluding(ctx context.Context, chatID string) (int, error) {
@@ -708,8 +799,8 @@ func (db *DB) MigrateChatID(ctx context.Context, fromChatID, toChatID string) (C
 	}
 
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO chats (id, name, name_source, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group, is_pinned, pinned_order, avatar_local_path, avatar_picture_id)
-		SELECT ?, name, name_source, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group, is_pinned, pinned_order, avatar_local_path, avatar_picture_id
+		INSERT INTO chats (id, name, name_source, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group, is_pinned, pinned_order, is_archived, avatar_local_path, avatar_picture_id)
+		SELECT ?, name, name_source, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group, is_pinned, pinned_order, is_archived, avatar_local_path, avatar_picture_id
 		FROM chats
 		WHERE id = ?
 		ON CONFLICT(id) DO UPDATE SET
@@ -742,6 +833,7 @@ func (db *DB) MigrateChatID(ctx context.Context, fromChatID, toChatID string) (C
 			unread_count = chats.unread_count + excluded.unread_count,
 			is_pinned = MAX(chats.is_pinned, excluded.is_pinned),
 			pinned_order = MAX(chats.pinned_order, excluded.pinned_order),
+			is_archived = MAX(chats.is_archived, excluded.is_archived),
 			is_group = excluded.is_group
 	`, toChatID, fromChatID, ChatNameSourceRaw, toChatID, ChatNameSourceRaw, toChatID); err != nil {
 		return Chat{}, false, err

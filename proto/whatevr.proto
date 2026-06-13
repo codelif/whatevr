@@ -90,6 +90,7 @@ service ChatService {
   rpc GetMessages(GetMessagesRequest) returns (GetMessagesResponse);
   rpc MarkChatRead(MarkChatReadRequest) returns (MarkChatReadResponse);
   rpc SetChatPinned(SetChatPinnedRequest) returns (SetChatPinnedResponse);
+  rpc SetChatArchived(SetChatArchivedRequest) returns (SetChatArchivedResponse);
   rpc SetChatPresence(SetChatPresenceRequest) returns (SetChatPresenceResponse);
   rpc SubscribeChatPresence(SubscribeChatPresenceRequest) returns (SubscribeChatPresenceResponse);
   rpc DownloadMessageMedia(DownloadMessageMediaRequest) returns (DownloadMessageMediaResponse);
@@ -345,6 +346,13 @@ message SetChatPinnedRequest {
 }
 
 message SetChatPinnedResponse {}
+
+message SetChatArchivedRequest {
+  string chat_id = 1;
+  bool archived = 2;
+}
+
+message SetChatArchivedResponse {}
 
 message SetChatPresenceRequest {
   string chat_id = 1;
@@ -631,6 +639,7 @@ message Chat {
   // Bumped on every change to this chat row; lets clients skip updates for
   // chats they already have at this stamp.
   int64 updated_at_unix = 12;
+  bool is_archived = 13;
 }
 
 message Message {

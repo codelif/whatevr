@@ -1462,8 +1462,9 @@ func getChatRow(ctx context.Context, queryer interface {
 	var chat Chat
 	var isGroup int
 	var isPinned int
+	var isArchived int
 	err := queryer.QueryRowContext(ctx, `
-		SELECT c.id, c.name, c.name_source, c.last_message, c.last_message_time, c.last_message_direction, c.last_message_status, c.unread_count, c.is_group, c.is_pinned, c.pinned_order, c.updated_at,
+		SELECT c.id, c.name, c.name_source, c.last_message, c.last_message_time, c.last_message_direction, c.last_message_status, c.unread_count, c.is_group, c.is_pinned, c.pinned_order, c.updated_at, c.is_archived,
 		       COALESCE(NULLIF(a.local_path, ''), c.avatar_local_path), COALESCE(NULLIF(a.picture_id, ''), c.avatar_picture_id), COALESCE(NULLIF(a.status, ''), c.avatar_status), COALESCE(NULLIF(a.checked_at, 0), c.avatar_checked_at)
 		FROM chats c
 		LEFT JOIN avatars a ON a.subject_kind = 'chat' AND a.subject_id = c.id
@@ -1481,6 +1482,7 @@ func getChatRow(ctx context.Context, queryer interface {
 		&isPinned,
 		&chat.PinnedOrder,
 		&chat.UpdatedAt,
+		&isArchived,
 		&chat.AvatarLocalPath,
 		&chat.AvatarPictureID,
 		&chat.AvatarStatus,
@@ -1488,6 +1490,7 @@ func getChatRow(ctx context.Context, queryer interface {
 	)
 	chat.IsGroup = isGroup != 0
 	chat.IsPinned = isPinned != 0
+	chat.IsArchived = isArchived != 0
 	return chat, err
 }
 
@@ -1575,6 +1578,7 @@ func scanChat(scanner interface{ Scan(...any) error }) (Chat, error) {
 	var chat Chat
 	var isGroup int
 	var isPinned int
+	var isArchived int
 	err := scanner.Scan(
 		&chat.ID,
 		&chat.Name,
@@ -1588,6 +1592,7 @@ func scanChat(scanner interface{ Scan(...any) error }) (Chat, error) {
 		&isPinned,
 		&chat.PinnedOrder,
 		&chat.UpdatedAt,
+		&isArchived,
 		&chat.AvatarLocalPath,
 		&chat.AvatarPictureID,
 		&chat.AvatarStatus,
@@ -1595,6 +1600,7 @@ func scanChat(scanner interface{ Scan(...any) error }) (Chat, error) {
 	)
 	chat.IsGroup = isGroup != 0
 	chat.IsPinned = isPinned != 0
+	chat.IsArchived = isArchived != 0
 	return chat, err
 }
 
