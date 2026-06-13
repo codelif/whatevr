@@ -112,6 +112,8 @@ func (c *Client) handleEvent(eventGen uint64, raw any) {
 		c.handlePinEvent(c.backgroundContext(), evt)
 	case *events.Archive:
 		c.handleArchiveEvent(c.backgroundContext(), evt)
+	case *events.Mute:
+		c.handleMuteEvent(c.backgroundContext(), evt)
 	case *events.Star:
 		c.handleStarEvent(c.backgroundContext(), evt)
 	case *events.JoinedGroup:
@@ -189,6 +191,42 @@ func (c *Client) handleArchiveEvent(ctx context.Context, evt *events.Archive) {
 	chat, changed, err := c.store.UpdateChatArchiveState(ctx, chatID, evt.Action.GetArchived())
 	if err != nil {
 		c.log.Warnf("Failed to update archive state for %s: %v", chatID, err)
+		return
+	}
+	if changed {
+		c.daemon.PublishChatUpdated(toDaemonChat(chat))
+	}
+}
+
+func (c *Client) handleMuteEvent(ctx context.Context, evt *events.Mute) {
+	if evt == nil || evt.JID.IsEmpty() || evt.Action == nil {
+		return
+	}
+
+	chatJID := c.normalizeJIDForChat(ctx, evt.JID)
+	chatID := chatJID.String()
+	name, nameSource := c.displayNameForChat(ctx, chatJID, false, "", "")
+	if chatJID.Server == types.GroupServer && nameSource == "" {
+		nameSource = appstore.ChatNameSourceGroup
+	}
+	if _, err := c.store.EnsureChatWithNameSource(ctx, chatID, name, nameSource, chatJID.Server == types.GroupServer); err != nil {
+		c.log.Warnf("Failed to ensure muted chat %s: %v", chatID, err)
+		return
+	}
+
+	muted := evt.Action.GetMuted()
+	var muteEnd int64
+	if muted {
+		// MuteEndTimestamp is unix millis; 0 from the device means "forever".
+		muteEnd = evt.Action.GetMuteEndTimestamp()
+		if muteEnd == 0 {
+			muteEnd = -1
+		}
+	}
+
+	chat, changed, err := c.store.UpdateChatMuteState(ctx, chatID, muted, muteEnd)
+	if err != nil {
+		c.log.Warnf("Failed to update mute state for %s: %v", chatID, err)
 		return
 	}
 	if changed {

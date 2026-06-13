@@ -502,7 +502,7 @@ func (c *Client) ingestMessage(ctx context.Context, evt *events.Message, opts in
 			chat := toDaemonChat(saved.Chat)
 			c.daemon.PublishNewMessage(message, chat)
 			c.clearComposingAfterLiveIncomingMessage(message)
-			if c.notifier != nil && c.shouldNotifyLiveMessage(message, chat.ID, textInput.CountUnread) {
+			if c.notifier != nil && c.shouldNotifyLiveMessage(message, chat, textInput.CountUnread) {
 				c.notifier.NotifyMessage(ctx, message, chat)
 			}
 		}
@@ -541,7 +541,7 @@ func (c *Client) ingestMessage(ctx context.Context, evt *events.Message, opts in
 			chat := toDaemonChat(saved.Chat)
 			c.daemon.PublishNewMessage(message, chat)
 			c.clearComposingAfterLiveIncomingMessage(message)
-			if c.notifier != nil && c.shouldNotifyLiveMessage(message, chat.ID, mediaInput.CountUnread) {
+			if c.notifier != nil && c.shouldNotifyLiveMessage(message, chat, mediaInput.CountUnread) {
 				c.notifier.NotifyMessage(ctx, message, chat)
 			}
 		}
@@ -558,8 +558,15 @@ func (c *Client) clearComposingAfterLiveIncomingMessage(message app.Message) {
 	c.daemon.ClearChatComposing(message.ChatID, message.SenderID)
 }
 
-func (c *Client) shouldNotifyLiveMessage(message app.Message, chatID string, countUnread bool) bool {
-	return countUnread && notificationTimestampFresh(message.TimestampUnix, time.Now()) && c.ShouldNotifyChat(chatID)
+func (c *Client) shouldNotifyLiveMessage(message app.Message, chat app.Chat, countUnread bool) bool {
+	return countUnread && notificationTimestampFresh(message.TimestampUnix, time.Now()) &&
+		c.ShouldNotifyChat(chat.ID) && !chatNotificationsMuted(chat.IsMuted, chat.MuteEndTimestamp)
+}
+
+// chatNotificationsMuted reports whether a chat's mute is currently in effect.
+// muteEndMillis is unix millis; -1 means muted forever, 0 means not muted.
+func chatNotificationsMuted(isMuted bool, muteEndMillis int64) bool {
+	return isMuted && (muteEndMillis == -1 || muteEndMillis > time.Now().UnixMilli())
 }
 
 func notificationTimestampFresh(timestampUnix int64, now time.Time) bool {
@@ -1326,6 +1333,8 @@ func toDaemonChat(chat appstore.Chat) app.Chat {
 		IsPinned:             chat.IsPinned,
 		PinnedOrder:          chat.PinnedOrder,
 		IsArchived:           chat.IsArchived,
+		IsMuted:              chat.IsMuted,
+		MuteEndTimestamp:     chat.MuteEndTimestamp,
 		UpdatedAtUnix:        chat.UpdatedAt,
 		AvatarLocalPath:      chat.AvatarLocalPath,
 	}

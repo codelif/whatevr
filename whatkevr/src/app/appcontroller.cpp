@@ -62,6 +62,7 @@ using whatevr::v1::LoginStateChanged;
 using whatevr::v1::MarkChatReadRequest;
 using whatevr::v1::MediaDownloadChanged;
 using whatevr::v1::SetChatArchivedRequest;
+using whatevr::v1::SetChatMutedRequest;
 using whatevr::v1::SetChatPinnedRequest;
 using whatevr::v1::SetChatPresenceRequest;
 using whatevr::v1::SubscribeChatPresenceRequest;
@@ -2530,6 +2531,38 @@ void AppController::setChatArchived(const QString &chatId, bool archived)
         if (!status.isOk()) {
             m_bannerText = status.message().isEmpty()
                 ? (archived ? i18nc("@info", "Unable to archive chat") : i18nc("@info", "Unable to unarchive chat"))
+                : status.message();
+            emitStateChanged();
+        }
+    });
+}
+
+void AppController::setChatMuted(const QString &chatId, bool muted, int durationSecs)
+{
+    if (!m_chatClient || chatId.isEmpty()) {
+        return;
+    }
+
+    SetChatMutedRequest request;
+    request.setChatId(chatId);
+    request.setMuted(muted);
+    // 0 with muted=true means "forever"; ignored by the daemon when unmuting.
+    request.setMuteDurationSecs(muted ? durationSecs : 0);
+
+    auto reply = m_chatClient->SetChatMuted(request);
+    auto *replyPtr = reply.get();
+    m_setChatMutedReplies.insert(chatId, std::move(reply));
+
+    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, chatId, muted](const QGrpcStatus &status) {
+        auto it = m_setChatMutedReplies.find(chatId);
+        if (it == m_setChatMutedReplies.end() || it.value().get() != replyPtr) {
+            return;
+        }
+
+        m_setChatMutedReplies.erase(it);
+        if (!status.isOk()) {
+            m_bannerText = status.message().isEmpty()
+                ? (muted ? i18nc("@info", "Unable to mute chat") : i18nc("@info", "Unable to unmute chat"))
                 : status.message();
             emitStateChanged();
         }

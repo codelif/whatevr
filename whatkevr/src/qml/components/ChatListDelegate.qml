@@ -16,6 +16,7 @@ ItemDelegate {
     property int unreadCount: 0
     property bool isPinned: false
     property bool isArchived: false
+    property bool isMuted: false
     // Threaded from the pane: archived rows collapse to nothing until the
     // "Archived" section is expanded.
     property bool archivedExpanded: false
@@ -61,7 +62,7 @@ ItemDelegate {
 
     signal selected(string chatId)
     signal pinToggled(string chatId, bool pinned)
-    signal contextMenuRequested(string chatId, bool pinned, bool archived, real x, real y)
+    signal contextMenuRequested(string chatId, bool pinned, bool archived, bool muted, real x, real y)
 
     // Archived rows stay in the model (so the section header can count them) but
     // collapse to zero height while the "Archived" section is collapsed.
@@ -90,7 +91,7 @@ ItemDelegate {
         z: 1
 
         onPressed: mouse => {
-            root.contextMenuRequested(root.chatId, root.isPinned, root.isArchived, mouse.x, mouse.y)
+            root.contextMenuRequested(root.chatId, root.isPinned, root.isArchived, root.isMuted, mouse.x, mouse.y)
             mouse.accepted = true
         }
     }
@@ -136,11 +137,20 @@ ItemDelegate {
         Column {
             id: trailing
 
-            visible: root.unreadCount > 0 || root.isPinned
+            visible: root.unreadCount > 0 || root.isPinned || root.isMuted
             anchors.right: parent.right
             anchors.rightMargin: Kirigami.Units.largeSpacing
             anchors.verticalCenter: parent.verticalCenter
             spacing: Kirigami.Units.smallSpacing / 2
+
+            Kirigami.Icon {
+                visible: root.isMuted
+                anchors.horizontalCenter: parent.horizontalCenter
+                width: Kirigami.Units.iconSizes.small
+                height: width
+                source: "notifications-disabled-symbolic"
+                color: Kirigami.Theme.disabledTextColor
+            }
 
             Kirigami.Icon {
                 visible: root.isPinned

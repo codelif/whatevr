@@ -322,6 +322,8 @@ func toProtoChat(chat app.Chat) *pb.Chat {
 		IsPinned:             chat.IsPinned,
 		PinnedOrder:          chat.PinnedOrder,
 		IsArchived:           chat.IsArchived,
+		IsMuted:              chat.IsMuted,
+		MuteEndTimestamp:     chat.MuteEndTimestamp,
 		UpdatedAtUnix:        chat.UpdatedAtUnix,
 		AvatarLocalPath:      chat.AvatarLocalPath,
 		LastMessageDirection: toProtoMessageDirection(chat.LastMessageDirection),

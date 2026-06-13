@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"strings"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -35,6 +36,7 @@ type ChatActionController interface {
 	RefreshLoadedChatAvatars(context.Context, string, []appstore.Message)
 	SetChatPinned(context.Context, string, bool) (appstore.Chat, error)
 	SetChatArchived(context.Context, string, bool) (appstore.Chat, error)
+	SetChatMuted(context.Context, string, bool, time.Duration) (appstore.Chat, error)
 	SetChatPresence(context.Context, string, bool) error
 	SubscribeChatPresence(context.Context, string) error
 	DownloadMessageMedia(context.Context, string) (appstore.Message, error)
@@ -179,6 +181,24 @@ func (s *ChatService) SetChatArchived(ctx context.Context, req *pb.SetChatArchiv
 		return nil, err
 	}
 	return &pb.SetChatArchivedResponse{}, nil
+}
+
+func (s *ChatService) SetChatMuted(ctx context.Context, req *pb.SetChatMutedRequest) (*pb.SetChatMutedResponse, error) {
+	if s.actions == nil {
+		return nil, status.Error(codes.Unimplemented, "chat action controller is not available")
+	}
+	if strings.TrimSpace(req.GetChatId()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "chat_id is required")
+	}
+
+	duration := time.Duration(req.GetMuteDurationSecs()) * time.Second
+	if _, err := s.actions.SetChatMuted(ctx, req.GetChatId(), req.GetMuted(), duration); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, status.Error(codes.NotFound, "chat not found")
+		}
+		return nil, err
+	}
+	return &pb.SetChatMutedResponse{}, nil
 }
 
 func (s *ChatService) SetChatPresence(ctx context.Context, req *pb.SetChatPresenceRequest) (*pb.SetChatPresenceResponse, error) {
@@ -357,6 +377,8 @@ func toAppChat(chat appstore.Chat) app.Chat {
 		IsPinned:             chat.IsPinned,
 		PinnedOrder:          chat.PinnedOrder,
 		IsArchived:           chat.IsArchived,
+		IsMuted:              chat.IsMuted,
+		MuteEndTimestamp:     chat.MuteEndTimestamp,
 		UpdatedAtUnix:        chat.UpdatedAt,
 		AvatarLocalPath:      chat.AvatarLocalPath,
 	}

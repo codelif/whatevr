@@ -22,6 +22,8 @@ type Chat struct {
 	IsPinned             bool
 	PinnedOrder          uint32
 	IsArchived           bool
+	IsMuted              bool
+	MuteEndTimestamp     int64
 	UpdatedAt            int64
 	AvatarLocalPath      string
 	AvatarPictureID      string
@@ -77,7 +79,7 @@ func (db *DB) ListChats(ctx context.Context, limit, offset int, afterChatID stri
 	}
 
 	const selectColumns = `
-		SELECT c.id, c.name, c.name_source, c.last_message, c.last_message_time, c.last_message_direction, c.last_message_status, c.unread_count, c.is_group, c.is_pinned, c.pinned_order, c.updated_at, c.is_archived,
+		SELECT c.id, c.name, c.name_source, c.last_message, c.last_message_time, c.last_message_direction, c.last_message_status, c.unread_count, c.is_group, c.is_pinned, c.pinned_order, c.updated_at, c.is_archived, c.is_muted, c.mute_end_timestamp,
 		       COALESCE(NULLIF(a.local_path, ''), c.avatar_local_path), COALESCE(NULLIF(a.picture_id, ''), c.avatar_picture_id), COALESCE(NULLIF(a.status, ''), c.avatar_status), COALESCE(NULLIF(a.checked_at, 0), c.avatar_checked_at)
 		FROM chats c
 		LEFT JOIN avatars a ON a.subject_kind = 'chat' AND a.subject_id = c.id
@@ -263,6 +265,40 @@ func (db *DB) UpdateChatArchiveState(ctx context.Context, chatID string, archive
 		SET is_archived = ?
 		WHERE id = ? AND is_archived != ?
 	`, boolToInt(archived), chatID, boolToInt(archived))
+	if err != nil {
+		return Chat{}, false, err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return Chat{}, false, err
+	}
+	if rowsAffected == 0 {
+		return Chat{}, false, nil
+	}
+
+	chat, err := db.GetChat(ctx, chatID)
+	if err != nil {
+		return Chat{}, false, err
+	}
+	return chat, true, nil
+}
+
+// UpdateChatMuteState persists the chat's mute flag and expiry (unix millis;
+// -1 = forever, 0 = not muted). When unmuting, muteEnd is forced to 0.
+func (db *DB) UpdateChatMuteState(ctx context.Context, chatID string, muted bool, muteEnd int64) (Chat, bool, error) {
+	if chatID == "" {
+		return Chat{}, false, nil
+	}
+	if !muted {
+		muteEnd = 0
+	}
+
+	result, err := db.conn.ExecContext(ctx, `
+		UPDATE chats
+		SET is_muted = ?, mute_end_timestamp = ?
+		WHERE id = ? AND (is_muted != ? OR mute_end_timestamp != ?)
+	`, boolToInt(muted), muteEnd, chatID, boolToInt(muted), muteEnd)
 	if err != nil {
 		return Chat{}, false, err
 	}
@@ -799,8 +835,8 @@ func (db *DB) MigrateChatID(ctx context.Context, fromChatID, toChatID string) (C
 	}
 
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO chats (id, name, name_source, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group, is_pinned, pinned_order, is_archived, avatar_local_path, avatar_picture_id)
-		SELECT ?, name, name_source, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group, is_pinned, pinned_order, is_archived, avatar_local_path, avatar_picture_id
+		INSERT INTO chats (id, name, name_source, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group, is_pinned, pinned_order, is_archived, is_muted, mute_end_timestamp, avatar_local_path, avatar_picture_id)
+		SELECT ?, name, name_source, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group, is_pinned, pinned_order, is_archived, is_muted, mute_end_timestamp, avatar_local_path, avatar_picture_id
 		FROM chats
 		WHERE id = ?
 		ON CONFLICT(id) DO UPDATE SET
@@ -834,6 +870,8 @@ func (db *DB) MigrateChatID(ctx context.Context, fromChatID, toChatID string) (C
 			is_pinned = MAX(chats.is_pinned, excluded.is_pinned),
 			pinned_order = MAX(chats.pinned_order, excluded.pinned_order),
 			is_archived = MAX(chats.is_archived, excluded.is_archived),
+			is_muted = MAX(chats.is_muted, excluded.is_muted),
+			mute_end_timestamp = MAX(chats.mute_end_timestamp, excluded.mute_end_timestamp),
 			is_group = excluded.is_group
 	`, toChatID, fromChatID, ChatNameSourceRaw, toChatID, ChatNameSourceRaw, toChatID); err != nil {
 		return Chat{}, false, err

@@ -91,6 +91,7 @@ service ChatService {
   rpc MarkChatRead(MarkChatReadRequest) returns (MarkChatReadResponse);
   rpc SetChatPinned(SetChatPinnedRequest) returns (SetChatPinnedResponse);
   rpc SetChatArchived(SetChatArchivedRequest) returns (SetChatArchivedResponse);
+  rpc SetChatMuted(SetChatMutedRequest) returns (SetChatMutedResponse);
   rpc SetChatPresence(SetChatPresenceRequest) returns (SetChatPresenceResponse);
   rpc SubscribeChatPresence(SubscribeChatPresenceRequest) returns (SubscribeChatPresenceResponse);
   rpc DownloadMessageMedia(DownloadMessageMediaRequest) returns (DownloadMessageMediaResponse);
@@ -353,6 +354,15 @@ message SetChatArchivedRequest {
 }
 
 message SetChatArchivedResponse {}
+
+message SetChatMutedRequest {
+  string chat_id = 1;
+  bool muted = 2;
+  // 0 with muted=true => forever; ignored when muted=false.
+  int64 mute_duration_secs = 3;
+}
+
+message SetChatMutedResponse {}
 
 message SetChatPresenceRequest {
   string chat_id = 1;
@@ -640,6 +650,9 @@ message Chat {
   // chats they already have at this stamp.
   int64 updated_at_unix = 12;
   bool is_archived = 13;
+  bool is_muted = 14;
+  // unix millis when the mute expires; -1 = forever, 0 = not muted.
+  int64 mute_end_timestamp = 15;
 }
 
 message Message {
