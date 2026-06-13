@@ -1206,6 +1206,99 @@ func (db *DB) ListStarredMessages(ctx context.Context, chatID string, limit int,
 	return result, nil
 }
 
+// MessageSearchResult is a full-text search hit: the matched message plus its
+// chat's display name (for labeling cross-chat results in the global view).
+type MessageSearchResult struct {
+	Message
+	ChatName string
+}
+
+// SearchMessages runs a full-text query against the messages_fts index, newest
+// hit first. chatID == "" spans all chats; beforeMessageID is a keyset cursor
+// for paging older results. The raw query is parsed into an FTS5 MATCH
+// expression by ftsMatchQuery (prefix match on the final token). A
+// blank/all-punctuation query returns no rows.
+func (db *DB) SearchMessages(ctx context.Context, query, chatID string, limit int, beforeMessageID string) ([]MessageSearchResult, error) {
+	defer db.timeOp("SearchMessages", time.Now())
+	if limit <= 0 {
+		limit = 50
+	}
+
+	match := ftsMatchQuery(query)
+	if match == "" {
+		return nil, nil
+	}
+
+	sql := messageSelectPrefix + `
+		JOIN messages_fts f ON f.rowid = m.rowid
+		WHERE messages_fts MATCH ?
+	`
+	args := []any{match}
+	if chatID != "" {
+		sql += ` AND m.chat_id = ?`
+		args = append(args, chatID)
+	}
+	if beforeMessageID != "" {
+		beforeTimestamp, beforeSeq, err := db.messageCursor(ctx, beforeMessageID)
+		if err != nil {
+			return nil, err
+		}
+		sql += ` AND (m.timestamp < ? OR (m.timestamp = ? AND m.rowid < ?))`
+		args = append(args, beforeTimestamp, beforeTimestamp, beforeSeq)
+	}
+	sql += `
+		ORDER BY m.timestamp DESC, m.rowid DESC
+		LIMIT ?
+	`
+	args = append(args, limit)
+
+	rows, err := db.reader().QueryContext(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	messages, err := scanMessageRows(rows, limit)
+	if err != nil {
+		return nil, err
+	}
+	if err := attachReactions(ctx, db.reader(), messages); err != nil {
+		return nil, err
+	}
+
+	names, err := db.chatNamesByID(ctx, messages)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]MessageSearchResult, len(messages))
+	for i, m := range messages {
+		result[i] = MessageSearchResult{Message: m, ChatName: names[m.ChatID]}
+	}
+	return result, nil
+}
+
+// ftsMatchQuery turns free-form user input into a safe FTS5 MATCH expression.
+// Each whitespace-separated token is wrapped in double quotes (so FTS5 treats
+// it as a bare string and never as a column filter or operator), with embedded
+// quotes doubled. The final token gets a trailing prefix marker so an
+// in-progress word matches as the user types (e.g. `hello wor` -> `"hello" "wor"*`).
+// Returns "" when the input yields no usable tokens.
+func ftsMatchQuery(raw string) string {
+	fields := strings.Fields(raw)
+	if len(fields) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(fields))
+	for i, tok := range fields {
+		quoted := `"` + strings.ReplaceAll(tok, `"`, `""`) + `"`
+		if i == len(fields)-1 {
+			quoted += "*"
+		}
+		parts = append(parts, quoted)
+	}
+	return strings.Join(parts, " ")
+}
+
 // chatNamesByID maps each message's chat_id to its chat display name in one
 // query, used to label cross-chat starred results.
 func (db *DB) chatNamesByID(ctx context.Context, messages []Message) (map[string]string, error) {

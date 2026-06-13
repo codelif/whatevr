@@ -99,6 +99,8 @@ service ChatService {
   rpc DeleteMessageForMe(DeleteMessageForMeRequest) returns (DeleteMessageForMeResponse);
   rpc ListStarredMessages(ListStarredMessagesRequest) returns (ListStarredMessagesResponse);
   rpc ListPinnedMessages(ListPinnedMessagesRequest) returns (ListPinnedMessagesResponse);
+  rpc SearchChats(SearchChatsRequest) returns (SearchChatsResponse);
+  rpc SearchMessages(SearchMessagesRequest) returns (SearchMessagesResponse);
 }
 
 service SendService {
@@ -510,6 +512,38 @@ message ListPinnedMessagesRequest {
 message ListPinnedMessagesResponse {
   // Currently-pinned (unexpired) messages, oldest pin first.
   repeated Message messages = 1;
+}
+
+// Chat-name search for the unified search bar (case-insensitive substring).
+message SearchChatsRequest {
+  string query = 1;
+  int32 limit = 2;
+}
+
+message SearchChatsResponse {
+  repeated Chat chats = 1;
+}
+
+// One message search hit plus its chat's display name, so global results can
+// label which conversation each match belongs to.
+message MessageSearchResult {
+  Message message = 1;
+  string chat_name = 2;
+}
+
+// Full-text message search. chat_id empty searches all chats; set it to scope
+// to one conversation (the in-chat search). Newest match first.
+message SearchMessagesRequest {
+  string query = 1;
+  string chat_id = 2;
+  int32 limit = 3;
+  // Keyset cursor: return matches strictly older than this one.
+  string before_message_id = 4;
+}
+
+message SearchMessagesResponse {
+  repeated MessageSearchResult results = 1;
+  bool has_more = 2;
 }
 
 message SetStickerFavoriteRequest {

@@ -11,6 +11,15 @@ Kirigami.Page {
 
     signal chatSelected(string chatId)
 
+    // The search bar is revealed by the toolbar search button, not shown by
+    // default. Hiding it clears any active query.
+    property bool searchBarVisible: false
+
+    function hideSearch() {
+        searchBarVisible = false
+        Whatevr.AppController.clearSearch()
+    }
+
     Layout.fillHeight: true
     Layout.minimumWidth: Kirigami.Units.gridUnit * 17
     // Track the window: roughly a third of the width, clamped so the list
@@ -25,6 +34,20 @@ Kirigami.Page {
     Kirigami.Theme.colorSet: Kirigami.Theme.View
 
     actions: [
+        Kirigami.Action {
+            icon.name: "search-symbolic"
+            text: Whatevr.I18n.i18nc("@action:button toggle the chat search bar", "Search")
+            displayHint: Kirigami.DisplayHint.IconOnly
+            checkable: true
+            checked: root.searchBarVisible
+            onTriggered: {
+                if (root.searchBarVisible) {
+                    root.hideSearch()
+                } else {
+                    root.searchBarVisible = true
+                }
+            }
+        },
         Kirigami.Action {
             icon.name: "view-refresh-symbolic"
             text: Whatevr.I18n.i18nc("@action:button", "Refresh")
@@ -71,6 +94,48 @@ Kirigami.Page {
             text: Whatevr.AppController.bannerText
         }
 
+        Kirigami.SearchField {
+            id: searchField
+
+            visible: root.searchBarVisible
+            Layout.fillWidth: true
+            Layout.margins: Kirigami.Units.largeSpacing
+            Layout.bottomMargin: Kirigami.Units.smallSpacing
+            placeholderText: Whatevr.I18n.i18nc("@info:placeholder", "Search chats and messages")
+            // Debounced daemon-side search; the model fills as results arrive.
+            onTextChanged: Whatevr.AppController.setSearchQuery(text)
+
+            onVisibleChanged: {
+                if (visible) {
+                    forceActiveFocus()
+                } else {
+                    text = ""
+                }
+            }
+
+            // First Escape clears a non-empty query; a second Escape (empty
+            // field) dismisses the search bar entirely.
+            Keys.onEscapePressed: event => {
+                if (searchField.text.length > 0) {
+                    searchField.text = ""
+                } else {
+                    root.hideSearch()
+                }
+                event.accepted = true
+            }
+
+            Connections {
+                target: Whatevr.AppController
+                // Keep the field in sync when the search is cleared elsewhere
+                // (e.g. after opening a result).
+                function onSearchChanged() {
+                    if (Whatevr.AppController.searchQuery !== searchField.text) {
+                        searchField.text = Whatevr.AppController.searchQuery
+                    }
+                }
+            }
+        }
+
         Item {
             id: chatListViewport
 
@@ -79,6 +144,8 @@ Kirigami.Page {
 
             ListView {
                 id: chatList
+
+                visible: !Whatevr.AppController.searchActive
 
                 property string contextChatId: ""
                 property bool contextChatPinned: false
@@ -334,6 +401,82 @@ Kirigami.Page {
             KineticWheelScroller {
                 anchors.fill: chatList
                 target: chatList
+                wheelStep: Kirigami.Units.gridUnit * 4
+            }
+
+            // Search results replace the chat list while a query is active.
+            // Chat-name matches and message-text matches are split into two
+            // sections via the model's "kind" role.
+            ListView {
+                id: searchList
+
+                anchors.fill: parent
+                clip: true
+                visible: Whatevr.AppController.searchActive
+                model: Whatevr.AppController.searchResultsModel
+                currentIndex: -1
+                boundsBehavior: Flickable.StopAtBounds
+                reuseItems: true
+                spacing: 0
+                ScrollBar.vertical: DiscreetScrollBar {}
+
+                section.property: "kind"
+                section.criteria: ViewSection.FullString
+                section.delegate: Kirigami.ListSectionHeader {
+                    required property string section
+
+                    width: ListView.view ? ListView.view.width : 0
+                    text: section === "message"
+                          ? Whatevr.I18n.i18nc("@title:group search results", "Messages")
+                          : Whatevr.I18n.i18nc("@title:group search results", "Chats")
+                }
+
+                delegate: SearchResultDelegate {
+                    required property var model
+
+                    kind: String(model.kind || "chat")
+                    avatarLocalPath: String(model.avatarLocalPath || "")
+                    initials: String(model.initials || "?")
+                    title: String(model.title || "")
+                    subtitle: String(model.subtitle || "")
+                    chatId: String(model.chatId || "")
+                    messageId: String(model.messageId || "")
+                    senderName: String(model.senderName || "")
+                    timeText: String(model.timeText || "")
+                    isOutgoing: Boolean(model.isOutgoing || false)
+
+                    onChatActivated: id => {
+                        Whatevr.AppController.selectChat(id)
+                        root.hideSearch()
+                        root.chatSelected(id)
+                    }
+                    onMessageActivated: (cId, mId) => {
+                        Whatevr.AppController.showMessageInChat(cId, mId)
+                        root.hideSearch()
+                        root.chatSelected(cId)
+                    }
+                }
+
+                BusyIndicator {
+                    anchors.centerIn: parent
+                    running: Whatevr.AppController.searchBusy && searchList.count === 0
+                    visible: running
+                }
+
+                Kirigami.PlaceholderMessage {
+                    anchors.centerIn: parent
+                    width: Math.min(parent.width - Kirigami.Units.largeSpacing * 4,
+                                    Kirigami.Units.gridUnit * 16)
+                    visible: !Whatevr.AppController.searchBusy && searchList.count === 0
+                    icon.name: "search-symbolic"
+                    text: Whatevr.I18n.i18nc("@info", "No results")
+                    explanation: Whatevr.I18n.i18nc("@info", "No chats or messages match your search.")
+                }
+            }
+
+            KineticWheelScroller {
+                anchors.fill: searchList
+                target: searchList
                 wheelStep: Kirigami.Units.gridUnit * 4
             }
         }

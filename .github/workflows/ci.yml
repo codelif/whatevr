@@ -103,11 +103,13 @@ jobs:
 
       - name: Vet
         working-directory: whatevrd
-        run: go vet ./...
+        # sqlite_fts5 enables the FTS5 module in go-sqlite3, required by the
+        # message-search index the store creates on open.
+        run: go vet -tags sqlite_fts5 ./...
 
       - name: Test
         working-directory: whatevrd
-        run: go test ./...
+        run: go test -tags sqlite_fts5 ./...
 
   validate:
     name: Validate metadata

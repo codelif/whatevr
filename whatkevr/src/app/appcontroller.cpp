@@ -36,6 +36,7 @@
 #include "../models/emojimodel.h"
 #include "../models/messagelistmodel.h"
 #include "../models/pinnedmessagesmodel.h"
+#include "../models/searchresultsmodel.h"
 #include "../models/starredmessagesmodel.h"
 #include "stickercontroller.h"
 #include "whatevr/v1/whatevr.qpb.h"
@@ -84,6 +85,10 @@ using whatevr::v1::ListStarredMessagesRequest;
 using whatevr::v1::ListStarredMessagesResponse;
 using whatevr::v1::ListPinnedMessagesRequest;
 using whatevr::v1::ListPinnedMessagesResponse;
+using whatevr::v1::SearchChatsRequest;
+using whatevr::v1::SearchChatsResponse;
+using whatevr::v1::SearchMessagesRequest;
+using whatevr::v1::SearchMessagesResponse;
 using whatevr::v1::ForwardMessageRequest;
 using whatevr::v1::HoldSessionRequest;
 using whatevr::v1::SendMediaRequest;
@@ -340,6 +345,7 @@ AppController::AppController(QObject *parent)
     m_messageListModel = new MessageListModel(this);
     m_starredMessagesModel = new StarredMessagesModel(this);
     m_pinnedMessagesModel = new PinnedMessagesModel(this);
+    m_searchResultsModel = new SearchResultsModel(this);
     m_stickerController = new StickerController(this);
     connect(m_stickerController, &StickerController::messageSent, this, [this](const whatevr::v1::Message &message) {
         applyMessageEvent(message);
@@ -367,6 +373,18 @@ AppController::AppController(QObject *parent)
     m_qrTimer = new QTimer(this);
     m_qrTimer->setInterval(1000);
     connect(m_qrTimer, &QTimer::timeout, this, &AppController::updateQrExpiryText);
+
+    // Debounce keystrokes so each character typed in a search box does not fire
+    // its own gRPC round-trip.
+    m_searchDebounceTimer = new QTimer(this);
+    m_searchDebounceTimer->setSingleShot(true);
+    m_searchDebounceTimer->setInterval(180);
+    connect(m_searchDebounceTimer, &QTimer::timeout, this, &AppController::runSearch);
+
+    m_chatSearchDebounceTimer = new QTimer(this);
+    m_chatSearchDebounceTimer->setSingleShot(true);
+    m_chatSearchDebounceTimer->setInterval(180);
+    connect(m_chatSearchDebounceTimer, &QTimer::timeout, this, &AppController::runChatSearch);
 
     m_selectedChatReloadTimer = new QTimer(this);
     m_selectedChatReloadTimer->setSingleShot(true);
@@ -646,6 +664,54 @@ QAbstractItemModel *AppController::pinnedMessagesModel() const
     return m_pinnedMessagesModel;
 }
 
+QAbstractItemModel *AppController::searchResultsModel() const
+{
+    return m_searchResultsModel;
+}
+
+QString AppController::searchQuery() const
+{
+    return m_searchQuery;
+}
+
+bool AppController::searchActive() const
+{
+    return !m_searchQuery.trimmed().isEmpty();
+}
+
+bool AppController::searchBusy() const
+{
+    return m_searchBusy;
+}
+
+bool AppController::chatSearchActive() const
+{
+    return m_chatSearchActive;
+}
+
+QString AppController::chatSearchQuery() const
+{
+    return m_chatSearchQuery;
+}
+
+int AppController::chatSearchMatchCount() const
+{
+    return static_cast<int>(m_chatSearchMatchIds.size());
+}
+
+int AppController::chatSearchCurrentIndex() const
+{
+    return m_chatSearchIndex < 0 ? 0 : m_chatSearchIndex + 1;
+}
+
+QString AppController::chatSearchActiveMessageId() const
+{
+    if (m_chatSearchIndex < 0 || m_chatSearchIndex >= m_chatSearchMatchIds.size()) {
+        return QString();
+    }
+    return m_chatSearchMatchIds.at(m_chatSearchIndex);
+}
+
 QAbstractItemModel *AppController::emojiModel() const
 {
     return m_emojiModel;
@@ -907,6 +973,13 @@ void AppController::selectChat(const QString &chatId)
     m_pendingMarkChatReadId.clear();
     m_markChatReadTimer->stop();
     m_subscribeChatPresenceReply.reset();
+
+    // The in-chat search is scoped to one conversation; switching chats ends it.
+    if (m_chatSearchActive || !m_chatSearchQuery.isEmpty() || !m_chatSearchMatchIds.isEmpty()) {
+        resetChatSearch();
+        m_chatSearchActive = false;
+        Q_EMIT chatSearchChanged();
+    }
 
     m_selectedChatId = chatId;
     m_selectedChatComposing = false;
@@ -2002,6 +2075,203 @@ void AppController::forwardMessage(const QString &messageId, const QStringList &
             Q_EMIT messageForwarded(m_forwardBatchChatCount);
         }
     });
+}
+
+void AppController::setSearchQuery(const QString &query)
+{
+    if (m_searchQuery == query) {
+        return;
+    }
+    m_searchQuery = query;
+    Q_EMIT searchChanged();
+
+    if (query.trimmed().isEmpty()) {
+        m_searchDebounceTimer->stop();
+        m_searchChatsReply.reset();
+        m_searchMessagesReply.reset();
+        m_searchResultsModel->clear();
+        if (m_searchBusy) {
+            m_searchBusy = false;
+            Q_EMIT searchChanged();
+        }
+        return;
+    }
+    m_searchDebounceTimer->start();
+}
+
+void AppController::clearSearch()
+{
+    setSearchQuery(QString());
+}
+
+void AppController::runSearch()
+{
+    if (!m_chatClient) {
+        return;
+    }
+    const QString query = m_searchQuery.trimmed();
+    if (query.isEmpty()) {
+        m_searchResultsModel->clear();
+        return;
+    }
+
+    m_searchBusy = true;
+    Q_EMIT searchChanged();
+
+    {
+        SearchChatsRequest request;
+        request.setQuery(query);
+        auto reply = m_chatClient->SearchChats(request);
+        auto *replyPtr = reply.get();
+        m_searchChatsReply = std::move(reply);
+        connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr](const QGrpcStatus &status) {
+            if (m_searchChatsReply.get() != replyPtr) {
+                return;
+            }
+            const auto reply = std::move(m_searchChatsReply);
+            if (status.isOk()) {
+                if (const auto response = reply->read<SearchChatsResponse>()) {
+                    m_searchResultsModel->setChats(response->chats());
+                }
+            }
+            // Clear the spinner once both halves have landed.
+            if (!m_searchMessagesReply && m_searchBusy) {
+                m_searchBusy = false;
+                Q_EMIT searchChanged();
+            }
+        });
+    }
+    {
+        SearchMessagesRequest request;
+        request.setQuery(query);
+        auto reply = m_chatClient->SearchMessages(request);
+        auto *replyPtr = reply.get();
+        m_searchMessagesReply = std::move(reply);
+        connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr](const QGrpcStatus &status) {
+            if (m_searchMessagesReply.get() != replyPtr) {
+                return;
+            }
+            const auto reply = std::move(m_searchMessagesReply);
+            if (status.isOk()) {
+                if (const auto response = reply->read<SearchMessagesResponse>()) {
+                    m_searchResultsModel->setMessages(response->results());
+                }
+            }
+            if (!m_searchChatsReply && m_searchBusy) {
+                m_searchBusy = false;
+                Q_EMIT searchChanged();
+            }
+        });
+    }
+}
+
+void AppController::openChatSearch()
+{
+    if (m_selectedChatId.isEmpty() || m_chatSearchActive) {
+        return;
+    }
+    m_chatSearchActive = true;
+    Q_EMIT chatSearchChanged();
+}
+
+void AppController::closeChatSearch()
+{
+    if (!m_chatSearchActive && m_chatSearchQuery.isEmpty() && m_chatSearchMatchIds.isEmpty()) {
+        return;
+    }
+    resetChatSearch();
+    m_chatSearchActive = false;
+    Q_EMIT chatSearchChanged();
+}
+
+void AppController::resetChatSearch()
+{
+    m_chatSearchDebounceTimer->stop();
+    m_chatSearchReply.reset();
+    m_chatSearchQuery.clear();
+    m_chatSearchMatchIds.clear();
+    m_chatSearchIndex = -1;
+}
+
+void AppController::setChatSearchQuery(const QString &query)
+{
+    if (m_chatSearchQuery == query) {
+        return;
+    }
+    m_chatSearchQuery = query;
+    Q_EMIT chatSearchChanged();
+
+    if (query.trimmed().isEmpty()) {
+        m_chatSearchDebounceTimer->stop();
+        m_chatSearchReply.reset();
+        m_chatSearchMatchIds.clear();
+        m_chatSearchIndex = -1;
+        Q_EMIT chatSearchChanged();
+        return;
+    }
+    m_chatSearchDebounceTimer->start();
+}
+
+void AppController::runChatSearch()
+{
+    if (!m_chatClient) {
+        return;
+    }
+    const QString query = m_chatSearchQuery.trimmed();
+    const QString chatId = m_selectedChatId;
+    if (query.isEmpty() || chatId.isEmpty()) {
+        m_chatSearchMatchIds.clear();
+        m_chatSearchIndex = -1;
+        Q_EMIT chatSearchChanged();
+        return;
+    }
+
+    SearchMessagesRequest request;
+    request.setQuery(query);
+    request.setChatId(chatId);
+    request.setLimit(100);
+
+    auto reply = m_chatClient->SearchMessages(request);
+    auto *replyPtr = reply.get();
+    m_chatSearchReply = std::move(reply);
+    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, chatId](const QGrpcStatus &status) {
+        if (m_chatSearchReply.get() != replyPtr) {
+            return;
+        }
+        const auto reply = std::move(m_chatSearchReply);
+        // Ignore a stale response if the user has switched chats meanwhile.
+        if (!status.isOk() || chatId != m_selectedChatId) {
+            return;
+        }
+        m_chatSearchMatchIds.clear();
+        if (const auto response = reply->read<SearchMessagesResponse>()) {
+            for (const auto &result : response->results()) {
+                m_chatSearchMatchIds.append(result.message().id_proto());
+            }
+        }
+        m_chatSearchIndex = m_chatSearchMatchIds.isEmpty() ? -1 : 0;
+        // The conversation view scrolls/glows the focused match off
+        // chatSearchActiveMessageId; the bubble highlights off chatSearchQuery.
+        Q_EMIT chatSearchChanged();
+    });
+}
+
+void AppController::chatSearchNext()
+{
+    if (m_chatSearchMatchIds.isEmpty()) {
+        return;
+    }
+    m_chatSearchIndex = (m_chatSearchIndex + 1) % m_chatSearchMatchIds.size();
+    Q_EMIT chatSearchChanged();
+}
+
+void AppController::chatSearchPrevious()
+{
+    if (m_chatSearchMatchIds.isEmpty()) {
+        return;
+    }
+    m_chatSearchIndex = (m_chatSearchIndex - 1 + m_chatSearchMatchIds.size()) % m_chatSearchMatchIds.size();
+    Q_EMIT chatSearchChanged();
 }
 
 void AppController::requestMessageInfo(const QString &messageId)

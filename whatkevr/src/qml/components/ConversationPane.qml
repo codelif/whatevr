@@ -298,6 +298,21 @@ Kirigami.Page {
 
     property list<Kirigami.Action> defaultActions: [
         Kirigami.Action {
+            icon.name: "search-symbolic"
+            text: Whatevr.I18n.i18nc("@action:button search within this chat", "Search")
+            displayHint: Kirigami.DisplayHint.IconOnly
+            visible: Whatevr.AppController.hasSelectedChat
+            checkable: true
+            checked: Whatevr.AppController.chatSearchActive
+            onTriggered: {
+                if (Whatevr.AppController.chatSearchActive) {
+                    Whatevr.AppController.closeChatSearch()
+                } else {
+                    Whatevr.AppController.openChatSearch()
+                }
+            }
+        },
+        Kirigami.Action {
             icon.name: "starred-symbolic"
             text: Whatevr.I18n.i18nc("@action:button starred messages in this chat", "Starred messages")
             displayHint: Kirigami.DisplayHint.AlwaysHide
@@ -405,9 +420,112 @@ Kirigami.Page {
         }
     ]
 
+    // The focused in-chat search match: MessageView owns the scroll + reply
+    // glow, so the jump is driven from here whenever AppController changes which
+    // match is active (search start, next, previous).
+    property string lastChatSearchJumpId: ""
+
+    Connections {
+        target: Whatevr.AppController
+        function onChatSearchChanged() {
+            const id = Whatevr.AppController.chatSearchActiveMessageId
+            if (id.length === 0) {
+                root.lastChatSearchJumpId = ""
+            } else if (id !== root.lastChatSearchJumpId) {
+                root.lastChatSearchJumpId = id
+                messageView.jumpToReplyTarget(id)
+            }
+        }
+    }
+
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
+
+        // In-chat search strip: matches navigation with a live n/m counter.
+        // Driven entirely by AppController's chat-search state.
+        Control {
+            id: chatSearchBar
+
+            Layout.fillWidth: true
+            visible: Whatevr.AppController.chatSearchActive
+            padding: Kirigami.Units.smallSpacing
+            Kirigami.Theme.colorSet: Kirigami.Theme.Window
+            Kirigami.Theme.inherit: false
+
+            background: Rectangle {
+                color: Kirigami.Theme.backgroundColor
+                Kirigami.Separator {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                }
+            }
+
+            onVisibleChanged: {
+                if (visible) {
+                    chatSearchInput.forceActiveFocus()
+                } else {
+                    chatSearchInput.text = ""
+                }
+            }
+
+            contentItem: RowLayout {
+                spacing: Kirigami.Units.smallSpacing
+
+                Kirigami.SearchField {
+                    id: chatSearchInput
+
+                    Layout.fillWidth: true
+                    placeholderText: Whatevr.I18n.i18nc("@info:placeholder", "Search in this conversation")
+                    onTextChanged: Whatevr.AppController.setChatSearchQuery(text)
+                    Keys.onReturnPressed: Whatevr.AppController.chatSearchNext()
+                    Keys.onEnterPressed: Whatevr.AppController.chatSearchNext()
+                    Keys.onEscapePressed: Whatevr.AppController.closeChatSearch()
+                }
+
+                Label {
+                    visible: Whatevr.AppController.chatSearchQuery.length > 0
+                    text: Whatevr.AppController.chatSearchMatchCount > 0
+                          ? Whatevr.I18n.i18nc("@info:status search match position, e.g. 2 of 9",
+                                               "%1 of %2",
+                                               Whatevr.AppController.chatSearchCurrentIndex,
+                                               Whatevr.AppController.chatSearchMatchCount)
+                          : Whatevr.I18n.i18nc("@info:status no search matches", "No matches")
+                    color: Kirigami.Theme.disabledTextColor
+                    font: Kirigami.Theme.smallFont
+                }
+
+                ToolButton {
+                    icon.name: "go-up-symbolic"
+                    enabled: Whatevr.AppController.chatSearchMatchCount > 0
+                    display: AbstractButton.IconOnly
+                    text: Whatevr.I18n.i18nc("@action:button newer search match", "Previous match")
+                    ToolTip.visible: hovered
+                    ToolTip.text: text
+                    onClicked: Whatevr.AppController.chatSearchPrevious()
+                }
+
+                ToolButton {
+                    icon.name: "go-down-symbolic"
+                    enabled: Whatevr.AppController.chatSearchMatchCount > 0
+                    display: AbstractButton.IconOnly
+                    text: Whatevr.I18n.i18nc("@action:button older search match", "Next match")
+                    ToolTip.visible: hovered
+                    ToolTip.text: text
+                    onClicked: Whatevr.AppController.chatSearchNext()
+                }
+
+                ToolButton {
+                    icon.name: "dialog-close-symbolic"
+                    display: AbstractButton.IconOnly
+                    text: Whatevr.I18n.i18nc("@action:button close in-chat search", "Close search")
+                    ToolTip.visible: hovered
+                    ToolTip.text: text
+                    onClicked: Whatevr.AppController.closeChatSearch()
+                }
+            }
+        }
 
         PinnedMessagesBanner {
             Layout.fillWidth: true

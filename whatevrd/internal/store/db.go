@@ -359,7 +359,59 @@ func (db *DB) migrate(ctx context.Context) error {
 	if err := db.ensureGroupParticipantsTable(ctx); err != nil {
 		return err
 	}
+	if err := db.ensureMessageSearchIndex(ctx); err != nil {
+		return err
+	}
 
+	return nil
+}
+
+// ensureMessageSearchIndex creates the FTS5 full-text index over messages.text
+// and the triggers that keep it in sync with inserts, deletes, and text edits.
+// It is an external-content index (content='messages'): the index stores only
+// the inverted terms and reads the text back from the messages table by rowid,
+// so it adds little storage. Requires the sqlite driver to be built with FTS5
+// (the daemon is built with -tags sqlite_fts5).
+func (db *DB) ensureMessageSearchIndex(ctx context.Context) error {
+	var existed int
+	if err := db.conn.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'messages_fts'`,
+	).Scan(&existed); err != nil {
+		return err
+	}
+
+	for _, statement := range []string{
+		`CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+			text,
+			content='messages',
+			content_rowid='rowid',
+			tokenize='unicode61 remove_diacritics 2'
+		)`,
+		`CREATE TRIGGER IF NOT EXISTS messages_fts_ai AFTER INSERT ON messages BEGIN
+			INSERT INTO messages_fts(rowid, text) VALUES (new.rowid, new.text);
+		END`,
+		`CREATE TRIGGER IF NOT EXISTS messages_fts_ad AFTER DELETE ON messages BEGIN
+			INSERT INTO messages_fts(messages_fts, rowid, text) VALUES('delete', old.rowid, old.text);
+		END`,
+		// Only reindex when the text actually changed; star/pin/read updates
+		// touch the row without altering its searchable content.
+		`CREATE TRIGGER IF NOT EXISTS messages_fts_au AFTER UPDATE ON messages WHEN old.text IS NOT new.text BEGIN
+			INSERT INTO messages_fts(messages_fts, rowid, text) VALUES('delete', old.rowid, old.text);
+			INSERT INTO messages_fts(rowid, text) VALUES (new.rowid, new.text);
+		END`,
+	} {
+		if _, err := db.conn.ExecContext(ctx, statement); err != nil {
+			return err
+		}
+	}
+
+	// Newly created on a database that already holds messages: backfill the
+	// index from existing rows. (On a fresh DB this is a cheap no-op.)
+	if existed == 0 {
+		if _, err := db.conn.ExecContext(ctx, `INSERT INTO messages_fts(messages_fts) VALUES('rebuild')`); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

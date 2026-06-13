@@ -152,6 +152,45 @@ func (db *DB) ListChats(ctx context.Context, limit, offset int, afterChatID stri
 	return chats, nil
 }
 
+// SearchChats returns chats whose display name matches query (case-insensitive
+// substring), in the same list order as ListChats. The chat table is small, so
+// a LIKE scan is fine; message text search uses the FTS index instead. A blank
+// query returns no rows.
+func (db *DB) SearchChats(ctx context.Context, query string, limit int) ([]Chat, error) {
+	defer db.timeOp("SearchChats", time.Now())
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+
+	rows, err := db.reader().QueryContext(ctx, `
+		SELECT c.id, c.name, c.name_source, c.last_message, c.last_message_time, c.last_message_direction, c.last_message_status, c.unread_count, c.is_group, c.is_pinned, c.pinned_order, c.updated_at, c.is_archived, c.is_muted, c.mute_end_timestamp,
+		       COALESCE(NULLIF(a.local_path, ''), c.avatar_local_path), COALESCE(NULLIF(a.picture_id, ''), c.avatar_picture_id), COALESCE(NULLIF(a.status, ''), c.avatar_status), COALESCE(NULLIF(a.checked_at, 0), c.avatar_checked_at)
+		FROM chats c
+		LEFT JOIN avatars a ON a.subject_kind = 'chat' AND a.subject_id = c.id
+		WHERE c.name LIKE ? ESCAPE '\' COLLATE NOCASE
+		ORDER BY CASE WHEN c.is_pinned != 0 THEN 0 ELSE 1 END, c.pinned_order DESC, c.last_message_time DESC, c.id ASC
+		LIMIT ?
+	`, "%"+escapeLike(query)+"%", limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	chats := make([]Chat, 0, limit)
+	for rows.Next() {
+		chat, err := scanChat(rows)
+		if err != nil {
+			return nil, err
+		}
+		chats = append(chats, normalizeListedChatName(chat))
+	}
+	return chats, rows.Err()
+}
+
 func normalizeListedChatName(chat Chat) Chat {
 	if chat.IsGroup || chat.NameSource != ChatNameSourceWhatsApp {
 		return chat

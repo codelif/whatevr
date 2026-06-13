@@ -5,6 +5,8 @@ import QtQuick.Controls
 import org.kde.kirigami as Kirigami
 import Whatevr as Whatevr
 
+import "SearchHighlight.js" as Highlight
+
 Item {
     id: root
 
@@ -364,6 +366,26 @@ Item {
                                                          showStarMark ? starMarkSize : 0,
                                                          showPinMark ? pinMarkSize : 0))
     readonly property bool hasBody: body.length > 0
+    // In-chat search highlighting. Only the plain-text body is highlighted;
+    // rich (markup) bodies keep their formatting and rely on scroll-to. The
+    // focused match is emphasised with the full highlight colour, other matches
+    // with a softened tint.
+    readonly property string searchQuery: Whatevr.AppController.chatSearchQuery
+    readonly property bool isActiveSearchMatch: root.searchQuery.length > 0
+                                                && Whatevr.AppController.chatSearchActiveMessageId === root.messageId
+    readonly property bool searchHighlightActive: root.searchQuery.length > 0 && root.hasBody && !root.hasRichText && !root.frameless
+    readonly property color searchHighlightBg: root.isActiveSearchMatch
+                                                ? Kirigami.Theme.highlightColor
+                                                : Qt.tint(Kirigami.Theme.backgroundColor,
+                                                          Qt.rgba(Kirigami.Theme.highlightColor.r,
+                                                                  Kirigami.Theme.highlightColor.g,
+                                                                  Kirigami.Theme.highlightColor.b, 0.45))
+    readonly property color searchHighlightFg: root.isActiveSearchMatch
+                                                ? Kirigami.Theme.highlightedTextColor
+                                                : Kirigami.Theme.textColor
+    readonly property string searchBodyHtml: root.searchHighlightActive
+                                             ? Highlight.highlight(root.body, root.searchQuery, root.searchHighlightBg, root.searchHighlightFg)
+                                             : ""
     readonly property bool showReadMore: textTruncated && !textExpanded && hasBody
     readonly property string readMoreLabelText: Whatevr.I18n.i18nc("@action:button expand long message", "Read more")
     readonly property bool hasInlineMedia: isImage && !isSticker
@@ -1008,8 +1030,12 @@ Item {
                     property real lastLineY: 0
                     property real lastLineHeight: 0
 
-                    text: root.body
-                    textFormat: Text.PlainText
+                    // While searching this chat, render the body as StyledText
+                    // with the matches background-highlighted. StyledText (not
+                    // RichText) keeps the line-based layout engine, so
+                    // onLineLaidOut still fires and the inline footer stays put.
+                    text: root.searchHighlightActive ? root.searchBodyHtml : root.body
+                    textFormat: root.searchHighlightActive ? Text.StyledText : Text.PlainText
                     wrapMode: Text.Wrap
                     color: root.isRevoked ? Kirigami.Theme.disabledTextColor : Kirigami.Theme.textColor
                     font.family: Kirigami.Theme.defaultFont.family
