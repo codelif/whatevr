@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"time"
 
 	"github.com/mattn/go-sqlite3"
 )
@@ -28,6 +29,29 @@ type DB struct {
 	// per-tile GetSticker burst) no longer queue head-of-line behind a long
 	// history-sync write on the lone writer connection.
 	readConn *sql.DB
+	// slowOp, when set, is called with the name and duration of store
+	// operations that exceed slowOpThreshold (pool wait + exec time), so
+	// writer-connection contention is visible in the daemon log.
+	slowOp func(op string, d time.Duration)
+}
+
+const slowOpThreshold = 100 * time.Millisecond
+
+// SetSlowOpLogger installs a callback invoked for store operations slower
+// than slowOpThreshold. Pass nil to disable.
+func (db *DB) SetSlowOpLogger(f func(op string, d time.Duration)) {
+	db.slowOp = f
+}
+
+// timeOp reports an operation to the slow-op logger if it ran long. Use as
+// `defer db.timeOp("Name", time.Now())`.
+func (db *DB) timeOp(op string, start time.Time) {
+	if db.slowOp == nil {
+		return
+	}
+	if d := time.Since(start); d >= slowOpThreshold {
+		db.slowOp(op, d)
+	}
 }
 
 // reader returns the connection pool to use for read-only queries. It falls
