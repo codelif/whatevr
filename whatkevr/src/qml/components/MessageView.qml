@@ -1345,6 +1345,8 @@ Item {
         // The MenuItem QQC2 generates for the link submenu; resolved once so
         // its visibility can track the link count (single links get a flat item).
         property Item linkSubMenuItem: null
+        // Likewise, submenu visibility does not reliably hide the generated row.
+        property Item pinSubMenuItem: null
 
         readonly property bool ctxValid: ctx !== null
         readonly property string ctxMessageId: ctxValid ? String(ctx.messageId) : ""
@@ -1390,6 +1392,9 @@ Item {
             if (linkSubMenuItem) {
                 linkSubMenuItem.visible = ctxLinks.length > 1
             }
+            if (pinSubMenuItem) {
+                pinSubMenuItem.visible = !ctxIsPinned && !ctxIsRevoked
+            }
             this.x = x
             this.y = y
             open()
@@ -1405,7 +1410,9 @@ Item {
                 if (item && item.subMenu === copyLinkSubMenu) {
                     linkSubMenuItem = item
                     item.visible = false
-                    break
+                } else if (item && item.subMenu === pinDurationSubMenu) {
+                    pinSubMenuItem = item
+                    item.visible = false
                 }
             }
         }
