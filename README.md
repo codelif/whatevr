@@ -181,13 +181,13 @@ Now with that, here is the current feature map, this is for whatevrd+whatkevr.
 | Video playback | ❌ | |
 | View-once messages sending | ❌ | |
 | Document/file sending | ❌ | Images/media path exists, general file UX missing |
-| Stickers | ⚠️ | Can receive any type of sticker. Sending yet to be implmented |
-| Message reactions | ❌ | |
-| Composer emoji inline search | ❌ | |
-| Edit sent messages | ❌ | Even received messages are not edited |
-| Delete messages | ❌ | |
-| Forward messages | ❌ | |
-| Star/bookmark messages | ❌ | |
+| Stickers | ✅ | Receive and send stickers |
+| Message reactions | ✅ | |
+| Composer emoji inline search | ✅ | |
+| Edit sent messages | ✅ | Received message edits are handled too |
+| Delete messages | ✅ | |
+| Forward messages | ✅ | |
+| Star/bookmark messages | ✅ | |
 | Group management | ❌ | No create/invite/admin UI |
 | Community management | ❌ |  |
 | Calls | ❌ | Voice/video calls unsupported |
