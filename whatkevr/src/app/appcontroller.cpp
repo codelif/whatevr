@@ -1715,40 +1715,44 @@ void AppController::sendReaction(const QString &messageId, const QString &emoji)
     }
     dismissUnreadAnchor();
 
-    SendReactionRequest request;
-    request.setMessageId(messageId);
-    request.setEmoji(emoji);
-
     // Reflect the reaction in the UI immediately; the daemon round-trip then
     // confirms it (success path applies the authoritative message) or the error
     // path reverts to this captured state.
     const QVariantList previousReactions = m_messageListModel->applyOptimisticReaction(messageId, emoji);
 
-    auto reply = m_sendClient->SendReaction(request);
-    auto *replyPtr = reply.get();
-    // Keyed per message so reacting to several messages in quick succession keeps
-    // each in-flight call alive (mirrors revokeMessage).
-    m_reactionReplies.insert(messageId, std::move(reply));
+    // Keyed per message and serialized so reacting in quick succession (emoji
+    // A -> B -> remove) reconciles to the last intent instead of racing.
+    auto send = [this, messageId, emoji, previousReactions]() {
+        SendReactionRequest request;
+        request.setMessageId(messageId);
+        request.setEmoji(emoji);
 
-    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, messageId, previousReactions](const QGrpcStatus &status) {
-        auto it = m_reactionReplies.find(messageId);
-        if (it == m_reactionReplies.end() || it.value().get() != replyPtr) {
-            return;
-        }
-        const auto reply = it.value();
-        m_reactionReplies.erase(it);
-        if (!status.isOk()) {
-            // Roll back the optimistic update so the pill reflects reality again.
-            m_messageListModel->restoreReactions(messageId, previousReactions);
-            Q_EMIT messageActionFailed(status.message().isEmpty() ? i18nc("@info", "Unable to react to the message") : status.message());
-            return;
-        }
-        if (const auto response = reply->read<SendReactionResponse>()) {
-            // The event stream also delivers this update; applying directly avoids
-            // a visible delay between tapping the emoji and the pill appearing.
-            applyMessageEvent(response->message());
-        }
-    });
+        auto reply = m_sendClient->SendReaction(request);
+        auto *replyPtr = reply.get();
+        m_reactionReplies[messageId].inFlight = std::move(reply);
+
+        connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, messageId, previousReactions](const QGrpcStatus &status) {
+            auto it = m_reactionReplies.find(messageId);
+            if (it == m_reactionReplies.end() || it.value().inFlight.get() != replyPtr) {
+                return;
+            }
+            const auto reply = it->inFlight;
+            if (!status.isOk()) {
+                if (!hasPendingSerial(m_reactionReplies, messageId)) {
+                    // Roll back the optimistic update so the pill reflects reality again.
+                    m_messageListModel->restoreReactions(messageId, previousReactions);
+                    Q_EMIT messageActionFailed(status.message().isEmpty() ? i18nc("@info", "Unable to react to the message") : status.message());
+                }
+            } else if (const auto response = reply->read<SendReactionResponse>()) {
+                // The event stream also delivers this update; applying directly avoids
+                // a visible delay between tapping the emoji and the pill appearing.
+                applyMessageEvent(response->message());
+            }
+            finishSerial(m_reactionReplies, messageId);
+        });
+    };
+
+    enqueueSerial(m_reactionReplies, messageId, std::move(send));
 }
 
 void AppController::setMessageStarred(const QString &messageId, bool starred)
@@ -1757,34 +1761,38 @@ void AppController::setMessageStarred(const QString &messageId, bool starred)
         return;
     }
 
-    SetMessageStarredRequest request;
-    request.setMessageId(messageId);
-    request.setStarred(starred);
-
     // Flip the bubble's star immediately; the daemon round-trip then confirms
     // (applies the authoritative message) or reverts to the captured state.
     const bool previousStarred = m_messageListModel->applyOptimisticStar(messageId, starred);
 
-    auto reply = m_sendClient->SetMessageStarred(request);
-    auto *replyPtr = reply.get();
-    m_setMessageStarredReplies.insert(messageId, std::move(reply));
+    auto send = [this, messageId, starred, previousStarred]() {
+        SetMessageStarredRequest request;
+        request.setMessageId(messageId);
+        request.setStarred(starred);
 
-    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, messageId, previousStarred](const QGrpcStatus &status) {
-        auto it = m_setMessageStarredReplies.find(messageId);
-        if (it == m_setMessageStarredReplies.end() || it.value().get() != replyPtr) {
-            return;
-        }
-        const auto reply = it.value();
-        m_setMessageStarredReplies.erase(it);
-        if (!status.isOk()) {
-            m_messageListModel->restoreStar(messageId, previousStarred);
-            Q_EMIT messageActionFailed(status.message().isEmpty() ? i18nc("@info", "Unable to star the message") : status.message());
-            return;
-        }
-        if (const auto response = reply->read<SetMessageStarredResponse>()) {
-            applyMessageEvent(response->message());
-        }
-    });
+        auto reply = m_sendClient->SetMessageStarred(request);
+        auto *replyPtr = reply.get();
+        m_setMessageStarredReplies[messageId].inFlight = std::move(reply);
+
+        connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, messageId, previousStarred](const QGrpcStatus &status) {
+            auto it = m_setMessageStarredReplies.find(messageId);
+            if (it == m_setMessageStarredReplies.end() || it.value().inFlight.get() != replyPtr) {
+                return;
+            }
+            const auto reply = it->inFlight;
+            if (!status.isOk()) {
+                if (!hasPendingSerial(m_setMessageStarredReplies, messageId)) {
+                    m_messageListModel->restoreStar(messageId, previousStarred);
+                    Q_EMIT messageActionFailed(status.message().isEmpty() ? i18nc("@info", "Unable to star the message") : status.message());
+                }
+            } else if (const auto response = reply->read<SetMessageStarredResponse>()) {
+                applyMessageEvent(response->message());
+            }
+            finishSerial(m_setMessageStarredReplies, messageId);
+        });
+    };
+
+    enqueueSerial(m_setMessageStarredReplies, messageId, std::move(send));
 }
 
 void AppController::pinMessage(const QString &messageId, int durationSecs)
@@ -1792,11 +1800,6 @@ void AppController::pinMessage(const QString &messageId, int durationSecs)
     if (!m_sendClient || messageId.isEmpty() || durationSecs <= 0) {
         return;
     }
-
-    PinMessageRequest request;
-    request.setMessageId(messageId);
-    request.setPinned(true);
-    request.setDurationSecs(static_cast<quint32>(durationSecs));
 
     // Show the pin in the banner/bubble immediately; the daemon round-trip then
     // confirms (applies the authoritative message) or reverts to the original.
@@ -1809,28 +1812,39 @@ void AppController::pinMessage(const QString &messageId, int durationSecs)
         applyMessageEvent(optimistic);
     }
 
-    auto reply = m_sendClient->PinMessage(request);
-    auto *replyPtr = reply.get();
-    m_pinMessageReplies.insert(messageId, std::move(reply));
+    // Pin and unpin share this slot (same pinned-state) so they serialize
+    // against each other instead of racing to the daemon.
+    auto send = [this, messageId, durationSecs, previous]() {
+        PinMessageRequest request;
+        request.setMessageId(messageId);
+        request.setPinned(true);
+        request.setDurationSecs(static_cast<quint32>(durationSecs));
 
-    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, messageId, previous](const QGrpcStatus &status) {
-        auto it = m_pinMessageReplies.find(messageId);
-        if (it == m_pinMessageReplies.end() || it.value().get() != replyPtr) {
-            return;
-        }
-        const auto reply = it.value();
-        m_pinMessageReplies.erase(it);
-        if (!status.isOk()) {
-            if (previous) {
-                applyMessageEvent(*previous);
+        auto reply = m_sendClient->PinMessage(request);
+        auto *replyPtr = reply.get();
+        m_pinMessageReplies[messageId].inFlight = std::move(reply);
+
+        connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, messageId, previous](const QGrpcStatus &status) {
+            auto it = m_pinMessageReplies.find(messageId);
+            if (it == m_pinMessageReplies.end() || it.value().inFlight.get() != replyPtr) {
+                return;
             }
-            Q_EMIT messageActionFailed(status.message().isEmpty() ? i18nc("@info", "Unable to pin the message") : status.message());
-            return;
-        }
-        if (const auto response = reply->read<PinMessageResponse>()) {
-            applyMessageEvent(response->message());
-        }
-    });
+            const auto reply = it->inFlight;
+            if (!status.isOk()) {
+                if (!hasPendingSerial(m_pinMessageReplies, messageId)) {
+                    if (previous) {
+                        applyMessageEvent(*previous);
+                    }
+                    Q_EMIT messageActionFailed(status.message().isEmpty() ? i18nc("@info", "Unable to pin the message") : status.message());
+                }
+            } else if (const auto response = reply->read<PinMessageResponse>()) {
+                applyMessageEvent(response->message());
+            }
+            finishSerial(m_pinMessageReplies, messageId);
+        });
+    };
+
+    enqueueSerial(m_pinMessageReplies, messageId, std::move(send));
 }
 
 void AppController::unpinMessage(const QString &messageId)
@@ -1838,10 +1852,6 @@ void AppController::unpinMessage(const QString &messageId)
     if (!m_sendClient || messageId.isEmpty()) {
         return;
     }
-
-    PinMessageRequest request;
-    request.setMessageId(messageId);
-    request.setPinned(false);
 
     // Drop the pin from the banner/bubble immediately; the daemon round-trip then
     // confirms or reverts to the original.
@@ -1854,28 +1864,36 @@ void AppController::unpinMessage(const QString &messageId)
         applyMessageEvent(optimistic);
     }
 
-    auto reply = m_sendClient->PinMessage(request);
-    auto *replyPtr = reply.get();
-    m_pinMessageReplies.insert(messageId, std::move(reply));
+    auto send = [this, messageId, previous]() {
+        PinMessageRequest request;
+        request.setMessageId(messageId);
+        request.setPinned(false);
 
-    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, messageId, previous](const QGrpcStatus &status) {
-        auto it = m_pinMessageReplies.find(messageId);
-        if (it == m_pinMessageReplies.end() || it.value().get() != replyPtr) {
-            return;
-        }
-        const auto reply = it.value();
-        m_pinMessageReplies.erase(it);
-        if (!status.isOk()) {
-            if (previous) {
-                applyMessageEvent(*previous);
+        auto reply = m_sendClient->PinMessage(request);
+        auto *replyPtr = reply.get();
+        m_pinMessageReplies[messageId].inFlight = std::move(reply);
+
+        connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, messageId, previous](const QGrpcStatus &status) {
+            auto it = m_pinMessageReplies.find(messageId);
+            if (it == m_pinMessageReplies.end() || it.value().inFlight.get() != replyPtr) {
+                return;
             }
-            Q_EMIT messageActionFailed(status.message().isEmpty() ? i18nc("@info", "Unable to unpin the message") : status.message());
-            return;
-        }
-        if (const auto response = reply->read<PinMessageResponse>()) {
-            applyMessageEvent(response->message());
-        }
-    });
+            const auto reply = it->inFlight;
+            if (!status.isOk()) {
+                if (!hasPendingSerial(m_pinMessageReplies, messageId)) {
+                    if (previous) {
+                        applyMessageEvent(*previous);
+                    }
+                    Q_EMIT messageActionFailed(status.message().isEmpty() ? i18nc("@info", "Unable to unpin the message") : status.message());
+                }
+            } else if (const auto response = reply->read<PinMessageResponse>()) {
+                applyMessageEvent(response->message());
+            }
+            finishSerial(m_pinMessageReplies, messageId);
+        });
+    };
+
+    enqueueSerial(m_pinMessageReplies, messageId, std::move(send));
 }
 
 void AppController::loadStarredMessages(const QString &chatId)
@@ -2477,38 +2495,78 @@ void AppController::requestSelectedChatPresence()
     });
 }
 
+void AppController::enqueueSerial(QHash<QString, SerialSlot> &slots, const QString &key,
+                                  std::function<void()> send)
+{
+    SerialSlot &slot = slots[key];
+    if (slot.inFlight) {
+        // A call is already in flight for this key: stash the latest intent,
+        // overwriting any earlier-queued one (intermediate states are stale).
+        slot.pending = std::move(send);
+        slot.hasPending = true;
+        return;
+    }
+    send();
+}
+
+void AppController::finishSerial(QHash<QString, SerialSlot> &slots, const QString &key)
+{
+    auto it = slots.find(key);
+    if (it == slots.end()) {
+        return;
+    }
+    it->inFlight.reset();
+    if (it->hasPending) {
+        auto pending = std::move(it->pending);
+        it->pending = nullptr;
+        it->hasPending = false;
+        pending();  // re-arms inFlight for this key
+        return;
+    }
+    slots.erase(it);
+}
+
+bool AppController::hasPendingSerial(const QHash<QString, SerialSlot> &slots, const QString &key) const
+{
+    auto it = slots.constFind(key);
+    return it != slots.constEnd() && it->hasPending;
+}
+
 void AppController::setChatPinned(const QString &chatId, bool pinned)
 {
     if (!m_chatClient || chatId.isEmpty()) {
         return;
     }
 
-    SetChatPinnedRequest request;
-    request.setChatId(chatId);
-    request.setPinned(pinned);
-
     // Optimistic: reflect the change now; revert if the daemon rejects it.
     const bool previousPinned = m_chatListModel->setChatPinnedLocal(chatId, pinned);
 
-    auto reply = m_chatClient->SetChatPinned(request);
-    auto *replyPtr = reply.get();
-    m_setChatPinnedReplies.insert(chatId, std::move(reply));
+    auto send = [this, chatId, pinned, previousPinned]() {
+        SetChatPinnedRequest request;
+        request.setChatId(chatId);
+        request.setPinned(pinned);
 
-    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, chatId, pinned, previousPinned](const QGrpcStatus &status) {
-        auto it = m_setChatPinnedReplies.find(chatId);
-        if (it == m_setChatPinnedReplies.end() || it.value().get() != replyPtr) {
-            return;
-        }
+        auto reply = m_chatClient->SetChatPinned(request);
+        auto *replyPtr = reply.get();
+        m_setChatPinnedReplies[chatId].inFlight = std::move(reply);
 
-        m_setChatPinnedReplies.erase(it);
-        if (!status.isOk()) {
-            m_chatListModel->setChatPinnedLocal(chatId, previousPinned);
-            m_bannerText = status.message().isEmpty()
-                ? (pinned ? i18nc("@info", "Unable to pin chat") : i18nc("@info", "Unable to unpin chat"))
-                : status.message();
-            emitStateChanged();
-        }
-    });
+        connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, chatId, pinned, previousPinned](const QGrpcStatus &status) {
+            auto it = m_setChatPinnedReplies.find(chatId);
+            if (it == m_setChatPinnedReplies.end() || it.value().inFlight.get() != replyPtr) {
+                return;
+            }
+            if (!status.isOk() && !hasPendingSerial(m_setChatPinnedReplies, chatId)) {
+                m_chatListModel->setChatPinnedLocal(chatId, previousPinned);
+                m_bannerText = status.message().isEmpty()
+                    ? (pinned ? i18nc("@info", "Unable to pin chat") : i18nc("@info", "Unable to unpin chat"))
+                    : status.message();
+                emitStateChanged();
+            }
+            finishSerial(m_setChatPinnedReplies, chatId);
+        });
+    };
+
+    enqueueSerial(m_setChatPinnedReplies, chatId, std::move(send));
 }
 
 void AppController::setChatArchived(const QString &chatId, bool archived)
@@ -2517,32 +2575,35 @@ void AppController::setChatArchived(const QString &chatId, bool archived)
         return;
     }
 
-    SetChatArchivedRequest request;
-    request.setChatId(chatId);
-    request.setArchived(archived);
-
     // Optimistic: reflect the change now; revert if the daemon rejects it.
     const bool previousArchived = m_chatListModel->setChatArchivedLocal(chatId, archived);
 
-    auto reply = m_chatClient->SetChatArchived(request);
-    auto *replyPtr = reply.get();
-    m_setChatArchivedReplies.insert(chatId, std::move(reply));
+    auto send = [this, chatId, archived, previousArchived]() {
+        SetChatArchivedRequest request;
+        request.setChatId(chatId);
+        request.setArchived(archived);
 
-    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, chatId, archived, previousArchived](const QGrpcStatus &status) {
-        auto it = m_setChatArchivedReplies.find(chatId);
-        if (it == m_setChatArchivedReplies.end() || it.value().get() != replyPtr) {
-            return;
-        }
+        auto reply = m_chatClient->SetChatArchived(request);
+        auto *replyPtr = reply.get();
+        m_setChatArchivedReplies[chatId].inFlight = std::move(reply);
 
-        m_setChatArchivedReplies.erase(it);
-        if (!status.isOk()) {
-            m_chatListModel->setChatArchivedLocal(chatId, previousArchived);
-            m_bannerText = status.message().isEmpty()
-                ? (archived ? i18nc("@info", "Unable to archive chat") : i18nc("@info", "Unable to unarchive chat"))
-                : status.message();
-            emitStateChanged();
-        }
-    });
+        connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, chatId, archived, previousArchived](const QGrpcStatus &status) {
+            auto it = m_setChatArchivedReplies.find(chatId);
+            if (it == m_setChatArchivedReplies.end() || it.value().inFlight.get() != replyPtr) {
+                return;
+            }
+            if (!status.isOk() && !hasPendingSerial(m_setChatArchivedReplies, chatId)) {
+                m_chatListModel->setChatArchivedLocal(chatId, previousArchived);
+                m_bannerText = status.message().isEmpty()
+                    ? (archived ? i18nc("@info", "Unable to archive chat") : i18nc("@info", "Unable to unarchive chat"))
+                    : status.message();
+                emitStateChanged();
+            }
+            finishSerial(m_setChatArchivedReplies, chatId);
+        });
+    };
+
+    enqueueSerial(m_setChatArchivedReplies, chatId, std::move(send));
 }
 
 void AppController::setChatMuted(const QString &chatId, bool muted, int durationSecs)
@@ -2551,34 +2612,37 @@ void AppController::setChatMuted(const QString &chatId, bool muted, int duration
         return;
     }
 
-    SetChatMutedRequest request;
-    request.setChatId(chatId);
-    request.setMuted(muted);
-    // 0 with muted=true means "forever"; ignored by the daemon when unmuting.
-    request.setMuteDurationSecs(muted ? durationSecs : 0);
-
     // Optimistic: reflect the change now; revert if the daemon rejects it.
     const bool previousMuted = m_chatListModel->setChatMutedLocal(chatId, muted);
 
-    auto reply = m_chatClient->SetChatMuted(request);
-    auto *replyPtr = reply.get();
-    m_setChatMutedReplies.insert(chatId, std::move(reply));
+    auto send = [this, chatId, muted, durationSecs, previousMuted]() {
+        SetChatMutedRequest request;
+        request.setChatId(chatId);
+        request.setMuted(muted);
+        // 0 with muted=true means "forever"; ignored by the daemon when unmuting.
+        request.setMuteDurationSecs(muted ? durationSecs : 0);
 
-    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, chatId, muted, previousMuted](const QGrpcStatus &status) {
-        auto it = m_setChatMutedReplies.find(chatId);
-        if (it == m_setChatMutedReplies.end() || it.value().get() != replyPtr) {
-            return;
-        }
+        auto reply = m_chatClient->SetChatMuted(request);
+        auto *replyPtr = reply.get();
+        m_setChatMutedReplies[chatId].inFlight = std::move(reply);
 
-        m_setChatMutedReplies.erase(it);
-        if (!status.isOk()) {
-            m_chatListModel->setChatMutedLocal(chatId, previousMuted);
-            m_bannerText = status.message().isEmpty()
-                ? (muted ? i18nc("@info", "Unable to mute chat") : i18nc("@info", "Unable to unmute chat"))
-                : status.message();
-            emitStateChanged();
-        }
-    });
+        connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, chatId, muted, previousMuted](const QGrpcStatus &status) {
+            auto it = m_setChatMutedReplies.find(chatId);
+            if (it == m_setChatMutedReplies.end() || it.value().inFlight.get() != replyPtr) {
+                return;
+            }
+            if (!status.isOk() && !hasPendingSerial(m_setChatMutedReplies, chatId)) {
+                m_chatListModel->setChatMutedLocal(chatId, previousMuted);
+                m_bannerText = status.message().isEmpty()
+                    ? (muted ? i18nc("@info", "Unable to mute chat") : i18nc("@info", "Unable to unmute chat"))
+                    : status.message();
+                emitStateChanged();
+            }
+            finishSerial(m_setChatMutedReplies, chatId);
+        });
+    };
+
+    enqueueSerial(m_setChatMutedReplies, chatId, std::move(send));
 }
 
 void AppController::setChatDraft(const QString &chatId, const QString &text)
