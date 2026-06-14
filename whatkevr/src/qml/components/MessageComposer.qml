@@ -29,13 +29,24 @@ Frame {
     property string editingOriginalText: ""
     readonly property bool editing: editingMessageId.length > 0
 
-    // Inline `:keyword` emoji suggestion state.
+    // Inline suggestion state, shared by the `:keyword` emoji bar and the `@`
+    // mention bar. suggestionMode selects which kind the current results are.
     property var suggestionResults: []
     property int suggestionIndex: 0
     property int suggestionStart: -1
+    property string suggestionMode: "emoji"
     readonly property bool suggestionsActive: suggestionBar.visible && root.suggestionResults.length > 0
 
-    signal sendTextRequested(string text, string replyToMessageId)
+    // @-mention authoring. Members are cached per chat and filtered in-memory;
+    // pendingMentions records the {jid, displayName} pairs inserted so submit can
+    // rewrite each "@DisplayName" run to the on-wire "@<userpart>" + JID list.
+    readonly property bool isGroupChat: Whatevr.AppController.selectedChatId.endsWith("@g.us")
+    property var mentionMembers: []
+    property string mentionMembersChatId: ""
+    property string mentionLoadingChatId: ""
+    property var pendingMentions: []
+
+    signal sendTextRequested(string text, string replyToMessageId, var mentionedJids)
     signal sendImageRequested(string fileUrl, string caption, string replyToMessageId)
     signal composingChanged(bool composing)
     signal clearReplyRequested()
@@ -88,10 +99,12 @@ Frame {
             root.editRequested(root.editingMessageId, text)
             root.editConsumed()
         } else {
-            root.sendTextRequested(text, root.replyToMessageId)
+            const payload = root.buildSendPayload(text)
+            root.sendTextRequested(payload.text, root.replyToMessageId, payload.jids)
             root.replyConsumed()
         }
         input.clear()
+        root.pendingMentions = []
         root.hideSuggestions()
         emojiPicker.close()
     }
@@ -114,6 +127,7 @@ Frame {
         input.text = text || ""
         input.cursorPosition = input.length
         root.restoringText = false
+        root.pendingMentions = []
         root.hideSuggestions()
         root.setComposing(false)
     }
@@ -182,6 +196,137 @@ Frame {
         root.suggestionResults = []
         root.suggestionIndex = 0
         root.suggestionStart = -1
+        root.suggestionMode = "emoji"
+    }
+
+    // Unified suggestion entry point: an open `@` token (groups only) takes the
+    // mention bar, otherwise the `:keyword` emoji bar applies.
+    function updateSuggestions() {
+        if (!root.enabledForChat) {
+            root.hideSuggestions()
+            return
+        }
+        if (root.isGroupChat) {
+            const mentionMatch = root.activeMentionQuery()
+            if (mentionMatch) {
+                root.updateMentionSuggestions(mentionMatch)
+                return
+            }
+        }
+        root.updateEmojiSuggestions()
+    }
+
+    // Returns { start, query } for an open `@mention` token before the cursor:
+    // an '@' at line start or after whitespace, with no '@'/newline after it and
+    // not starting with whitespace. Returns null otherwise.
+    function activeMentionQuery() {
+        const pos = input.cursorPosition
+        const before = input.getText(0, pos)
+        const at = before.lastIndexOf("@")
+        if (at < 0) {
+            return null
+        }
+        if (at > 0 && !/\s/.test(before.charAt(at - 1))) {
+            return null
+        }
+        const token = before.substring(at + 1)
+        if (token.indexOf("@") >= 0 || token.indexOf("\n") >= 0 || /^\s/.test(token)) {
+            return null
+        }
+        return { start: at, query: token }
+    }
+
+    // Fetch the current group's members for the @-picker when the cache is stale.
+    // openGroupInfo is async; groupInfoReceived (below) repopulates and re-runs.
+    function ensureMentionMembers() {
+        const chatId = Whatevr.AppController.selectedChatId
+        if (root.mentionMembersChatId === chatId || root.mentionLoadingChatId === chatId) {
+            return
+        }
+        root.mentionLoadingChatId = chatId
+        Whatevr.AppController.openGroupInfo(chatId)
+    }
+
+    function mentionCandidates(query) {
+        const q = query.trim().toLowerCase()
+        const results = []
+        // "Everyone" (@all) leads the list when its tokens match the query.
+        if (q.length === 0 || "everyone".indexOf(q) === 0 || "all".indexOf(q) === 0) {
+            results.push({ jid: "", displayName: "all", label: "Everyone", avatar: "", isAll: true })
+        }
+        for (const member of root.mentionMembers) {
+            const name = member.displayName || member.phoneNumber || member.jid
+            if (q.length === 0 || name.toLowerCase().indexOf(q) >= 0) {
+                results.push({ jid: member.jid, displayName: name, label: name,
+                               avatar: member.avatarLocalPath || "", isAll: false })
+            }
+            if (results.length >= 40) {
+                break
+            }
+        }
+        return results
+    }
+
+    function updateMentionSuggestions(match) {
+        root.ensureMentionMembers()
+        const results = root.mentionCandidates(match.query)
+        if (results.length === 0) {
+            root.hideSuggestions()
+            return
+        }
+        root.suggestionMode = "mention"
+        root.suggestionStart = match.start
+        root.suggestionResults = results
+        root.suggestionIndex = 0
+        suggestionBar.visible = true
+        suggestionList.positionViewAtBeginning()
+    }
+
+    function acceptMention(index) {
+        const item = root.suggestionResults[index]
+        if (!item || root.suggestionStart < 0) {
+            root.hideSuggestions()
+            return
+        }
+        const start = root.suggestionStart
+        const end = input.cursorPosition
+        const inserted = "@" + item.displayName + " "
+        input.remove(start, end)
+        input.insert(start, inserted)
+        const updated = root.pendingMentions.slice()
+        updated.push({ jid: item.jid, displayName: item.displayName, isAll: item.isAll === true })
+        root.pendingMentions = updated
+        root.hideSuggestions()
+    }
+
+    // Rewrite the plain composer text into the on-wire form: each recorded
+    // "@DisplayName" run becomes "@<userpart>" with its JID collected; @all keeps
+    // its literal token but expands to every member JID. Recorded mentions whose
+    // literal no longer appears (the user edited them) are dropped — never stale.
+    function buildSendPayload(plainText) {
+        let outText = plainText
+        const jids = []
+        for (const mention of root.pendingMentions) {
+            const token = "@" + mention.displayName
+            const idx = outText.indexOf(token)
+            if (idx < 0) {
+                continue
+            }
+            if (mention.isAll) {
+                for (const member of root.mentionMembers) {
+                    if (member.jid && jids.indexOf(member.jid) < 0) {
+                        jids.push(member.jid)
+                    }
+                }
+                continue
+            }
+            const userpart = mention.jid.split("@")[0]
+            outText = outText.substring(0, idx) + "@" + userpart + outText.substring(idx + token.length)
+            if (jids.indexOf(mention.jid) < 0) {
+                jids.push(mention.jid)
+            }
+        }
+        return { text: outText, jids: jids }
     }
 
     function cycleSuggestion(delta) {
@@ -194,6 +339,10 @@ Frame {
     }
 
     function acceptSuggestion(index) {
+        if (root.suggestionMode === "mention") {
+            root.acceptMention(index)
+            return
+        }
         const item = root.suggestionResults[index]
         if (!item || root.suggestionStart < 0) {
             root.hideSuggestions()
@@ -397,9 +546,13 @@ Frame {
 
                             required property int index
                             required property var modelData
+                            readonly property bool isMention: root.suggestionMode === "mention"
 
                             height: suggestionList.height
-                            width: height
+                            width: isMention
+                                   ? Math.min(mentionContent.implicitWidth + Kirigami.Units.smallSpacing * 2,
+                                              suggestionList.width)
+                                   : height
 
                             Rectangle {
                                 anchors.fill: parent
@@ -413,13 +566,39 @@ Frame {
                             }
 
                             Text {
+                                visible: !suggestionCell.isMention
                                 anchors.centerIn: parent
-                                text: suggestionCell.modelData.emoji
+                                text: suggestionCell.modelData.emoji || ""
                                 font.family: Whatevr.AppController.emojiModel.emojiFontFamily
                                 font.pixelSize: Math.round(suggestionCell.height * 0.55)
                                 renderType: Text.QtRendering
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter
+                            }
+
+                            RowLayout {
+                                id: mentionContent
+
+                                visible: suggestionCell.isMention
+                                anchors.fill: parent
+                                anchors.leftMargin: Kirigami.Units.smallSpacing
+                                anchors.rightMargin: Kirigami.Units.smallSpacing
+                                spacing: Kirigami.Units.smallSpacing / 2
+
+                                AvatarImage {
+                                    visible: suggestionCell.modelData.isAll !== true
+                                    Layout.preferredWidth: Math.round(suggestionList.height * 0.74)
+                                    Layout.preferredHeight: Math.round(suggestionList.height * 0.74)
+                                    avatarLocalPath: suggestionCell.modelData.avatar || ""
+                                    initials: (suggestionCell.modelData.label || "?").charAt(0).toUpperCase()
+                                }
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: suggestionCell.modelData.label || ""
+                                    elide: Text.ElideRight
+                                    verticalAlignment: Text.AlignVCenter
+                                }
                             }
 
                             TapHandler {
@@ -497,9 +676,9 @@ Frame {
                             return
                         }
                         root.noteDraftActivity()
-                        root.updateEmojiSuggestions()
+                        root.updateSuggestions()
                     }
-                    onCursorPositionChanged: root.updateEmojiSuggestions()
+                    onCursorPositionChanged: root.updateSuggestions()
 
                     Keys.onReturnPressed: event => {
                         if (root.suggestionsActive) {
@@ -590,6 +769,34 @@ Frame {
                 emojiPicker.close()
                 root.forceInputFocus()
             }
+        }
+    }
+
+    // Caches group members for the @-mention picker. Fired by ensureMentionMembers()
+    // and also whenever the shared group-info dialog refreshes; we keep only the
+    // currently selected chat's roster and re-run the open picker against it.
+    Connections {
+        target: Whatevr.AppController
+
+        function onGroupInfoReceived(info) {
+            if (info.chatId !== Whatevr.AppController.selectedChatId) {
+                return
+            }
+            root.mentionMembers = info.members || []
+            root.mentionMembersChatId = info.chatId
+            if (root.mentionLoadingChatId === info.chatId) {
+                root.mentionLoadingChatId = ""
+            }
+            if (root.isGroupChat && input.activeFocus) {
+                root.updateSuggestions()
+            }
+        }
+
+        function onSelectionChanged() {
+            root.mentionMembers = []
+            root.mentionMembersChatId = ""
+            root.mentionLoadingChatId = ""
+            root.pendingMentions = []
         }
     }
 

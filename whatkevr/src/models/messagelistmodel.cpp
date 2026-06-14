@@ -745,7 +745,7 @@ QVariantMap MessageListModel::messageSnapshot(const QString &messageId) const
     bool hasMarkup = message.hasRichText;
     QString fullRichText = message.richText;
     if (message.textTruncated && !message.fullMarkupParsed) {
-        const auto markup = parseWhatsAppMessageMarkup(message.text);
+        const auto markup = parseWhatsAppMessageMarkup(message.text, message.mentions, message.isGroupChat);
         hasMarkup = markup.hasRichText;
         fullRichText = markup.richText;
     }
@@ -1053,7 +1053,7 @@ bool MessageListModel::expandMessageText(const QString &messageId)
         return true;
     }
 
-    const auto markup = parseWhatsAppMessageMarkup(message.text);
+    const auto markup = parseWhatsAppMessageMarkup(message.text, message.mentions, message.isGroupChat);
     message.layoutText = markup.layoutText;
     message.emojiOnlyCount = markup.emojiOnlyCount;
     message.hasRichText = markup.hasRichText;
@@ -1141,6 +1141,14 @@ MessageListModel::MessageItem MessageListModel::fromProto(const whatevr::v1::Mes
             {QStringLiteral("fromMe"), reaction.fromMe()},
         });
     }
+    // Group chats carry the "@g.us" server suffix; the parser uses this to gate
+    // the literal @all / @everyone mention tokens.
+    item.isGroupChat = item.chatId.endsWith(QStringLiteral("@g.us"));
+    const auto &mentions = message.mentions();
+    item.mentions.reserve(static_cast<int>(mentions.size()));
+    for (const auto &mention : mentions) {
+        item.mentions.append(whatevr::util::MessageMention {mention.jid(), mention.displayName()});
+    }
     // Revoked rows arrive with cleared content; substitute the tombstone here
     // so layout measurement, previews and copy all see the displayed string.
     if (item.isRevoked) {
@@ -1164,7 +1172,7 @@ void MessageListModel::ensurePreviewParsed(const MessageItem &item)
 
     const QString previewText = collapsedMessageText(item.text);
     const bool truncated = previewText != item.text;
-    const auto previewMarkup = parseWhatsAppMessageMarkup(previewText);
+    const auto previewMarkup = parseWhatsAppMessageMarkup(previewText, item.mentions, item.isGroupChat);
     item.textPreview = previewText;
     item.layoutTextPreview = previewMarkup.layoutText;
     item.previewHasRichText = previewMarkup.hasRichText;

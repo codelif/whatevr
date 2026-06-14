@@ -447,6 +447,9 @@ func (db *DB) ensureMessageRevokedColumn(ctx context.Context) error {
 		{"is_starred", `ALTER TABLE messages ADD COLUMN is_starred INTEGER NOT NULL DEFAULT 0`},
 		{"pinned_at", `ALTER TABLE messages ADD COLUMN pinned_at INTEGER NOT NULL DEFAULT 0`},
 		{"pinned_until", `ALTER TABLE messages ADD COLUMN pinned_until INTEGER NOT NULL DEFAULT 0`},
+		// Newline-joined full JIDs of @-mentioned participants (see
+		// encodeMentionedJIDs). Empty for the vast majority of messages.
+		{"mentioned_jids", `ALTER TABLE messages ADD COLUMN mentioned_jids TEXT NOT NULL DEFAULT ''`},
 	}
 	for _, a := range alterations {
 		if existing[a.col] {

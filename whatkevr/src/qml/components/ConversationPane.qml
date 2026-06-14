@@ -603,6 +603,8 @@ Kirigami.Page {
                 onTypeIntoComposerRequested: text => root.typeIntoComposer(text)
                 onReplyToMessageRequested: (messageId, senderName, text, mediaKind, mediaMimeType, outgoing) => root.setReplyTarget(messageId, senderName, text, mediaKind, mediaMimeType, outgoing)
                 onEditMessageRequested: (messageId, text) => root.setEditTarget(messageId, text)
+                onMentionClicked: jid => contactInfoDialog.openFor({ isGroup: false, targetJid: jid })
+                onMentionAllClicked: root.openChatInfo()
             }
 
             BusyIndicator {
@@ -658,7 +660,7 @@ Kirigami.Page {
             replyToOutgoing: root.replyToOutgoing
             editingMessageId: root.editingMessageId
             editingOriginalText: root.editingOriginalText
-            onSendTextRequested: (text, replyToMessageId) => Whatevr.AppController.sendText(text, replyToMessageId)
+            onSendTextRequested: (text, replyToMessageId, mentionedJids) => Whatevr.AppController.sendText(text, replyToMessageId, mentionedJids)
             onSendImageRequested: (fileUrl, caption, replyToMessageId) => Whatevr.AppController.sendImage(fileUrl, caption, replyToMessageId)
             onComposingChanged: composing => Whatevr.AppController.setSelectedChatComposing(composing)
             onClearReplyRequested: root.clearReplyTarget()

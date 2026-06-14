@@ -22,6 +22,67 @@ const (
 	StatusSent      = "sent"
 )
 
+// MessageMention is one @-mention: the mentioned participant's JID plus the
+// display name resolved when the message was ingested. The display name may be
+// empty when the participant was unknown at ingest; the renderer then falls
+// back to the JID's user-part, exactly as WhatsApp shows an unknown number.
+type MessageMention struct {
+	JID         string
+	DisplayName string
+}
+
+// Field/record separators for the messages.mentioned_jids column. These ASCII
+// control chars never appear in JIDs or display names, so the pairs round-trip
+// without a JSON dependency. Empty in/empty out is the common (no-mention) case.
+const (
+	mentionFieldSep  = "\x1f"
+	mentionRecordSep = "\x1e"
+)
+
+func encodeMentions(mentions []MessageMention) string {
+	if len(mentions) == 0 {
+		return ""
+	}
+	records := make([]string, 0, len(mentions))
+	for _, mention := range mentions {
+		jid := strings.TrimSpace(mention.JID)
+		if jid == "" {
+			continue
+		}
+		records = append(records, jid+mentionFieldSep+mention.DisplayName)
+	}
+	return strings.Join(records, mentionRecordSep)
+}
+
+func decodeMentions(raw string) []MessageMention {
+	if raw == "" {
+		return nil
+	}
+	records := strings.Split(raw, mentionRecordSep)
+	mentions := make([]MessageMention, 0, len(records))
+	for _, record := range records {
+		jid, name, _ := strings.Cut(record, mentionFieldSep)
+		if jid == "" {
+			continue
+		}
+		mentions = append(mentions, MessageMention{JID: jid, DisplayName: name})
+	}
+	return mentions
+}
+
+// MentionJIDs pulls just the JIDs out of a mention list, in order. The send
+// path uses these to populate ContextInfo.MentionedJID on the wire.
+func MentionJIDs(mentions []MessageMention) []string {
+	if len(mentions) == 0 {
+		return nil
+	}
+	jids := make([]string, 0, len(mentions))
+	for _, mention := range mentions {
+		jids = append(jids, mention.JID)
+	}
+	return jids
+}
+
 type Message struct {
 	ID                      string
 	ChatID                  string
@@ -54,6 +115,9 @@ type Message struct {
 	NextSendAttempt         int64
 	ReplyTo                 MessageReply
 	Reactions               []Reaction
+	// @-mentioned participants with names resolved at ingest. Empty for the
+	// vast majority of messages.
+	Mentions []MessageMention
 }
 
 type MessageReply struct {
@@ -102,6 +166,7 @@ type TextMessageInput struct {
 	CountUnread    bool
 	IsForwarded    bool
 	ReplyTo        MessageReply
+	Mentions       []MessageMention
 }
 
 type SavedTextMessage struct {
@@ -174,10 +239,10 @@ func saveTextMessageTx(ctx context.Context, tx *sql.Tx, input TextMessageInput) 
 	}
 
 	result, err := tx.ExecContext(ctx, `
-		INSERT INTO messages (id, chat_id, sender_id, text, timestamp, direction, is_read, status, is_forwarded, reply_to_message_id, reply_to_sender_id, reply_to_sender_name, reply_to_text, reply_to_media_kind, reply_to_media_mime_type, reply_to_direction)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO messages (id, chat_id, sender_id, text, timestamp, direction, is_read, status, is_forwarded, mentioned_jids, reply_to_message_id, reply_to_sender_id, reply_to_sender_name, reply_to_text, reply_to_media_kind, reply_to_media_mime_type, reply_to_direction)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO NOTHING
-	`, input.ID, input.ChatID, input.SenderID, input.Text, input.Timestamp.Unix(), input.Direction, boolToInt(!input.CountUnread), input.Status, boolToInt(input.IsForwarded),
+	`, input.ID, input.ChatID, input.SenderID, input.Text, input.Timestamp.Unix(), input.Direction, boolToInt(!input.CountUnread), input.Status, boolToInt(input.IsForwarded), encodeMentions(input.Mentions),
 		input.ReplyTo.MessageID, input.ReplyTo.SenderID, input.ReplyTo.SenderName, input.ReplyTo.Text, input.ReplyTo.MediaKind, input.ReplyTo.MediaMimeType, input.ReplyTo.Direction)
 	if err != nil {
 		return SavedTextMessage{}, err
@@ -332,11 +397,11 @@ func saveMediaMessageTx(ctx context.Context, tx *sql.Tx, input MediaMessageInput
 	}
 
 	result, err := tx.ExecContext(ctx, `
-		INSERT INTO messages (id, chat_id, sender_id, text, timestamp, direction, is_read, status, is_forwarded, media_kind, media_mime_type, media_local_path, media_thumbnail_local_path, media_width, media_height, media_animated, media_payload, media_cache_key, reply_to_message_id, reply_to_sender_id, reply_to_sender_name, reply_to_text, reply_to_media_kind, reply_to_media_mime_type, reply_to_direction)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO messages (id, chat_id, sender_id, text, timestamp, direction, is_read, status, is_forwarded, mentioned_jids, media_kind, media_mime_type, media_local_path, media_thumbnail_local_path, media_width, media_height, media_animated, media_payload, media_cache_key, reply_to_message_id, reply_to_sender_id, reply_to_sender_name, reply_to_text, reply_to_media_kind, reply_to_media_mime_type, reply_to_direction)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO NOTHING
 	`, input.ID, input.ChatID, input.SenderID, input.Text, input.Timestamp.Unix(), input.Direction,
-		boolToInt(!input.CountUnread), input.Status, boolToInt(input.IsForwarded), input.MediaKind, input.MediaMimeType, input.MediaLocalPath, input.MediaThumbnailLocalPath, input.MediaWidth, input.MediaHeight, boolToInt(input.MediaAnimated), input.MediaPayload, input.MediaCacheKey,
+		boolToInt(!input.CountUnread), input.Status, boolToInt(input.IsForwarded), encodeMentions(input.Mentions), input.MediaKind, input.MediaMimeType, input.MediaLocalPath, input.MediaThumbnailLocalPath, input.MediaWidth, input.MediaHeight, boolToInt(input.MediaAnimated), input.MediaPayload, input.MediaCacheKey,
 		input.ReplyTo.MessageID, input.ReplyTo.SenderID, input.ReplyTo.SenderName, input.ReplyTo.Text, input.ReplyTo.MediaKind, input.ReplyTo.MediaMimeType, input.ReplyTo.Direction)
 	if err != nil {
 		return SavedTextMessage{}, err
@@ -607,7 +672,7 @@ const messageSelectPrefix = `
 	       COALESCE(NULLIF(sa.local_path, ''), NULLIF(ca.local_path, ''), NULLIF(s.avatar_local_path, ''), NULLIF(c.avatar_local_path, ''), ''),
 	       m.text, m.timestamp, m.rowid, m.direction, m.is_read, m.status, m.media_kind, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_animated,
 	       m.reply_to_message_id, m.reply_to_sender_id, m.reply_to_sender_name, m.reply_to_text, m.reply_to_media_kind, m.reply_to_media_mime_type, m.reply_to_direction,
-	       m.send_attempts, m.last_send_error, m.next_send_attempt, m.is_revoked, m.is_edited, m.is_starred, m.pinned_at, m.pinned_until
+	       m.send_attempts, m.last_send_error, m.next_send_attempt, m.is_revoked, m.is_edited, m.is_starred, m.pinned_at, m.pinned_until, m.mentioned_jids
 	FROM messages m
 	LEFT JOIN senders s ON s.id = m.sender_id
 	LEFT JOIN chats c ON c.id = m.sender_id
@@ -627,7 +692,7 @@ func (db *DB) ListMessages(ctx context.Context, chatID string, limit int, before
 		       COALESCE(NULLIF(sa.local_path, ''), NULLIF(ca.local_path, ''), NULLIF(s.avatar_local_path, ''), NULLIF(c.avatar_local_path, ''), ''),
 		       m.text, m.timestamp, m.rowid, m.direction, m.is_read, m.status, m.media_kind, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_animated,
 		       m.reply_to_message_id, m.reply_to_sender_id, m.reply_to_sender_name, m.reply_to_text, m.reply_to_media_kind, m.reply_to_media_mime_type, m.reply_to_direction,
-		       m.send_attempts, m.last_send_error, m.next_send_attempt, m.is_revoked, m.is_edited, m.is_starred, m.pinned_at, m.pinned_until
+		       m.send_attempts, m.last_send_error, m.next_send_attempt, m.is_revoked, m.is_edited, m.is_starred, m.pinned_at, m.pinned_until, m.mentioned_jids
 		FROM messages m
 		LEFT JOIN senders s ON s.id = m.sender_id
 		LEFT JOIN chats c ON c.id = m.sender_id
@@ -736,7 +801,7 @@ func (db *DB) listMessagesAroundSide(ctx context.Context, chatID string, timesta
 		       COALESCE(NULLIF(sa.local_path, ''), NULLIF(ca.local_path, ''), NULLIF(s.avatar_local_path, ''), NULLIF(c.avatar_local_path, ''), ''),
 		       m.text, m.timestamp, m.rowid, m.direction, m.is_read, m.status, m.media_kind, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_animated,
 		       m.reply_to_message_id, m.reply_to_sender_id, m.reply_to_sender_name, m.reply_to_text, m.reply_to_media_kind, m.reply_to_media_mime_type, m.reply_to_direction,
-		       m.send_attempts, m.last_send_error, m.next_send_attempt, m.is_revoked, m.is_edited, m.is_starred, m.pinned_at, m.pinned_until
+		       m.send_attempts, m.last_send_error, m.next_send_attempt, m.is_revoked, m.is_edited, m.is_starred, m.pinned_at, m.pinned_until, m.mentioned_jids
 		FROM messages m
 		LEFT JOIN senders s ON s.id = m.sender_id
 		LEFT JOIN chats c ON c.id = m.sender_id
@@ -792,7 +857,7 @@ func (db *DB) ListPendingOutgoingMessages(ctx context.Context, limit int, now ti
 	rows, err := db.reader().QueryContext(ctx, `
 		SELECT id, chat_id, sender_id, text, timestamp, direction, is_read, status, media_kind, media_mime_type, media_local_path, media_thumbnail_local_path, media_width, media_height, media_animated, media_payload, media_cache_key,
 		       reply_to_message_id, reply_to_sender_id, reply_to_sender_name, reply_to_text, reply_to_media_kind, reply_to_media_mime_type, reply_to_direction,
-		       send_attempts, last_send_error, next_send_attempt, is_forwarded
+		       send_attempts, last_send_error, next_send_attempt, is_forwarded, mentioned_jids
 		FROM messages
 		WHERE direction = ? AND status = ? AND next_send_attempt <= ?
 		ORDER BY timestamp ASC, rowid ASC
@@ -806,6 +871,7 @@ func (db *DB) ListPendingOutgoingMessages(ctx context.Context, limit int, now ti
 	messages := make([]Message, 0, limit)
 	for rows.Next() {
 		var message Message
+		var mentionedRaw string
 		if err := rows.Scan(
 			&message.ID,
 			&message.ChatID,
@@ -835,9 +901,11 @@ func (db *DB) ListPendingOutgoingMessages(ctx context.Context, limit int, now ti
 			&message.LastSendError,
 			&message.NextSendAttempt,
 			&message.IsForwarded,
+			&mentionedRaw,
 		); err != nil {
 			return nil, err
 		}
+		message.Mentions = decodeMentions(mentionedRaw)
 		messages = append(messages, message)
 	}
 
@@ -995,7 +1063,11 @@ func (db *DB) MarkMessageRevoked(ctx context.Context, id string) (Message, Chat,
 // and chat plus whether anything changed. A revoked message cannot be edited,
 // and re-applying the same text on an already-edited message is a no-op; both
 // cases return changed=false.
-func (db *DB) UpdateMessageText(ctx context.Context, id, newText string) (Message, Chat, bool, error) {
+// UpdateMessageText replaces a message's body in place (an edit). A nil
+// mentions leaves the stored mentions untouched (used by our own edits, which
+// don't re-author mentions); a non-nil slice — including empty — replaces them,
+// so an incoming edit that dropped its @-mentions clears the column.
+func (db *DB) UpdateMessageText(ctx context.Context, id, newText string, mentions []MessageMention) (Message, Chat, bool, error) {
 	tx, err := db.conn.BeginTx(ctx, nil)
 	if err != nil {
 		return Message{}, Chat{}, false, err
@@ -1014,12 +1086,23 @@ func (db *DB) UpdateMessageText(ctx context.Context, id, newText string) (Messag
 		return message, chat, false, nil
 	}
 
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE messages
-		SET text = ?,
-			is_edited = 1
-		WHERE id = ?
-	`, newText, id); err != nil {
+	if mentions == nil {
+		_, err = tx.ExecContext(ctx, `
+			UPDATE messages
+			SET text = ?,
+				is_edited = 1
+			WHERE id = ?
+		`, newText, id)
+	} else {
+		_, err = tx.ExecContext(ctx, `
+			UPDATE messages
+			SET text = ?,
+				is_edited = 1,
+				mentioned_jids = ?
+			WHERE id = ?
+		`, newText, encodeMentions(mentions), id)
+	}
+	if err != nil {
 		return Message{}, Chat{}, false, err
 	}
 
@@ -1594,13 +1677,14 @@ func getChatRow(ctx context.Context, queryer interface {
 func getMessageRow(ctx context.Context, queryer interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }, id string, message *Message) error {
-	return queryer.QueryRowContext(ctx, `
+	var mentionedRaw string
+	err := queryer.QueryRowContext(ctx, `
 		SELECT m.id, m.chat_id, m.sender_id,
 		       COALESCE(NULLIF(s.name, ''), NULLIF(c.name, ''), ''),
 		       COALESCE(NULLIF(sa.local_path, ''), NULLIF(ca.local_path, ''), NULLIF(s.avatar_local_path, ''), NULLIF(c.avatar_local_path, ''), ''),
 		       m.text, m.timestamp, m.rowid, m.direction, m.is_read, m.status, m.media_kind, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_animated, m.media_payload, m.media_cache_key,
 		       m.reply_to_message_id, m.reply_to_sender_id, m.reply_to_sender_name, m.reply_to_text, m.reply_to_media_kind, m.reply_to_media_mime_type, m.reply_to_direction,
-		       m.send_attempts, m.last_send_error, m.next_send_attempt, m.is_revoked, m.is_edited, m.is_starred, m.pinned_at, m.pinned_until
+		       m.send_attempts, m.last_send_error, m.next_send_attempt, m.is_revoked, m.is_edited, m.is_starred, m.pinned_at, m.pinned_until, m.mentioned_jids
 		FROM messages m
 		LEFT JOIN senders s ON s.id = m.sender_id
 		LEFT JOIN chats c ON c.id = m.sender_id
@@ -1643,7 +1727,10 @@ func getMessageRow(ctx context.Context, queryer interface {
 		&message.IsStarred,
 		&message.PinnedAt,
 		&message.PinnedUntil,
+		&mentionedRaw,
 	)
+	message.Mentions = decodeMentions(mentionedRaw)
+	return err
 }
 
 // SenderDisplay returns the stored display name and avatar path for a sender
@@ -1715,6 +1802,7 @@ func scanMessageRows(rows *sql.Rows, capacity int) ([]Message, error) {
 	messages := make([]Message, 0, capacity)
 	for rows.Next() {
 		var message Message
+		var mentionedRaw string
 		if err := rows.Scan(
 			&message.ID,
 			&message.ChatID,
@@ -1749,9 +1837,11 @@ func scanMessageRows(rows *sql.Rows, capacity int) ([]Message, error) {
 			&message.IsStarred,
 			&message.PinnedAt,
 			&message.PinnedUntil,
+			&mentionedRaw,
 		); err != nil {
 			return nil, err
 		}
+		message.Mentions = decodeMentions(mentionedRaw)
 		messages = append(messages, message)
 	}
 	if err := rows.Err(); err != nil {

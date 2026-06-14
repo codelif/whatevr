@@ -128,7 +128,7 @@ func TestUpdateMessageTextEditsBodyAndUpdatesSummary(t *testing.T) {
 	saveOutgoingGroupMessage(t, db, ctx, "msg-1")
 	const messageID = "group@g.us:msg-1"
 
-	message, chat, changed, err := db.UpdateMessageText(ctx, messageID, "edited hello")
+	message, chat, changed, err := db.UpdateMessageText(ctx, messageID, "edited hello", nil)
 	if err != nil {
 		t.Fatalf("update text: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestUpdateMessageTextEditsBodyAndUpdatesSummary(t *testing.T) {
 	}
 
 	// Idempotent when the text is unchanged.
-	_, _, changedAgain, err := db.UpdateMessageText(ctx, messageID, "edited hello")
+	_, _, changedAgain, err := db.UpdateMessageText(ctx, messageID, "edited hello", nil)
 	if err != nil {
 		t.Fatalf("repeat edit: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestUpdateMessageTextEditsBodyAndUpdatesSummary(t *testing.T) {
 	}
 
 	// A second distinct edit still applies.
-	updated, _, changed, err := db.UpdateMessageText(ctx, messageID, "edited again")
+	updated, _, changed, err := db.UpdateMessageText(ctx, messageID, "edited again", nil)
 	if err != nil {
 		t.Fatalf("second edit: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestUpdateMessageTextRefusesRevokedMessage(t *testing.T) {
 		t.Fatalf("mark revoked: %v", err)
 	}
 
-	message, _, changed, err := db.UpdateMessageText(ctx, messageID, "too late")
+	message, _, changed, err := db.UpdateMessageText(ctx, messageID, "too late", nil)
 	if err != nil {
 		t.Fatalf("update text on revoked: %v", err)
 	}

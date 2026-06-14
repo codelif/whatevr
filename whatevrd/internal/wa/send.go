@@ -41,7 +41,7 @@ type readBatch struct {
 	messageIDs []types.MessageID
 }
 
-func (c *Client) SendText(ctx context.Context, chatID, text, replyToMessageID string) (appstore.SavedTextMessage, error) {
+func (c *Client) SendText(ctx context.Context, chatID, text, replyToMessageID string, mentionedJIDs []string) (appstore.SavedTextMessage, error) {
 	rpcArrival := time.Now()
 	client := c.currentClient()
 	if client == nil {
@@ -80,6 +80,7 @@ func (c *Client) SendText(ctx context.Context, chatID, text, replyToMessageID st
 		IsGroup:     targetJID.Server == types.GroupServer || targetJID.Server == types.BroadcastServer,
 		CountUnread: false,
 		ReplyTo:     replyTo,
+		Mentions:    c.resolveMentions(ctx, mentionedJIDs),
 	})
 	if err != nil {
 		return appstore.SavedTextMessage{}, err
@@ -683,6 +684,12 @@ func (c *Client) outgoingContextInfo(ctx context.Context, client *whatsmeow.Clie
 		}
 		contextInfo.IsForwarded = proto.Bool(true)
 		contextInfo.ForwardingScore = proto.Uint32(1)
+	}
+	if mentionedJIDs := appstore.MentionJIDs(message.Mentions); len(mentionedJIDs) > 0 {
+		if contextInfo == nil {
+			contextInfo = &waE2E.ContextInfo{}
+		}
+		contextInfo.MentionedJID = mentionedJIDs
 	}
 	return contextInfo
 }

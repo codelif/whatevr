@@ -13,11 +13,13 @@ import (
 )
 
 type fakeSendController struct {
-	text string
+	text          string
+	mentionedJIDs []string
 }
 
-func (f *fakeSendController) SendText(_ context.Context, chatID, text, _ string) (appstore.SavedTextMessage, error) {
+func (f *fakeSendController) SendText(_ context.Context, chatID, text, _ string, mentionedJIDs []string) (appstore.SavedTextMessage, error) {
 	f.text = text
+	f.mentionedJIDs = mentionedJIDs
 	return appstore.SavedTextMessage{
 		Message: appstore.Message{
 			ID:        chatID + ":message-id",

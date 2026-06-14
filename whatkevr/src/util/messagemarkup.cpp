@@ -2,6 +2,7 @@
 
 #include <QFont>
 #include <QGuiApplication>
+#include <QHash>
 #include <QScreen>
 #include <QTextBoundaryFinder>
 #include <QVector>
@@ -204,6 +205,13 @@ struct HtmlBuildContext {
     bool hasFormatting = false;
     bool hasEmoji = false;
     QString emojiSpanOpen;
+    // Mention linkification. checkMentions gates the whole `@` code path so
+    // plain/non-group messages pay nothing. mentionsByUserpart maps a JID's
+    // user-part to its resolved mention; isGroup additionally enables the
+    // literal @all / @everyone tokens.
+    bool checkMentions = false;
+    bool isGroup = false;
+    const QHash<QString, const MessageMention *> *mentionsByUserpart = nullptr;
 };
 
 struct UrlMatch {
@@ -552,6 +560,57 @@ void appendDelimited(const QString &text, int open, int close, QChar marker, QSt
     }
 }
 
+// Try to linkify an @-mention starting at text[i] ('@'). Returns the index just
+// past the mention on a hit, or -1 when text[i] is not a recognised mention.
+// The token after '@' is the JID user-part (digits for phone/LID) or, in a
+// group, the literal "all"/"everyone".
+int tryAppendMention(const QString &text, int i, int end, QString &html, QString &layoutText, HtmlBuildContext &context)
+{
+    if (!context.checkMentions || text.at(i) != QLatin1Char('@')) {
+        return -1;
+    }
+
+    const int tokenStart = i + 1;
+    int tokenEnd = tokenStart;
+    while (tokenEnd < end && text.at(tokenEnd).isLetterOrNumber()) {
+        ++tokenEnd;
+    }
+    if (tokenEnd == tokenStart) {
+        return -1;
+    }
+    const QString token = text.mid(tokenStart, tokenEnd - tokenStart);
+
+    QString href;
+    QString display;
+    if (context.isGroup) {
+        const QString lower = token.toLower();
+        if (lower == QLatin1String("all") || lower == QLatin1String("everyone")) {
+            href = QStringLiteral("wamention-all:");
+            display = QLatin1Char('@') + token;
+        }
+    }
+    if (href.isEmpty() && context.mentionsByUserpart != nullptr) {
+        const auto it = context.mentionsByUserpart->constFind(token);
+        if (it != context.mentionsByUserpart->constEnd()) {
+            const MessageMention *mention = it.value();
+            href = QStringLiteral("wamention:") + mention->jid;
+            display = QLatin1Char('@') + (mention->displayName.isEmpty() ? token : mention->displayName);
+        }
+    }
+    if (href.isEmpty()) {
+        return -1;
+    }
+
+    context.hasFormatting = true;
+    html += QStringLiteral("<a href=\"");
+    html += escapedHtmlAttribute(href);
+    html += QStringLiteral("\">");
+    appendEscapedWithEmoji(display, 0, display.size(), html, context);
+    html += QStringLiteral("</a>");
+    layoutText += display;
+    return tokenEnd;
+}
+
 void appendUrlAnchor(const QString &text, int start, const UrlMatch &url, QString &html, QString &layoutText, HtmlBuildContext &context)
 {
     context.hasFormatting = true;
@@ -605,6 +664,14 @@ void appendInline(const QString &text, int start, int end, QString &html, QStrin
             continue;
         }
 
+        if (ch == QLatin1Char('@')) {
+            const int mentionEnd = tryAppendMention(text, i, end, html, layoutText, context);
+            if (mentionEnd > i) {
+                i = mentionEnd;
+                continue;
+            }
+        }
+
         if (ch == QLatin1Char('*') || ch == QLatin1Char('_') || ch == QLatin1Char('~')) {
             const int close = findClosingDelimiter(text, i, end, ch);
             if (close >= 0) {
@@ -621,6 +688,9 @@ void appendInline(const QString &text, int start, int end, QString &html, QStrin
             }
             const QChar next = text.at(runEnd);
             if (next == QLatin1Char('`') || next == QLatin1Char('*') || next == QLatin1Char('_') || next == QLatin1Char('~')) {
+                break;
+            }
+            if (context.checkMentions && next == QLatin1Char('@')) {
                 break;
             }
             ++runEnd;
@@ -1014,18 +1084,39 @@ QString whatsAppToCommonMark(const QString &text)
     return out;
 }
 
-MessageMarkup parseWhatsAppMessageMarkup(const QString &text)
+MessageMarkup parseWhatsAppMessageMarkup(const QString &text, const QList<MessageMention> &mentions, bool isGroup)
 {
     MessageMarkup result;
     result.emojiOnlyCount = emojiOnlyClusterCount(text);
 
+    // Mentions are linkified only when actually present; @all/@everyone work in
+    // any group. Both gate on the cheap `@`-contains check so plain messages
+    // skip the whole mention path.
+    const bool checkMentions = (!mentions.isEmpty() || isGroup) && text.contains(QLatin1Char('@'));
+
     const bool hasEmoji = textContainsEmojiCluster(text);
-    if (!hasEmoji && !textMayContainWhatsAppMarkup(text) && !textMayContainUrl(text)) {
+    if (!hasEmoji && !textMayContainWhatsAppMarkup(text) && !textMayContainUrl(text) && !checkMentions) {
         return result;
+    }
+
+    // Index mentions by JID user-part (the token that appears in the text).
+    QHash<QString, const MessageMention *> mentionsByUserpart;
+    if (checkMentions && !mentions.isEmpty()) {
+        mentionsByUserpart.reserve(mentions.size());
+        for (const MessageMention &mention : mentions) {
+            const int at = mention.jid.indexOf(QLatin1Char('@'));
+            const QString userpart = at > 0 ? mention.jid.left(at) : mention.jid;
+            if (!userpart.isEmpty()) {
+                mentionsByUserpart.insert(userpart, &mention);
+            }
+        }
     }
 
     HtmlBuildContext context;
     context.emojiSpanOpen = emojiSpanOpenTag();
+    context.checkMentions = checkMentions;
+    context.isGroup = isGroup;
+    context.mentionsByUserpart = mentionsByUserpart.isEmpty() ? nullptr : &mentionsByUserpart;
     result.richText = buildRichText(text, result.layoutText, context);
     result.hasRichText = context.hasFormatting || context.hasEmoji;
     if (!result.hasRichText) {

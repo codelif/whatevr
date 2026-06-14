@@ -97,6 +97,10 @@ Item {
     signal typeIntoComposerRequested(string text)
     signal replyToMessageRequested(string messageId, string senderName, string text, string mediaKind, string mediaMimeType, bool outgoing)
     signal editMessageRequested(string messageId, string text)
+    // An @-mention was clicked in a bubble; the conversation pane opens the
+    // matching contact/group info dialog.
+    signal mentionClicked(string jid)
+    signal mentionAllClicked()
 
     onLoadingOlderMessagesChanged: {
         if (loadingOlderMessages) {
@@ -1034,6 +1038,8 @@ Item {
             onReplyRequested: (messageId, senderName, text, mediaKind, mediaMimeType, outgoing) => root.replyToMessageRequested(messageId, senderName, text, mediaKind, mediaMimeType, outgoing)
             onReplyPreviewActivated: messageId => root.jumpToReplyTarget(messageId)
             onReadMoreRequested: messageId => root.openMessageContent(messageId)
+            onMentionClicked: jid => root.mentionClicked(jid)
+            onMentionAllClicked: root.mentionAllClicked()
             onContextMenuRequested: (posX, posY) => root.openContextMenu(messageDelegate, posX, posY)
             onReactionPickerRequested: (posX, posY) => root.openQuickReactions(messageDelegate, posX, posY)
             onReactionToggleRequested: emoji => root.reactToMessage(messageDelegate.messageId, emoji)

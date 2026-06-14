@@ -409,6 +409,12 @@ func toProtoMessage(message app.Message) *pb.Message {
 			FromMe:        reaction.FromMe,
 		})
 	}
+	for _, mention := range message.Mentions {
+		protoMessage.Mentions = append(protoMessage.Mentions, &pb.Mention{
+			Jid:         mention.JID,
+			DisplayName: mention.DisplayName,
+		})
+	}
 	return protoMessage
 }
 

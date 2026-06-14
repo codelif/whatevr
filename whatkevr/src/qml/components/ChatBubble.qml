@@ -113,6 +113,10 @@ Item {
     signal reactionDetailsRequested()
     signal replyPreviewActivated(string messageId)
     signal readMoreRequested(string messageId)
+    // An @-mention link was clicked: open contact info for the JID, or the
+    // group info dialog for an @all / @everyone mention.
+    signal mentionClicked(string jid)
+    signal mentionAllClicked()
     // Position is in this delegate's coordinates; the view maps it.
     signal contextMenuRequested(real posX, real posY)
     signal selectionToggleRequested()
@@ -1063,7 +1067,15 @@ Item {
                     font.family: Kirigami.Theme.defaultFont.family
                     font.pointSize: root.bodyPointSize
                     font.weight: Font.Normal
-                    onLinkActivated: link => Qt.openUrlExternally(link)
+                    onLinkActivated: link => {
+                        if (link.startsWith("wamention:")) {
+                            root.mentionClicked(link.substring("wamention:".length))
+                        } else if (link.startsWith("wamention-all:")) {
+                            root.mentionAllClicked()
+                        } else {
+                            Qt.openUrlExternally(link)
+                        }
+                    }
                     onLinkHovered: link => currentHoveredLink = link
 
                     HoverHandler {

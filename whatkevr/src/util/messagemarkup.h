@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QList>
 #include <QString>
 #include <QStringList>
 
@@ -12,10 +13,20 @@ struct MessageMarkup {
     QString layoutText;
 };
 
+// One @-mention to weave into the rich text: the JID's user-part is matched
+// against the `@<userpart>` token in the message body and rendered as the
+// display name, linked via the `wamention:<jid>` scheme.
+struct MessageMention {
+    QString jid;
+    QString displayName;
+};
+
 // Parse WhatsApp's small markdown subset into Qt rich text. Plain messages stay
-// on the QML PlainText path; richText is populated only when formatting or emoji
-// enlargement is actually needed.
-MessageMarkup parseWhatsAppMessageMarkup(const QString &text);
+// on the QML PlainText path; richText is populated only when formatting, emoji
+// enlargement, or an @-mention is actually present. `mentions` linkifies the
+// `@<userpart>` tokens to `wamention:<jid>`; in a group the literal `@all` /
+// `@everyone` tokens linkify to `wamention-all:` regardless of `mentions`.
+MessageMarkup parseWhatsAppMessageMarkup(const QString &text, const QList<MessageMention> &mentions = {}, bool isGroup = false);
 
 // Collect the unique clickable links the rich-text path would linkify, in
 // order of first appearance. Bare domains get the same https:// scheme the

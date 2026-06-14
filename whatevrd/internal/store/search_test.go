@@ -95,7 +95,7 @@ func TestSearchMessagesReflectsEdits(t *testing.T) {
 		t.Fatalf("pre-edit banana search = (%v, %v), want one hit", got, err)
 	}
 
-	if _, _, _, err := db.UpdateMessageText(ctx, "c1:m1", "edited cherry text"); err != nil {
+	if _, _, _, err := db.UpdateMessageText(ctx, "c1:m1", "edited cherry text", nil); err != nil {
 		t.Fatalf("edit: %v", err)
 	}
 
