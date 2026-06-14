@@ -401,6 +401,10 @@ Kirigami.Page {
             KineticWheelScroller {
                 anchors.fill: chatList
                 target: chatList
+                // Only the visible list's scroller may be live; a disabled Item
+                // lets wheel events fall through to the sibling beneath it, so
+                // the hidden one never intercepts scrolling.
+                enabled: chatList.visible
                 wheelStep: Kirigami.Units.gridUnit * 4
             }
 
@@ -489,6 +493,7 @@ Kirigami.Page {
             KineticWheelScroller {
                 anchors.fill: searchList
                 target: searchList
+                enabled: searchList.visible
                 wheelStep: Kirigami.Units.gridUnit * 4
             }
         }
