@@ -64,7 +64,7 @@ build-daemon:
 
 build-frontend:
 	$(CMAKE) -S whatkevr -B $(BUILD_DIR)/whatkevr -G Ninja \
-		-DCMAKE_BUILD_TYPE=RelWithDebInfo \
+		-DCMAKE_BUILD_TYPE=Debug \
 		-DCMAKE_INSTALL_PREFIX=$(PREFIX) \
 		-DWHATEVR_VERSION=$(VERSION_NUMERIC) \
 		-DWHATEVR_VERSION_FULL=$(VERSION)
