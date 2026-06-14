@@ -148,10 +148,13 @@ Kirigami.Page {
     }
 
     Keys.onPressed: event => {
-        // ESC priority: pane > selection > reply > close chat. The picker is a
-        // focused Popup that consumes ESC while open, so by the time ESC
-        // reaches here the pane is already closed; leave selection mode, then
-        // clear a pending reply, else close the chat.
+        // ESC priority: pane > selection > reply > close chat. Convention:
+        // every escape-closable popup sets `focus: true` so it consumes ESC at
+        // the popup layer and this close-chat fallback never fires while one is
+        // open (the picker is such a focused Popup). Any new popup that closes
+        // on ESC MUST set `focus: true` or it will leak ESC here and close the
+        // chat. By the time ESC reaches here no popup was open: leave selection
+        // mode, then clear a pending reply, else close the chat.
         if (event.key === Qt.Key_Escape) {
             if (!Whatevr.AppController.hasSelectedChat) {
                 return

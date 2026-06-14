@@ -21,12 +21,20 @@ QQC2.Popup {
 
     parent: QQC2.Overlay.overlay
     modal: true
+    // A focused popup consumes Escape at the popup layer (per the app's
+    // escape-handling convention), so closing the viewer never propagates ESC
+    // to ConversationPane's close-chat fallback.
+    focus: true
     dim: false
     padding: 0
     x: 0
     y: 0
     width: parent ? parent.width : 0
     height: parent ? parent.height : 0
+    // Must stay above the Kirigami.Dialog it is opened from and above the emoji
+    // picker overlay (z: 10001 in MessageComposer) so the fullscreen image
+    // covers everything.
+    z: 10002
     closePolicy: QQC2.Popup.CloseOnEscape | QQC2.Popup.CloseOnPressOutside
 
     background: Rectangle {
