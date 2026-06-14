@@ -293,7 +293,9 @@ func (c *Client) EditMessage(ctx context.Context, messageID, newText string) (ap
 		return appstore.Message{}, grpcstatus.Errorf(codes.Unknown, "edit failed: %v", err)
 	}
 
-	updated, chat, changed, err := c.store.UpdateMessageText(ctx, message.ID, newText)
+	// nil preserves the existing mentions: editing our own message doesn't
+	// re-author @-mentions.
+	updated, chat, changed, err := c.store.UpdateMessageText(ctx, message.ID, newText, nil)
 	if err != nil {
 		return appstore.Message{}, err
 	}

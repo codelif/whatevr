@@ -393,8 +393,15 @@ func (c *Client) handleEditMessage(ctx context.Context, evt *events.Message, off
 	// media message, which is exactly the field an edit replaces.
 	newText, _, _ := quotedReplyPreview(protocol.GetEditedMessage())
 
+	// An edit re-states its mentions; pass a non-nil (possibly empty) slice so a
+	// mention added or removed in the edit is reflected, never stale.
+	mentions := c.mentionsFromMessage(ctx, protocol.GetEditedMessage())
+	if mentions == nil {
+		mentions = []appstore.MessageMention{}
+	}
+
 	internalID := internalMessageIDForChat(chatID, types.MessageID(targetID))
-	message, chat, changed, err := c.store.UpdateMessageText(ctx, internalID, newText)
+	message, chat, changed, err := c.store.UpdateMessageText(ctx, internalID, newText, mentions)
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			c.log.Warnf("Failed to apply edit to message %s: %v", internalID, err)
@@ -782,7 +789,57 @@ func (c *Client) textMessageInput(ctx context.Context, evt *events.Message, opts
 		IsGroup:        info.IsGroup,
 		CountUnread:    shouldCountUnread(evt, opts),
 		ReplyTo:        c.replyFromContextInfo(ctx, chatID, contextInfoFromMessage(evt.Message)),
+		Mentions:       c.mentionsFromMessage(ctx, evt.Message),
 	}, true
+}
+
+// mentionedJIDsFromMessage pulls the @-mention JID list out of a message's
+// context info (ExtendedTextMessage / image / sticker). The matching
+// `@<userpart>` tokens already live in the message text; the renderer pairs
+// them up. Returns nil when there are no mentions.
+func mentionedJIDsFromMessage(message *waE2E.Message) []string {
+	contextInfo := contextInfoFromMessage(message)
+	if contextInfo == nil {
+		return nil
+	}
+	mentioned := contextInfo.GetMentionedJID()
+	if len(mentioned) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(mentioned))
+	for _, jid := range mentioned {
+		if trimmed := strings.TrimSpace(jid); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}
+
+// mentionsFromMessage resolves each @-mention in a message to a {JID, name}
+// pair, resolving display names through the same senderName chain used for the
+// message author. The JID is kept verbatim so its user-part still matches the
+// `@<userpart>` token the renderer looks for.
+func (c *Client) mentionsFromMessage(ctx context.Context, message *waE2E.Message) []appstore.MessageMention {
+	return c.resolveMentions(ctx, mentionedJIDsFromMessage(message))
+}
+
+func (c *Client) resolveMentions(ctx context.Context, jids []string) []appstore.MessageMention {
+	if len(jids) == 0 {
+		return nil
+	}
+	mentions := make([]appstore.MessageMention, 0, len(jids))
+	for _, raw := range jids {
+		jid, err := types.ParseJID(raw)
+		if err != nil {
+			mentions = append(mentions, appstore.MessageMention{JID: raw})
+			continue
+		}
+		// Drop the leading "~" senderName prepends for unsaved push names: a
+		// mention chip reads cleaner as "@Name" than "@~Name".
+		name := strings.TrimPrefix(c.senderName(ctx, jid), "~")
+		mentions = append(mentions, appstore.MessageMention{JID: jid.String(), DisplayName: name})
+	}
+	return mentions
 }
 
 func contextInfoFromMessage(message *waE2E.Message) *waE2E.ContextInfo {
@@ -1300,7 +1357,19 @@ func toDaemonMessage(message appstore.Message) app.Message {
 			Direction:     message.ReplyTo.Direction,
 		},
 		Reactions: toDaemonReactions(message.Reactions),
+		Mentions:  toDaemonMentions(message.Mentions),
 	}
+}
+
+func toDaemonMentions(mentions []appstore.MessageMention) []app.Mention {
+	if len(mentions) == 0 {
+		return nil
+	}
+	out := make([]app.Mention, len(mentions))
+	for i, mention := range mentions {
+		out[i] = app.Mention{JID: mention.JID, DisplayName: mention.DisplayName}
+	}
+	return out
 }
 
 func toDaemonReactions(reactions []appstore.Reaction) []app.Reaction {

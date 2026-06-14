@@ -21,7 +21,7 @@ const (
 )
 
 type SendController interface {
-	SendText(context.Context, string, string, string) (appstore.SavedTextMessage, error)
+	SendText(context.Context, string, string, string, []string) (appstore.SavedTextMessage, error)
 	SendMedia(context.Context, string, string, string, string) (appstore.SavedTextMessage, error)
 	RevokeMessage(context.Context, string) (appstore.Message, error)
 	EditMessage(context.Context, string, string) (appstore.Message, error)
@@ -55,7 +55,7 @@ func (s *SendService) SendText(ctx context.Context, req *pb.SendTextRequest) (*p
 		return nil, status.Errorf(codes.InvalidArgument, "text must be <= %d characters", maxSendTextRunes)
 	}
 
-	saved, err := s.sender.SendText(ctx, strings.TrimSpace(req.GetChatId()), text, strings.TrimSpace(req.GetReplyToMessageId()))
+	saved, err := s.sender.SendText(ctx, strings.TrimSpace(req.GetChatId()), text, strings.TrimSpace(req.GetReplyToMessageId()), req.GetMentionedJids())
 	if err != nil {
 		return nil, err
 	}

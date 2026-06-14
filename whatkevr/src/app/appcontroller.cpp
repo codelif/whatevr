@@ -1191,7 +1191,7 @@ void AppController::jumpToMessage(const QString &messageId)
     });
 }
 
-void AppController::sendText(const QString &text, const QString &replyToMessageId)
+void AppController::sendText(const QString &text, const QString &replyToMessageId, const QStringList &mentionedJids)
 {
     const QString trimmed = plainTextFromQtRichText(text).trimmed();
     if (!m_sendClient || m_sendTextReply || m_selectedChatId.isEmpty() || trimmed.isEmpty()) {
@@ -1206,6 +1206,9 @@ void AppController::sendText(const QString &text, const QString &replyToMessageI
     request.setChatId(m_selectedChatId);
     request.setText(trimmed);
     request.setReplyToMessageId(replyToMessageId.trimmed());
+    if (!mentionedJids.isEmpty()) {
+        request.setMentionedJids(mentionedJids);
+    }
 
     m_sendInFlight = true;
     m_composerErrorText.clear();

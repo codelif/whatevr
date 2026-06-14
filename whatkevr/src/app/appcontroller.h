@@ -222,7 +222,8 @@ public:
     // Opens chatId (if not already current) and scrolls to messageId once its
     // page has loaded. Drives "Show in chat" from the starred-messages view.
     Q_INVOKABLE void showMessageInChat(const QString &chatId, const QString &messageId);
-    Q_INVOKABLE void sendText(const QString &text, const QString &replyToMessageId = QString());
+    Q_INVOKABLE void sendText(const QString &text, const QString &replyToMessageId = QString(),
+                              const QStringList &mentionedJids = QStringList());
     Q_INVOKABLE void sendImage(const QString &fileUrl, const QString &caption = QString(), const QString &replyToMessageId = QString());
     Q_INVOKABLE void addRecentEmoji(const QString &emoji);
     Q_INVOKABLE [[nodiscard]] int previousGraphemeBoundary(const QString &text, int cursorPosition) const;

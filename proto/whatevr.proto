@@ -674,6 +674,10 @@ message SendTextRequest {
   string chat_id = 1;
   string text = 2;
   string reply_to_message_id = 3;
+  // Full JIDs of @-mentioned participants. The `text` already carries the
+  // matching `@<userpart>` tokens; these become ContextInfo.MentionedJID on
+  // the wire so other clients render real mentions.
+  repeated string mentioned_jids = 4;
 }
 
 message SendTextResponse {
@@ -846,6 +850,15 @@ message Message {
   // Unix time when the pin expires; 0 when the message is not pinned. Clients
   // stop showing the pin once this passes.
   int64 pinned_until_unix = 25;
+  // @-mentions in this message, in no particular order. Each carries the
+  // mentioned JID plus a display name resolved by the daemon; the renderer
+  // matches each `@<jid-userpart>` token in `text` and shows @DisplayName.
+  repeated Mention mentions = 26;
+}
+
+message Mention {
+  string jid = 1;
+  string display_name = 2;
 }
 
 message Reaction {

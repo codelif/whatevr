@@ -583,7 +583,19 @@ func toAppMessage(message appstore.Message) app.Message {
 			Direction:     message.ReplyTo.Direction,
 		},
 		Reactions: toAppReactions(message.Reactions),
+		Mentions:  toAppMentions(message.Mentions),
 	}
+}
+
+func toAppMentions(mentions []appstore.MessageMention) []app.Mention {
+	if len(mentions) == 0 {
+		return nil
+	}
+	out := make([]app.Mention, len(mentions))
+	for i, mention := range mentions {
+		out[i] = app.Mention{JID: mention.JID, DisplayName: mention.DisplayName}
+	}
+	return out
 }
 
 func toAppReactions(reactions []appstore.Reaction) []app.Reaction {

@@ -306,6 +306,12 @@ type Message struct {
 	PinnedUntilUnix         int64
 	ReplyTo                 MessageReply
 	Reactions               []Reaction
+	Mentions                []Mention
+}
+
+type Mention struct {
+	JID         string
+	DisplayName string
 }
 
 type MessageReply struct {

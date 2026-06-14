@@ -12,6 +12,8 @@
 
 #include <cstdint>
 
+#include "messagemarkup.h"
+
 namespace whatevr::v1 {
 class Message;
 }
@@ -219,6 +221,11 @@ private:
         // Each entry is a QVariantMap {emoji, senderId, senderName, fromMe}.
         // Aggregation into pills is done in QML.
         QVariantList reactions;
+        // @-mentions in this message, used by the markup parser to linkify
+        // `@<userpart>` tokens. isGroupChat (derived from the chat id) also
+        // enables the literal @all / @everyone tokens.
+        QList<whatevr::util::MessageMention> mentions;
+        bool isGroupChat = false;
     };
 
     static MessageItem fromProto(const whatevr::v1::Message &message);
