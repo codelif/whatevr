@@ -22,8 +22,22 @@ SettingsPage {
             model: Whatevr.Settings.availableColorSchemes()
             textRole: "name"
             valueRole: "id"
-            currentIndex: indexOfValue(Whatevr.Settings.colorScheme)
-            onActivated: index => Whatevr.Settings.colorScheme = currentValue
+
+            // indexOfValue() hits the inner ComboBox, whose model alias may not be
+            // populated when a plain `currentIndex:` binding first evaluates -> it would
+            // return -1 and never recover (blank text + a mislaid-out popup). Assign once
+            // the component (and model) is ready.
+            Component.onCompleted: currentIndex = indexOfValue(Whatevr.Settings.colorScheme)
+
+            onActivated: Whatevr.Settings.colorScheme = currentValue
+
+            // Re-sync if the scheme changes from elsewhere (idempotent for our own onActivated).
+            Connections {
+                target: Whatevr.Settings
+                function onColorSchemeChanged() {
+                    schemeCombo.currentIndex = schemeCombo.indexOfValue(Whatevr.Settings.colorScheme);
+                }
+            }
         }
 
         FormCard.FormDelegateSeparator {}
