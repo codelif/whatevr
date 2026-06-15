@@ -50,6 +50,12 @@ Kirigami.ScrollablePage {
         currentIndex: -1
         reuseItems: true
 
+        // On layer pop the ListView is destroyed with its delegates still bound to
+        // the shared model; detach first so there are no live delegates to cancel
+        // (avoids "DelegateModel::cancel: index out range" and the cascade of
+        // ScrollablePage flickable-null relayout warnings during teardown).
+        Component.onDestruction: starredList.model = null
+
         Kirigami.PlaceholderMessage {
             anchors.centerIn: parent
             width: parent.width - Kirigami.Units.gridUnit * 4

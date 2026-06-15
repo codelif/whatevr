@@ -63,6 +63,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(Qt6 ${QT_MIN_VERSION} REQUIRED COMPONENTS Core Gui Network Protobuf Grpc Qml Quick QuickControls2 ShaderTools Widgets)
 find_package(KF6 ${KF_MIN_VERSION} REQUIRED COMPONENTS CoreAddons DBusAddons I18n Kirigami Prison)
+find_package(KF6ColorScheme ${KF_MIN_VERSION} REQUIRED)
 find_package(KF6KirigamiAddons 1.0.0 REQUIRED)
 find_package(rlottie REQUIRED)
 
@@ -81,6 +82,8 @@ qt_add_executable(whatkevr
     src/main.cpp
     src/app/appcontroller.cpp
     src/app/appcontroller.h
+    src/app/settings.cpp
+    src/app/settings.h
     src/app/stickercontroller.cpp
     src/app/stickercontroller.h
     src/models/chatlistmodel.cpp
@@ -193,6 +196,17 @@ qt_add_qml_module(whatkevr
         src/qml/components/ForwardChatPickerDialog.qml
         src/qml/pages/LoginPage.qml
         src/qml/pages/StatusPage.qml
+        src/qml/components/SettingsGlobalDrawer.qml
+        src/qml/settings/SettingsSearch.js
+        src/qml/settings/SettingsView.qml
+        src/qml/settings/SettingsPage.qml
+        src/qml/settings/AppearancePage.qml
+        src/qml/settings/BehaviorPage.qml
+        src/qml/settings/WindowLayoutPage.qml
+        src/qml/settings/AccountPage.qml
+        src/qml/settings/StoragePage.qml
+        src/qml/settings/EmojiStickersPage.qml
+        src/qml/settings/KeyboardShortcutsPage.qml
 )
 
 qt6_add_shaders(whatkevr "roundedimage_shaders"
@@ -222,6 +236,7 @@ target_link_libraries(whatkevr PRIVATE
     Qt6::QuickControls2
     Qt6::Widgets
     KF6::CoreAddons
+    KF6::ColorScheme
     KF6::DBusAddons
     KF6::I18n
     KF6::Kirigami

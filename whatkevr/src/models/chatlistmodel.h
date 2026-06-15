@@ -105,6 +105,9 @@ private:
 
     static ChatItem fromProto(const whatevr::v1::Chat &chat);
     void applyDraft(ChatItem &item) const;
+    // Composer-draft persistence, gated by the "Save unsent drafts" setting.
+    void loadPersistedDrafts();
+    void savePersistedDrafts() const;
     static QString displayName(const ChatItem &chat);
     static QString initialsForName(const QString &name);
     static bool sameSortOrder(const QList<ChatItem> &left, const QList<ChatItem> &right);

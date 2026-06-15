@@ -11,10 +11,37 @@
 #include <KLocalizedString>
 
 #include "app/appcontroller.h"
+#include "app/settings.h"
 #include "version.h"
+
+namespace
+{
+QtMessageHandler g_previousMessageHandler = nullptr;
+
+// KirigamiAddons' ConfigurationView builds its module pages (FormCard
+// ScrollablePages, the formcard AboutPage's license sheets, MessageDialog)
+// before the settings window's overlay/flickable are resolved, so a handful of
+// framework bindings transiently read a null `parent`/`flickable`. These are
+// upstream warnings we cannot fix in QML; drop only these specific Kirigami /
+// KirigamiAddons null-property TypeErrors and pass everything else through
+// untouched — our own QML errors still surface.
+void filterKirigamiNullPropertyWarnings(QtMsgType type, const QMessageLogContext &context, const QString &message)
+{
+    if (type == QtWarningMsg
+        && message.contains(QLatin1String("Cannot read property"))
+        && message.contains(QLatin1String("of null"))
+        && message.contains(QLatin1String("org/kde/kirigami"))) {
+        return;
+    }
+    if (g_previousMessageHandler) {
+        g_previousMessageHandler(type, context, message);
+    }
+}
+}
 
 int main(int argc, char *argv[])
 {
+    g_previousMessageHandler = qInstallMessageHandler(filterKirigamiNullPropertyWarnings);
     KLocalizedString::setApplicationDomain("whatkevr");
     QQuickStyle::setStyle(QStringLiteral("org.kde.desktop"));
     // Some incoming media carries malformed ICC profile descriptions; Qt warns
@@ -45,6 +72,11 @@ int main(int argc, char *argv[])
 
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextObject(new KLocalizedContext(&engine));
+
+    // Constructed before AppController so the models it creates can read the
+    // shared Settings instance (drafts persistence, default skin tone).
+    Settings settings;
+    Settings::setInstance(&settings);
 
     AppController appController;
     AppController::setInstance(&appController);

@@ -33,6 +33,46 @@ Kirigami.ApplicationWindow {
     title: Whatevr.I18n.i18nc("@title:window", "Whatevr")
     visible: true
 
+    globalDrawer: SettingsGlobalDrawer {
+        searchIndex: settingsView.searchIndex
+        onSettingsRequested: settingsView.open()
+        onAboutRequested: settingsView.open("about")
+        onLogoutRequested: Whatevr.AppController.logout()
+        onOptionRequested: (moduleId, rowId) => settingsView.openAt(moduleId, rowId)
+    }
+
+    SettingsView {
+        id: settingsView
+
+        window: root
+    }
+
+    // Ctrl+, — the KDE-standard accelerator for opening preferences. Lives at
+    // window scope so it fires regardless of which column has focus.
+    Shortcut {
+        sequences: [StandardKey.Preferences]
+        onActivated: settingsView.open()
+    }
+
+    function openSettings() {
+        settingsView.open()
+    }
+
+    // Window geometry persistence. Saves are debounced so a drag-resize burst
+    // collapses into one write; restore happens in Component.onCompleted.
+    Timer {
+        id: geometrySaveTimer
+
+        interval: 500
+        onTriggered: if (Whatevr.Settings.rememberWindowGeometry)
+            Whatevr.Settings.saveWindowGeometry(root.x, root.y, root.width, root.height)
+    }
+
+    onXChanged: geometrySaveTimer.restart()
+    onYChanged: geometrySaveTimer.restart()
+    onWidthChanged: geometrySaveTimer.restart()
+    onHeightChanged: geometrySaveTimer.restart()
+
     pageStack.columnView.columnResizeMode: chatWideLayout ? Kirigami.ColumnView.FixedColumns : Kirigami.ColumnView.SingleColumn
     pageStack.globalToolBar.style: Kirigami.ApplicationHeaderStyle.ToolBar
     pageStack.globalToolBar.showNavigationButtons: currentMode === "chat"
@@ -263,7 +303,15 @@ Kirigami.ApplicationWindow {
         }
     }
 
-    Component.onCompleted: rebuildPageStack()
+    Component.onCompleted: {
+        if (Whatevr.Settings.rememberWindowGeometry && Whatevr.Settings.hasSavedWindowGeometry()) {
+            root.width = Whatevr.Settings.savedWindowWidth()
+            root.height = Whatevr.Settings.savedWindowHeight()
+            root.x = Whatevr.Settings.savedWindowX()
+            root.y = Whatevr.Settings.savedWindowY()
+        }
+        rebuildPageStack()
+    }
 
     Connections {
         target: Whatevr.AppController

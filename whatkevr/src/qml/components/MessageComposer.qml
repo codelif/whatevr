@@ -686,9 +686,19 @@ Frame {
                             event.accepted = true
                             return
                         }
-                        if (event.modifiers & Qt.ShiftModifier) {
-                            event.accepted = false
-                            return
+                        const ctrl = (event.modifiers & Qt.ControlModifier) || (event.modifiers & Qt.MetaModifier)
+                        if (Whatevr.Settings.enterToSend) {
+                            // Enter sends; Shift+Enter inserts a newline.
+                            if (event.modifiers & Qt.ShiftModifier) {
+                                event.accepted = false
+                                return
+                            }
+                        } else {
+                            // Enter inserts a newline; Ctrl/Cmd+Enter sends.
+                            if (!ctrl) {
+                                event.accepted = false
+                                return
+                            }
                         }
                         event.accepted = true
                         root.submitText()
@@ -783,6 +793,24 @@ Frame {
                 return
             }
             root.mentionMembers = info.members || []
+            root.mentionMembersChatId = info.chatId
+            if (root.mentionLoadingChatId === info.chatId) {
+                root.mentionLoadingChatId = ""
+            }
+            if (root.isGroupChat && input.activeFocus) {
+                root.updateSuggestions()
+            }
+        }
+
+        // The instant groupInfoReceived carries only stored participants, which
+        // can be empty on a cold roster (then the @-picker shows just "Everyone").
+        // The live roster streams in afterwards via this event; merge it in.
+        function onGroupInfoUpdated(info) {
+            if (info.chatId !== Whatevr.AppController.selectedChatId
+                    || !info.members || info.members.length === 0) {
+                return
+            }
+            root.mentionMembers = info.members
             root.mentionMembersChatId = info.chatId
             if (root.mentionLoadingChatId === info.chatId) {
                 root.mentionLoadingChatId = ""

@@ -25,10 +25,25 @@ Kirigami.Page {
     // Track the window: roughly a third of the width, clamped so the list
     // neither starves the conversation on small windows nor sprawls on wide
     // ones. (In the single-column layout the column spans the window anyway.)
-    Layout.preferredWidth: Math.max(Kirigami.Units.gridUnit * 17,
-                                    Math.min(Kirigami.Units.gridUnit * 24,
-                                             Math.round((applicationWindow()?.width ?? 0) * 0.34)))
+    Layout.preferredWidth: (Whatevr.Settings.rememberColumnWidth && Whatevr.Settings.chatListColumnWidth > 0)
+        ? Whatevr.Settings.chatListColumnWidth
+        : Math.max(Kirigami.Units.gridUnit * 17,
+                   Math.min(Kirigami.Units.gridUnit * 24,
+                            Math.round((applicationWindow()?.width ?? 0) * 0.34)))
     Layout.maximumWidth: Kirigami.Units.gridUnit * 24
+
+    // Persist the column width the user drags to (debounced), so it survives
+    // restarts when "Remember chat list width" is on.
+    Timer {
+        id: columnWidthSaveTimer
+
+        interval: 400
+        onTriggered: if (Whatevr.Settings.rememberColumnWidth)
+            Whatevr.Settings.chatListColumnWidth = Math.round(root.width)
+    }
+
+    onWidthChanged: if (Whatevr.Settings.rememberColumnWidth)
+        columnWidthSaveTimer.restart()
     title: Whatevr.I18n.i18nc("@title", "Chats")
     padding: 0
     Kirigami.Theme.colorSet: Kirigami.Theme.View
@@ -66,6 +81,12 @@ Kirigami.Page {
                     headerTitle: Whatevr.I18n.i18nc("@title", "Starred messages")
                 })
             }
+        },
+        Kirigami.Action {
+            icon.name: "settings-configure-symbolic"
+            text: Whatevr.I18n.i18nc("@action:button", "Settings")
+            displayHint: Kirigami.DisplayHint.AlwaysHide
+            onTriggered: applicationWindow().openSettings()
         },
         Kirigami.Action {
             icon.name: "system-log-out-symbolic"

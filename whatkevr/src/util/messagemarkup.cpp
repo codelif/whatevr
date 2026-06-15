@@ -604,7 +604,7 @@ int tryAppendMention(const QString &text, int i, int end, QString &html, QString
     context.hasFormatting = true;
     html += QStringLiteral("<a href=\"");
     html += escapedHtmlAttribute(href);
-    html += QStringLiteral("\">");
+    html += QStringLiteral("\" style=\"text-decoration:none;\">");
     appendEscapedWithEmoji(display, 0, display.size(), html, context);
     html += QStringLiteral("</a>");
     layoutText += display;
