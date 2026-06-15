@@ -589,7 +589,25 @@ Item {
     MouseArea {
         anchors.fill: parent
         acceptedButtons: Qt.RightButton
-        hoverEnabled: false
+        // This area sits on top of the whole row (z:9) so it consumes the
+        // right-press before the body TextEdits — but a MouseArea also owns the
+        // item cursor for everything beneath it. So it has to resolve the cursor
+        // itself: pointing hand over a body link/mention, I-beam over body text,
+        // arrow elsewhere. hoverEnabled drives the per-position re-evaluation.
+        hoverEnabled: true
+        cursorShape: {
+            const item = bodyTextLoader.item
+            if (item) {
+                const p = mapToItem(item, mouseX, mouseY)
+                if (p.x >= 0 && p.y >= 0 && p.x <= item.width && p.y <= item.height) {
+                    if (root.hasRichText && item.linkAt(p.x, p.y)) {
+                        return Qt.PointingHandCursor
+                    }
+                    return Qt.IBeamCursor
+                }
+            }
+            return Qt.ArrowCursor
+        }
         z: 9
         onPressed: mouse => {
             if (root.messageId.length === 0) {
@@ -1033,9 +1051,6 @@ Item {
                         }
                     }
 
-                    HoverHandler {
-                        cursorShape: Qt.IBeamCursor
-                    }
                 }
             }
 
@@ -1044,8 +1059,6 @@ Item {
 
                 TextEdit {
                     id: richBody
-
-                    property string currentHoveredLink: ""
 
                     // Rect after the last character; re-evaluates with the
                     // document (length) and the wrap geometry (width/height).
@@ -1076,12 +1089,12 @@ Item {
                             Qt.openUrlExternally(link)
                         }
                     }
-                    onLinkHovered: link => currentHoveredLink = link
-
-                    HoverHandler {
-                        cursorShape: richBody.currentHoveredLink.length > 0 ? Qt.PointingHandCursor : Qt.IBeamCursor
-                    }
-
+                    // Pass-through hover surface: a MouseArea re-applies its
+                    // cursorShape on every move (a HoverHandler only re-applies
+                    // on enter/leave, so moving onto an inline link mid-hover
+                    // never refreshed the cursor). NoButton lets press/click
+                    // fall through to the TextEdit for selection and link
+                    // activation.
                     onSelectedTextChanged: {
                         if (selectedText.length > 0) {
                             root.messageSelectionClaimed(root.messageId)

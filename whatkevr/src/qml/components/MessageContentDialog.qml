@@ -110,8 +110,12 @@ CenteredDialog {
                                 : 10
                 onLinkActivated: link => Qt.openUrlExternally(link)
 
-                HoverHandler {
-                    cursorShape: Qt.IBeamCursor
+                MouseArea {
+                    anchors.fill: parent
+                    acceptedButtons: Qt.NoButton
+                    hoverEnabled: true
+                    cursorShape: (root.useRichText && contentText.linkAt(mouseX, mouseY))
+                                 ? Qt.PointingHandCursor : Qt.IBeamCursor
                 }
             }
 
