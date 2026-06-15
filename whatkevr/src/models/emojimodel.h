@@ -47,6 +47,8 @@ public:
     [[nodiscard]] bool loaded() const;
 
     Q_INVOKABLE void addRecentEmoji(const QString &emoji);
+    // Clears the recently-used emoji list (the "Reset recent emoji" setting).
+    Q_INVOKABLE void resetRecents();
     // Up to `limit` most-recently-used emoji, newest first; used to surface the
     // user's last-used reaction in the quick-reaction bar.
     Q_INVOKABLE [[nodiscard]] QStringList recentEmoji(int limit) const;

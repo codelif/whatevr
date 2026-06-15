@@ -4,14 +4,51 @@
 #include <QDateTime>
 #include <QFileInfo>
 #include <QScopeGuard>
+#include <QSettings>
+#include <QVariantMap>
 
 #include "whatevr/v1/whatevr.qpb.h"
 
 #include "richtext.h"
+#include "settings.h"
+
+namespace {
+constexpr auto kDraftsKey = "settings/drafts";
+}
 
 ChatListModel::ChatListModel(QObject *parent)
     : QAbstractListModel(parent)
 {
+    loadPersistedDrafts();
+}
+
+void ChatListModel::loadPersistedDrafts()
+{
+    const Settings *settings = Settings::instance();
+    if (!settings || !settings->persistDrafts()) {
+        return;
+    }
+    const QVariantMap stored = QSettings().value(QLatin1String(kDraftsKey)).toMap();
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    for (auto it = stored.constBegin(); it != stored.constEnd(); ++it) {
+        const QString text = it.value().toString();
+        if (!text.isEmpty()) {
+            m_drafts.insert(it.key(), Draft {text, now});
+        }
+    }
+}
+
+void ChatListModel::savePersistedDrafts() const
+{
+    const Settings *settings = Settings::instance();
+    if (!settings || !settings->persistDrafts()) {
+        return;
+    }
+    QVariantMap map;
+    for (auto it = m_drafts.constBegin(); it != m_drafts.constEnd(); ++it) {
+        map.insert(it.key(), it.value().text);
+    }
+    QSettings().setValue(QLatin1String(kDraftsKey), map);
 }
 
 int ChatListModel::rowCount(const QModelIndex &parent) const
@@ -331,6 +368,8 @@ void ChatListModel::setChatDraft(const QString &chatId, const QString &text)
         // Stamp "now" so a (re)created draft floats to the top of its section.
         m_drafts.insert(chatId, Draft {text, QDateTime::currentSecsSinceEpoch()});
     }
+
+    savePersistedDrafts();
 
     const int chatIndex = indexOf(chatId);
     if (chatIndex < 0) {

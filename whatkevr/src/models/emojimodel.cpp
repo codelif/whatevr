@@ -152,6 +152,17 @@ QStringList EmojiModel::recentEmoji(int limit) const
     return m_recentEmoji.mid(0, qMin(limit, static_cast<int>(m_recentEmoji.size())));
 }
 
+void EmojiModel::resetRecents()
+{
+    if (m_recentEmoji.isEmpty()) {
+        return;
+    }
+    m_recentEmoji.clear();
+    saveRecents();
+    rebuildRows();
+    Q_EMIT loadedChanged();
+}
+
 QString EmojiModel::emojiAt(int row) const
 {
     if (row < 0 || row >= m_rows.size()) {

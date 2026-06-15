@@ -237,9 +237,15 @@ CenteredDialog {
         target: Whatevr.AppController
 
         function onContactInfoReceived(info) {
-            if (root.isGroup || info.jid !== root.targetJid) {
+            // The daemon may answer with the canonical phone JID rather than the
+            // JID we requested (an @lid mention resolves to @s.whatsapp.net), so
+            // match on either and then adopt the canonical JID — later avatar /
+            // status updates are published against it.
+            if (root.isGroup
+                    || (info.jid !== root.targetJid && info.requestedJid !== root.targetJid)) {
                 return
             }
+            root.targetJid = info.jid
             root.phoneNumber = info.phoneNumber
             root.savedName = info.savedName
             root.pushName = info.pushName

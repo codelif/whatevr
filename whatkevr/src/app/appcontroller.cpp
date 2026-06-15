@@ -2296,6 +2296,10 @@ void AppController::openContactInfo(const QString &jid)
         }
         const QVariantMap info {
             {QStringLiteral("jid"), response->jid()},
+            // The daemon returns the canonical phone JID, which can differ from the
+            // JID we asked for (e.g. an @lid mention resolves to @s.whatsapp.net).
+            // Echo the requested JID so the dialog can match its in-flight request.
+            {QStringLiteral("requestedJid"), jid},
             {QStringLiteral("phoneNumber"), response->phoneNumber()},
             {QStringLiteral("savedName"), response->savedName()},
             {QStringLiteral("pushName"), response->pushName()},
