@@ -37,10 +37,39 @@ void ChatListFilterModel::setFilterRoleName(const QString &roleName)
     Q_EMIT filterRoleNameChanged();
 }
 
+ChatListFilterModel::Category ChatListFilterModel::chatCategory() const
+{
+    return m_chatCategory;
+}
+
+void ChatListFilterModel::setChatCategory(Category category)
+{
+    if (m_chatCategory == category) {
+        return;
+    }
+    m_chatCategory = category;
+    invalidateFilter();
+    Q_EMIT chatCategoryChanged();
+}
+
 void ChatListFilterModel::setSourceModel(QAbstractItemModel *sourceModel)
 {
     QSortFilterProxyModel::setSourceModel(sourceModel);
     applyFilterRole();
+    resolveIsGroupRole();
+}
+
+bool ChatListFilterModel::filterAcceptsRow(int sourceRow, const QModelIndex &sourceParent) const
+{
+    if (!QSortFilterProxyModel::filterAcceptsRow(sourceRow, sourceParent)) {
+        return false;
+    }
+    if (m_chatCategory == All || m_isGroupRole < 0) {
+        return true;
+    }
+    const QModelIndex index = sourceModel()->index(sourceRow, 0, sourceParent);
+    const bool isGroup = index.data(m_isGroupRole).toBool();
+    return m_chatCategory == Groups ? isGroup : !isGroup;
 }
 
 void ChatListFilterModel::applyFilterRole()
@@ -54,6 +83,22 @@ void ChatListFilterModel::applyFilterRole()
     for (auto it = roles.constBegin(); it != roles.constEnd(); ++it) {
         if (it.value() == wanted) {
             setFilterRole(it.key());
+            return;
+        }
+    }
+}
+
+void ChatListFilterModel::resolveIsGroupRole()
+{
+    m_isGroupRole = -1;
+    const QAbstractItemModel *source = sourceModel();
+    if (source == nullptr) {
+        return;
+    }
+    const QHash<int, QByteArray> roles = source->roleNames();
+    for (auto it = roles.constBegin(); it != roles.constEnd(); ++it) {
+        if (it.value() == QByteArrayLiteral("isGroup")) {
+            m_isGroupRole = it.key();
             return;
         }
     }

@@ -16,8 +16,18 @@ class ChatListFilterModel : public QSortFilterProxyModel
     QML_ELEMENT
     Q_PROPERTY(QString filterText READ filterText WRITE setFilterText NOTIFY filterTextChanged FINAL)
     Q_PROPERTY(QString filterRoleName READ filterRoleName WRITE setFilterRoleName NOTIFY filterRoleNameChanged FINAL)
+    Q_PROPERTY(Category chatCategory READ chatCategory WRITE setChatCategory NOTIFY chatCategoryChanged FINAL)
 
 public:
+    // Chat-type filter, layered on top of the text filter. All = no-op so the
+    // text-only callers (e.g. the forward picker) keep their current behaviour.
+    enum Category {
+        All,
+        DirectMessages,
+        Groups,
+    };
+    Q_ENUM(Category)
+
     explicit ChatListFilterModel(QObject *parent = nullptr);
 
     QString filterText() const;
@@ -26,15 +36,25 @@ public:
     QString filterRoleName() const;
     void setFilterRoleName(const QString &roleName);
 
+    Category chatCategory() const;
+    void setChatCategory(Category category);
+
     void setSourceModel(QAbstractItemModel *sourceModel) override;
 
 Q_SIGNALS:
     void filterTextChanged();
     void filterRoleNameChanged();
+    void chatCategoryChanged();
+
+protected:
+    bool filterAcceptsRow(int sourceRow, const QModelIndex &sourceParent) const override;
 
 private:
     void applyFilterRole();
+    void resolveIsGroupRole();
 
     QString m_filterText;
     QString m_filterRoleName = QStringLiteral("name");
+    Category m_chatCategory = All;
+    int m_isGroupRole = -1;
 };

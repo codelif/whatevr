@@ -507,6 +507,7 @@ const (
 	ChatService_CheckPhoneOnWhatsApp_FullMethodName  = "/whatevr.v1.ChatService/CheckPhoneOnWhatsApp"
 	ChatService_EnsureDirectChat_FullMethodName      = "/whatevr.v1.ChatService/EnsureDirectChat"
 	ChatService_GetContactInfo_FullMethodName        = "/whatevr.v1.ChatService/GetContactInfo"
+	ChatService_GetSelfProfile_FullMethodName        = "/whatevr.v1.ChatService/GetSelfProfile"
 	ChatService_GetGroupInfo_FullMethodName          = "/whatevr.v1.ChatService/GetGroupInfo"
 	ChatService_FetchProfilePicture_FullMethodName   = "/whatevr.v1.ChatService/FetchProfilePicture"
 )
@@ -538,6 +539,9 @@ type ChatServiceClient interface {
 	EnsureDirectChat(ctx context.Context, in *EnsureDirectChatRequest, opts ...grpc.CallOption) (*EnsureDirectChatResponse, error)
 	// Full contact card for a 1:1 user: saved/push/business names, phone, avatar.
 	GetContactInfo(ctx context.Context, in *GetContactInfoRequest, opts ...grpc.CallOption) (*GetContactInfoResponse, error)
+	// The logged-in user's own profile card (name, phone, avatar), for the
+	// profile footer in the chat list.
+	GetSelfProfile(ctx context.Context, in *GetSelfProfileRequest, opts ...grpc.CallOption) (*GetSelfProfileResponse, error)
 	// Group card: subject, description, avatar and the resolved member list.
 	GetGroupInfo(ctx context.Context, in *GetGroupInfoRequest, opts ...grpc.CallOption) (*GetGroupInfoResponse, error)
 	// Fetch a full-resolution profile picture for the avatar viewer.
@@ -732,6 +736,16 @@ func (c *chatServiceClient) GetContactInfo(ctx context.Context, in *GetContactIn
 	return out, nil
 }
 
+func (c *chatServiceClient) GetSelfProfile(ctx context.Context, in *GetSelfProfileRequest, opts ...grpc.CallOption) (*GetSelfProfileResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetSelfProfileResponse)
+	err := c.cc.Invoke(ctx, ChatService_GetSelfProfile_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *chatServiceClient) GetGroupInfo(ctx context.Context, in *GetGroupInfoRequest, opts ...grpc.CallOption) (*GetGroupInfoResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetGroupInfoResponse)
@@ -779,6 +793,9 @@ type ChatServiceServer interface {
 	EnsureDirectChat(context.Context, *EnsureDirectChatRequest) (*EnsureDirectChatResponse, error)
 	// Full contact card for a 1:1 user: saved/push/business names, phone, avatar.
 	GetContactInfo(context.Context, *GetContactInfoRequest) (*GetContactInfoResponse, error)
+	// The logged-in user's own profile card (name, phone, avatar), for the
+	// profile footer in the chat list.
+	GetSelfProfile(context.Context, *GetSelfProfileRequest) (*GetSelfProfileResponse, error)
 	// Group card: subject, description, avatar and the resolved member list.
 	GetGroupInfo(context.Context, *GetGroupInfoRequest) (*GetGroupInfoResponse, error)
 	// Fetch a full-resolution profile picture for the avatar viewer.
@@ -846,6 +863,9 @@ func (UnimplementedChatServiceServer) EnsureDirectChat(context.Context, *EnsureD
 }
 func (UnimplementedChatServiceServer) GetContactInfo(context.Context, *GetContactInfoRequest) (*GetContactInfoResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetContactInfo not implemented")
+}
+func (UnimplementedChatServiceServer) GetSelfProfile(context.Context, *GetSelfProfileRequest) (*GetSelfProfileResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetSelfProfile not implemented")
 }
 func (UnimplementedChatServiceServer) GetGroupInfo(context.Context, *GetGroupInfoRequest) (*GetGroupInfoResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetGroupInfo not implemented")
@@ -1198,6 +1218,24 @@ func _ChatService_GetContactInfo_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ChatService_GetSelfProfile_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetSelfProfileRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ChatServiceServer).GetSelfProfile(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ChatService_GetSelfProfile_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ChatServiceServer).GetSelfProfile(ctx, req.(*GetSelfProfileRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _ChatService_GetGroupInfo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetGroupInfoRequest)
 	if err := dec(in); err != nil {
@@ -1312,6 +1350,10 @@ var ChatService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetContactInfo",
 			Handler:    _ChatService_GetContactInfo_Handler,
+		},
+		{
+			MethodName: "GetSelfProfile",
+			Handler:    _ChatService_GetSelfProfile_Handler,
 		},
 		{
 			MethodName: "GetGroupInfo",

@@ -33,14 +33,6 @@ Kirigami.ApplicationWindow {
     title: Whatevr.I18n.i18nc("@title:window", "Whatevr")
     visible: true
 
-    globalDrawer: SettingsGlobalDrawer {
-        searchIndex: settingsView.searchIndex
-        onSettingsRequested: settingsView.open()
-        onAboutRequested: settingsView.open("about")
-        onLogoutRequested: Whatevr.AppController.logout()
-        onOptionRequested: (moduleId, rowId) => settingsView.openAt(moduleId, rowId)
-    }
-
     SettingsView {
         id: settingsView
 
@@ -54,8 +46,11 @@ Kirigami.ApplicationWindow {
         onActivated: settingsView.open()
     }
 
-    function openSettings() {
-        settingsView.open()
+    function openSettings(moduleId) {
+        if (moduleId)
+            settingsView.open(moduleId)
+        else
+            settingsView.open()
     }
 
     // Window geometry persistence. Saves are debounced so a drag-resize burst

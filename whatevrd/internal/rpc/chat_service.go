@@ -50,6 +50,7 @@ type ChatActionController interface {
 	CheckPhoneOnWhatsApp(context.Context, string) (app.PhoneCheck, error)
 	EnsureDirectChat(context.Context, string) (appstore.Chat, error)
 	GetContactInfo(context.Context, string) (app.ContactInfo, error)
+	SelfProfile(context.Context) (app.ContactInfo, error)
 	GetGroupInfo(context.Context, string) (app.GroupInfo, error)
 	FetchProfilePicture(context.Context, string) (string, error)
 }
@@ -464,6 +465,23 @@ func (s *ChatService) GetContactInfo(ctx context.Context, req *pb.GetContactInfo
 		BusinessName:    info.BusinessName,
 		AvatarLocalPath: info.AvatarLocalPath,
 		IsBusiness:      info.IsBusiness,
+		StatusText:      info.StatusText,
+	}, nil
+}
+
+func (s *ChatService) GetSelfProfile(ctx context.Context, req *pb.GetSelfProfileRequest) (*pb.GetSelfProfileResponse, error) {
+	if s.actions == nil {
+		return nil, status.Error(codes.Unimplemented, "profile lookup is not available")
+	}
+	info, err := s.actions.SelfProfile(ctx)
+	if err != nil {
+		return nil, status.Error(codes.FailedPrecondition, err.Error())
+	}
+	return &pb.GetSelfProfileResponse{
+		Jid:             info.JID,
+		PhoneNumber:     info.PhoneNumber,
+		PushName:        info.PushName,
+		AvatarLocalPath: info.AvatarLocalPath,
 		StatusText:      info.StatusText,
 	}, nil
 }

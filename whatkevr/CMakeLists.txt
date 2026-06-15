@@ -194,11 +194,12 @@ qt_add_qml_module(whatkevr
         src/qml/components/MessageInfoDialog.qml
         src/qml/components/MessageContentDialog.qml
         src/qml/components/ForwardChatPickerDialog.qml
+        src/qml/components/ChatListSidebar.qml
         src/qml/pages/LoginPage.qml
         src/qml/pages/StatusPage.qml
-        src/qml/components/SettingsGlobalDrawer.qml
         src/qml/settings/SettingsSearch.js
         src/qml/settings/SettingsView.qml
+        src/qml/settings/SettingsWindow.qml
         src/qml/settings/SettingsPage.qml
         src/qml/settings/AppearancePage.qml
         src/qml/settings/BehaviorPage.qml
