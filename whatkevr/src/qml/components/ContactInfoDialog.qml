@@ -368,9 +368,13 @@ CenteredDialog {
                 avatarLocalPath: root.avatarLocalPath
                 initials: root.initialsForName(root.primaryName)
 
-                TapHandler {
+                // MouseArea (not TapHandler) so the press is consumed and does
+                // not bleed through to items behind the avatar.
+                MouseArea {
+                    anchors.fill: parent
                     enabled: !root.loading
-                    onTapped: Whatevr.AppController.viewProfilePicture(root.subjectKey)
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: Whatevr.AppController.viewProfilePicture(root.subjectKey)
                 }
             }
 
