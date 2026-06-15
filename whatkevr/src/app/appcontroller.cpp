@@ -95,6 +95,8 @@ using whatevr::v1::EnsureDirectChatRequest;
 using whatevr::v1::EnsureDirectChatResponse;
 using whatevr::v1::GetContactInfoRequest;
 using whatevr::v1::GetContactInfoResponse;
+using whatevr::v1::GetSelfProfileRequest;
+using whatevr::v1::GetSelfProfileResponse;
 using whatevr::v1::GetGroupInfoRequest;
 using whatevr::v1::GetGroupInfoResponse;
 using whatevr::v1::FetchProfilePictureRequest;
@@ -849,6 +851,26 @@ QString AppController::unreadAnchorMessageId() const
 int AppController::unreadAnchorCount() const
 {
     return m_unreadAnchorCount;
+}
+
+QString AppController::currentUserName() const
+{
+    return m_currentUserName;
+}
+
+QString AppController::currentUserAvatarPath() const
+{
+    return m_currentUserAvatarPath;
+}
+
+QString AppController::currentUserStatusText() const
+{
+    return m_currentUserStatusText;
+}
+
+QString AppController::currentUserJid() const
+{
+    return m_currentUserJid;
 }
 
 bool AppController::historySyncVisible() const
@@ -2312,6 +2334,50 @@ void AppController::openContactInfo(const QString &jid)
     });
 }
 
+void AppController::fetchSelfProfile()
+{
+    if (!m_chatClient || m_selfProfileReply) {
+        return;
+    }
+    GetSelfProfileRequest request;
+    auto reply = m_chatClient->GetSelfProfile(request);
+    auto *replyPtr = reply.get();
+    m_selfProfileReply = std::move(reply);
+    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr](const QGrpcStatus &status) {
+        if (m_selfProfileReply.get() != replyPtr) {
+            return;
+        }
+        const auto reply = std::move(m_selfProfileReply);
+        if (!status.isOk()) {
+            return;
+        }
+        const auto response = reply->read<GetSelfProfileResponse>();
+        if (!response) {
+            return;
+        }
+
+        // The push name is the user-set profile name; fall back to the phone
+        // number so the footer is never blank once we are signed in.
+        QString name = response->pushName().trimmed();
+        if (name.isEmpty()) {
+            name = response->phoneNumber().trimmed();
+        }
+
+        const bool changed = m_currentUserName != name
+            || m_currentUserAvatarPath != response->avatarLocalPath()
+            || m_currentUserStatusText != response->statusText()
+            || m_currentUserJid != response->jid();
+        if (!changed) {
+            return;
+        }
+        m_currentUserName = name;
+        m_currentUserAvatarPath = response->avatarLocalPath();
+        m_currentUserStatusText = response->statusText();
+        m_currentUserJid = response->jid();
+        Q_EMIT currentUserChanged();
+    });
+}
+
 void AppController::openGroupInfo(const QString &chatId)
 {
     if (!m_chatClient || chatId.trimmed().isEmpty()) {
@@ -3471,6 +3537,7 @@ void AppController::applyStatusResponse(const GetStatusResponse &status)
 
     if (shellVisible()) {
         requestChats();
+        fetchSelfProfile();
     }
 
     clearBanner();
@@ -3503,6 +3570,7 @@ void AppController::applyConnectionChanged(const ConnectionChanged &change)
 
     if (shellVisible()) {
         requestChats();
+        fetchSelfProfile();
     }
 
     emitStateChanged();
@@ -3522,6 +3590,7 @@ void AppController::applyLoginStateChanged(const LoginStateChanged &change)
 
     if (shellVisible()) {
         requestChats();
+        fetchSelfProfile();
     }
 
     emitStateChanged();
@@ -3607,6 +3676,16 @@ void AppController::applyAvatarUpdated(const AvatarUpdated &update)
     }
     if (messageAvatarChanged) {
         Q_EMIT messagesChanged();
+    }
+
+    // The logged-in user's own avatar changed: refresh the profile footer.
+    // Match on the user part since the avatar subject JID may carry a different
+    // server/device suffix than the stored self JID.
+    if (!m_currentUserJid.isEmpty()) {
+        const QString selfUser = m_currentUserJid.section(QLatin1Char('@'), 0, 0);
+        if (!selfUser.isEmpty() && id.section(QLatin1Char('@'), 0, 0) == selfUser) {
+            fetchSelfProfile();
+        }
     }
 }
 

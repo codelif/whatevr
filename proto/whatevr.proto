@@ -109,6 +109,9 @@ service ChatService {
   rpc EnsureDirectChat(EnsureDirectChatRequest) returns (EnsureDirectChatResponse);
   // Full contact card for a 1:1 user: saved/push/business names, phone, avatar.
   rpc GetContactInfo(GetContactInfoRequest) returns (GetContactInfoResponse);
+  // The logged-in user's own profile card (name, phone, avatar), for the
+  // profile footer in the chat list.
+  rpc GetSelfProfile(GetSelfProfileRequest) returns (GetSelfProfileResponse);
   // Group card: subject, description, avatar and the resolved member list.
   rpc GetGroupInfo(GetGroupInfoRequest) returns (GetGroupInfoResponse);
   // Fetch a full-resolution profile picture for the avatar viewer.
@@ -624,6 +627,20 @@ message GetContactInfoResponse {
   bool is_business = 7;
   // The user's WhatsApp "about"/status text, when available.
   string status_text = 8;
+}
+
+message GetSelfProfileRequest {}
+
+// The logged-in user's own profile. Empty fields when not signed in yet.
+message GetSelfProfileResponse {
+  string jid = 1;
+  // Formatted phone number (e.g. "+1 415 555 0100") when derivable.
+  string phone_number = 2;
+  // WhatsApp profile (push) name set by the user themselves.
+  string push_name = 3;
+  string avatar_local_path = 4;
+  // The user's WhatsApp "about"/status text, when available.
+  string status_text = 5;
 }
 
 // One group member with the names/phone/avatar resolved the same way senders

@@ -15,6 +15,9 @@ Kirigami.Page {
     // default. Hiding it clears any active query.
     property bool searchBarVisible: false
 
+    // Sidebar chat-type filter: 0 = Home (all), 1 = DMs, 2 = Groups.
+    property int activeFilter: 0
+
     function hideSearch() {
         searchBarVisible = false
         Whatevr.AppController.clearSearch()
@@ -62,43 +65,34 @@ Kirigami.Page {
                     root.searchBarVisible = true
                 }
             }
-        },
-        Kirigami.Action {
-            icon.name: "view-refresh-symbolic"
-            text: Whatevr.I18n.i18nc("@action:button", "Refresh")
-            visible: Whatevr.AppController.bannerText.length > 0
-            enabled: Whatevr.AppController.primaryActionEnabled
-            onTriggered: Whatevr.AppController.triggerPrimaryAction()
-        },
-        Kirigami.Action {
-            icon.name: "starred-symbolic"
-            text: Whatevr.I18n.i18nc("@action:button open the starred-messages view", "Starred messages")
-            displayHint: Kirigami.DisplayHint.AlwaysHide
-            onTriggered: {
-                Whatevr.AppController.loadStarredMessages("")
-                applicationWindow().pageStack.layers.push(Qt.resolvedUrl("StarredMessagesPage.qml"), {
-                    chatId: "",
-                    headerTitle: Whatevr.I18n.i18nc("@title", "Starred messages")
-                })
-            }
-        },
-        Kirigami.Action {
-            icon.name: "settings-configure-symbolic"
-            text: Whatevr.I18n.i18nc("@action:button", "Settings")
-            displayHint: Kirigami.DisplayHint.AlwaysHide
-            onTriggered: applicationWindow().openSettings()
-        },
-        Kirigami.Action {
-            icon.name: "system-log-out-symbolic"
-            text: Whatevr.I18n.i18nc("@action:button", "Log out")
-            displayHint: Kirigami.DisplayHint.AlwaysHide
-            onTriggered: Whatevr.AppController.logout()
         }
     ]
 
-    ColumnLayout {
+    // Chat list filtered by the sidebar category. The text search lives in a
+    // separate model (searchResultsModel), so this proxy only narrows by type.
+    Whatevr.ChatListFilterModel {
+        id: chatFilterModel
+
+        sourceModel: Whatevr.AppController.chatListModel
+        chatCategory: root.activeFilter === 1 ? Whatevr.ChatListFilterModel.DirectMessages
+                    : root.activeFilter === 2 ? Whatevr.ChatListFilterModel.Groups
+                    : Whatevr.ChatListFilterModel.All
+    }
+
+    RowLayout {
         anchors.fill: parent
         spacing: 0
+
+        ChatListSidebar {
+            Layout.fillHeight: true
+            activeFilter: root.activeFilter
+            onActiveFilterChanged: root.activeFilter = activeFilter
+        }
+
+        ColumnLayout {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            spacing: 0
 
         HistorySyncStrip {
             Layout.margins: Kirigami.Units.largeSpacing
@@ -177,7 +171,7 @@ Kirigami.Page {
 
                 anchors.fill: parent
                 clip: true
-                model: Whatevr.AppController.chatListModel
+                model: chatFilterModel
                 currentIndex: -1
                 boundsBehavior: Flickable.StopAtBounds
                 flickableDirection: Flickable.VerticalFlick
@@ -517,6 +511,7 @@ Kirigami.Page {
                 enabled: searchList.visible
                 wheelStep: Kirigami.Units.gridUnit * 4
             }
+        }
         }
     }
 

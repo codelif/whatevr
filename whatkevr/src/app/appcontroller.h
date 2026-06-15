@@ -140,6 +140,10 @@ class AppController final : public QObject
     Q_PROPERTY(int historySyncPercent READ historySyncPercent NOTIFY historySyncChanged FINAL)
     Q_PROPERTY(QString historySyncTitle READ historySyncTitle NOTIFY historySyncChanged FINAL)
     Q_PROPERTY(QString historySyncDetail READ historySyncDetail NOTIFY historySyncChanged FINAL)
+    Q_PROPERTY(QString currentUserName READ currentUserName NOTIFY currentUserChanged FINAL)
+    Q_PROPERTY(QString currentUserAvatarPath READ currentUserAvatarPath NOTIFY currentUserChanged FINAL)
+    Q_PROPERTY(QString currentUserStatusText READ currentUserStatusText NOTIFY currentUserChanged FINAL)
+    Q_PROPERTY(QString currentUserJid READ currentUserJid NOTIFY currentUserChanged FINAL)
 
 public:
     static void setInstance(AppController *instance);
@@ -206,6 +210,10 @@ public:
     [[nodiscard]] int selectedChatUnreadCount() const;
     [[nodiscard]] QString unreadAnchorMessageId() const;
     [[nodiscard]] int unreadAnchorCount() const;
+    [[nodiscard]] QString currentUserName() const;
+    [[nodiscard]] QString currentUserAvatarPath() const;
+    [[nodiscard]] QString currentUserStatusText() const;
+    [[nodiscard]] QString currentUserJid() const;
     [[nodiscard]] bool historySyncVisible() const;
     [[nodiscard]] int historySyncPercent() const;
     [[nodiscard]] QString historySyncTitle() const;
@@ -317,6 +325,7 @@ Q_SIGNALS:
     // The unread divider anchor for the selected chat was set or cleared.
     void unreadAnchorChanged();
     void historySyncChanged();
+    void currentUserChanged();
     void outgoingMessageAddedToSelectedChat();
     void messageJumpReady(const QString &messageId);
     void messageJumpUnavailable(const QString &messageId);
@@ -390,6 +399,9 @@ private:
     void applyLoginEvent(const whatevr::v1::LoginEvent &event);
     void applyChatUpdated(const whatevr::v1::ChatUpdated &update);
     void applyAvatarUpdated(const whatevr::v1::AvatarUpdated &update);
+    // Fetch the logged-in user's own profile (name/avatar/status) for the
+    // chat-list profile footer, refreshing the currentUser* properties.
+    void fetchSelfProfile();
     void applyContactInfoUpdated(const whatevr::v1::ContactInfoUpdated &update);
     void applyGroupInfoUpdated(const whatevr::v1::GroupInfoUpdated &update);
     void applyChatPresenceChanged(const whatevr::v1::ChatPresenceChanged &presence);
@@ -557,7 +569,12 @@ private:
     std::unique_ptr<QGrpcCallReply> m_checkPhoneReply;
     std::unique_ptr<QGrpcCallReply> m_startDirectChatReply;
     std::unique_ptr<QGrpcCallReply> m_contactInfoReply;
+    std::unique_ptr<QGrpcCallReply> m_selfProfileReply;
     std::unique_ptr<QGrpcCallReply> m_groupInfoReply;
+    QString m_currentUserName;
+    QString m_currentUserAvatarPath;
+    QString m_currentUserStatusText;
+    QString m_currentUserJid;
     std::unique_ptr<QGrpcCallReply> m_profilePictureReply;
     std::unique_ptr<QGrpcCallReply> m_chatSearchReply;
     int m_forwardBatchChatCount = 0;

@@ -143,6 +143,30 @@ func (c *Client) GetContactInfo(ctx context.Context, jidStr string) (app.Contact
 	return info, nil
 }
 
+// SelfProfile returns the logged-in user's own profile card: their push name,
+// formatted phone, avatar and status text. Reuses the contact-info path for the
+// avatar/status resolution and prefers the authoritative self push name from the
+// device store.
+func (c *Client) SelfProfile(ctx context.Context) (app.ContactInfo, error) {
+	client := c.currentClient()
+	if client == nil || client.Store.ID == nil {
+		return app.ContactInfo{}, errors.New("not logged in")
+	}
+	selfJID := client.Store.ID.ToNonAD()
+
+	info, err := c.GetContactInfo(ctx, selfJID.String())
+	if err != nil {
+		info = app.ContactInfo{
+			JID:         selfJID.String(),
+			PhoneNumber: formatPhoneDisplayName(selfJID),
+		}
+	}
+	if name := whatsAppDisplayName(client.Store.PushName); name != "" {
+		info.PushName = name
+	}
+	return info, nil
+}
+
 // refreshContactStatus fetches the user's "about"/status text in the background
 // and publishes it as a ContactInfoUpdated event once it lands. Best-effort: a
 // network hiccup just leaves the card without status text.
