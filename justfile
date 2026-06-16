@@ -46,7 +46,7 @@ version:
 
 # Update metadata, validate, commit, and tag. Does not push. x.y.z
 release version:
-    @python3 scripts/release.py "{{version}}"
+    @uv run scripts/release.py "{{version}}"
 
 uninstall prefix="/usr/local" destdir="":
     @prefix="{{prefix}}"; \
