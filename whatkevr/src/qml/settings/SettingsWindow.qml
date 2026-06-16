@@ -37,10 +37,14 @@ Kirigami.ApplicationWindow {
 
     modality: Qt.WindowModal
 
+    // The first category page is pushed exactly once. Kept at window scope (not
+    // on the sidebar ListView) so a ListView re-creation can't reset it and push
+    // a duplicate page, which replays the slide-in transition.
+    property bool initDone: false
+
     pageStack {
         columnView.columnWidth: Kirigami.Units.gridUnit * 13
-
-        popHiddenPages: true
+        columnView.scrollDuration: 0
 
         globalToolBar {
             style: Kirigami.ApplicationHeaderStyle.ToolBar
@@ -55,6 +59,11 @@ Kirigami.ApplicationWindow {
         edge: Qt.application.layoutDirection === Qt.RightToLeft ? Qt.RightEdge : Qt.LeftEdge
 
         modal: false
+        // Pinned sidebar: never auto-close. Without this the non-modal drawer
+        // closes when the window loses focus and reopens on refocus, resizing
+        // the pageStack and replaying the page slide-in every time. NoAutoClose
+        // keeps its width stable so the current category page does not re-animate.
+        closePolicy: QQC2.Popup.NoAutoClose
         Kirigami.OverlayZStacking.layer: Kirigami.OverlayZStacking.Drawer
         z: Kirigami.OverlayZStacking.z
         drawerOpen: true
@@ -100,11 +109,10 @@ Kirigami.ApplicationWindow {
 
                     property string filterText: ""
                     readonly property bool searching: filterText.trim().length !== 0
-                    property bool initDone: false
 
                     currentIndex: -1
 
-                    onWidthChanged: if (!initDone) {
+                    onWidthChanged: if (!root.initDone) {
                         let module = getModuleByName(root.defaultModule);
                         if (module) {
                             root.pageStack.push(pageForModule(module));
@@ -116,7 +124,7 @@ Kirigami.ApplicationWindow {
                                 root.pageStack.currentItem.title = root.modules[0].text;
                             }
                         }
-                        initDone = true;
+                        root.initDone = true;
                         if (root.pendingRowId)
                             root.navigateToRow(root.pendingModuleId, root.pendingRowId);
                     }
@@ -249,6 +257,9 @@ Kirigami.ApplicationWindow {
             }
 
             const page = component.createObject(root, module.initialProperties());
+            if (page.hasOwnProperty("hostPageStack")) {
+                page.hostPageStack = root.pageStack;
+            }
             if (page.title.length === 0) {
                 page.title = module.text;
             }

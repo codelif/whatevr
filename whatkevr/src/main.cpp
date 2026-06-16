@@ -4,6 +4,7 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickStyle>
+#include <QTimer>
 
 #include <KAboutData>
 #include <KDBusService>
@@ -103,6 +104,16 @@ int main(int argc, char *argv[])
         Qt::QueuedConnection);
 
     engine.loadFromModule(QStringLiteral("Whatevr"), QStringLiteral("Main"));
+
+    // Assert the saved color scheme onto the live palette. The org.kde.desktop
+    // platform integration resets qApp's palette to the *system* scheme when the
+    // first window is exposed (which happens once the event loop runs), so a
+    // synchronous apply here would be clobbered. Defer to the event loop so the
+    // scheme wins, matching the working runtime path. A saved light scheme would
+    // otherwise come up as the system dark theme on restart.
+    QTimer::singleShot(0, &settings, [&settings] {
+        settings.applyColorScheme();
+    });
 
     // Process the URL this instance was launched with, if any.
     appController.handleCommandLine(app.arguments());

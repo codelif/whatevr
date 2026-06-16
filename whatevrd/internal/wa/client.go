@@ -18,6 +18,7 @@ import (
 	waLog "go.mau.fi/whatsmeow/util/log"
 
 	"whatevrd/internal/app"
+	"whatevrd/internal/notify"
 	appstore "whatevrd/internal/store"
 )
 
@@ -96,6 +97,11 @@ type Client struct {
 	reconnectNow  atomic.Bool
 	eventGen      atomic.Uint64
 	pinBackfill   atomic.Bool
+
+	// appPrefs caches the daemon_config user preferences so the hot notify and
+	// media-ingestion gates never hit sqlite per message. Loaded at New() and
+	// replaced on SetAppPreferences.
+	appPrefs atomic.Pointer[app.AppPreferences]
 }
 
 type frontendSession struct {
@@ -104,7 +110,7 @@ type frontendSession struct {
 }
 
 type MessageNotifier interface {
-	NotifyMessage(context.Context, app.Message, app.Chat)
+	NotifyMessage(context.Context, app.Message, app.Chat, notify.Options)
 }
 
 type mediaDownloadState struct {
@@ -148,6 +154,7 @@ func New(ctx context.Context, paths app.Paths, daemon *app.Daemon, store *appsto
 		sendTimings:      make(map[string]*sendTiming),
 	}
 	c.stickerDownloadSem = make(chan struct{}, stickerDownloadConcurrency)
+	c.loadAppPreferences(ctx)
 
 	storeLog := log.Sub("Store")
 	store.SetSlowOpLogger(func(op string, d time.Duration) {

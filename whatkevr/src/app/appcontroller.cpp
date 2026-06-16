@@ -110,6 +110,24 @@ using whatevr::v1::SendTextResponse;
 using whatevr::v1::SubscribeEventsRequest;
 using whatevr::v1::SubscribeLoginEventsRequest;
 using whatevr::v1::UpdateSessionStateRequest;
+using whatevr::v1::AppPreferences;
+using whatevr::v1::BlockedContact;
+using whatevr::v1::GetAppPreferencesRequest;
+using whatevr::v1::GetAppPreferencesResponse;
+using whatevr::v1::GetBlocklistRequest;
+using whatevr::v1::GetBlocklistResponse;
+using whatevr::v1::GetPrivacySettingsRequest;
+using whatevr::v1::GetPrivacySettingsResponse;
+using whatevr::v1::PrivacySettingsValues;
+using whatevr::v1::SetAppPreferencesRequest;
+using whatevr::v1::SetAppPreferencesResponse;
+using whatevr::v1::SetPrivacySettingRequest;
+using whatevr::v1::SetPrivacySettingResponse;
+using whatevr::v1::SetProfileStatusRequest;
+using whatevr::v1::UpdateBlocklistRequest;
+using whatevr::v1::UpdateBlocklistResponse;
+using PrivacyAudience = whatevr::v1::PrivacyAudienceGadget::PrivacyAudience;
+using PrivacyCategory = whatevr::v1::PrivacyCategoryGadget::PrivacyCategory;
 
 namespace {
 
@@ -2637,12 +2655,16 @@ void AppController::attachClients()
     if (!m_sendClient) {
         m_sendClient = std::make_unique<whatevr::v1::SendService::Client>(this);
     }
+    if (!m_settingsClient) {
+        m_settingsClient = std::make_unique<whatevr::v1::SettingsService::Client>(this);
+    }
 
     m_daemonClient->attachChannel(m_channel);
     m_loginClient->attachChannel(m_channel);
     m_frontendClient->attachChannel(m_channel);
     m_chatClient->attachChannel(m_channel);
     m_sendClient->attachChannel(m_channel);
+    m_settingsClient->attachChannel(m_channel);
     m_stickerController->attachChannel(m_channel);
     Q_EMIT composerChanged();
 }
@@ -4201,4 +4223,337 @@ void AppController::updateSelectedChatData()
     m_selectedChatIsGroup = m_chatListModel->chatIsGroup(m_selectedChatId);
     m_selectedChatUnreadCount = m_chatListModel->chatUnreadCount(m_selectedChatId);
     m_messageListModel->setGroupChat(m_selectedChatIsGroup);
+}
+
+// ---- Account & app settings (SettingsService) ----
+
+namespace {
+
+QVariantMap privacyToMap(const PrivacySettingsValues &v)
+{
+    QVariantMap map;
+    map[QStringLiteral("lastSeen")] = static_cast<int>(v.lastSeen());
+    map[QStringLiteral("online")] = static_cast<int>(v.online());
+    map[QStringLiteral("profilePhoto")] = static_cast<int>(v.profilePhoto());
+    map[QStringLiteral("about")] = static_cast<int>(v.about());
+    map[QStringLiteral("readReceipts")] = v.readReceipts();
+    map[QStringLiteral("groupAdd")] = static_cast<int>(v.groupAdd());
+    map[QStringLiteral("callAdd")] = static_cast<int>(v.callAdd());
+    return map;
+}
+
+QVariantList blocklistToList(const QList<BlockedContact> &contacts)
+{
+    QVariantList list;
+    list.reserve(contacts.size());
+    for (const BlockedContact &contact : contacts) {
+        QVariantMap map;
+        map[QStringLiteral("jid")] = contact.jid();
+        map[QStringLiteral("displayName")] = contact.displayName();
+        map[QStringLiteral("phoneNumber")] = contact.phoneNumber();
+        map[QStringLiteral("avatarLocalPath")] = contact.avatarLocalPath();
+        list.append(map);
+    }
+    return list;
+}
+
+QVariantMap appPreferencesToMap(const AppPreferences &p)
+{
+    QVariantMap map;
+    map[QStringLiteral("notificationsEnabled")] = p.notificationsEnabled();
+    map[QStringLiteral("notificationSound")] = p.notificationSound();
+    map[QStringLiteral("notificationPreview")] = p.notificationPreview();
+    map[QStringLiteral("autoDownloadPhotos")] = p.autoDownloadPhotos();
+    map[QStringLiteral("autoDownloadVideos")] = p.autoDownloadVideos();
+    map[QStringLiteral("autoDownloadAudio")] = p.autoDownloadAudio();
+    map[QStringLiteral("autoDownloadDocuments")] = p.autoDownloadDocuments();
+    return map;
+}
+
+AppPreferences appPreferencesFromMap(const QVariantMap &map)
+{
+    AppPreferences p;
+    p.setNotificationsEnabled(map.value(QStringLiteral("notificationsEnabled"), true).toBool());
+    p.setNotificationSound(map.value(QStringLiteral("notificationSound"), false).toBool());
+    p.setNotificationPreview(map.value(QStringLiteral("notificationPreview"), true).toBool());
+    p.setAutoDownloadPhotos(map.value(QStringLiteral("autoDownloadPhotos"), false).toBool());
+    p.setAutoDownloadVideos(map.value(QStringLiteral("autoDownloadVideos"), false).toBool());
+    p.setAutoDownloadAudio(map.value(QStringLiteral("autoDownloadAudio"), false).toBool());
+    p.setAutoDownloadDocuments(map.value(QStringLiteral("autoDownloadDocuments"), false).toBool());
+    return p;
+}
+
+PrivacyCategory privacyCategoryFromKey(const QString &key)
+{
+    if (key == QLatin1String("lastSeen")) {
+        return PrivacyCategory::PRIVACY_CATEGORY_LAST_SEEN;
+    }
+    if (key == QLatin1String("online")) {
+        return PrivacyCategory::PRIVACY_CATEGORY_ONLINE;
+    }
+    if (key == QLatin1String("profilePhoto")) {
+        return PrivacyCategory::PRIVACY_CATEGORY_PROFILE_PHOTO;
+    }
+    if (key == QLatin1String("about")) {
+        return PrivacyCategory::PRIVACY_CATEGORY_ABOUT;
+    }
+    if (key == QLatin1String("groupAdd")) {
+        return PrivacyCategory::PRIVACY_CATEGORY_GROUP_ADD;
+    }
+    if (key == QLatin1String("callAdd")) {
+        return PrivacyCategory::PRIVACY_CATEGORY_CALL_ADD;
+    }
+    return PrivacyCategory::PRIVACY_CATEGORY_UNSPECIFIED;
+}
+
+} // namespace
+
+QVariantMap AppController::privacySettings() const
+{
+    return m_privacySettings;
+}
+
+QVariantList AppController::blockedContacts() const
+{
+    return m_blockedContacts;
+}
+
+QVariantMap AppController::appPreferences() const
+{
+    return m_appPreferences;
+}
+
+void AppController::refreshPrivacySettings()
+{
+    if (!m_settingsClient || m_privacyReply) {
+        return;
+    }
+    GetPrivacySettingsRequest request;
+    auto reply = m_settingsClient->GetPrivacySettings(request);
+    auto *replyPtr = reply.get();
+    m_privacyReply = std::move(reply);
+    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr](const QGrpcStatus &status) {
+        if (m_privacyReply.get() != replyPtr) {
+            return;
+        }
+        const auto reply = std::move(m_privacyReply);
+        if (!status.isOk()) {
+            Q_EMIT settingsActionFailed(status.message());
+            return;
+        }
+        const auto response = reply->read<GetPrivacySettingsResponse>();
+        if (!response) {
+            return;
+        }
+        m_privacySettings = privacyToMap(response->settings());
+        Q_EMIT privacySettingsChanged();
+    });
+}
+
+void AppController::setPrivacyAudience(const QString &category, int audience)
+{
+    if (!m_settingsClient) {
+        return;
+    }
+    const PrivacyCategory cat = privacyCategoryFromKey(category);
+    if (cat == PrivacyCategory::PRIVACY_CATEGORY_UNSPECIFIED) {
+        return;
+    }
+    SetPrivacySettingRequest request;
+    request.setCategory(cat);
+    request.setAudience(static_cast<PrivacyAudience>(audience));
+    auto reply = m_settingsClient->SetPrivacySetting(request);
+    auto *replyPtr = reply.get();
+    m_setPrivacyReply = std::move(reply);
+    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr](const QGrpcStatus &status) {
+        if (m_setPrivacyReply.get() != replyPtr) {
+            return;
+        }
+        const auto reply = std::move(m_setPrivacyReply);
+        if (!status.isOk()) {
+            Q_EMIT settingsActionFailed(status.message());
+            refreshPrivacySettings();
+            return;
+        }
+        const auto response = reply->read<SetPrivacySettingResponse>();
+        if (!response) {
+            return;
+        }
+        m_privacySettings = privacyToMap(response->settings());
+        Q_EMIT privacySettingsChanged();
+    });
+}
+
+void AppController::setReadReceipts(bool enabled)
+{
+    if (!m_settingsClient) {
+        return;
+    }
+    SetPrivacySettingRequest request;
+    request.setCategory(PrivacyCategory::PRIVACY_CATEGORY_READ_RECEIPTS);
+    request.setReadReceipts(enabled);
+    auto reply = m_settingsClient->SetPrivacySetting(request);
+    auto *replyPtr = reply.get();
+    m_setPrivacyReply = std::move(reply);
+    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr](const QGrpcStatus &status) {
+        if (m_setPrivacyReply.get() != replyPtr) {
+            return;
+        }
+        const auto reply = std::move(m_setPrivacyReply);
+        if (!status.isOk()) {
+            Q_EMIT settingsActionFailed(status.message());
+            refreshPrivacySettings();
+            return;
+        }
+        const auto response = reply->read<SetPrivacySettingResponse>();
+        if (!response) {
+            return;
+        }
+        m_privacySettings = privacyToMap(response->settings());
+        Q_EMIT privacySettingsChanged();
+    });
+}
+
+void AppController::refreshBlocklist()
+{
+    if (!m_settingsClient || m_blocklistReply) {
+        return;
+    }
+    GetBlocklistRequest request;
+    auto reply = m_settingsClient->GetBlocklist(request);
+    auto *replyPtr = reply.get();
+    m_blocklistReply = std::move(reply);
+    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr](const QGrpcStatus &status) {
+        if (m_blocklistReply.get() != replyPtr) {
+            return;
+        }
+        const auto reply = std::move(m_blocklistReply);
+        if (!status.isOk()) {
+            Q_EMIT settingsActionFailed(status.message());
+            return;
+        }
+        const auto response = reply->read<GetBlocklistResponse>();
+        if (!response) {
+            return;
+        }
+        m_blockedContacts = blocklistToList(response->contacts());
+        Q_EMIT blockedContactsChanged();
+    });
+}
+
+void AppController::setContactBlocked(const QString &jid, bool blocked)
+{
+    if (!m_settingsClient || jid.isEmpty()) {
+        return;
+    }
+    UpdateBlocklistRequest request;
+    request.setJid(jid);
+    request.setBlock(blocked);
+    auto reply = m_settingsClient->UpdateBlocklist(request);
+    auto *replyPtr = reply.get();
+    m_updateBlocklistReply = std::move(reply);
+    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr](const QGrpcStatus &status) {
+        if (m_updateBlocklistReply.get() != replyPtr) {
+            return;
+        }
+        const auto reply = std::move(m_updateBlocklistReply);
+        if (!status.isOk()) {
+            Q_EMIT settingsActionFailed(status.message());
+            return;
+        }
+        const auto response = reply->read<UpdateBlocklistResponse>();
+        if (!response) {
+            return;
+        }
+        m_blockedContacts = blocklistToList(response->contacts());
+        Q_EMIT blockedContactsChanged();
+    });
+}
+
+void AppController::setProfileStatus(const QString &statusText)
+{
+    if (!m_settingsClient) {
+        return;
+    }
+    SetProfileStatusRequest request;
+    request.setStatusText(statusText);
+    auto reply = m_settingsClient->SetProfileStatus(request);
+    auto *replyPtr = reply.get();
+    m_setProfileStatusReply = std::move(reply);
+    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr, statusText](const QGrpcStatus &status) {
+        if (m_setProfileStatusReply.get() != replyPtr) {
+            return;
+        }
+        const auto reply = std::move(m_setProfileStatusReply);
+        if (!status.isOk()) {
+            Q_EMIT settingsActionFailed(status.message());
+            return;
+        }
+        // Reflect the new status locally so the profile page updates immediately.
+        if (m_currentUserStatusText != statusText) {
+            m_currentUserStatusText = statusText;
+            Q_EMIT currentUserChanged();
+        }
+    });
+}
+
+void AppController::refreshAppPreferences()
+{
+    if (!m_settingsClient || m_appPrefsReply) {
+        return;
+    }
+    GetAppPreferencesRequest request;
+    auto reply = m_settingsClient->GetAppPreferences(request);
+    auto *replyPtr = reply.get();
+    m_appPrefsReply = std::move(reply);
+    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr](const QGrpcStatus &status) {
+        if (m_appPrefsReply.get() != replyPtr) {
+            return;
+        }
+        const auto reply = std::move(m_appPrefsReply);
+        if (!status.isOk()) {
+            Q_EMIT settingsActionFailed(status.message());
+            return;
+        }
+        const auto response = reply->read<GetAppPreferencesResponse>();
+        if (!response) {
+            return;
+        }
+        m_appPreferences = appPreferencesToMap(response->preferences());
+        Q_EMIT appPreferencesChanged();
+    });
+}
+
+void AppController::setAppPreference(const QString &key, bool value)
+{
+    if (!m_settingsClient) {
+        return;
+    }
+    // Optimistically update the local copy so the toggle stays responsive, then
+    // persist the whole set (the daemon stores them together).
+    m_appPreferences[key] = value;
+    Q_EMIT appPreferencesChanged();
+
+    SetAppPreferencesRequest request;
+    request.setPreferences(appPreferencesFromMap(m_appPreferences));
+    auto reply = m_settingsClient->SetAppPreferences(request);
+    auto *replyPtr = reply.get();
+    m_setAppPrefsReply = std::move(reply);
+    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr](const QGrpcStatus &status) {
+        if (m_setAppPrefsReply.get() != replyPtr) {
+            return;
+        }
+        const auto reply = std::move(m_setAppPrefsReply);
+        if (!status.isOk()) {
+            Q_EMIT settingsActionFailed(status.message());
+            refreshAppPreferences();
+            return;
+        }
+        const auto response = reply->read<SetAppPreferencesResponse>();
+        if (!response) {
+            return;
+        }
+        m_appPreferences = appPreferencesToMap(response->preferences());
+        Q_EMIT appPreferencesChanged();
+    });
 }

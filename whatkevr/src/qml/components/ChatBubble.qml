@@ -156,7 +156,10 @@ Item {
         ? unreadSeparatorLoader.height + Kirigami.Units.largeSpacing
         : 0
     readonly property real outerMargin: Kirigami.Units.largeSpacing
-    readonly property real innerPadding: Kirigami.Units.largeSpacing
+    // Bubble padding follows the appearance density setting (live).
+    readonly property real densityScale: Whatevr.Settings.density === 0 ? 0.7
+        : (Whatevr.Settings.density === 2 ? 1.3 : 1.0)
+    readonly property real innerPadding: Math.round(Kirigami.Units.largeSpacing * densityScale)
     readonly property real senderAvatarSize: Kirigami.Units.gridUnit * 1.65
     readonly property real senderGutterWidth: showSenderGutter ? senderAvatarSize + Kirigami.Units.smallSpacing : 0
     readonly property real senderHeaderHeight: showSenderHeader
@@ -166,9 +169,12 @@ Item {
                                                     Math.min(Math.max(0, listWidth - outerMargin * 2 - senderGutterWidth),
                                                               Kirigami.Units.gridUnit * 28))
     readonly property real maxContentWidth: Math.max(Kirigami.Units.gridUnit * 4, maxBubbleWidth - innerPadding * 2)
-    readonly property real bodyPointSize: Kirigami.Theme.defaultFont.pointSize > 0
-        ? Kirigami.Theme.defaultFont.pointSize
-        : 10
+    // Honour the appearance setting (point size; 0 = follow the system font).
+    readonly property real bodyPointSize: Whatevr.Settings.messageFontSize > 0
+        ? Whatevr.Settings.messageFontSize
+        : (Kirigami.Theme.defaultFont.pointSize > 0
+            ? Kirigami.Theme.defaultFont.pointSize
+            : 10)
     readonly property real messageBaseY: dateSeparatorHeight + unreadSeparatorHeight + (senderHeaderHeight > 0 ? senderHeaderHeight + Kirigami.Units.smallSpacing / 2 : 0)
     readonly property real replyGlowPadding: Kirigami.Units.smallSpacing
     property real replyGlowOpacity: 0

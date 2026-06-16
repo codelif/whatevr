@@ -57,6 +57,9 @@ class Client;
 namespace SendService {
 class Client;
 }
+namespace SettingsService {
+class Client;
+}
 namespace DaemonStateGadget {
 enum class DaemonState : int32_t;
 }
@@ -144,6 +147,15 @@ class AppController final : public QObject
     Q_PROPERTY(QString currentUserAvatarPath READ currentUserAvatarPath NOTIFY currentUserChanged FINAL)
     Q_PROPERTY(QString currentUserStatusText READ currentUserStatusText NOTIFY currentUserChanged FINAL)
     Q_PROPERTY(QString currentUserJid READ currentUserJid NOTIFY currentUserChanged FINAL)
+
+    // Account settings, fetched on demand when the settings window opens.
+    // privacySettings keys: lastSeen/online/profilePhoto/about/groupAdd/callAdd
+    // (int PrivacyAudience) and readReceipts (bool). blockedContacts is a list of
+    // {jid,displayName,phoneNumber,avatarLocalPath} maps. appPreferences mirrors
+    // the daemon AppPreferences message as bool-valued keys.
+    Q_PROPERTY(QVariantMap privacySettings READ privacySettings NOTIFY privacySettingsChanged FINAL)
+    Q_PROPERTY(QVariantList blockedContacts READ blockedContacts NOTIFY blockedContactsChanged FINAL)
+    Q_PROPERTY(QVariantMap appPreferences READ appPreferences NOTIFY appPreferencesChanged FINAL)
 
 public:
     static void setInstance(AppController *instance);
@@ -308,6 +320,22 @@ public:
     Q_INVOKABLE void markSelectedChatViewed();
     Q_INVOKABLE void logout();
 
+    // --- Account & app settings (SettingsService) ---
+    [[nodiscard]] QVariantMap privacySettings() const;
+    [[nodiscard]] QVariantList blockedContacts() const;
+    [[nodiscard]] QVariantMap appPreferences() const;
+    Q_INVOKABLE void refreshPrivacySettings();
+    // category is one of "lastSeen","online","profilePhoto","about","groupAdd",
+    // "callAdd"; audience is a PrivacyAudience enum value.
+    Q_INVOKABLE void setPrivacyAudience(const QString &category, int audience);
+    Q_INVOKABLE void setReadReceipts(bool enabled);
+    Q_INVOKABLE void refreshBlocklist();
+    Q_INVOKABLE void setContactBlocked(const QString &jid, bool blocked);
+    Q_INVOKABLE void setProfileStatus(const QString &statusText);
+    Q_INVOKABLE void refreshAppPreferences();
+    // Update one app-preference key (see appPreferences) and persist the whole set.
+    Q_INVOKABLE void setAppPreference(const QString &key, bool value);
+
     // Entry points for single-instance activation / deep links. handleCommandLine
     // is fed the argv of this or a forwarded secondary instance (KDBusService);
     // it raises the window and, if a whatevr:// URL is present, opens that chat.
@@ -316,6 +344,12 @@ public:
 
 Q_SIGNALS:
     void stateChanged();
+    void privacySettingsChanged();
+    void blockedContactsChanged();
+    void appPreferencesChanged();
+    // Emitted with a human-readable message when a settings mutation fails, so
+    // the settings UI can surface it inline.
+    void settingsActionFailed(const QString &message);
     void activateWindowRequested();
     void openChatRequested(const QString &chatId);
     void chatsChanged();
@@ -538,6 +572,7 @@ private:
     std::unique_ptr<whatevr::v1::FrontendService::Client> m_frontendClient;
     std::unique_ptr<whatevr::v1::ChatService::Client> m_chatClient;
     std::unique_ptr<whatevr::v1::SendService::Client> m_sendClient;
+    std::unique_ptr<whatevr::v1::SettingsService::Client> m_settingsClient;
     std::unique_ptr<QGrpcCallReply> m_statusReply;
     std::unique_ptr<QGrpcCallReply> m_reconnectReply;
     std::unique_ptr<QGrpcCallReply> m_chatsReply;
@@ -581,6 +616,16 @@ private:
     bool m_forwardBatchFailed = false;
     QHash<QString, std::shared_ptr<QGrpcCallReply>> m_deleteMessageReplies;
     std::unique_ptr<QGrpcCallReply> m_logoutReply;
+    std::unique_ptr<QGrpcCallReply> m_privacyReply;
+    std::unique_ptr<QGrpcCallReply> m_setPrivacyReply;
+    std::unique_ptr<QGrpcCallReply> m_blocklistReply;
+    std::unique_ptr<QGrpcCallReply> m_updateBlocklistReply;
+    std::unique_ptr<QGrpcCallReply> m_setProfileStatusReply;
+    std::unique_ptr<QGrpcCallReply> m_appPrefsReply;
+    std::unique_ptr<QGrpcCallReply> m_setAppPrefsReply;
+    QVariantMap m_privacySettings;
+    QVariantList m_blockedContacts;
+    QVariantMap m_appPreferences;
     std::unique_ptr<QGrpcServerStream> m_frontendSessionStream;
     std::unique_ptr<QGrpcServerStream> m_daemonStream;
     std::unique_ptr<QGrpcServerStream> m_loginStream;

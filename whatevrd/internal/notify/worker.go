@@ -43,6 +43,7 @@ type Worker struct {
 type queuedMessage struct {
 	message app.Message
 	chat    app.Chat
+	opts    Options
 }
 
 func NewWorker(opener ChatOpener) (*Worker, error) {
@@ -74,7 +75,7 @@ func (w *Worker) Start(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case item := <-w.queue:
-				w.send(ctx, item.message, item.chat)
+				w.send(ctx, item.message, item.chat, item.opts)
 			case signal := <-signals:
 				w.handleSignal(ctx, signal)
 			}
@@ -82,10 +83,10 @@ func (w *Worker) Start(ctx context.Context) {
 	}()
 }
 
-func (w *Worker) NotifyMessage(ctx context.Context, message app.Message, chat app.Chat) {
+func (w *Worker) NotifyMessage(ctx context.Context, message app.Message, chat app.Chat, opts Options) {
 	select {
 	case <-ctx.Done():
-	case w.queue <- queuedMessage{message: message, chat: chat}:
+	case w.queue <- queuedMessage{message: message, chat: chat, opts: opts}:
 	default:
 		log.Printf("notification queue full; dropping notification for chat %s", chat.ID)
 	}
@@ -101,8 +102,8 @@ func (w *Worker) refreshCapabilities() {
 	w.caps = ParseCapabilities(values)
 }
 
-func (w *Worker) send(ctx context.Context, message app.Message, chat app.Chat) {
-	content := FormatMessage(w.caps, message, chat)
+func (w *Worker) send(ctx context.Context, message app.Message, chat app.Chat, opts Options) {
+	content := FormatMessage(w.caps, message, chat, opts)
 	hints := make(map[string]dbus.Variant, len(content.Hints))
 	for key, value := range content.Hints {
 		hints[key] = dbus.MakeVariant(value)

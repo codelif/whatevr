@@ -32,10 +32,19 @@ class Settings final : public QObject
     // --- Appearance ---
     // Active KColorScheme id; empty string means "follow the system scheme".
     Q_PROPERTY(QString colorScheme READ colorScheme WRITE setColorScheme NOTIFY colorSchemeChanged FINAL)
-    Q_PROPERTY(bool compactMode READ compactMode WRITE setCompactMode NOTIFY compactModeChanged FINAL)
+    // High-level theme selector layered over colorScheme: 0 System, 1 Light, 2 Dark.
+    // Setting it picks an appropriate KColorScheme id; reading it derives the mode
+    // back from the active scheme.
+    Q_PROPERTY(int themeMode READ themeMode WRITE setThemeMode NOTIFY themeModeChanged FINAL)
+    // List/conversation density: 0 Compact, 1 Standard, 2 Comfortable.
+    Q_PROPERTY(int density READ density WRITE setDensity NOTIFY densityChanged FINAL)
+    // Derived convenience kept for existing consumers: true when density == Compact.
+    Q_PROPERTY(bool compactMode READ compactMode NOTIFY compactModeChanged FINAL)
     // Message-bubble font point size; 0 means "inherit the theme default".
     Q_PROPERTY(int messageFontSize READ messageFontSize WRITE setMessageFontSize NOTIFY messageFontSizeChanged FINAL)
     Q_PROPERTY(bool showAvatars READ showAvatars WRITE setShowAvatars NOTIFY showAvatarsChanged FINAL)
+    // Conversation wallpaper preset id; empty is the plain default background.
+    Q_PROPERTY(QString chatWallpaper READ chatWallpaper WRITE setChatWallpaper NOTIFY chatWallpaperChanged FINAL)
 
     // --- Behavior ---
     Q_PROPERTY(bool persistDrafts READ persistDrafts WRITE setPersistDrafts NOTIFY persistDraftsChanged FINAL)
@@ -54,6 +63,20 @@ class Settings final : public QObject
     Q_PROPERTY(int defaultSkinTone READ defaultSkinTone WRITE setDefaultSkinTone NOTIFY defaultSkinToneChanged FINAL)
 
 public:
+    enum Density {
+        DensityCompact = 0,
+        DensityStandard = 1,
+        DensityComfortable = 2,
+    };
+    Q_ENUM(Density)
+
+    enum ThemeMode {
+        ThemeSystem = 0,
+        ThemeLight = 1,
+        ThemeDark = 2,
+    };
+    Q_ENUM(ThemeMode)
+
     static void setInstance(Settings *instance);
     static Settings *instance();
     static Settings *create(QQmlEngine *qmlEngine, QJSEngine *jsEngine);
@@ -63,12 +86,17 @@ public:
 
     [[nodiscard]] QString colorScheme() const;
     void setColorScheme(const QString &schemeId);
+    [[nodiscard]] int themeMode() const;
+    void setThemeMode(int mode);
+    [[nodiscard]] int density() const;
+    void setDensity(int density);
     [[nodiscard]] bool compactMode() const;
-    void setCompactMode(bool compact);
     [[nodiscard]] int messageFontSize() const;
     void setMessageFontSize(int points);
     [[nodiscard]] bool showAvatars() const;
     void setShowAvatars(bool show);
+    [[nodiscard]] QString chatWallpaper() const;
+    void setChatWallpaper(const QString &wallpaperId);
 
     [[nodiscard]] bool persistDrafts() const;
     void setPersistDrafts(bool persist);
@@ -89,6 +117,12 @@ public:
     // "id" and "name". The system-default entry has an empty "id".
     Q_INVOKABLE [[nodiscard]] QVariantList availableColorSchemes() const;
 
+    // Re-assert the saved color scheme onto the live application palette. Must
+    // be called once the first QQuickWindow exists (the org.kde.desktop style
+    // re-reads system colors at window creation, which otherwise leaves a saved
+    // light scheme half-applied on startup).
+    void applyColorScheme();
+
     // --- Storage & cache (frontend-owned; no daemon round-trip) ---
     // Daemon media cache directory ($XDG_CACHE_HOME/whatevrd/media).
     Q_INVOKABLE [[nodiscard]] QString mediaCachePath() const;
@@ -106,9 +140,12 @@ public:
 
 Q_SIGNALS:
     void colorSchemeChanged();
+    void themeModeChanged();
+    void densityChanged();
     void compactModeChanged();
     void messageFontSizeChanged();
     void showAvatarsChanged();
+    void chatWallpaperChanged();
     void persistDraftsChanged();
     void enterToSendChanged();
     void rememberWindowGeometryChanged();
@@ -120,15 +157,15 @@ Q_SIGNALS:
 
 private:
     void load();
-    void applyColorScheme();
     static qint64 directorySize(const QString &path);
 
     KColorSchemeManager *m_schemeManager = nullptr;
 
     QString m_colorScheme;
-    bool m_compactMode = false;
+    int m_density = DensityStandard;
     int m_messageFontSize = 0;
     bool m_showAvatars = true;
+    QString m_chatWallpaper;
     bool m_persistDrafts = true;
     bool m_enterToSend = true;
     bool m_rememberWindowGeometry = true;

@@ -510,7 +510,9 @@ func (c *Client) ingestMessage(ctx context.Context, evt *events.Message, opts in
 			c.daemon.PublishNewMessage(message, chat)
 			c.clearComposingAfterLiveIncomingMessage(message)
 			if c.notifier != nil && c.shouldNotifyLiveMessage(message, chat, textInput.CountUnread) {
-				c.notifier.NotifyMessage(ctx, message, chat)
+				if opts, enabled := c.notificationOptions(); enabled {
+					c.notifier.NotifyMessage(ctx, message, chat, opts)
+				}
 			}
 		}
 		return saved, true
@@ -549,13 +551,46 @@ func (c *Client) ingestMessage(ctx context.Context, evt *events.Message, opts in
 			c.daemon.PublishNewMessage(message, chat)
 			c.clearComposingAfterLiveIncomingMessage(message)
 			if c.notifier != nil && c.shouldNotifyLiveMessage(message, chat, mediaInput.CountUnread) {
-				c.notifier.NotifyMessage(ctx, message, chat)
+				if opts, enabled := c.notificationOptions(); enabled {
+					c.notifier.NotifyMessage(ctx, message, chat, opts)
+				}
 			}
+			c.maybeAutoDownloadMedia(ctx, saved.Message)
 		}
 		return saved, true
 	}
 
 	return appstore.SavedTextMessage{}, false
+}
+
+// maybeAutoDownloadMedia kicks off a background download of a freshly-received
+// media message when the user's auto-download policy covers its kind. Best
+// effort: failures surface through the normal on-demand download path later.
+func (c *Client) maybeAutoDownloadMedia(ctx context.Context, message appstore.Message) {
+	if message.Direction != appstore.DirectionIncoming || message.MediaLocalPath != "" {
+		return
+	}
+	prefs := c.appPreferences()
+	var want bool
+	switch {
+	case strings.HasPrefix(message.MediaMimeType, "image/"):
+		want = prefs.AutoDownloadPhotos
+	case strings.HasPrefix(message.MediaMimeType, "video/"):
+		want = prefs.AutoDownloadVideos
+	case strings.HasPrefix(message.MediaMimeType, "audio/"):
+		want = prefs.AutoDownloadAudio
+	case message.MediaMimeType != "" || message.MediaLocalPath != "":
+		want = prefs.AutoDownloadDocuments
+	}
+	if !want {
+		return
+	}
+	messageID := message.ID
+	go func() {
+		if _, err := c.DownloadMessageMedia(context.WithoutCancel(ctx), messageID); err != nil {
+			c.log.Debugf("Auto-download failed for %s: %v", messageID, err)
+		}
+	}()
 }
 
 func (c *Client) clearComposingAfterLiveIncomingMessage(message app.Message) {

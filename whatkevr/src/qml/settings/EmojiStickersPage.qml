@@ -8,13 +8,15 @@ SettingsPage {
 
     title: Whatevr.I18n.i18nc("@title settings category", "Emoji & Stickers")
 
+    // Index 0-5 maps to the Fitzpatrick skin-tone modifiers; the sample is a
+    // hand-wave emoji so each tile shows the tone directly.
     readonly property var skinTones: [
-        Whatevr.I18n.i18nc("@item:inlistbox skin tone", "Default"),
-        Whatevr.I18n.i18nc("@item:inlistbox skin tone", "Light"),
-        Whatevr.I18n.i18nc("@item:inlistbox skin tone", "Medium-light"),
-        Whatevr.I18n.i18nc("@item:inlistbox skin tone", "Medium"),
-        Whatevr.I18n.i18nc("@item:inlistbox skin tone", "Medium-dark"),
-        Whatevr.I18n.i18nc("@item:inlistbox skin tone", "Dark")
+        { value: 0, label: Whatevr.I18n.i18nc("@item:inlistbox skin tone", "Default"), sample: "👋" },
+        { value: 1, label: Whatevr.I18n.i18nc("@item:inlistbox skin tone", "Light"), sample: "👋🏻" },
+        { value: 2, label: Whatevr.I18n.i18nc("@item:inlistbox skin tone", "Medium-light"), sample: "👋🏼" },
+        { value: 3, label: Whatevr.I18n.i18nc("@item:inlistbox skin tone", "Medium"), sample: "👋🏽" },
+        { value: 4, label: Whatevr.I18n.i18nc("@item:inlistbox skin tone", "Medium-dark"), sample: "👋🏾" },
+        { value: 5, label: Whatevr.I18n.i18nc("@item:inlistbox skin tone", "Dark"), sample: "👋🏿" }
     ]
 
     FormCard.FormHeader {
@@ -22,12 +24,12 @@ SettingsPage {
     }
 
     FormCard.FormCard {
-        FormCard.FormComboBoxDelegate {
+        PreviewSelector {
             objectName: "emoji.skinTone"
-            text: Whatevr.I18n.i18nc("@label:listbox", "Default skin tone")
-            model: page.skinTones
-            currentIndex: Whatevr.Settings.defaultSkinTone
-            onActivated: index => Whatevr.Settings.defaultSkinTone = index
+            previewKind: "skintone"
+            options: page.skinTones
+            currentValue: Whatevr.Settings.defaultSkinTone
+            onActivated: value => Whatevr.Settings.defaultSkinTone = value
         }
 
         FormCard.FormDelegateSeparator {}

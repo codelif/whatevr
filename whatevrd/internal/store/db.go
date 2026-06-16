@@ -10,7 +10,7 @@ import (
 	"github.com/mattn/go-sqlite3"
 )
 
-const schemaVersion = 4
+const schemaVersion = 5
 const SQLiteDriverName = "whatevrd-sqlite"
 
 // SQLiteReadDriverName backs the read-only connection pool. Its ConnectHook
@@ -189,6 +189,14 @@ func (db *DB) migrate(ctx context.Context) error {
 
 	statements := []string{
 		`CREATE TABLE IF NOT EXISTS app_state (
+			key TEXT PRIMARY KEY,
+			value TEXT NOT NULL,
+			updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+		)`,
+		// Daemon-side user preferences (notifications, media auto-download) that
+		// are not part of the WhatsApp account. Distinct from app_state, which
+		// holds internal sync bookkeeping. Read/written via daemon_config.go.
+		`CREATE TABLE IF NOT EXISTS daemon_config (
 			key TEXT PRIMARY KEY,
 			value TEXT NOT NULL,
 			updated_at INTEGER NOT NULL DEFAULT (unixepoch())

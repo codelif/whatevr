@@ -25,6 +25,10 @@ Item {
     readonly property real cellSize: Kirigami.Units.gridUnit * 2.2
     readonly property string emojiFontFamily: Whatevr.AppController.emojiModel.emojiFontFamily
 
+    // Fitzpatrick skin-tone modifier codepoints (light → dark).
+    readonly property int toneModifierLo: 0x1F3FB
+    readonly property int toneModifierHi: 0x1F3FF
+
     function categoryGlyph(group) {
         if (group === "Recent") {
             return "◷"
@@ -209,6 +213,40 @@ Item {
         }
     }
 
+    // Resolve the emoji to actually insert for a tile, honouring the default
+    // skin tone setting (1=light … 5=dark; 0=Default leaves the base emoji).
+    // Generic: finds the alternate carrying exactly the requested tone modifier
+    // instead of assuming a fixed alternate order, and skips multi-tone combos.
+    function applyDefaultTone(baseEmoji, alternates) {
+        const tone = Whatevr.Settings.defaultSkinTone
+        if (tone <= 0 || !alternates || alternates.length === 0) {
+            return baseEmoji
+        }
+        const target = pane.toneModifierLo + (tone - 1)
+        for (let i = 0; i < alternates.length; i++) {
+            if (pane.altHasOnlyTone(alternates[i], target)) {
+                return alternates[i]
+            }
+        }
+        return baseEmoji
+    }
+
+    function altHasOnlyTone(alt, target) {
+        let count = 0
+        let hasTarget = false
+        for (let i = 0; i < alt.length; ) {
+            const cp = alt.codePointAt(i)
+            i += cp > 0xFFFF ? 2 : 1
+            if (cp >= pane.toneModifierLo && cp <= pane.toneModifierHi) {
+                count++
+                if (cp === target) {
+                    hasTarget = true
+                }
+            }
+        }
+        return hasTarget && count === 1
+    }
+
     function showAlternates(baseEmoji, alternates, item) {
         if (!alternates || alternates.length === 0) {
             return
@@ -362,14 +400,20 @@ Item {
             }
 
             Keys.onReturnPressed: event => {
-                const emoji = Whatevr.AppController.emojiModel.emojiAt(emojiGrid.currentIndex)
+                // currentItem carries the tone-shifted displayEmoji; fall back to
+                // the base when the row isn't realised.
+                const item = emojiGrid.currentItem
+                const emoji = item ? item.displayEmoji
+                                   : Whatevr.AppController.emojiModel.emojiAt(emojiGrid.currentIndex)
                 if (emoji.length > 0) {
                     pane.selectEmoji(emoji, emojiGrid)
                     event.accepted = true
                 }
             }
             Keys.onEnterPressed: event => {
-                const emoji = Whatevr.AppController.emojiModel.emojiAt(emojiGrid.currentIndex)
+                const item = emojiGrid.currentItem
+                const emoji = item ? item.displayEmoji
+                                   : Whatevr.AppController.emojiModel.emojiAt(emojiGrid.currentIndex)
                 if (emoji.length > 0) {
                     pane.selectEmoji(emoji, emojiGrid)
                     event.accepted = true
@@ -408,6 +452,8 @@ Item {
                 required property var emoticons
                 required property var alternates
                 readonly property string description: pane.formatAliases(shortcodes, emoticons)
+                // The emoji shown and inserted, shifted to the default skin tone.
+                readonly property string displayEmoji: pane.applyDefaultTone(emojiTile.emoji, emojiTile.alternates)
 
                 width: emojiGrid.cellWidth
                 height: emojiGrid.cellHeight
@@ -428,7 +474,7 @@ Item {
 
                 Text {
                     anchors.centerIn: parent
-                    text: emojiTile.emoji
+                    text: emojiTile.displayEmoji
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
                     font.family: pane.emojiFontFamily.length > 0 ? pane.emojiFontFamily : Kirigami.Theme.defaultFont.family
@@ -478,7 +524,7 @@ Item {
                         if (button === Qt.RightButton) {
                             pane.showAlternates(emojiTile.emoji, emojiTile.alternates, emojiTile)
                         } else {
-                            pane.selectEmoji(emojiTile.emoji,
+                            pane.selectEmoji(emojiTile.displayEmoji,
                                              pane.searchField && pane.searchField.activeFocus ? pane.searchField : emojiGrid)
                         }
                     }
