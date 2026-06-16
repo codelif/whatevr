@@ -31,7 +31,7 @@ jobs:
       - name: Install dependencies
         run: |
           pacman -Syu --noconfirm --needed \
-            git openssh sudo base-devel go cmake ninja extra-cmake-modules zstd vulkan-headers \
+            git openssh sudo base-devel go just cmake ninja extra-cmake-modules zstd vulkan-headers \
             qt6-base qt6-declarative qt6-shadertools qt6-grpc \
             kcoreaddons kdbusaddons ki18n kirigami kirigami-addons prison sqlite \
             desktop-file-utils appstream libxml2
@@ -77,10 +77,10 @@ jobs:
           pacman -U --noconfirm "$GITHUB_WORKSPACE"/.cache/aur/rlottie/rlottie-*.pkg.tar*
 
       - name: Validate metadata
-        run: make validate
+        run: just validate
 
       - name: Build release artifacts
-        run: make checksums PREFIX=/usr ARCH=x86_64
+        run: just artifacts x86_64
 
       - name: Write release notes from tag
         id: release-notes

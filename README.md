@@ -29,34 +29,34 @@ For other systems, for now you can follow the build instructions below:
 <details>
     <summary>Build Instructions</summary>
     
-whatevr builds through a single top-level `Makefile` that compiles **both** the
+whatevr builds through a single top-level `justfile` that compiles **both** the
 daemon (`whatevrd`) and the Qt/Kirigami frontend (`whatkevr`). The daemon must be
 running for any frontend to work.
 
 #### 1. Install dependencies
 
-**Daemon:** Go 1.25+, a C compiler, SQLite dev files, pkg-config.
+**Daemon:** Go 1.25+, just, a C compiler, SQLite dev files, pkg-config.
 **Frontend:** C++20 compiler, CMake 3.21+, Ninja, Qt 6.8+, KDE Frameworks 6.5+
 (KCoreAddons, KDBusAddons, KI18n, Kirigami, Prison), Kirigami Addons 1.0+,
 rlottie, Vulkan headers.
 
 ```sh
 # Arch
-sudo pacman -S --needed base-devel go sqlite pkgconf cmake ninja \
+sudo pacman -S --needed base-devel go just sqlite pkgconf cmake ninja \
   extra-cmake-modules vulkan-headers qt6-base qt6-declarative qt6-shadertools qt6-grpc \
   kcoreaddons kdbusaddons ki18n kirigami kirigami-addons prison rlottie 
 
 # Note: rlottie is not available on the official Arch repos, you can install it from the AUR 
 
 # Fedora
-sudo dnf install go gcc gcc-c++ sqlite-devel pkgconf-pkg-config cmake ninja-build \
+sudo dnf install go just gcc gcc-c++ sqlite-devel pkgconf-pkg-config cmake ninja-build \
   extra-cmake-modules vulkan-headers qt6-qtbase-devel qt6-qtdeclarative-devel \
   qt6-qtshadertools-devel qt6-qtgrpc-devel kf6-kcoreaddons-devel \
   kf6-kdbusaddons-devel kf6-ki18n-devel kf6-kirigami-devel kf6-prison-devel \
   kf6-kirigami-addons-devel rlottie-devel
 
 # Debian 13 "trixie" (needs Go >= 1.25 — see Platform support)
-sudo apt install golang gcc g++ libsqlite3-dev pkg-config cmake ninja-build \
+sudo apt install golang just gcc g++ libsqlite3-dev pkg-config cmake ninja-build \
   extra-cmake-modules vulkan-headers qt6-base-dev qt6-declarative-dev qt6-shadertools-dev \
   qt6-grpc-dev libkf6coreaddons-dev libkf6dbusaddons-dev libkf6i18n-dev \
   libkf6kirigami-dev libkf6prison-dev kirigami-addons-dev librlottie-dev
@@ -65,18 +65,19 @@ sudo apt install golang gcc g++ libsqlite3-dev pkg-config cmake ninja-build \
 #### 2. Build and install
 
 ```sh
-make build                            # build daemon + frontend
-make install PREFIX="$HOME/.local"    # user-local install
+just build                            # debug build for local testing
+just build-release                    # optimized release build
+just install "$HOME/.local"           # user-local release install
 # or system-wide:
-sudo make install PREFIX=/usr
+sudo just install /usr
 ```
 
-`make install` places the `whatevrd` and `whatkevr` binaries, desktop entry,
-icon, AppStream metainfo and the systemd user units under `PREFIX`. Make sure the
-chosen `bin` directory is on your `PATH` (e.g. `~/.local/bin`).
+`just install` places the `whatevrd` and `whatkevr` binaries, desktop entry,
+icon, AppStream metainfo and the systemd user units under the selected prefix.
+Make sure the chosen `bin` directory is on your `PATH` (e.g. `~/.local/bin`).
 
-Other handy targets: `make version`, `make validate`, `make clean`, and the
-packaging target `make package-arch`.
+Other handy targets: `just version`, `just validate`, `just artifacts`, and
+`just clean`.
 
 #### 3. Run
 
@@ -89,7 +90,7 @@ whatkevr
 
 #### Run the daemon via systemd (optional)
 
-`make install` ships two **mutually exclusive** user units — enable **one**,
+`just install` ships two **mutually exclusive** user units — enable **one**,
 never both (they share the same socket path):
 
 - **Socket activation (recommended):** the daemon starts on demand the moment a
@@ -131,7 +132,7 @@ xdg-mime default in.codelif.Whatevr.desktop x-scheme-handler/whatevr
 #### Other frontends: whatgevr (unmaintained)
 
 The GTK4/libadwaita frontend is not actively maintained and is excluded from the
-Makefile and packaging. Build it manually if you want to hack on it:
+main build and packaging. Build it manually if you want to hack on it:
 
 ```sh
 # deps: rust, gtk4, libadwaita, pkg-config
