@@ -9,6 +9,7 @@ pkgbase = whatevr
 	license = BSD-3-Clause
 	makedepends = go
 	makedepends = gcc
+	makedepends = just
 	makedepends = cmake
 	makedepends = ninja
 	makedepends = extra-cmake-modules

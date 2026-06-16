@@ -1,6 +1,6 @@
 #pragma once
 
 // Generated from version.h.in by CMake. Do not edit directly.
-// The value flows from the repo git tag / VERSION file through the Makefile
+// The value flows from the repo git tag / VERSION file through the justfile
 // (-DWHATEVR_VERSION_FULL) or CMake's VERSION-file fallback.
 #define WHATEVR_VERSION_STRING "@WHATEVR_VERSION_FULL@"

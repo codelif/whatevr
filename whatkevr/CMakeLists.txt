@@ -2,7 +2,7 @@
 # ECM/KDEInstallDirs modules used below.
 cmake_minimum_required(VERSION 3.21)
 
-# Version is supplied by the top-level Makefile (-DWHATEVR_VERSION numeric,
+# Version is supplied by the top-level justfile (-DWHATEVR_VERSION numeric,
 # -DWHATEVR_VERSION_FULL descriptive). When CMake is invoked standalone (e.g. by
 # distro packagers) fall back to the repo-root VERSION file so there is still a
 # single source of truth.
@@ -22,17 +22,9 @@ endif()
 
 project(whatkevr VERSION ${WHATEVR_VERSION} LANGUAGES CXX)
 
-# Without an explicit build type the compiler runs with no optimisation, which
-# makes the QML/scene-graph paths noticeably slower. Default to an optimised
-# build (with debug info) when the user has not chosen one.
-if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
-    set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
-endif()
-
-# Link-time optimisation for optimised builds. Distro packagers who inject
-# their own flags can pass -DWHATKEVR_ENABLE_LTO=OFF.
-option(WHATKEVR_ENABLE_LTO "Enable interprocedural optimisation (LTO)" ON)
-if(WHATKEVR_ENABLE_LTO AND NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+# Build type is selected by the entrypoint. Release builds use LTO when the
+# toolchain supports it; debug builds stay easy to inspect.
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
     include(CheckIPOSupported)
     check_ipo_supported(RESULT whatkevr_ipo_supported OUTPUT whatkevr_ipo_error)
     if(whatkevr_ipo_supported)

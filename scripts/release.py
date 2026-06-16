@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """One-command release driver for whatevr.
 
-`make release VERSION=x.y.z` funnels here. This is the single point where a new
+`just release x.y.z` funnels here. This is the single point where a new
 version and its release notes are authored once and propagated everywhere they
 are needed (VERSION fallback, AppStream metainfo), then committed and
 annotated-tagged. It refuses to run on a dirty tree and never pushes — review the
@@ -366,8 +366,8 @@ def main() -> None:
     ]
 
     print("Validating metadata...")
-    if subprocess.run(["make", "validate"]).returncode != 0:
-        fail("`make validate` failed — files were edited but not committed; "
+    if subprocess.run(["just", "validate"]).returncode != 0:
+        fail("`just validate` failed — files were edited but not committed; "
              "fix and re-run, or `git checkout -- .` to discard")
 
     rel = [str(p.relative_to(root)) for p in changed]
