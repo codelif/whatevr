@@ -44,7 +44,8 @@ Kirigami.ApplicationWindow {
 
     pageStack {
         columnView.columnWidth: Kirigami.Units.gridUnit * 13
-        columnView.scrollDuration: 0
+
+        popHiddenPages: true
 
         globalToolBar {
             style: Kirigami.ApplicationHeaderStyle.ToolBar
@@ -59,11 +60,6 @@ Kirigami.ApplicationWindow {
         edge: Qt.application.layoutDirection === Qt.RightToLeft ? Qt.RightEdge : Qt.LeftEdge
 
         modal: false
-        // Pinned sidebar: never auto-close. Without this the non-modal drawer
-        // closes when the window loses focus and reopens on refocus, resizing
-        // the pageStack and replaying the page slide-in every time. NoAutoClose
-        // keeps its width stable so the current category page does not re-animate.
-        closePolicy: QQC2.Popup.NoAutoClose
         Kirigami.OverlayZStacking.layer: Kirigami.OverlayZStacking.Drawer
         z: Kirigami.OverlayZStacking.z
         drawerOpen: true
@@ -259,6 +255,19 @@ Kirigami.ApplicationWindow {
             const page = component.createObject(root, module.initialProperties());
             if (page.hasOwnProperty("hostPageStack")) {
                 page.hostPageStack = root.pageStack;
+            }
+            // Every category page is a FormCardPage. On window refocus its
+            // ScrollablePage scrolls the focused control into view and
+            // miscomputes a full page-width horizontal offset, so the flickable
+            // is shoved sideways and rebounds to 0 — replaying the page slide-in
+            // on every refocus. These pages never scroll horizontally, so pin
+            // contentX to 0. Done here (not just in SettingsPage) so the library
+            // AboutPage, which does not derive from SettingsPage, is covered too.
+            if (page.flickable) {
+                page.flickable.contentXChanged.connect(() => {
+                    if (page.flickable.contentX !== 0)
+                        page.flickable.contentX = 0;
+                });
             }
             if (page.title.length === 0) {
                 page.title = module.text;
