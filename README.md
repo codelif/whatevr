@@ -164,7 +164,7 @@ Now with that, here is the current feature map, this is for whatevrd+whatkevr.
 | Reply to messages | ✅ | |
 | Message delivery/read status | ✅ | |
 | Pin and unpin chats | ✅ | |
-| Group chats | ✅ | Basic chat/message support |
+| Group chats | ✅ | Basic support + info display |
 | Chat avatars | ✅ | |
 | Media preview/display | ✅ | Images and cached media |
 | Paste image from clipboard | ✅ | |
@@ -173,9 +173,9 @@ Now with that, here is the current feature map, this is for whatevrd+whatkevr.
 | Offline/history sync progress | ✅ | |
 | Desktop notifications | ✅ | Handled by daemon |
 | Emoji picker | ✅ | Frontend-local |
-| Message search | ❌ | |
-| Chat search | ❌ | |
-| Contact search/new chat | ❌ | |
+| Message search | ✅ | |
+| Chat search | ✅ | |
+| Contact search/new chat | ✅ | |
 | Voice messages | ❌ | |
 | Audio playback | ❌ | |
 | Video playback | ❌ | |
@@ -188,12 +188,15 @@ Now with that, here is the current feature map, this is for whatevrd+whatkevr.
 | Delete messages | ✅ | |
 | Forward messages | ✅ | |
 | Star/bookmark messages | ✅ | |
+| Archive chats | ✅ | |
+| Mute chats | ✅ | |
+| Pinned messages | ✅ | |
 | Group management | ❌ | No create/invite/admin UI |
 | Community management | ❌ |  |
 | Calls | ❌ | Voice/video calls unsupported |
 | Status/stories | ❌ | |
-| Settings UI | ❌ | |
-| Account/profile editing | ❌ | |
+| Settings UI | ✅ | |
+| Account/profile editing | ✅ | Includes privacy settings |
 | Import/export backups | ❌ | |
 | DB encryption and keyring integration | ❌ | |
 | Daemon SNI (Tray) | ❌ | |
@@ -218,6 +221,8 @@ Whatevr stands on the shoulders of:
 - [rlottie](https://github.com/Samsung/rlottie) — Lottie rendering for animated stickers (MIT)
 - [emojilib](https://github.com/muan/emojilib) — emoji keyword / shortcode data, © 2014 Mu-An Chiou (MIT)
 - [Google Fonts emoji metadata](https://github.com/googlefonts/emoji-metadata) — emoji ordering & grouping data (Apache-2.0)
+
+Additionally, I took a fair amount of inspiration for UI layouts :from [NeoChat](https://apps.kde.org/neochat/)
 
 ## License
 This program is licensed under the BSD-3-Clause License
