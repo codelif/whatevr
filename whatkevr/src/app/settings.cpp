@@ -17,7 +17,10 @@ namespace {
 Settings *g_instance = nullptr;
 
 constexpr auto kColorScheme = "settings/colorScheme";
+constexpr auto kDensity = "settings/density";
+// Legacy boolean replaced by kDensity; read once at load to migrate.
 constexpr auto kCompactMode = "settings/compactMode";
+constexpr auto kChatWallpaper = "settings/chatWallpaper";
 constexpr auto kMessageFontSize = "settings/messageFontSize";
 constexpr auto kShowAvatars = "settings/showAvatars";
 constexpr auto kPersistDrafts = "settings/persistDrafts";
@@ -66,7 +69,11 @@ Settings::Settings(QObject *parent)
     m_schemeManager->setAutosaveChanges(false);
 
     load();
-    applyColorScheme();
+    // Deliberately NOT applying the scheme here: at construction time no
+    // QQuickWindow exists yet, and the org.kde.desktop QtQuick style re-reads
+    // the system palette when the first window is created, clobbering an
+    // early-applied scheme (visible as a half-applied light theme on restart).
+    // main() calls applyColorScheme() once the engine has loaded the window.
 }
 
 Settings::~Settings()
@@ -80,7 +87,13 @@ void Settings::load()
 {
     const QSettings settings;
     m_colorScheme = settings.value(QLatin1String(kColorScheme)).toString();
-    m_compactMode = settings.value(QLatin1String(kCompactMode), false).toBool();
+    if (settings.contains(QLatin1String(kDensity))) {
+        m_density = qBound(0, settings.value(QLatin1String(kDensity)).toInt(), 2);
+    } else {
+        // Migrate the legacy boolean: compact -> Compact, otherwise Standard.
+        m_density = settings.value(QLatin1String(kCompactMode), false).toBool() ? DensityCompact : DensityStandard;
+    }
+    m_chatWallpaper = settings.value(QLatin1String(kChatWallpaper)).toString();
     m_messageFontSize = settings.value(QLatin1String(kMessageFontSize), 0).toInt();
     m_showAvatars = settings.value(QLatin1String(kShowAvatars), true).toBool();
     m_persistDrafts = settings.value(QLatin1String(kPersistDrafts), true).toBool();
@@ -114,21 +127,115 @@ void Settings::setColorScheme(const QString &schemeId)
     QSettings().setValue(QLatin1String(kColorScheme), m_colorScheme);
     applyColorScheme();
     Q_EMIT colorSchemeChanged();
+    // themeMode is derived from the active scheme, so it moves with it.
+    Q_EMIT themeModeChanged();
+}
+
+namespace {
+// Maps the high-level light/dark selector onto a concrete KColorScheme id.
+//
+// Two-pass so we land on the scheme the user means rather than the first that
+// merely isn't its opposite: for light, "Breeze Light" beats "Breeze Classic"
+// (both are light, but only one is named Light). Pass 1 prefers a scheme whose
+// name carries the explicit keyword ("Light"/"Dark"); pass 2 falls back to the
+// first scheme that isn't the opposite tone. No hard-coded ids.
+QString schemeIdForMode(const QVariantList &schemes, bool wantDark)
+{
+    const QString wanted = wantDark ? QStringLiteral("Dark") : QStringLiteral("Light");
+    const QString opposite = wantDark ? QStringLiteral("Light") : QStringLiteral("Dark");
+
+    QString fallback;
+    for (const QVariant &entry : schemes) {
+        const QVariantMap map = entry.toMap();
+        const QString id = map.value(QStringLiteral("id")).toString();
+        if (id.isEmpty()) {
+            continue; // the system-default entry
+        }
+        const QString name = map.value(QStringLiteral("name")).toString();
+        if (name.contains(wanted, Qt::CaseInsensitive)) {
+            return id; // explicit match wins outright
+        }
+        if (fallback.isEmpty() && !name.contains(opposite, Qt::CaseInsensitive)) {
+            fallback = id; // first scheme of the right tone, kept as backup
+        }
+    }
+    return fallback;
+}
+} // namespace
+
+int Settings::themeMode() const
+{
+    if (m_colorScheme.isEmpty()) {
+        return ThemeSystem;
+    }
+    // Derive light/dark from the active scheme's display name.
+    const QVariantList schemes = availableColorSchemes();
+    for (const QVariant &entry : schemes) {
+        const QVariantMap map = entry.toMap();
+        if (map.value(QStringLiteral("id")).toString() == m_colorScheme) {
+            return map.value(QStringLiteral("name")).toString().contains(QStringLiteral("Dark"), Qt::CaseInsensitive)
+                ? ThemeDark
+                : ThemeLight;
+        }
+    }
+    return ThemeLight;
+}
+
+void Settings::setThemeMode(int mode)
+{
+    switch (mode) {
+    case ThemeSystem:
+        setColorScheme(QString());
+        break;
+    case ThemeLight:
+        setColorScheme(schemeIdForMode(availableColorSchemes(), false));
+        break;
+    case ThemeDark:
+        setColorScheme(schemeIdForMode(availableColorSchemes(), true));
+        break;
+    default:
+        break;
+    }
+}
+
+int Settings::density() const
+{
+    return m_density;
+}
+
+void Settings::setDensity(int density)
+{
+    const int clamped = qBound(0, density, 2);
+    if (m_density == clamped) {
+        return;
+    }
+    const bool wasCompact = compactMode();
+    m_density = clamped;
+    QSettings().setValue(QLatin1String(kDensity), m_density);
+    Q_EMIT densityChanged();
+    if (wasCompact != compactMode()) {
+        Q_EMIT compactModeChanged();
+    }
 }
 
 bool Settings::compactMode() const
 {
-    return m_compactMode;
+    return m_density == DensityCompact;
 }
 
-void Settings::setCompactMode(bool compact)
+QString Settings::chatWallpaper() const
 {
-    if (m_compactMode == compact) {
+    return m_chatWallpaper;
+}
+
+void Settings::setChatWallpaper(const QString &wallpaperId)
+{
+    if (m_chatWallpaper == wallpaperId) {
         return;
     }
-    m_compactMode = compact;
-    QSettings().setValue(QLatin1String(kCompactMode), m_compactMode);
-    Q_EMIT compactModeChanged();
+    m_chatWallpaper = wallpaperId;
+    QSettings().setValue(QLatin1String(kChatWallpaper), m_chatWallpaper);
+    Q_EMIT chatWallpaperChanged();
 }
 
 int Settings::messageFontSize() const

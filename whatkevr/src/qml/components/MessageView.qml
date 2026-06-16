@@ -5,11 +5,21 @@ import QtQuick.Controls
 import Qt.labs.platform as Platform
 import org.kde.kirigami as Kirigami
 import Whatevr as Whatevr
+import "Wallpapers.js" as Wallpapers
 
 Item {
     id: root
 
     Kirigami.Theme.colorSet: Kirigami.Theme.View
+
+    // Conversation wallpaper (live): falls back to the theme background when the
+    // chosen preset has no color or "Default" is selected.
+    Rectangle {
+        anchors.fill: parent
+        z: -1
+        readonly property string wallpaperColor: Wallpapers.colorFor(Whatevr.Settings.chatWallpaper)
+        color: wallpaperColor.length > 0 ? wallpaperColor : Kirigami.Theme.backgroundColor
+    }
 
     property string chatId: ""
     property alias model: list.model
@@ -878,7 +888,15 @@ Item {
         // Newest at the bottom; older history stacks upward off the top edge.
         verticalLayoutDirection: ListView.BottomToTop
 
-        spacing: Kirigami.Units.smallSpacing / 2
+        // Inter-message gap follows the appearance density setting (live):
+        // compact tightens it, comfortable opens it up.
+        spacing: {
+            switch (Whatevr.Settings.density) {
+            case 0: return Math.round(Kirigami.Units.smallSpacing / 4)  // Compact
+            case 2: return Math.round(Kirigami.Units.smallSpacing * 1.5) // Comfortable
+            default: return Math.round(Kirigami.Units.smallSpacing / 2)  // Standard
+            }
+        }
         // Deep cache: cache-buffer delegates are incubated asynchronously, so
         // every row prepared here is one fewer synchronous creation while the
         // user is scrolling (those are what stall frames). Cached text rows

@@ -1737,6 +1737,352 @@ var SendService_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
+	SettingsService_GetPrivacySettings_FullMethodName = "/whatevr.v1.SettingsService/GetPrivacySettings"
+	SettingsService_SetPrivacySetting_FullMethodName  = "/whatevr.v1.SettingsService/SetPrivacySetting"
+	SettingsService_GetBlocklist_FullMethodName       = "/whatevr.v1.SettingsService/GetBlocklist"
+	SettingsService_UpdateBlocklist_FullMethodName    = "/whatevr.v1.SettingsService/UpdateBlocklist"
+	SettingsService_SetProfileStatus_FullMethodName   = "/whatevr.v1.SettingsService/SetProfileStatus"
+	SettingsService_GetAppPreferences_FullMethodName  = "/whatevr.v1.SettingsService/GetAppPreferences"
+	SettingsService_SetAppPreferences_FullMethodName  = "/whatevr.v1.SettingsService/SetAppPreferences"
+)
+
+// SettingsServiceClient is the client API for SettingsService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// User-account settings that touch the live WhatsApp connection (privacy,
+// blocklist, profile status) plus daemon-persisted app preferences
+// (notifications, media auto-download). The frontend fetches these when the
+// settings window opens, so there are no push events; mutations return the
+// updated value so the UI can patch in place.
+type SettingsServiceClient interface {
+	GetPrivacySettings(ctx context.Context, in *GetPrivacySettingsRequest, opts ...grpc.CallOption) (*GetPrivacySettingsResponse, error)
+	SetPrivacySetting(ctx context.Context, in *SetPrivacySettingRequest, opts ...grpc.CallOption) (*SetPrivacySettingResponse, error)
+	GetBlocklist(ctx context.Context, in *GetBlocklistRequest, opts ...grpc.CallOption) (*GetBlocklistResponse, error)
+	UpdateBlocklist(ctx context.Context, in *UpdateBlocklistRequest, opts ...grpc.CallOption) (*UpdateBlocklistResponse, error)
+	// Set the logged-in user's "About"/status text. The display (push) name is
+	// not settable via whatsmeow, so it is read-only and reused from GetSelfProfile.
+	SetProfileStatus(ctx context.Context, in *SetProfileStatusRequest, opts ...grpc.CallOption) (*SetProfileStatusResponse, error)
+	GetAppPreferences(ctx context.Context, in *GetAppPreferencesRequest, opts ...grpc.CallOption) (*GetAppPreferencesResponse, error)
+	SetAppPreferences(ctx context.Context, in *SetAppPreferencesRequest, opts ...grpc.CallOption) (*SetAppPreferencesResponse, error)
+}
+
+type settingsServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewSettingsServiceClient(cc grpc.ClientConnInterface) SettingsServiceClient {
+	return &settingsServiceClient{cc}
+}
+
+func (c *settingsServiceClient) GetPrivacySettings(ctx context.Context, in *GetPrivacySettingsRequest, opts ...grpc.CallOption) (*GetPrivacySettingsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetPrivacySettingsResponse)
+	err := c.cc.Invoke(ctx, SettingsService_GetPrivacySettings_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *settingsServiceClient) SetPrivacySetting(ctx context.Context, in *SetPrivacySettingRequest, opts ...grpc.CallOption) (*SetPrivacySettingResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetPrivacySettingResponse)
+	err := c.cc.Invoke(ctx, SettingsService_SetPrivacySetting_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *settingsServiceClient) GetBlocklist(ctx context.Context, in *GetBlocklistRequest, opts ...grpc.CallOption) (*GetBlocklistResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetBlocklistResponse)
+	err := c.cc.Invoke(ctx, SettingsService_GetBlocklist_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *settingsServiceClient) UpdateBlocklist(ctx context.Context, in *UpdateBlocklistRequest, opts ...grpc.CallOption) (*UpdateBlocklistResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UpdateBlocklistResponse)
+	err := c.cc.Invoke(ctx, SettingsService_UpdateBlocklist_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *settingsServiceClient) SetProfileStatus(ctx context.Context, in *SetProfileStatusRequest, opts ...grpc.CallOption) (*SetProfileStatusResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetProfileStatusResponse)
+	err := c.cc.Invoke(ctx, SettingsService_SetProfileStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *settingsServiceClient) GetAppPreferences(ctx context.Context, in *GetAppPreferencesRequest, opts ...grpc.CallOption) (*GetAppPreferencesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetAppPreferencesResponse)
+	err := c.cc.Invoke(ctx, SettingsService_GetAppPreferences_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *settingsServiceClient) SetAppPreferences(ctx context.Context, in *SetAppPreferencesRequest, opts ...grpc.CallOption) (*SetAppPreferencesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetAppPreferencesResponse)
+	err := c.cc.Invoke(ctx, SettingsService_SetAppPreferences_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// SettingsServiceServer is the server API for SettingsService service.
+// All implementations must embed UnimplementedSettingsServiceServer
+// for forward compatibility.
+//
+// User-account settings that touch the live WhatsApp connection (privacy,
+// blocklist, profile status) plus daemon-persisted app preferences
+// (notifications, media auto-download). The frontend fetches these when the
+// settings window opens, so there are no push events; mutations return the
+// updated value so the UI can patch in place.
+type SettingsServiceServer interface {
+	GetPrivacySettings(context.Context, *GetPrivacySettingsRequest) (*GetPrivacySettingsResponse, error)
+	SetPrivacySetting(context.Context, *SetPrivacySettingRequest) (*SetPrivacySettingResponse, error)
+	GetBlocklist(context.Context, *GetBlocklistRequest) (*GetBlocklistResponse, error)
+	UpdateBlocklist(context.Context, *UpdateBlocklistRequest) (*UpdateBlocklistResponse, error)
+	// Set the logged-in user's "About"/status text. The display (push) name is
+	// not settable via whatsmeow, so it is read-only and reused from GetSelfProfile.
+	SetProfileStatus(context.Context, *SetProfileStatusRequest) (*SetProfileStatusResponse, error)
+	GetAppPreferences(context.Context, *GetAppPreferencesRequest) (*GetAppPreferencesResponse, error)
+	SetAppPreferences(context.Context, *SetAppPreferencesRequest) (*SetAppPreferencesResponse, error)
+	mustEmbedUnimplementedSettingsServiceServer()
+}
+
+// UnimplementedSettingsServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedSettingsServiceServer struct{}
+
+func (UnimplementedSettingsServiceServer) GetPrivacySettings(context.Context, *GetPrivacySettingsRequest) (*GetPrivacySettingsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetPrivacySettings not implemented")
+}
+func (UnimplementedSettingsServiceServer) SetPrivacySetting(context.Context, *SetPrivacySettingRequest) (*SetPrivacySettingResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetPrivacySetting not implemented")
+}
+func (UnimplementedSettingsServiceServer) GetBlocklist(context.Context, *GetBlocklistRequest) (*GetBlocklistResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetBlocklist not implemented")
+}
+func (UnimplementedSettingsServiceServer) UpdateBlocklist(context.Context, *UpdateBlocklistRequest) (*UpdateBlocklistResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateBlocklist not implemented")
+}
+func (UnimplementedSettingsServiceServer) SetProfileStatus(context.Context, *SetProfileStatusRequest) (*SetProfileStatusResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetProfileStatus not implemented")
+}
+func (UnimplementedSettingsServiceServer) GetAppPreferences(context.Context, *GetAppPreferencesRequest) (*GetAppPreferencesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetAppPreferences not implemented")
+}
+func (UnimplementedSettingsServiceServer) SetAppPreferences(context.Context, *SetAppPreferencesRequest) (*SetAppPreferencesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetAppPreferences not implemented")
+}
+func (UnimplementedSettingsServiceServer) mustEmbedUnimplementedSettingsServiceServer() {}
+func (UnimplementedSettingsServiceServer) testEmbeddedByValue()                         {}
+
+// UnsafeSettingsServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to SettingsServiceServer will
+// result in compilation errors.
+type UnsafeSettingsServiceServer interface {
+	mustEmbedUnimplementedSettingsServiceServer()
+}
+
+func RegisterSettingsServiceServer(s grpc.ServiceRegistrar, srv SettingsServiceServer) {
+	// If the following call panics, it indicates UnimplementedSettingsServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&SettingsService_ServiceDesc, srv)
+}
+
+func _SettingsService_GetPrivacySettings_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetPrivacySettingsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SettingsServiceServer).GetPrivacySettings(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SettingsService_GetPrivacySettings_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SettingsServiceServer).GetPrivacySettings(ctx, req.(*GetPrivacySettingsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SettingsService_SetPrivacySetting_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetPrivacySettingRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SettingsServiceServer).SetPrivacySetting(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SettingsService_SetPrivacySetting_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SettingsServiceServer).SetPrivacySetting(ctx, req.(*SetPrivacySettingRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SettingsService_GetBlocklist_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetBlocklistRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SettingsServiceServer).GetBlocklist(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SettingsService_GetBlocklist_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SettingsServiceServer).GetBlocklist(ctx, req.(*GetBlocklistRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SettingsService_UpdateBlocklist_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateBlocklistRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SettingsServiceServer).UpdateBlocklist(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SettingsService_UpdateBlocklist_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SettingsServiceServer).UpdateBlocklist(ctx, req.(*UpdateBlocklistRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SettingsService_SetProfileStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetProfileStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SettingsServiceServer).SetProfileStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SettingsService_SetProfileStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SettingsServiceServer).SetProfileStatus(ctx, req.(*SetProfileStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SettingsService_GetAppPreferences_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetAppPreferencesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SettingsServiceServer).GetAppPreferences(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SettingsService_GetAppPreferences_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SettingsServiceServer).GetAppPreferences(ctx, req.(*GetAppPreferencesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SettingsService_SetAppPreferences_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetAppPreferencesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SettingsServiceServer).SetAppPreferences(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SettingsService_SetAppPreferences_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SettingsServiceServer).SetAppPreferences(ctx, req.(*SetAppPreferencesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// SettingsService_ServiceDesc is the grpc.ServiceDesc for SettingsService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var SettingsService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "whatevr.v1.SettingsService",
+	HandlerType: (*SettingsServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "GetPrivacySettings",
+			Handler:    _SettingsService_GetPrivacySettings_Handler,
+		},
+		{
+			MethodName: "SetPrivacySetting",
+			Handler:    _SettingsService_SetPrivacySetting_Handler,
+		},
+		{
+			MethodName: "GetBlocklist",
+			Handler:    _SettingsService_GetBlocklist_Handler,
+		},
+		{
+			MethodName: "UpdateBlocklist",
+			Handler:    _SettingsService_UpdateBlocklist_Handler,
+		},
+		{
+			MethodName: "SetProfileStatus",
+			Handler:    _SettingsService_SetProfileStatus_Handler,
+		},
+		{
+			MethodName: "GetAppPreferences",
+			Handler:    _SettingsService_GetAppPreferences_Handler,
+		},
+		{
+			MethodName: "SetAppPreferences",
+			Handler:    _SettingsService_SetAppPreferences_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "whatevr.proto",
+}
+
+const (
 	StickerService_ListStickers_FullMethodName            = "/whatevr.v1.StickerService/ListStickers"
 	StickerService_ListStickerPacks_FullMethodName        = "/whatevr.v1.StickerService/ListStickerPacks"
 	StickerService_GetStickerPack_FullMethodName          = "/whatevr.v1.StickerService/GetStickerPack"

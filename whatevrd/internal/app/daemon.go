@@ -392,6 +392,52 @@ type GroupInfo struct {
 	Members         []GroupMember
 }
 
+// PrivacySettings mirrors the user's WhatsApp privacy categories. Each audience
+// field holds the raw whatsmeow value ("all", "contacts", "contact_blacklist",
+// "none", "match_last_seen", "known"); ReadReceipts is a plain toggle because
+// WhatsApp only allows everyone/nobody for it.
+type PrivacySettings struct {
+	LastSeen     string
+	Online       string
+	ProfilePhoto string
+	About        string
+	ReadReceipts bool
+	GroupAdd     string
+	CallAdd      string
+}
+
+// BlockedContact is one entry in the user's blocklist, with display fields
+// resolved the same way chat participants are.
+type BlockedContact struct {
+	JID             string
+	DisplayName     string
+	PhoneNumber     string
+	AvatarLocalPath string
+}
+
+// AppPreferences are the daemon-persisted preferences not tied to the WhatsApp
+// account: notification gating and media auto-download policy.
+type AppPreferences struct {
+	NotificationsEnabled  bool
+	NotificationSound     bool
+	NotificationPreview   bool
+	AutoDownloadPhotos    bool
+	AutoDownloadVideos    bool
+	AutoDownloadAudio     bool
+	AutoDownloadDocuments bool
+}
+
+// DefaultAppPreferences are applied the first time the daemon runs, before the
+// user has saved anything. Notifications on (no sound, with preview) and media
+// auto-download off match WhatsApp Desktop defaults.
+func DefaultAppPreferences() AppPreferences {
+	return AppPreferences{
+		NotificationsEnabled: true,
+		NotificationSound:    false,
+		NotificationPreview:  true,
+	}
+}
+
 type LoginEventKind int
 
 const (

@@ -13,6 +13,12 @@ FormCard.FormCardPage {
     // Set via ConfigurationModule.initialProperties when navigating from search.
     property string pendingRowId: ""
 
+    // The settings window's own pageStack, injected by SettingsWindow when the
+    // page is created. Pages must push drill-in sub-pages (e.g. blocked
+    // contacts) onto THIS stack; applicationWindow() resolves to the main app
+    // window, which would open the sub-page behind the settings pane.
+    property var hostPageStack: null
+
     function flashRow(rowId) {
         if (!rowId)
             return

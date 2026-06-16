@@ -71,8 +71,12 @@ ItemDelegate {
     readonly property bool nested: isArchived && archivedExpanded
     readonly property real nestIndent: nested ? Kirigami.Units.gridUnit * 1.3 : 0
 
+    // Fixed row height: the density setting affects only the conversation view,
+    // not the chat list.
+    readonly property real rowHeightUnits: 4.4
+
     width: ListView.view ? ListView.view.width : implicitWidth
-    implicitHeight: Kirigami.Units.gridUnit * 4.4
+    implicitHeight: Kirigami.Units.gridUnit * root.rowHeightUnits
     // Collapse to zero height (not visible:false) so the ListView still counts
     // the row for section grouping and keeps the "Archived" header rendered.
     height: collapsed ? 0 : implicitHeight
@@ -119,11 +123,12 @@ ItemDelegate {
     contentItem: Item {
         id: content
 
-        implicitHeight: Kirigami.Units.gridUnit * 4.4
+        implicitHeight: Kirigami.Units.gridUnit * root.rowHeightUnits
 
         AvatarImage {
             id: avatar
 
+            visible: Whatevr.Settings.showAvatars
             anchors.left: parent.left
             anchors.leftMargin: Kirigami.Units.largeSpacing
             anchors.verticalCenter: parent.verticalCenter
@@ -184,7 +189,8 @@ ItemDelegate {
         Item {
             id: middle
 
-            anchors.left: avatar.right
+            // Reclaim the gutter when avatars are hidden.
+            anchors.left: avatar.visible ? avatar.right : parent.left
             anchors.leftMargin: Kirigami.Units.largeSpacing
             anchors.right: trailing.visible ? trailing.left : parent.right
             anchors.rightMargin: Kirigami.Units.largeSpacing

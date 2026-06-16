@@ -38,6 +38,36 @@ QStringList stringsFromArray(const QJsonArray &array)
     return strings;
 }
 
+// Returns the alternate carrying exactly the requested Fitzpatrick skin tone
+// (1=light … 5=dark), or the base emoji when tone is 0/out of range or no
+// single-tone variant exists. Detects the tone modifier codepoint rather than
+// assuming alternate ordering, and skips multi-person/multi-tone combos.
+QString applyDefaultTone(const QString &baseEmoji, const QStringList &alternates, int tone)
+{
+    constexpr char32_t toneLo = 0x1F3FB;
+    constexpr char32_t toneHi = 0x1F3FF;
+    if (tone <= 0 || alternates.isEmpty()) {
+        return baseEmoji;
+    }
+    const char32_t target = toneLo + static_cast<char32_t>(tone - 1);
+    for (const QString &alt : alternates) {
+        int count = 0;
+        bool hasTarget = false;
+        for (const char32_t cp : alt.toStdU32String()) {
+            if (cp >= toneLo && cp <= toneHi) {
+                ++count;
+                if (cp == target) {
+                    hasTarget = true;
+                }
+            }
+        }
+        if (hasTarget && count == 1) {
+            return alt;
+        }
+    }
+    return baseEmoji;
+}
+
 }
 
 EmojiModel::EmojiModel(QObject *parent)
@@ -232,6 +262,10 @@ QVariantList EmojiModel::searchEmoji(const QString &query, int limit) const
         return a.sourceIndex < b.sourceIndex; // stable Unicode order otherwise
     });
 
+    // The inline `:keyword` bar inserts these directly, so honour the default
+    // skin tone here too (the grid does the equivalent in QML).
+    const int tone = QSettings().value(QStringLiteral("settings/defaultSkinTone"), 0).toInt();
+
     QVariantList results;
     const int count = std::min<int>(limit, candidates.size());
     results.reserve(count);
@@ -245,7 +279,7 @@ QVariantList EmojiModel::searchEmoji(const QString &query, int limit) const
             shortcode.chop(1);
         }
         results.append(QVariantMap {
-            {QStringLiteral("emoji"), item.emoji},
+            {QStringLiteral("emoji"), applyDefaultTone(item.emoji, item.alternates, tone)},
             {QStringLiteral("shortcode"), shortcode},
         });
     }

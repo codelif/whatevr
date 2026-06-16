@@ -129,6 +129,23 @@ service SendService {
   rpc PinMessage(PinMessageRequest) returns (PinMessageResponse);
 }
 
+// User-account settings that touch the live WhatsApp connection (privacy,
+// blocklist, profile status) plus daemon-persisted app preferences
+// (notifications, media auto-download). The frontend fetches these when the
+// settings window opens, so there are no push events; mutations return the
+// updated value so the UI can patch in place.
+service SettingsService {
+  rpc GetPrivacySettings(GetPrivacySettingsRequest) returns (GetPrivacySettingsResponse);
+  rpc SetPrivacySetting(SetPrivacySettingRequest) returns (SetPrivacySettingResponse);
+  rpc GetBlocklist(GetBlocklistRequest) returns (GetBlocklistResponse);
+  rpc UpdateBlocklist(UpdateBlocklistRequest) returns (UpdateBlocklistResponse);
+  // Set the logged-in user's "About"/status text. The display (push) name is
+  // not settable via whatsmeow, so it is read-only and reused from GetSelfProfile.
+  rpc SetProfileStatus(SetProfileStatusRequest) returns (SetProfileStatusResponse);
+  rpc GetAppPreferences(GetAppPreferencesRequest) returns (GetAppPreferencesResponse);
+  rpc SetAppPreferences(SetAppPreferencesRequest) returns (SetAppPreferencesResponse);
+}
+
 service StickerService {
   rpc ListStickers(ListStickersRequest) returns (ListStickersResponse);
   rpc ListStickerPacks(ListStickerPacksRequest) returns (ListStickerPacksResponse);
@@ -895,4 +912,116 @@ message MessageReply {
   string media_kind = 5;
   string media_mime_type = 6;
   MessageDirection direction = 7;
+}
+
+// Who a privacy-controlled detail is visible to. Not every category accepts
+// every value (e.g. read receipts are only EVERYONE/NOBODY, online is only
+// EVERYONE/MATCH_LAST_SEEN); the daemon validates per category.
+enum PrivacyAudience {
+  PRIVACY_AUDIENCE_UNSPECIFIED = 0;
+  PRIVACY_AUDIENCE_EVERYONE = 1;          // whatsmeow "all"
+  PRIVACY_AUDIENCE_CONTACTS = 2;          // "contacts"
+  PRIVACY_AUDIENCE_CONTACTS_EXCEPT = 3;   // "contact_blacklist"
+  PRIVACY_AUDIENCE_NOBODY = 4;            // "none"
+  PRIVACY_AUDIENCE_MATCH_LAST_SEEN = 5;   // "match_last_seen" (online only)
+  PRIVACY_AUDIENCE_KNOWN = 6;             // "known" (call-add only)
+}
+
+enum PrivacyCategory {
+  PRIVACY_CATEGORY_UNSPECIFIED = 0;
+  PRIVACY_CATEGORY_LAST_SEEN = 1;
+  PRIVACY_CATEGORY_ONLINE = 2;
+  PRIVACY_CATEGORY_PROFILE_PHOTO = 3;
+  PRIVACY_CATEGORY_ABOUT = 4;
+  PRIVACY_CATEGORY_READ_RECEIPTS = 5;
+  PRIVACY_CATEGORY_GROUP_ADD = 6;
+  PRIVACY_CATEGORY_CALL_ADD = 7;
+}
+
+// Snapshot of every privacy category the UI exposes. read_receipts is a plain
+// toggle on the wire (WhatsApp only allows everyone/nobody for it).
+message PrivacySettingsValues {
+  PrivacyAudience last_seen = 1;
+  PrivacyAudience online = 2;
+  PrivacyAudience profile_photo = 3;
+  PrivacyAudience about = 4;
+  bool read_receipts = 5;
+  PrivacyAudience group_add = 6;
+  PrivacyAudience call_add = 7;
+}
+
+message GetPrivacySettingsRequest {}
+
+message GetPrivacySettingsResponse {
+  PrivacySettingsValues settings = 1;
+}
+
+message SetPrivacySettingRequest {
+  PrivacyCategory category = 1;
+  // Used for every category except READ_RECEIPTS.
+  PrivacyAudience audience = 2;
+  // Used only when category == READ_RECEIPTS.
+  bool read_receipts = 3;
+}
+
+message SetPrivacySettingResponse {
+  // The full settings snapshot after the change, so the UI re-syncs every row.
+  PrivacySettingsValues settings = 1;
+}
+
+message BlockedContact {
+  string jid = 1;
+  string display_name = 2;
+  string phone_number = 3;
+  string avatar_local_path = 4;
+}
+
+message GetBlocklistRequest {}
+
+message GetBlocklistResponse {
+  repeated BlockedContact contacts = 1;
+}
+
+message UpdateBlocklistRequest {
+  string jid = 1;
+  // true blocks the contact, false unblocks.
+  bool block = 2;
+}
+
+message UpdateBlocklistResponse {
+  // The blocklist after the change.
+  repeated BlockedContact contacts = 1;
+}
+
+message SetProfileStatusRequest {
+  string status_text = 1;
+}
+
+message SetProfileStatusResponse {}
+
+// Daemon-persisted preferences (in the daemon_config table), independent of the
+// WhatsApp account. Notification gates and media auto-download policy.
+message AppPreferences {
+  bool notifications_enabled = 1;
+  bool notification_sound = 2;
+  // Include the message text in the notification body; off shows just the sender.
+  bool notification_preview = 3;
+  bool auto_download_photos = 4;
+  bool auto_download_videos = 5;
+  bool auto_download_audio = 6;
+  bool auto_download_documents = 7;
+}
+
+message GetAppPreferencesRequest {}
+
+message GetAppPreferencesResponse {
+  AppPreferences preferences = 1;
+}
+
+message SetAppPreferencesRequest {
+  AppPreferences preferences = 1;
+}
+
+message SetAppPreferencesResponse {
+  AppPreferences preferences = 1;
 }

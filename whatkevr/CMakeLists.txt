@@ -195,16 +195,22 @@ qt_add_qml_module(whatkevr
         src/qml/components/MessageContentDialog.qml
         src/qml/components/ForwardChatPickerDialog.qml
         src/qml/components/ChatListSidebar.qml
+        src/qml/components/Wallpapers.js
         src/qml/pages/LoginPage.qml
         src/qml/pages/StatusPage.qml
         src/qml/settings/SettingsSearch.js
         src/qml/settings/SettingsView.qml
         src/qml/settings/SettingsWindow.qml
         src/qml/settings/SettingsPage.qml
+        src/qml/settings/PreviewSelector.qml
+        src/qml/settings/PrivacyAudienceCombo.qml
         src/qml/settings/AppearancePage.qml
-        src/qml/settings/BehaviorPage.qml
+        src/qml/settings/ChatsPage.qml
+        src/qml/settings/NotificationsPage.qml
+        src/qml/settings/PrivacyPage.qml
+        src/qml/settings/BlockedContactsPage.qml
+        src/qml/settings/ProfilePage.qml
         src/qml/settings/WindowLayoutPage.qml
-        src/qml/settings/AccountPage.qml
         src/qml/settings/StoragePage.qml
         src/qml/settings/EmojiStickersPage.qml
         src/qml/settings/KeyboardShortcutsPage.qml

@@ -464,6 +464,134 @@ func (AvatarSubjectKind) EnumDescriptor() ([]byte, []int) {
 	return file_whatevr_proto_rawDescGZIP(), []int{7}
 }
 
+// Who a privacy-controlled detail is visible to. Not every category accepts
+// every value (e.g. read receipts are only EVERYONE/NOBODY, online is only
+// EVERYONE/MATCH_LAST_SEEN); the daemon validates per category.
+type PrivacyAudience int32
+
+const (
+	PrivacyAudience_PRIVACY_AUDIENCE_UNSPECIFIED     PrivacyAudience = 0
+	PrivacyAudience_PRIVACY_AUDIENCE_EVERYONE        PrivacyAudience = 1 // whatsmeow "all"
+	PrivacyAudience_PRIVACY_AUDIENCE_CONTACTS        PrivacyAudience = 2 // "contacts"
+	PrivacyAudience_PRIVACY_AUDIENCE_CONTACTS_EXCEPT PrivacyAudience = 3 // "contact_blacklist"
+	PrivacyAudience_PRIVACY_AUDIENCE_NOBODY          PrivacyAudience = 4 // "none"
+	PrivacyAudience_PRIVACY_AUDIENCE_MATCH_LAST_SEEN PrivacyAudience = 5 // "match_last_seen" (online only)
+	PrivacyAudience_PRIVACY_AUDIENCE_KNOWN           PrivacyAudience = 6 // "known" (call-add only)
+)
+
+// Enum value maps for PrivacyAudience.
+var (
+	PrivacyAudience_name = map[int32]string{
+		0: "PRIVACY_AUDIENCE_UNSPECIFIED",
+		1: "PRIVACY_AUDIENCE_EVERYONE",
+		2: "PRIVACY_AUDIENCE_CONTACTS",
+		3: "PRIVACY_AUDIENCE_CONTACTS_EXCEPT",
+		4: "PRIVACY_AUDIENCE_NOBODY",
+		5: "PRIVACY_AUDIENCE_MATCH_LAST_SEEN",
+		6: "PRIVACY_AUDIENCE_KNOWN",
+	}
+	PrivacyAudience_value = map[string]int32{
+		"PRIVACY_AUDIENCE_UNSPECIFIED":     0,
+		"PRIVACY_AUDIENCE_EVERYONE":        1,
+		"PRIVACY_AUDIENCE_CONTACTS":        2,
+		"PRIVACY_AUDIENCE_CONTACTS_EXCEPT": 3,
+		"PRIVACY_AUDIENCE_NOBODY":          4,
+		"PRIVACY_AUDIENCE_MATCH_LAST_SEEN": 5,
+		"PRIVACY_AUDIENCE_KNOWN":           6,
+	}
+)
+
+func (x PrivacyAudience) Enum() *PrivacyAudience {
+	p := new(PrivacyAudience)
+	*p = x
+	return p
+}
+
+func (x PrivacyAudience) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (PrivacyAudience) Descriptor() protoreflect.EnumDescriptor {
+	return file_whatevr_proto_enumTypes[8].Descriptor()
+}
+
+func (PrivacyAudience) Type() protoreflect.EnumType {
+	return &file_whatevr_proto_enumTypes[8]
+}
+
+func (x PrivacyAudience) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use PrivacyAudience.Descriptor instead.
+func (PrivacyAudience) EnumDescriptor() ([]byte, []int) {
+	return file_whatevr_proto_rawDescGZIP(), []int{8}
+}
+
+type PrivacyCategory int32
+
+const (
+	PrivacyCategory_PRIVACY_CATEGORY_UNSPECIFIED   PrivacyCategory = 0
+	PrivacyCategory_PRIVACY_CATEGORY_LAST_SEEN     PrivacyCategory = 1
+	PrivacyCategory_PRIVACY_CATEGORY_ONLINE        PrivacyCategory = 2
+	PrivacyCategory_PRIVACY_CATEGORY_PROFILE_PHOTO PrivacyCategory = 3
+	PrivacyCategory_PRIVACY_CATEGORY_ABOUT         PrivacyCategory = 4
+	PrivacyCategory_PRIVACY_CATEGORY_READ_RECEIPTS PrivacyCategory = 5
+	PrivacyCategory_PRIVACY_CATEGORY_GROUP_ADD     PrivacyCategory = 6
+	PrivacyCategory_PRIVACY_CATEGORY_CALL_ADD      PrivacyCategory = 7
+)
+
+// Enum value maps for PrivacyCategory.
+var (
+	PrivacyCategory_name = map[int32]string{
+		0: "PRIVACY_CATEGORY_UNSPECIFIED",
+		1: "PRIVACY_CATEGORY_LAST_SEEN",
+		2: "PRIVACY_CATEGORY_ONLINE",
+		3: "PRIVACY_CATEGORY_PROFILE_PHOTO",
+		4: "PRIVACY_CATEGORY_ABOUT",
+		5: "PRIVACY_CATEGORY_READ_RECEIPTS",
+		6: "PRIVACY_CATEGORY_GROUP_ADD",
+		7: "PRIVACY_CATEGORY_CALL_ADD",
+	}
+	PrivacyCategory_value = map[string]int32{
+		"PRIVACY_CATEGORY_UNSPECIFIED":   0,
+		"PRIVACY_CATEGORY_LAST_SEEN":     1,
+		"PRIVACY_CATEGORY_ONLINE":        2,
+		"PRIVACY_CATEGORY_PROFILE_PHOTO": 3,
+		"PRIVACY_CATEGORY_ABOUT":         4,
+		"PRIVACY_CATEGORY_READ_RECEIPTS": 5,
+		"PRIVACY_CATEGORY_GROUP_ADD":     6,
+		"PRIVACY_CATEGORY_CALL_ADD":      7,
+	}
+)
+
+func (x PrivacyCategory) Enum() *PrivacyCategory {
+	p := new(PrivacyCategory)
+	*p = x
+	return p
+}
+
+func (x PrivacyCategory) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (PrivacyCategory) Descriptor() protoreflect.EnumDescriptor {
+	return file_whatevr_proto_enumTypes[9].Descriptor()
+}
+
+func (PrivacyCategory) Type() protoreflect.EnumType {
+	return &file_whatevr_proto_enumTypes[9]
+}
+
+func (x PrivacyCategory) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use PrivacyCategory.Descriptor instead.
+func (PrivacyCategory) EnumDescriptor() ([]byte, []int) {
+	return file_whatevr_proto_rawDescGZIP(), []int{9}
+}
+
 type GetStatusRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -7407,6 +7535,876 @@ func (x *MessageReply) GetDirection() MessageDirection {
 	return MessageDirection_MESSAGE_DIRECTION_UNSPECIFIED
 }
 
+// Snapshot of every privacy category the UI exposes. read_receipts is a plain
+// toggle on the wire (WhatsApp only allows everyone/nobody for it).
+type PrivacySettingsValues struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	LastSeen      PrivacyAudience        `protobuf:"varint,1,opt,name=last_seen,json=lastSeen,proto3,enum=whatevr.v1.PrivacyAudience" json:"last_seen,omitempty"`
+	Online        PrivacyAudience        `protobuf:"varint,2,opt,name=online,proto3,enum=whatevr.v1.PrivacyAudience" json:"online,omitempty"`
+	ProfilePhoto  PrivacyAudience        `protobuf:"varint,3,opt,name=profile_photo,json=profilePhoto,proto3,enum=whatevr.v1.PrivacyAudience" json:"profile_photo,omitempty"`
+	About         PrivacyAudience        `protobuf:"varint,4,opt,name=about,proto3,enum=whatevr.v1.PrivacyAudience" json:"about,omitempty"`
+	ReadReceipts  bool                   `protobuf:"varint,5,opt,name=read_receipts,json=readReceipts,proto3" json:"read_receipts,omitempty"`
+	GroupAdd      PrivacyAudience        `protobuf:"varint,6,opt,name=group_add,json=groupAdd,proto3,enum=whatevr.v1.PrivacyAudience" json:"group_add,omitempty"`
+	CallAdd       PrivacyAudience        `protobuf:"varint,7,opt,name=call_add,json=callAdd,proto3,enum=whatevr.v1.PrivacyAudience" json:"call_add,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PrivacySettingsValues) Reset() {
+	*x = PrivacySettingsValues{}
+	mi := &file_whatevr_proto_msgTypes[115]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PrivacySettingsValues) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PrivacySettingsValues) ProtoMessage() {}
+
+func (x *PrivacySettingsValues) ProtoReflect() protoreflect.Message {
+	mi := &file_whatevr_proto_msgTypes[115]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PrivacySettingsValues.ProtoReflect.Descriptor instead.
+func (*PrivacySettingsValues) Descriptor() ([]byte, []int) {
+	return file_whatevr_proto_rawDescGZIP(), []int{115}
+}
+
+func (x *PrivacySettingsValues) GetLastSeen() PrivacyAudience {
+	if x != nil {
+		return x.LastSeen
+	}
+	return PrivacyAudience_PRIVACY_AUDIENCE_UNSPECIFIED
+}
+
+func (x *PrivacySettingsValues) GetOnline() PrivacyAudience {
+	if x != nil {
+		return x.Online
+	}
+	return PrivacyAudience_PRIVACY_AUDIENCE_UNSPECIFIED
+}
+
+func (x *PrivacySettingsValues) GetProfilePhoto() PrivacyAudience {
+	if x != nil {
+		return x.ProfilePhoto
+	}
+	return PrivacyAudience_PRIVACY_AUDIENCE_UNSPECIFIED
+}
+
+func (x *PrivacySettingsValues) GetAbout() PrivacyAudience {
+	if x != nil {
+		return x.About
+	}
+	return PrivacyAudience_PRIVACY_AUDIENCE_UNSPECIFIED
+}
+
+func (x *PrivacySettingsValues) GetReadReceipts() bool {
+	if x != nil {
+		return x.ReadReceipts
+	}
+	return false
+}
+
+func (x *PrivacySettingsValues) GetGroupAdd() PrivacyAudience {
+	if x != nil {
+		return x.GroupAdd
+	}
+	return PrivacyAudience_PRIVACY_AUDIENCE_UNSPECIFIED
+}
+
+func (x *PrivacySettingsValues) GetCallAdd() PrivacyAudience {
+	if x != nil {
+		return x.CallAdd
+	}
+	return PrivacyAudience_PRIVACY_AUDIENCE_UNSPECIFIED
+}
+
+type GetPrivacySettingsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetPrivacySettingsRequest) Reset() {
+	*x = GetPrivacySettingsRequest{}
+	mi := &file_whatevr_proto_msgTypes[116]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetPrivacySettingsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetPrivacySettingsRequest) ProtoMessage() {}
+
+func (x *GetPrivacySettingsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_whatevr_proto_msgTypes[116]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetPrivacySettingsRequest.ProtoReflect.Descriptor instead.
+func (*GetPrivacySettingsRequest) Descriptor() ([]byte, []int) {
+	return file_whatevr_proto_rawDescGZIP(), []int{116}
+}
+
+type GetPrivacySettingsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Settings      *PrivacySettingsValues `protobuf:"bytes,1,opt,name=settings,proto3" json:"settings,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetPrivacySettingsResponse) Reset() {
+	*x = GetPrivacySettingsResponse{}
+	mi := &file_whatevr_proto_msgTypes[117]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetPrivacySettingsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetPrivacySettingsResponse) ProtoMessage() {}
+
+func (x *GetPrivacySettingsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_whatevr_proto_msgTypes[117]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetPrivacySettingsResponse.ProtoReflect.Descriptor instead.
+func (*GetPrivacySettingsResponse) Descriptor() ([]byte, []int) {
+	return file_whatevr_proto_rawDescGZIP(), []int{117}
+}
+
+func (x *GetPrivacySettingsResponse) GetSettings() *PrivacySettingsValues {
+	if x != nil {
+		return x.Settings
+	}
+	return nil
+}
+
+type SetPrivacySettingRequest struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Category PrivacyCategory        `protobuf:"varint,1,opt,name=category,proto3,enum=whatevr.v1.PrivacyCategory" json:"category,omitempty"`
+	// Used for every category except READ_RECEIPTS.
+	Audience PrivacyAudience `protobuf:"varint,2,opt,name=audience,proto3,enum=whatevr.v1.PrivacyAudience" json:"audience,omitempty"`
+	// Used only when category == READ_RECEIPTS.
+	ReadReceipts  bool `protobuf:"varint,3,opt,name=read_receipts,json=readReceipts,proto3" json:"read_receipts,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetPrivacySettingRequest) Reset() {
+	*x = SetPrivacySettingRequest{}
+	mi := &file_whatevr_proto_msgTypes[118]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetPrivacySettingRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetPrivacySettingRequest) ProtoMessage() {}
+
+func (x *SetPrivacySettingRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_whatevr_proto_msgTypes[118]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetPrivacySettingRequest.ProtoReflect.Descriptor instead.
+func (*SetPrivacySettingRequest) Descriptor() ([]byte, []int) {
+	return file_whatevr_proto_rawDescGZIP(), []int{118}
+}
+
+func (x *SetPrivacySettingRequest) GetCategory() PrivacyCategory {
+	if x != nil {
+		return x.Category
+	}
+	return PrivacyCategory_PRIVACY_CATEGORY_UNSPECIFIED
+}
+
+func (x *SetPrivacySettingRequest) GetAudience() PrivacyAudience {
+	if x != nil {
+		return x.Audience
+	}
+	return PrivacyAudience_PRIVACY_AUDIENCE_UNSPECIFIED
+}
+
+func (x *SetPrivacySettingRequest) GetReadReceipts() bool {
+	if x != nil {
+		return x.ReadReceipts
+	}
+	return false
+}
+
+type SetPrivacySettingResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The full settings snapshot after the change, so the UI re-syncs every row.
+	Settings      *PrivacySettingsValues `protobuf:"bytes,1,opt,name=settings,proto3" json:"settings,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetPrivacySettingResponse) Reset() {
+	*x = SetPrivacySettingResponse{}
+	mi := &file_whatevr_proto_msgTypes[119]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetPrivacySettingResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetPrivacySettingResponse) ProtoMessage() {}
+
+func (x *SetPrivacySettingResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_whatevr_proto_msgTypes[119]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetPrivacySettingResponse.ProtoReflect.Descriptor instead.
+func (*SetPrivacySettingResponse) Descriptor() ([]byte, []int) {
+	return file_whatevr_proto_rawDescGZIP(), []int{119}
+}
+
+func (x *SetPrivacySettingResponse) GetSettings() *PrivacySettingsValues {
+	if x != nil {
+		return x.Settings
+	}
+	return nil
+}
+
+type BlockedContact struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Jid             string                 `protobuf:"bytes,1,opt,name=jid,proto3" json:"jid,omitempty"`
+	DisplayName     string                 `protobuf:"bytes,2,opt,name=display_name,json=displayName,proto3" json:"display_name,omitempty"`
+	PhoneNumber     string                 `protobuf:"bytes,3,opt,name=phone_number,json=phoneNumber,proto3" json:"phone_number,omitempty"`
+	AvatarLocalPath string                 `protobuf:"bytes,4,opt,name=avatar_local_path,json=avatarLocalPath,proto3" json:"avatar_local_path,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *BlockedContact) Reset() {
+	*x = BlockedContact{}
+	mi := &file_whatevr_proto_msgTypes[120]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BlockedContact) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BlockedContact) ProtoMessage() {}
+
+func (x *BlockedContact) ProtoReflect() protoreflect.Message {
+	mi := &file_whatevr_proto_msgTypes[120]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BlockedContact.ProtoReflect.Descriptor instead.
+func (*BlockedContact) Descriptor() ([]byte, []int) {
+	return file_whatevr_proto_rawDescGZIP(), []int{120}
+}
+
+func (x *BlockedContact) GetJid() string {
+	if x != nil {
+		return x.Jid
+	}
+	return ""
+}
+
+func (x *BlockedContact) GetDisplayName() string {
+	if x != nil {
+		return x.DisplayName
+	}
+	return ""
+}
+
+func (x *BlockedContact) GetPhoneNumber() string {
+	if x != nil {
+		return x.PhoneNumber
+	}
+	return ""
+}
+
+func (x *BlockedContact) GetAvatarLocalPath() string {
+	if x != nil {
+		return x.AvatarLocalPath
+	}
+	return ""
+}
+
+type GetBlocklistRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetBlocklistRequest) Reset() {
+	*x = GetBlocklistRequest{}
+	mi := &file_whatevr_proto_msgTypes[121]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetBlocklistRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetBlocklistRequest) ProtoMessage() {}
+
+func (x *GetBlocklistRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_whatevr_proto_msgTypes[121]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetBlocklistRequest.ProtoReflect.Descriptor instead.
+func (*GetBlocklistRequest) Descriptor() ([]byte, []int) {
+	return file_whatevr_proto_rawDescGZIP(), []int{121}
+}
+
+type GetBlocklistResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Contacts      []*BlockedContact      `protobuf:"bytes,1,rep,name=contacts,proto3" json:"contacts,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetBlocklistResponse) Reset() {
+	*x = GetBlocklistResponse{}
+	mi := &file_whatevr_proto_msgTypes[122]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetBlocklistResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetBlocklistResponse) ProtoMessage() {}
+
+func (x *GetBlocklistResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_whatevr_proto_msgTypes[122]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetBlocklistResponse.ProtoReflect.Descriptor instead.
+func (*GetBlocklistResponse) Descriptor() ([]byte, []int) {
+	return file_whatevr_proto_rawDescGZIP(), []int{122}
+}
+
+func (x *GetBlocklistResponse) GetContacts() []*BlockedContact {
+	if x != nil {
+		return x.Contacts
+	}
+	return nil
+}
+
+type UpdateBlocklistRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Jid   string                 `protobuf:"bytes,1,opt,name=jid,proto3" json:"jid,omitempty"`
+	// true blocks the contact, false unblocks.
+	Block         bool `protobuf:"varint,2,opt,name=block,proto3" json:"block,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateBlocklistRequest) Reset() {
+	*x = UpdateBlocklistRequest{}
+	mi := &file_whatevr_proto_msgTypes[123]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateBlocklistRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateBlocklistRequest) ProtoMessage() {}
+
+func (x *UpdateBlocklistRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_whatevr_proto_msgTypes[123]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateBlocklistRequest.ProtoReflect.Descriptor instead.
+func (*UpdateBlocklistRequest) Descriptor() ([]byte, []int) {
+	return file_whatevr_proto_rawDescGZIP(), []int{123}
+}
+
+func (x *UpdateBlocklistRequest) GetJid() string {
+	if x != nil {
+		return x.Jid
+	}
+	return ""
+}
+
+func (x *UpdateBlocklistRequest) GetBlock() bool {
+	if x != nil {
+		return x.Block
+	}
+	return false
+}
+
+type UpdateBlocklistResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The blocklist after the change.
+	Contacts      []*BlockedContact `protobuf:"bytes,1,rep,name=contacts,proto3" json:"contacts,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateBlocklistResponse) Reset() {
+	*x = UpdateBlocklistResponse{}
+	mi := &file_whatevr_proto_msgTypes[124]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateBlocklistResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateBlocklistResponse) ProtoMessage() {}
+
+func (x *UpdateBlocklistResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_whatevr_proto_msgTypes[124]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateBlocklistResponse.ProtoReflect.Descriptor instead.
+func (*UpdateBlocklistResponse) Descriptor() ([]byte, []int) {
+	return file_whatevr_proto_rawDescGZIP(), []int{124}
+}
+
+func (x *UpdateBlocklistResponse) GetContacts() []*BlockedContact {
+	if x != nil {
+		return x.Contacts
+	}
+	return nil
+}
+
+type SetProfileStatusRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	StatusText    string                 `protobuf:"bytes,1,opt,name=status_text,json=statusText,proto3" json:"status_text,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetProfileStatusRequest) Reset() {
+	*x = SetProfileStatusRequest{}
+	mi := &file_whatevr_proto_msgTypes[125]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetProfileStatusRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetProfileStatusRequest) ProtoMessage() {}
+
+func (x *SetProfileStatusRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_whatevr_proto_msgTypes[125]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetProfileStatusRequest.ProtoReflect.Descriptor instead.
+func (*SetProfileStatusRequest) Descriptor() ([]byte, []int) {
+	return file_whatevr_proto_rawDescGZIP(), []int{125}
+}
+
+func (x *SetProfileStatusRequest) GetStatusText() string {
+	if x != nil {
+		return x.StatusText
+	}
+	return ""
+}
+
+type SetProfileStatusResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetProfileStatusResponse) Reset() {
+	*x = SetProfileStatusResponse{}
+	mi := &file_whatevr_proto_msgTypes[126]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetProfileStatusResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetProfileStatusResponse) ProtoMessage() {}
+
+func (x *SetProfileStatusResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_whatevr_proto_msgTypes[126]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetProfileStatusResponse.ProtoReflect.Descriptor instead.
+func (*SetProfileStatusResponse) Descriptor() ([]byte, []int) {
+	return file_whatevr_proto_rawDescGZIP(), []int{126}
+}
+
+// Daemon-persisted preferences (in the daemon_config table), independent of the
+// WhatsApp account. Notification gates and media auto-download policy.
+type AppPreferences struct {
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	NotificationsEnabled bool                   `protobuf:"varint,1,opt,name=notifications_enabled,json=notificationsEnabled,proto3" json:"notifications_enabled,omitempty"`
+	NotificationSound    bool                   `protobuf:"varint,2,opt,name=notification_sound,json=notificationSound,proto3" json:"notification_sound,omitempty"`
+	// Include the message text in the notification body; off shows just the sender.
+	NotificationPreview   bool `protobuf:"varint,3,opt,name=notification_preview,json=notificationPreview,proto3" json:"notification_preview,omitempty"`
+	AutoDownloadPhotos    bool `protobuf:"varint,4,opt,name=auto_download_photos,json=autoDownloadPhotos,proto3" json:"auto_download_photos,omitempty"`
+	AutoDownloadVideos    bool `protobuf:"varint,5,opt,name=auto_download_videos,json=autoDownloadVideos,proto3" json:"auto_download_videos,omitempty"`
+	AutoDownloadAudio     bool `protobuf:"varint,6,opt,name=auto_download_audio,json=autoDownloadAudio,proto3" json:"auto_download_audio,omitempty"`
+	AutoDownloadDocuments bool `protobuf:"varint,7,opt,name=auto_download_documents,json=autoDownloadDocuments,proto3" json:"auto_download_documents,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
+}
+
+func (x *AppPreferences) Reset() {
+	*x = AppPreferences{}
+	mi := &file_whatevr_proto_msgTypes[127]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AppPreferences) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AppPreferences) ProtoMessage() {}
+
+func (x *AppPreferences) ProtoReflect() protoreflect.Message {
+	mi := &file_whatevr_proto_msgTypes[127]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AppPreferences.ProtoReflect.Descriptor instead.
+func (*AppPreferences) Descriptor() ([]byte, []int) {
+	return file_whatevr_proto_rawDescGZIP(), []int{127}
+}
+
+func (x *AppPreferences) GetNotificationsEnabled() bool {
+	if x != nil {
+		return x.NotificationsEnabled
+	}
+	return false
+}
+
+func (x *AppPreferences) GetNotificationSound() bool {
+	if x != nil {
+		return x.NotificationSound
+	}
+	return false
+}
+
+func (x *AppPreferences) GetNotificationPreview() bool {
+	if x != nil {
+		return x.NotificationPreview
+	}
+	return false
+}
+
+func (x *AppPreferences) GetAutoDownloadPhotos() bool {
+	if x != nil {
+		return x.AutoDownloadPhotos
+	}
+	return false
+}
+
+func (x *AppPreferences) GetAutoDownloadVideos() bool {
+	if x != nil {
+		return x.AutoDownloadVideos
+	}
+	return false
+}
+
+func (x *AppPreferences) GetAutoDownloadAudio() bool {
+	if x != nil {
+		return x.AutoDownloadAudio
+	}
+	return false
+}
+
+func (x *AppPreferences) GetAutoDownloadDocuments() bool {
+	if x != nil {
+		return x.AutoDownloadDocuments
+	}
+	return false
+}
+
+type GetAppPreferencesRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetAppPreferencesRequest) Reset() {
+	*x = GetAppPreferencesRequest{}
+	mi := &file_whatevr_proto_msgTypes[128]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetAppPreferencesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetAppPreferencesRequest) ProtoMessage() {}
+
+func (x *GetAppPreferencesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_whatevr_proto_msgTypes[128]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetAppPreferencesRequest.ProtoReflect.Descriptor instead.
+func (*GetAppPreferencesRequest) Descriptor() ([]byte, []int) {
+	return file_whatevr_proto_rawDescGZIP(), []int{128}
+}
+
+type GetAppPreferencesResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Preferences   *AppPreferences        `protobuf:"bytes,1,opt,name=preferences,proto3" json:"preferences,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetAppPreferencesResponse) Reset() {
+	*x = GetAppPreferencesResponse{}
+	mi := &file_whatevr_proto_msgTypes[129]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetAppPreferencesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetAppPreferencesResponse) ProtoMessage() {}
+
+func (x *GetAppPreferencesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_whatevr_proto_msgTypes[129]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetAppPreferencesResponse.ProtoReflect.Descriptor instead.
+func (*GetAppPreferencesResponse) Descriptor() ([]byte, []int) {
+	return file_whatevr_proto_rawDescGZIP(), []int{129}
+}
+
+func (x *GetAppPreferencesResponse) GetPreferences() *AppPreferences {
+	if x != nil {
+		return x.Preferences
+	}
+	return nil
+}
+
+type SetAppPreferencesRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Preferences   *AppPreferences        `protobuf:"bytes,1,opt,name=preferences,proto3" json:"preferences,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetAppPreferencesRequest) Reset() {
+	*x = SetAppPreferencesRequest{}
+	mi := &file_whatevr_proto_msgTypes[130]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetAppPreferencesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetAppPreferencesRequest) ProtoMessage() {}
+
+func (x *SetAppPreferencesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_whatevr_proto_msgTypes[130]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetAppPreferencesRequest.ProtoReflect.Descriptor instead.
+func (*SetAppPreferencesRequest) Descriptor() ([]byte, []int) {
+	return file_whatevr_proto_rawDescGZIP(), []int{130}
+}
+
+func (x *SetAppPreferencesRequest) GetPreferences() *AppPreferences {
+	if x != nil {
+		return x.Preferences
+	}
+	return nil
+}
+
+type SetAppPreferencesResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Preferences   *AppPreferences        `protobuf:"bytes,1,opt,name=preferences,proto3" json:"preferences,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetAppPreferencesResponse) Reset() {
+	*x = SetAppPreferencesResponse{}
+	mi := &file_whatevr_proto_msgTypes[131]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetAppPreferencesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetAppPreferencesResponse) ProtoMessage() {}
+
+func (x *SetAppPreferencesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_whatevr_proto_msgTypes[131]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetAppPreferencesResponse.ProtoReflect.Descriptor instead.
+func (*SetAppPreferencesResponse) Descriptor() ([]byte, []int) {
+	return file_whatevr_proto_rawDescGZIP(), []int{131}
+}
+
+func (x *SetAppPreferencesResponse) GetPreferences() *AppPreferences {
+	if x != nil {
+		return x.Preferences
+	}
+	return nil
+}
+
 var File_whatevr_proto protoreflect.FileDescriptor
 
 const file_whatevr_proto_rawDesc = "" +
@@ -7898,7 +8896,56 @@ const file_whatevr_proto_rawDesc = "" +
 	"\n" +
 	"media_kind\x18\x05 \x01(\tR\tmediaKind\x12&\n" +
 	"\x0fmedia_mime_type\x18\x06 \x01(\tR\rmediaMimeType\x12:\n" +
-	"\tdirection\x18\a \x01(\x0e2\x1c.whatevr.v1.MessageDirectionR\tdirection*\xd2\x01\n" +
+	"\tdirection\x18\a \x01(\x0e2\x1c.whatevr.v1.MessageDirectionR\tdirection\"\x92\x03\n" +
+	"\x15PrivacySettingsValues\x128\n" +
+	"\tlast_seen\x18\x01 \x01(\x0e2\x1b.whatevr.v1.PrivacyAudienceR\blastSeen\x123\n" +
+	"\x06online\x18\x02 \x01(\x0e2\x1b.whatevr.v1.PrivacyAudienceR\x06online\x12@\n" +
+	"\rprofile_photo\x18\x03 \x01(\x0e2\x1b.whatevr.v1.PrivacyAudienceR\fprofilePhoto\x121\n" +
+	"\x05about\x18\x04 \x01(\x0e2\x1b.whatevr.v1.PrivacyAudienceR\x05about\x12#\n" +
+	"\rread_receipts\x18\x05 \x01(\bR\freadReceipts\x128\n" +
+	"\tgroup_add\x18\x06 \x01(\x0e2\x1b.whatevr.v1.PrivacyAudienceR\bgroupAdd\x126\n" +
+	"\bcall_add\x18\a \x01(\x0e2\x1b.whatevr.v1.PrivacyAudienceR\acallAdd\"\x1b\n" +
+	"\x19GetPrivacySettingsRequest\"[\n" +
+	"\x1aGetPrivacySettingsResponse\x12=\n" +
+	"\bsettings\x18\x01 \x01(\v2!.whatevr.v1.PrivacySettingsValuesR\bsettings\"\xb1\x01\n" +
+	"\x18SetPrivacySettingRequest\x127\n" +
+	"\bcategory\x18\x01 \x01(\x0e2\x1b.whatevr.v1.PrivacyCategoryR\bcategory\x127\n" +
+	"\baudience\x18\x02 \x01(\x0e2\x1b.whatevr.v1.PrivacyAudienceR\baudience\x12#\n" +
+	"\rread_receipts\x18\x03 \x01(\bR\freadReceipts\"Z\n" +
+	"\x19SetPrivacySettingResponse\x12=\n" +
+	"\bsettings\x18\x01 \x01(\v2!.whatevr.v1.PrivacySettingsValuesR\bsettings\"\x94\x01\n" +
+	"\x0eBlockedContact\x12\x10\n" +
+	"\x03jid\x18\x01 \x01(\tR\x03jid\x12!\n" +
+	"\fdisplay_name\x18\x02 \x01(\tR\vdisplayName\x12!\n" +
+	"\fphone_number\x18\x03 \x01(\tR\vphoneNumber\x12*\n" +
+	"\x11avatar_local_path\x18\x04 \x01(\tR\x0favatarLocalPath\"\x15\n" +
+	"\x13GetBlocklistRequest\"N\n" +
+	"\x14GetBlocklistResponse\x126\n" +
+	"\bcontacts\x18\x01 \x03(\v2\x1a.whatevr.v1.BlockedContactR\bcontacts\"@\n" +
+	"\x16UpdateBlocklistRequest\x12\x10\n" +
+	"\x03jid\x18\x01 \x01(\tR\x03jid\x12\x14\n" +
+	"\x05block\x18\x02 \x01(\bR\x05block\"Q\n" +
+	"\x17UpdateBlocklistResponse\x126\n" +
+	"\bcontacts\x18\x01 \x03(\v2\x1a.whatevr.v1.BlockedContactR\bcontacts\":\n" +
+	"\x17SetProfileStatusRequest\x12\x1f\n" +
+	"\vstatus_text\x18\x01 \x01(\tR\n" +
+	"statusText\"\x1a\n" +
+	"\x18SetProfileStatusResponse\"\xf3\x02\n" +
+	"\x0eAppPreferences\x123\n" +
+	"\x15notifications_enabled\x18\x01 \x01(\bR\x14notificationsEnabled\x12-\n" +
+	"\x12notification_sound\x18\x02 \x01(\bR\x11notificationSound\x121\n" +
+	"\x14notification_preview\x18\x03 \x01(\bR\x13notificationPreview\x120\n" +
+	"\x14auto_download_photos\x18\x04 \x01(\bR\x12autoDownloadPhotos\x120\n" +
+	"\x14auto_download_videos\x18\x05 \x01(\bR\x12autoDownloadVideos\x12.\n" +
+	"\x13auto_download_audio\x18\x06 \x01(\bR\x11autoDownloadAudio\x126\n" +
+	"\x17auto_download_documents\x18\a \x01(\bR\x15autoDownloadDocuments\"\x1a\n" +
+	"\x18GetAppPreferencesRequest\"Y\n" +
+	"\x19GetAppPreferencesResponse\x12<\n" +
+	"\vpreferences\x18\x01 \x01(\v2\x1a.whatevr.v1.AppPreferencesR\vpreferences\"X\n" +
+	"\x18SetAppPreferencesRequest\x12<\n" +
+	"\vpreferences\x18\x01 \x01(\v2\x1a.whatevr.v1.AppPreferencesR\vpreferences\"Y\n" +
+	"\x19SetAppPreferencesResponse\x12<\n" +
+	"\vpreferences\x18\x01 \x01(\v2\x1a.whatevr.v1.AppPreferencesR\vpreferences*\xd2\x01\n" +
 	"\vDaemonState\x12\x1c\n" +
 	"\x18DAEMON_STATE_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15DAEMON_STATE_STARTING\x10\x01\x12\x1b\n" +
@@ -7947,7 +8994,24 @@ const file_whatevr_proto_rawDesc = "" +
 	"\x11AvatarSubjectKind\x12#\n" +
 	"\x1fAVATAR_SUBJECT_KIND_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x18AVATAR_SUBJECT_KIND_CHAT\x10\x01\x12\x1e\n" +
-	"\x1aAVATAR_SUBJECT_KIND_SENDER\x10\x022\xf5\x01\n" +
+	"\x1aAVATAR_SUBJECT_KIND_SENDER\x10\x02*\xf6\x01\n" +
+	"\x0fPrivacyAudience\x12 \n" +
+	"\x1cPRIVACY_AUDIENCE_UNSPECIFIED\x10\x00\x12\x1d\n" +
+	"\x19PRIVACY_AUDIENCE_EVERYONE\x10\x01\x12\x1d\n" +
+	"\x19PRIVACY_AUDIENCE_CONTACTS\x10\x02\x12$\n" +
+	" PRIVACY_AUDIENCE_CONTACTS_EXCEPT\x10\x03\x12\x1b\n" +
+	"\x17PRIVACY_AUDIENCE_NOBODY\x10\x04\x12$\n" +
+	" PRIVACY_AUDIENCE_MATCH_LAST_SEEN\x10\x05\x12\x1a\n" +
+	"\x16PRIVACY_AUDIENCE_KNOWN\x10\x06*\x93\x02\n" +
+	"\x0fPrivacyCategory\x12 \n" +
+	"\x1cPRIVACY_CATEGORY_UNSPECIFIED\x10\x00\x12\x1e\n" +
+	"\x1aPRIVACY_CATEGORY_LAST_SEEN\x10\x01\x12\x1b\n" +
+	"\x17PRIVACY_CATEGORY_ONLINE\x10\x02\x12\"\n" +
+	"\x1ePRIVACY_CATEGORY_PROFILE_PHOTO\x10\x03\x12\x1a\n" +
+	"\x16PRIVACY_CATEGORY_ABOUT\x10\x04\x12\"\n" +
+	"\x1ePRIVACY_CATEGORY_READ_RECEIPTS\x10\x05\x12\x1e\n" +
+	"\x1aPRIVACY_CATEGORY_GROUP_ADD\x10\x06\x12\x1d\n" +
+	"\x19PRIVACY_CATEGORY_CALL_ADD\x10\a2\xf5\x01\n" +
 	"\rDaemonService\x12H\n" +
 	"\tGetStatus\x12\x1c.whatevr.v1.GetStatusRequest\x1a\x1d.whatevr.v1.GetStatusResponse\x12P\n" +
 	"\x0fSubscribeEvents\x12\".whatevr.v1.SubscribeEventsRequest\x1a\x17.whatevr.v1.DaemonEvent0\x01\x12H\n" +
@@ -7989,7 +9053,15 @@ const file_whatevr_proto_rawDesc = "" +
 	"\fSendReaction\x12\x1f.whatevr.v1.SendReactionRequest\x1a .whatevr.v1.SendReactionResponse\x12`\n" +
 	"\x11SetMessageStarred\x12$.whatevr.v1.SetMessageStarredRequest\x1a%.whatevr.v1.SetMessageStarredResponse\x12K\n" +
 	"\n" +
-	"PinMessage\x12\x1d.whatevr.v1.PinMessageRequest\x1a\x1e.whatevr.v1.PinMessageResponse2\xa0\x05\n" +
+	"PinMessage\x12\x1d.whatevr.v1.PinMessageRequest\x1a\x1e.whatevr.v1.PinMessageResponse2\xaa\x05\n" +
+	"\x0fSettingsService\x12c\n" +
+	"\x12GetPrivacySettings\x12%.whatevr.v1.GetPrivacySettingsRequest\x1a&.whatevr.v1.GetPrivacySettingsResponse\x12`\n" +
+	"\x11SetPrivacySetting\x12$.whatevr.v1.SetPrivacySettingRequest\x1a%.whatevr.v1.SetPrivacySettingResponse\x12Q\n" +
+	"\fGetBlocklist\x12\x1f.whatevr.v1.GetBlocklistRequest\x1a .whatevr.v1.GetBlocklistResponse\x12Z\n" +
+	"\x0fUpdateBlocklist\x12\".whatevr.v1.UpdateBlocklistRequest\x1a#.whatevr.v1.UpdateBlocklistResponse\x12]\n" +
+	"\x10SetProfileStatus\x12#.whatevr.v1.SetProfileStatusRequest\x1a$.whatevr.v1.SetProfileStatusResponse\x12`\n" +
+	"\x11GetAppPreferences\x12$.whatevr.v1.GetAppPreferencesRequest\x1a%.whatevr.v1.GetAppPreferencesResponse\x12`\n" +
+	"\x11SetAppPreferences\x12$.whatevr.v1.SetAppPreferencesRequest\x1a%.whatevr.v1.SetAppPreferencesResponse2\xa0\x05\n" +
 	"\x0eStickerService\x12Q\n" +
 	"\fListStickers\x12\x1f.whatevr.v1.ListStickersRequest\x1a .whatevr.v1.ListStickersResponse\x12]\n" +
 	"\x10ListStickerPacks\x12#.whatevr.v1.ListStickerPacksRequest\x1a$.whatevr.v1.ListStickerPacksResponse\x12W\n" +
@@ -8011,8 +9083,8 @@ func file_whatevr_proto_rawDescGZIP() []byte {
 	return file_whatevr_proto_rawDescData
 }
 
-var file_whatevr_proto_enumTypes = make([]protoimpl.EnumInfo, 8)
-var file_whatevr_proto_msgTypes = make([]protoimpl.MessageInfo, 115)
+var file_whatevr_proto_enumTypes = make([]protoimpl.EnumInfo, 10)
+var file_whatevr_proto_msgTypes = make([]protoimpl.MessageInfo, 132)
 var file_whatevr_proto_goTypes = []any{
 	(DaemonState)(0),                        // 0: whatevr.v1.DaemonState
 	(MessageDirection)(0),                   // 1: whatevr.v1.MessageDirection
@@ -8022,284 +9094,332 @@ var file_whatevr_proto_goTypes = []any{
 	(ContactAvailability)(0),                // 5: whatevr.v1.ContactAvailability
 	(StickerSource)(0),                      // 6: whatevr.v1.StickerSource
 	(AvatarSubjectKind)(0),                  // 7: whatevr.v1.AvatarSubjectKind
-	(*GetStatusRequest)(nil),                // 8: whatevr.v1.GetStatusRequest
-	(*GetStatusResponse)(nil),               // 9: whatevr.v1.GetStatusResponse
-	(*SubscribeEventsRequest)(nil),          // 10: whatevr.v1.SubscribeEventsRequest
-	(*DaemonEvent)(nil),                     // 11: whatevr.v1.DaemonEvent
-	(*ContactInfoUpdated)(nil),              // 12: whatevr.v1.ContactInfoUpdated
-	(*GroupInfoUpdated)(nil),                // 13: whatevr.v1.GroupInfoUpdated
-	(*MessageDeleted)(nil),                  // 14: whatevr.v1.MessageDeleted
-	(*StickerLibraryChanged)(nil),           // 15: whatevr.v1.StickerLibraryChanged
-	(*StickerDownloadChanged)(nil),          // 16: whatevr.v1.StickerDownloadChanged
-	(*Avatar)(nil),                          // 17: whatevr.v1.Avatar
-	(*AvatarUpdated)(nil),                   // 18: whatevr.v1.AvatarUpdated
-	(*HistorySyncProgress)(nil),             // 19: whatevr.v1.HistorySyncProgress
-	(*HistoryBackfilled)(nil),               // 20: whatevr.v1.HistoryBackfilled
-	(*ChatPresenceChanged)(nil),             // 21: whatevr.v1.ChatPresenceChanged
-	(*MediaDownloadChanged)(nil),            // 22: whatevr.v1.MediaDownloadChanged
-	(*ConnectionChanged)(nil),               // 23: whatevr.v1.ConnectionChanged
-	(*ReconnectRequest)(nil),                // 24: whatevr.v1.ReconnectRequest
-	(*ReconnectResponse)(nil),               // 25: whatevr.v1.ReconnectResponse
-	(*LoginStateChanged)(nil),               // 26: whatevr.v1.LoginStateChanged
-	(*NewMessage)(nil),                      // 27: whatevr.v1.NewMessage
-	(*MessageUpdated)(nil),                  // 28: whatevr.v1.MessageUpdated
-	(*ChatUpdated)(nil),                     // 29: whatevr.v1.ChatUpdated
-	(*SubscribeLoginEventsRequest)(nil),     // 30: whatevr.v1.SubscribeLoginEventsRequest
-	(*LoginEvent)(nil),                      // 31: whatevr.v1.LoginEvent
-	(*QrCode)(nil),                          // 32: whatevr.v1.QrCode
-	(*LogoutRequest)(nil),                   // 33: whatevr.v1.LogoutRequest
-	(*LogoutResponse)(nil),                  // 34: whatevr.v1.LogoutResponse
-	(*HoldSessionRequest)(nil),              // 35: whatevr.v1.HoldSessionRequest
-	(*FrontendSessionEvent)(nil),            // 36: whatevr.v1.FrontendSessionEvent
-	(*OpenChat)(nil),                        // 37: whatevr.v1.OpenChat
-	(*UpdateSessionStateRequest)(nil),       // 38: whatevr.v1.UpdateSessionStateRequest
-	(*UpdateSessionStateResponse)(nil),      // 39: whatevr.v1.UpdateSessionStateResponse
-	(*ListChatsRequest)(nil),                // 40: whatevr.v1.ListChatsRequest
-	(*ListChatsResponse)(nil),               // 41: whatevr.v1.ListChatsResponse
-	(*GetMessagesRequest)(nil),              // 42: whatevr.v1.GetMessagesRequest
-	(*GetMessagesResponse)(nil),             // 43: whatevr.v1.GetMessagesResponse
-	(*MarkChatReadRequest)(nil),             // 44: whatevr.v1.MarkChatReadRequest
-	(*MarkChatReadResponse)(nil),            // 45: whatevr.v1.MarkChatReadResponse
-	(*SetChatPinnedRequest)(nil),            // 46: whatevr.v1.SetChatPinnedRequest
-	(*SetChatPinnedResponse)(nil),           // 47: whatevr.v1.SetChatPinnedResponse
-	(*SetChatArchivedRequest)(nil),          // 48: whatevr.v1.SetChatArchivedRequest
-	(*SetChatArchivedResponse)(nil),         // 49: whatevr.v1.SetChatArchivedResponse
-	(*SetChatMutedRequest)(nil),             // 50: whatevr.v1.SetChatMutedRequest
-	(*SetChatMutedResponse)(nil),            // 51: whatevr.v1.SetChatMutedResponse
-	(*SetChatPresenceRequest)(nil),          // 52: whatevr.v1.SetChatPresenceRequest
-	(*SetChatPresenceResponse)(nil),         // 53: whatevr.v1.SetChatPresenceResponse
-	(*SubscribeChatPresenceRequest)(nil),    // 54: whatevr.v1.SubscribeChatPresenceRequest
-	(*SubscribeChatPresenceResponse)(nil),   // 55: whatevr.v1.SubscribeChatPresenceResponse
-	(*DownloadMessageMediaRequest)(nil),     // 56: whatevr.v1.DownloadMessageMediaRequest
-	(*DownloadMessageMediaResponse)(nil),    // 57: whatevr.v1.DownloadMessageMediaResponse
-	(*GetMessageInfoRequest)(nil),           // 58: whatevr.v1.GetMessageInfoRequest
-	(*ParticipantReceipt)(nil),              // 59: whatevr.v1.ParticipantReceipt
-	(*GetMessageInfoResponse)(nil),          // 60: whatevr.v1.GetMessageInfoResponse
-	(*DeleteMessageForMeRequest)(nil),       // 61: whatevr.v1.DeleteMessageForMeRequest
-	(*DeleteMessageForMeResponse)(nil),      // 62: whatevr.v1.DeleteMessageForMeResponse
-	(*RevokeMessageRequest)(nil),            // 63: whatevr.v1.RevokeMessageRequest
-	(*RevokeMessageResponse)(nil),           // 64: whatevr.v1.RevokeMessageResponse
-	(*EditMessageRequest)(nil),              // 65: whatevr.v1.EditMessageRequest
-	(*EditMessageResponse)(nil),             // 66: whatevr.v1.EditMessageResponse
-	(*ForwardMessageRequest)(nil),           // 67: whatevr.v1.ForwardMessageRequest
-	(*ForwardMessageResponse)(nil),          // 68: whatevr.v1.ForwardMessageResponse
-	(*SendReactionRequest)(nil),             // 69: whatevr.v1.SendReactionRequest
-	(*SendReactionResponse)(nil),            // 70: whatevr.v1.SendReactionResponse
-	(*SetMessageStarredRequest)(nil),        // 71: whatevr.v1.SetMessageStarredRequest
-	(*SetMessageStarredResponse)(nil),       // 72: whatevr.v1.SetMessageStarredResponse
-	(*PinMessageRequest)(nil),               // 73: whatevr.v1.PinMessageRequest
-	(*PinMessageResponse)(nil),              // 74: whatevr.v1.PinMessageResponse
-	(*StarredMessageItem)(nil),              // 75: whatevr.v1.StarredMessageItem
-	(*ListStarredMessagesRequest)(nil),      // 76: whatevr.v1.ListStarredMessagesRequest
-	(*ListStarredMessagesResponse)(nil),     // 77: whatevr.v1.ListStarredMessagesResponse
-	(*ListPinnedMessagesRequest)(nil),       // 78: whatevr.v1.ListPinnedMessagesRequest
-	(*ListPinnedMessagesResponse)(nil),      // 79: whatevr.v1.ListPinnedMessagesResponse
-	(*SearchChatsRequest)(nil),              // 80: whatevr.v1.SearchChatsRequest
-	(*SearchChatsResponse)(nil),             // 81: whatevr.v1.SearchChatsResponse
-	(*MessageSearchResult)(nil),             // 82: whatevr.v1.MessageSearchResult
-	(*SearchMessagesRequest)(nil),           // 83: whatevr.v1.SearchMessagesRequest
-	(*SearchMessagesResponse)(nil),          // 84: whatevr.v1.SearchMessagesResponse
-	(*CheckPhoneOnWhatsAppRequest)(nil),     // 85: whatevr.v1.CheckPhoneOnWhatsAppRequest
-	(*CheckPhoneOnWhatsAppResponse)(nil),    // 86: whatevr.v1.CheckPhoneOnWhatsAppResponse
-	(*EnsureDirectChatRequest)(nil),         // 87: whatevr.v1.EnsureDirectChatRequest
-	(*EnsureDirectChatResponse)(nil),        // 88: whatevr.v1.EnsureDirectChatResponse
-	(*GetContactInfoRequest)(nil),           // 89: whatevr.v1.GetContactInfoRequest
-	(*GetContactInfoResponse)(nil),          // 90: whatevr.v1.GetContactInfoResponse
-	(*GetSelfProfileRequest)(nil),           // 91: whatevr.v1.GetSelfProfileRequest
-	(*GetSelfProfileResponse)(nil),          // 92: whatevr.v1.GetSelfProfileResponse
-	(*GroupMember)(nil),                     // 93: whatevr.v1.GroupMember
-	(*GetGroupInfoRequest)(nil),             // 94: whatevr.v1.GetGroupInfoRequest
-	(*GetGroupInfoResponse)(nil),            // 95: whatevr.v1.GetGroupInfoResponse
-	(*FetchProfilePictureRequest)(nil),      // 96: whatevr.v1.FetchProfilePictureRequest
-	(*FetchProfilePictureResponse)(nil),     // 97: whatevr.v1.FetchProfilePictureResponse
-	(*SetStickerFavoriteRequest)(nil),       // 98: whatevr.v1.SetStickerFavoriteRequest
-	(*SetStickerFavoriteResponse)(nil),      // 99: whatevr.v1.SetStickerFavoriteResponse
-	(*SendTextRequest)(nil),                 // 100: whatevr.v1.SendTextRequest
-	(*SendTextResponse)(nil),                // 101: whatevr.v1.SendTextResponse
-	(*SendMediaRequest)(nil),                // 102: whatevr.v1.SendMediaRequest
-	(*SendMediaResponse)(nil),               // 103: whatevr.v1.SendMediaResponse
-	(*Sticker)(nil),                         // 104: whatevr.v1.Sticker
-	(*StickerPack)(nil),                     // 105: whatevr.v1.StickerPack
-	(*ListStickersRequest)(nil),             // 106: whatevr.v1.ListStickersRequest
-	(*ListStickersResponse)(nil),            // 107: whatevr.v1.ListStickersResponse
-	(*ListStickerPacksRequest)(nil),         // 108: whatevr.v1.ListStickerPacksRequest
-	(*ListStickerPacksResponse)(nil),        // 109: whatevr.v1.ListStickerPacksResponse
-	(*GetStickerPackRequest)(nil),           // 110: whatevr.v1.GetStickerPackRequest
-	(*GetStickerPackResponse)(nil),          // 111: whatevr.v1.GetStickerPackResponse
-	(*DownloadStickerRequest)(nil),          // 112: whatevr.v1.DownloadStickerRequest
-	(*DownloadStickerResponse)(nil),         // 113: whatevr.v1.DownloadStickerResponse
-	(*SetStickerPackInstalledRequest)(nil),  // 114: whatevr.v1.SetStickerPackInstalledRequest
-	(*SetStickerPackInstalledResponse)(nil), // 115: whatevr.v1.SetStickerPackInstalledResponse
-	(*SendStickerRequest)(nil),              // 116: whatevr.v1.SendStickerRequest
-	(*SendStickerResponse)(nil),             // 117: whatevr.v1.SendStickerResponse
-	(*Chat)(nil),                            // 118: whatevr.v1.Chat
-	(*Message)(nil),                         // 119: whatevr.v1.Message
-	(*Mention)(nil),                         // 120: whatevr.v1.Mention
-	(*Reaction)(nil),                        // 121: whatevr.v1.Reaction
-	(*MessageReply)(nil),                    // 122: whatevr.v1.MessageReply
+	(PrivacyAudience)(0),                    // 8: whatevr.v1.PrivacyAudience
+	(PrivacyCategory)(0),                    // 9: whatevr.v1.PrivacyCategory
+	(*GetStatusRequest)(nil),                // 10: whatevr.v1.GetStatusRequest
+	(*GetStatusResponse)(nil),               // 11: whatevr.v1.GetStatusResponse
+	(*SubscribeEventsRequest)(nil),          // 12: whatevr.v1.SubscribeEventsRequest
+	(*DaemonEvent)(nil),                     // 13: whatevr.v1.DaemonEvent
+	(*ContactInfoUpdated)(nil),              // 14: whatevr.v1.ContactInfoUpdated
+	(*GroupInfoUpdated)(nil),                // 15: whatevr.v1.GroupInfoUpdated
+	(*MessageDeleted)(nil),                  // 16: whatevr.v1.MessageDeleted
+	(*StickerLibraryChanged)(nil),           // 17: whatevr.v1.StickerLibraryChanged
+	(*StickerDownloadChanged)(nil),          // 18: whatevr.v1.StickerDownloadChanged
+	(*Avatar)(nil),                          // 19: whatevr.v1.Avatar
+	(*AvatarUpdated)(nil),                   // 20: whatevr.v1.AvatarUpdated
+	(*HistorySyncProgress)(nil),             // 21: whatevr.v1.HistorySyncProgress
+	(*HistoryBackfilled)(nil),               // 22: whatevr.v1.HistoryBackfilled
+	(*ChatPresenceChanged)(nil),             // 23: whatevr.v1.ChatPresenceChanged
+	(*MediaDownloadChanged)(nil),            // 24: whatevr.v1.MediaDownloadChanged
+	(*ConnectionChanged)(nil),               // 25: whatevr.v1.ConnectionChanged
+	(*ReconnectRequest)(nil),                // 26: whatevr.v1.ReconnectRequest
+	(*ReconnectResponse)(nil),               // 27: whatevr.v1.ReconnectResponse
+	(*LoginStateChanged)(nil),               // 28: whatevr.v1.LoginStateChanged
+	(*NewMessage)(nil),                      // 29: whatevr.v1.NewMessage
+	(*MessageUpdated)(nil),                  // 30: whatevr.v1.MessageUpdated
+	(*ChatUpdated)(nil),                     // 31: whatevr.v1.ChatUpdated
+	(*SubscribeLoginEventsRequest)(nil),     // 32: whatevr.v1.SubscribeLoginEventsRequest
+	(*LoginEvent)(nil),                      // 33: whatevr.v1.LoginEvent
+	(*QrCode)(nil),                          // 34: whatevr.v1.QrCode
+	(*LogoutRequest)(nil),                   // 35: whatevr.v1.LogoutRequest
+	(*LogoutResponse)(nil),                  // 36: whatevr.v1.LogoutResponse
+	(*HoldSessionRequest)(nil),              // 37: whatevr.v1.HoldSessionRequest
+	(*FrontendSessionEvent)(nil),            // 38: whatevr.v1.FrontendSessionEvent
+	(*OpenChat)(nil),                        // 39: whatevr.v1.OpenChat
+	(*UpdateSessionStateRequest)(nil),       // 40: whatevr.v1.UpdateSessionStateRequest
+	(*UpdateSessionStateResponse)(nil),      // 41: whatevr.v1.UpdateSessionStateResponse
+	(*ListChatsRequest)(nil),                // 42: whatevr.v1.ListChatsRequest
+	(*ListChatsResponse)(nil),               // 43: whatevr.v1.ListChatsResponse
+	(*GetMessagesRequest)(nil),              // 44: whatevr.v1.GetMessagesRequest
+	(*GetMessagesResponse)(nil),             // 45: whatevr.v1.GetMessagesResponse
+	(*MarkChatReadRequest)(nil),             // 46: whatevr.v1.MarkChatReadRequest
+	(*MarkChatReadResponse)(nil),            // 47: whatevr.v1.MarkChatReadResponse
+	(*SetChatPinnedRequest)(nil),            // 48: whatevr.v1.SetChatPinnedRequest
+	(*SetChatPinnedResponse)(nil),           // 49: whatevr.v1.SetChatPinnedResponse
+	(*SetChatArchivedRequest)(nil),          // 50: whatevr.v1.SetChatArchivedRequest
+	(*SetChatArchivedResponse)(nil),         // 51: whatevr.v1.SetChatArchivedResponse
+	(*SetChatMutedRequest)(nil),             // 52: whatevr.v1.SetChatMutedRequest
+	(*SetChatMutedResponse)(nil),            // 53: whatevr.v1.SetChatMutedResponse
+	(*SetChatPresenceRequest)(nil),          // 54: whatevr.v1.SetChatPresenceRequest
+	(*SetChatPresenceResponse)(nil),         // 55: whatevr.v1.SetChatPresenceResponse
+	(*SubscribeChatPresenceRequest)(nil),    // 56: whatevr.v1.SubscribeChatPresenceRequest
+	(*SubscribeChatPresenceResponse)(nil),   // 57: whatevr.v1.SubscribeChatPresenceResponse
+	(*DownloadMessageMediaRequest)(nil),     // 58: whatevr.v1.DownloadMessageMediaRequest
+	(*DownloadMessageMediaResponse)(nil),    // 59: whatevr.v1.DownloadMessageMediaResponse
+	(*GetMessageInfoRequest)(nil),           // 60: whatevr.v1.GetMessageInfoRequest
+	(*ParticipantReceipt)(nil),              // 61: whatevr.v1.ParticipantReceipt
+	(*GetMessageInfoResponse)(nil),          // 62: whatevr.v1.GetMessageInfoResponse
+	(*DeleteMessageForMeRequest)(nil),       // 63: whatevr.v1.DeleteMessageForMeRequest
+	(*DeleteMessageForMeResponse)(nil),      // 64: whatevr.v1.DeleteMessageForMeResponse
+	(*RevokeMessageRequest)(nil),            // 65: whatevr.v1.RevokeMessageRequest
+	(*RevokeMessageResponse)(nil),           // 66: whatevr.v1.RevokeMessageResponse
+	(*EditMessageRequest)(nil),              // 67: whatevr.v1.EditMessageRequest
+	(*EditMessageResponse)(nil),             // 68: whatevr.v1.EditMessageResponse
+	(*ForwardMessageRequest)(nil),           // 69: whatevr.v1.ForwardMessageRequest
+	(*ForwardMessageResponse)(nil),          // 70: whatevr.v1.ForwardMessageResponse
+	(*SendReactionRequest)(nil),             // 71: whatevr.v1.SendReactionRequest
+	(*SendReactionResponse)(nil),            // 72: whatevr.v1.SendReactionResponse
+	(*SetMessageStarredRequest)(nil),        // 73: whatevr.v1.SetMessageStarredRequest
+	(*SetMessageStarredResponse)(nil),       // 74: whatevr.v1.SetMessageStarredResponse
+	(*PinMessageRequest)(nil),               // 75: whatevr.v1.PinMessageRequest
+	(*PinMessageResponse)(nil),              // 76: whatevr.v1.PinMessageResponse
+	(*StarredMessageItem)(nil),              // 77: whatevr.v1.StarredMessageItem
+	(*ListStarredMessagesRequest)(nil),      // 78: whatevr.v1.ListStarredMessagesRequest
+	(*ListStarredMessagesResponse)(nil),     // 79: whatevr.v1.ListStarredMessagesResponse
+	(*ListPinnedMessagesRequest)(nil),       // 80: whatevr.v1.ListPinnedMessagesRequest
+	(*ListPinnedMessagesResponse)(nil),      // 81: whatevr.v1.ListPinnedMessagesResponse
+	(*SearchChatsRequest)(nil),              // 82: whatevr.v1.SearchChatsRequest
+	(*SearchChatsResponse)(nil),             // 83: whatevr.v1.SearchChatsResponse
+	(*MessageSearchResult)(nil),             // 84: whatevr.v1.MessageSearchResult
+	(*SearchMessagesRequest)(nil),           // 85: whatevr.v1.SearchMessagesRequest
+	(*SearchMessagesResponse)(nil),          // 86: whatevr.v1.SearchMessagesResponse
+	(*CheckPhoneOnWhatsAppRequest)(nil),     // 87: whatevr.v1.CheckPhoneOnWhatsAppRequest
+	(*CheckPhoneOnWhatsAppResponse)(nil),    // 88: whatevr.v1.CheckPhoneOnWhatsAppResponse
+	(*EnsureDirectChatRequest)(nil),         // 89: whatevr.v1.EnsureDirectChatRequest
+	(*EnsureDirectChatResponse)(nil),        // 90: whatevr.v1.EnsureDirectChatResponse
+	(*GetContactInfoRequest)(nil),           // 91: whatevr.v1.GetContactInfoRequest
+	(*GetContactInfoResponse)(nil),          // 92: whatevr.v1.GetContactInfoResponse
+	(*GetSelfProfileRequest)(nil),           // 93: whatevr.v1.GetSelfProfileRequest
+	(*GetSelfProfileResponse)(nil),          // 94: whatevr.v1.GetSelfProfileResponse
+	(*GroupMember)(nil),                     // 95: whatevr.v1.GroupMember
+	(*GetGroupInfoRequest)(nil),             // 96: whatevr.v1.GetGroupInfoRequest
+	(*GetGroupInfoResponse)(nil),            // 97: whatevr.v1.GetGroupInfoResponse
+	(*FetchProfilePictureRequest)(nil),      // 98: whatevr.v1.FetchProfilePictureRequest
+	(*FetchProfilePictureResponse)(nil),     // 99: whatevr.v1.FetchProfilePictureResponse
+	(*SetStickerFavoriteRequest)(nil),       // 100: whatevr.v1.SetStickerFavoriteRequest
+	(*SetStickerFavoriteResponse)(nil),      // 101: whatevr.v1.SetStickerFavoriteResponse
+	(*SendTextRequest)(nil),                 // 102: whatevr.v1.SendTextRequest
+	(*SendTextResponse)(nil),                // 103: whatevr.v1.SendTextResponse
+	(*SendMediaRequest)(nil),                // 104: whatevr.v1.SendMediaRequest
+	(*SendMediaResponse)(nil),               // 105: whatevr.v1.SendMediaResponse
+	(*Sticker)(nil),                         // 106: whatevr.v1.Sticker
+	(*StickerPack)(nil),                     // 107: whatevr.v1.StickerPack
+	(*ListStickersRequest)(nil),             // 108: whatevr.v1.ListStickersRequest
+	(*ListStickersResponse)(nil),            // 109: whatevr.v1.ListStickersResponse
+	(*ListStickerPacksRequest)(nil),         // 110: whatevr.v1.ListStickerPacksRequest
+	(*ListStickerPacksResponse)(nil),        // 111: whatevr.v1.ListStickerPacksResponse
+	(*GetStickerPackRequest)(nil),           // 112: whatevr.v1.GetStickerPackRequest
+	(*GetStickerPackResponse)(nil),          // 113: whatevr.v1.GetStickerPackResponse
+	(*DownloadStickerRequest)(nil),          // 114: whatevr.v1.DownloadStickerRequest
+	(*DownloadStickerResponse)(nil),         // 115: whatevr.v1.DownloadStickerResponse
+	(*SetStickerPackInstalledRequest)(nil),  // 116: whatevr.v1.SetStickerPackInstalledRequest
+	(*SetStickerPackInstalledResponse)(nil), // 117: whatevr.v1.SetStickerPackInstalledResponse
+	(*SendStickerRequest)(nil),              // 118: whatevr.v1.SendStickerRequest
+	(*SendStickerResponse)(nil),             // 119: whatevr.v1.SendStickerResponse
+	(*Chat)(nil),                            // 120: whatevr.v1.Chat
+	(*Message)(nil),                         // 121: whatevr.v1.Message
+	(*Mention)(nil),                         // 122: whatevr.v1.Mention
+	(*Reaction)(nil),                        // 123: whatevr.v1.Reaction
+	(*MessageReply)(nil),                    // 124: whatevr.v1.MessageReply
+	(*PrivacySettingsValues)(nil),           // 125: whatevr.v1.PrivacySettingsValues
+	(*GetPrivacySettingsRequest)(nil),       // 126: whatevr.v1.GetPrivacySettingsRequest
+	(*GetPrivacySettingsResponse)(nil),      // 127: whatevr.v1.GetPrivacySettingsResponse
+	(*SetPrivacySettingRequest)(nil),        // 128: whatevr.v1.SetPrivacySettingRequest
+	(*SetPrivacySettingResponse)(nil),       // 129: whatevr.v1.SetPrivacySettingResponse
+	(*BlockedContact)(nil),                  // 130: whatevr.v1.BlockedContact
+	(*GetBlocklistRequest)(nil),             // 131: whatevr.v1.GetBlocklistRequest
+	(*GetBlocklistResponse)(nil),            // 132: whatevr.v1.GetBlocklistResponse
+	(*UpdateBlocklistRequest)(nil),          // 133: whatevr.v1.UpdateBlocklistRequest
+	(*UpdateBlocklistResponse)(nil),         // 134: whatevr.v1.UpdateBlocklistResponse
+	(*SetProfileStatusRequest)(nil),         // 135: whatevr.v1.SetProfileStatusRequest
+	(*SetProfileStatusResponse)(nil),        // 136: whatevr.v1.SetProfileStatusResponse
+	(*AppPreferences)(nil),                  // 137: whatevr.v1.AppPreferences
+	(*GetAppPreferencesRequest)(nil),        // 138: whatevr.v1.GetAppPreferencesRequest
+	(*GetAppPreferencesResponse)(nil),       // 139: whatevr.v1.GetAppPreferencesResponse
+	(*SetAppPreferencesRequest)(nil),        // 140: whatevr.v1.SetAppPreferencesRequest
+	(*SetAppPreferencesResponse)(nil),       // 141: whatevr.v1.SetAppPreferencesResponse
 }
 var file_whatevr_proto_depIdxs = []int32{
 	0,   // 0: whatevr.v1.GetStatusResponse.state:type_name -> whatevr.v1.DaemonState
-	23,  // 1: whatevr.v1.DaemonEvent.connection_changed:type_name -> whatevr.v1.ConnectionChanged
-	26,  // 2: whatevr.v1.DaemonEvent.login_state_changed:type_name -> whatevr.v1.LoginStateChanged
-	27,  // 3: whatevr.v1.DaemonEvent.new_message:type_name -> whatevr.v1.NewMessage
-	28,  // 4: whatevr.v1.DaemonEvent.message_updated:type_name -> whatevr.v1.MessageUpdated
-	29,  // 5: whatevr.v1.DaemonEvent.chat_updated:type_name -> whatevr.v1.ChatUpdated
-	21,  // 6: whatevr.v1.DaemonEvent.chat_presence_changed:type_name -> whatevr.v1.ChatPresenceChanged
-	19,  // 7: whatevr.v1.DaemonEvent.history_sync_progress:type_name -> whatevr.v1.HistorySyncProgress
-	20,  // 8: whatevr.v1.DaemonEvent.history_backfilled:type_name -> whatevr.v1.HistoryBackfilled
-	22,  // 9: whatevr.v1.DaemonEvent.media_download_changed:type_name -> whatevr.v1.MediaDownloadChanged
-	18,  // 10: whatevr.v1.DaemonEvent.avatar_updated:type_name -> whatevr.v1.AvatarUpdated
-	15,  // 11: whatevr.v1.DaemonEvent.sticker_library_changed:type_name -> whatevr.v1.StickerLibraryChanged
-	16,  // 12: whatevr.v1.DaemonEvent.sticker_download_changed:type_name -> whatevr.v1.StickerDownloadChanged
-	14,  // 13: whatevr.v1.DaemonEvent.message_deleted:type_name -> whatevr.v1.MessageDeleted
-	12,  // 14: whatevr.v1.DaemonEvent.contact_info_updated:type_name -> whatevr.v1.ContactInfoUpdated
-	13,  // 15: whatevr.v1.DaemonEvent.group_info_updated:type_name -> whatevr.v1.GroupInfoUpdated
-	93,  // 16: whatevr.v1.GroupInfoUpdated.members:type_name -> whatevr.v1.GroupMember
+	25,  // 1: whatevr.v1.DaemonEvent.connection_changed:type_name -> whatevr.v1.ConnectionChanged
+	28,  // 2: whatevr.v1.DaemonEvent.login_state_changed:type_name -> whatevr.v1.LoginStateChanged
+	29,  // 3: whatevr.v1.DaemonEvent.new_message:type_name -> whatevr.v1.NewMessage
+	30,  // 4: whatevr.v1.DaemonEvent.message_updated:type_name -> whatevr.v1.MessageUpdated
+	31,  // 5: whatevr.v1.DaemonEvent.chat_updated:type_name -> whatevr.v1.ChatUpdated
+	23,  // 6: whatevr.v1.DaemonEvent.chat_presence_changed:type_name -> whatevr.v1.ChatPresenceChanged
+	21,  // 7: whatevr.v1.DaemonEvent.history_sync_progress:type_name -> whatevr.v1.HistorySyncProgress
+	22,  // 8: whatevr.v1.DaemonEvent.history_backfilled:type_name -> whatevr.v1.HistoryBackfilled
+	24,  // 9: whatevr.v1.DaemonEvent.media_download_changed:type_name -> whatevr.v1.MediaDownloadChanged
+	20,  // 10: whatevr.v1.DaemonEvent.avatar_updated:type_name -> whatevr.v1.AvatarUpdated
+	17,  // 11: whatevr.v1.DaemonEvent.sticker_library_changed:type_name -> whatevr.v1.StickerLibraryChanged
+	18,  // 12: whatevr.v1.DaemonEvent.sticker_download_changed:type_name -> whatevr.v1.StickerDownloadChanged
+	16,  // 13: whatevr.v1.DaemonEvent.message_deleted:type_name -> whatevr.v1.MessageDeleted
+	14,  // 14: whatevr.v1.DaemonEvent.contact_info_updated:type_name -> whatevr.v1.ContactInfoUpdated
+	15,  // 15: whatevr.v1.DaemonEvent.group_info_updated:type_name -> whatevr.v1.GroupInfoUpdated
+	95,  // 16: whatevr.v1.GroupInfoUpdated.members:type_name -> whatevr.v1.GroupMember
 	6,   // 17: whatevr.v1.StickerLibraryChanged.source:type_name -> whatevr.v1.StickerSource
-	104, // 18: whatevr.v1.StickerDownloadChanged.sticker:type_name -> whatevr.v1.Sticker
+	106, // 18: whatevr.v1.StickerDownloadChanged.sticker:type_name -> whatevr.v1.Sticker
 	7,   // 19: whatevr.v1.Avatar.kind:type_name -> whatevr.v1.AvatarSubjectKind
-	17,  // 20: whatevr.v1.AvatarUpdated.avatar:type_name -> whatevr.v1.Avatar
+	19,  // 20: whatevr.v1.AvatarUpdated.avatar:type_name -> whatevr.v1.Avatar
 	3,   // 21: whatevr.v1.HistorySyncProgress.sync_type:type_name -> whatevr.v1.HistorySyncType
 	4,   // 22: whatevr.v1.HistorySyncProgress.phase:type_name -> whatevr.v1.HistorySyncPhase
 	5,   // 23: whatevr.v1.ChatPresenceChanged.availability:type_name -> whatevr.v1.ContactAvailability
 	0,   // 24: whatevr.v1.ConnectionChanged.state:type_name -> whatevr.v1.DaemonState
 	0,   // 25: whatevr.v1.LoginStateChanged.state:type_name -> whatevr.v1.DaemonState
-	119, // 26: whatevr.v1.NewMessage.message:type_name -> whatevr.v1.Message
-	119, // 27: whatevr.v1.MessageUpdated.message:type_name -> whatevr.v1.Message
-	118, // 28: whatevr.v1.ChatUpdated.chat:type_name -> whatevr.v1.Chat
-	32,  // 29: whatevr.v1.LoginEvent.qr_code:type_name -> whatevr.v1.QrCode
-	26,  // 30: whatevr.v1.LoginEvent.login_state_changed:type_name -> whatevr.v1.LoginStateChanged
-	37,  // 31: whatevr.v1.FrontendSessionEvent.open_chat:type_name -> whatevr.v1.OpenChat
-	118, // 32: whatevr.v1.ListChatsResponse.chats:type_name -> whatevr.v1.Chat
-	119, // 33: whatevr.v1.GetMessagesResponse.messages:type_name -> whatevr.v1.Message
-	119, // 34: whatevr.v1.DownloadMessageMediaResponse.message:type_name -> whatevr.v1.Message
+	121, // 26: whatevr.v1.NewMessage.message:type_name -> whatevr.v1.Message
+	121, // 27: whatevr.v1.MessageUpdated.message:type_name -> whatevr.v1.Message
+	120, // 28: whatevr.v1.ChatUpdated.chat:type_name -> whatevr.v1.Chat
+	34,  // 29: whatevr.v1.LoginEvent.qr_code:type_name -> whatevr.v1.QrCode
+	28,  // 30: whatevr.v1.LoginEvent.login_state_changed:type_name -> whatevr.v1.LoginStateChanged
+	39,  // 31: whatevr.v1.FrontendSessionEvent.open_chat:type_name -> whatevr.v1.OpenChat
+	120, // 32: whatevr.v1.ListChatsResponse.chats:type_name -> whatevr.v1.Chat
+	121, // 33: whatevr.v1.GetMessagesResponse.messages:type_name -> whatevr.v1.Message
+	121, // 34: whatevr.v1.DownloadMessageMediaResponse.message:type_name -> whatevr.v1.Message
 	2,   // 35: whatevr.v1.GetMessageInfoResponse.status:type_name -> whatevr.v1.MessageStatus
-	59,  // 36: whatevr.v1.GetMessageInfoResponse.receipts:type_name -> whatevr.v1.ParticipantReceipt
-	119, // 37: whatevr.v1.RevokeMessageResponse.message:type_name -> whatevr.v1.Message
-	119, // 38: whatevr.v1.EditMessageResponse.message:type_name -> whatevr.v1.Message
-	119, // 39: whatevr.v1.ForwardMessageResponse.messages:type_name -> whatevr.v1.Message
-	119, // 40: whatevr.v1.SendReactionResponse.message:type_name -> whatevr.v1.Message
-	119, // 41: whatevr.v1.SetMessageStarredResponse.message:type_name -> whatevr.v1.Message
-	119, // 42: whatevr.v1.PinMessageResponse.message:type_name -> whatevr.v1.Message
-	119, // 43: whatevr.v1.StarredMessageItem.message:type_name -> whatevr.v1.Message
-	75,  // 44: whatevr.v1.ListStarredMessagesResponse.items:type_name -> whatevr.v1.StarredMessageItem
-	119, // 45: whatevr.v1.ListPinnedMessagesResponse.messages:type_name -> whatevr.v1.Message
-	118, // 46: whatevr.v1.SearchChatsResponse.chats:type_name -> whatevr.v1.Chat
-	119, // 47: whatevr.v1.MessageSearchResult.message:type_name -> whatevr.v1.Message
-	82,  // 48: whatevr.v1.SearchMessagesResponse.results:type_name -> whatevr.v1.MessageSearchResult
-	118, // 49: whatevr.v1.EnsureDirectChatResponse.chat:type_name -> whatevr.v1.Chat
-	93,  // 50: whatevr.v1.GetGroupInfoResponse.members:type_name -> whatevr.v1.GroupMember
-	104, // 51: whatevr.v1.SetStickerFavoriteResponse.sticker:type_name -> whatevr.v1.Sticker
-	119, // 52: whatevr.v1.SendTextResponse.message:type_name -> whatevr.v1.Message
-	119, // 53: whatevr.v1.SendMediaResponse.message:type_name -> whatevr.v1.Message
+	61,  // 36: whatevr.v1.GetMessageInfoResponse.receipts:type_name -> whatevr.v1.ParticipantReceipt
+	121, // 37: whatevr.v1.RevokeMessageResponse.message:type_name -> whatevr.v1.Message
+	121, // 38: whatevr.v1.EditMessageResponse.message:type_name -> whatevr.v1.Message
+	121, // 39: whatevr.v1.ForwardMessageResponse.messages:type_name -> whatevr.v1.Message
+	121, // 40: whatevr.v1.SendReactionResponse.message:type_name -> whatevr.v1.Message
+	121, // 41: whatevr.v1.SetMessageStarredResponse.message:type_name -> whatevr.v1.Message
+	121, // 42: whatevr.v1.PinMessageResponse.message:type_name -> whatevr.v1.Message
+	121, // 43: whatevr.v1.StarredMessageItem.message:type_name -> whatevr.v1.Message
+	77,  // 44: whatevr.v1.ListStarredMessagesResponse.items:type_name -> whatevr.v1.StarredMessageItem
+	121, // 45: whatevr.v1.ListPinnedMessagesResponse.messages:type_name -> whatevr.v1.Message
+	120, // 46: whatevr.v1.SearchChatsResponse.chats:type_name -> whatevr.v1.Chat
+	121, // 47: whatevr.v1.MessageSearchResult.message:type_name -> whatevr.v1.Message
+	84,  // 48: whatevr.v1.SearchMessagesResponse.results:type_name -> whatevr.v1.MessageSearchResult
+	120, // 49: whatevr.v1.EnsureDirectChatResponse.chat:type_name -> whatevr.v1.Chat
+	95,  // 50: whatevr.v1.GetGroupInfoResponse.members:type_name -> whatevr.v1.GroupMember
+	106, // 51: whatevr.v1.SetStickerFavoriteResponse.sticker:type_name -> whatevr.v1.Sticker
+	121, // 52: whatevr.v1.SendTextResponse.message:type_name -> whatevr.v1.Message
+	121, // 53: whatevr.v1.SendMediaResponse.message:type_name -> whatevr.v1.Message
 	6,   // 54: whatevr.v1.ListStickersRequest.source:type_name -> whatevr.v1.StickerSource
-	104, // 55: whatevr.v1.ListStickersResponse.stickers:type_name -> whatevr.v1.Sticker
-	105, // 56: whatevr.v1.ListStickerPacksResponse.packs:type_name -> whatevr.v1.StickerPack
-	105, // 57: whatevr.v1.GetStickerPackResponse.pack:type_name -> whatevr.v1.StickerPack
-	104, // 58: whatevr.v1.GetStickerPackResponse.stickers:type_name -> whatevr.v1.Sticker
-	104, // 59: whatevr.v1.DownloadStickerResponse.sticker:type_name -> whatevr.v1.Sticker
-	105, // 60: whatevr.v1.SetStickerPackInstalledResponse.pack:type_name -> whatevr.v1.StickerPack
-	119, // 61: whatevr.v1.SendStickerResponse.message:type_name -> whatevr.v1.Message
+	106, // 55: whatevr.v1.ListStickersResponse.stickers:type_name -> whatevr.v1.Sticker
+	107, // 56: whatevr.v1.ListStickerPacksResponse.packs:type_name -> whatevr.v1.StickerPack
+	107, // 57: whatevr.v1.GetStickerPackResponse.pack:type_name -> whatevr.v1.StickerPack
+	106, // 58: whatevr.v1.GetStickerPackResponse.stickers:type_name -> whatevr.v1.Sticker
+	106, // 59: whatevr.v1.DownloadStickerResponse.sticker:type_name -> whatevr.v1.Sticker
+	107, // 60: whatevr.v1.SetStickerPackInstalledResponse.pack:type_name -> whatevr.v1.StickerPack
+	121, // 61: whatevr.v1.SendStickerResponse.message:type_name -> whatevr.v1.Message
 	1,   // 62: whatevr.v1.Chat.last_message_direction:type_name -> whatevr.v1.MessageDirection
 	2,   // 63: whatevr.v1.Chat.last_message_status:type_name -> whatevr.v1.MessageStatus
 	1,   // 64: whatevr.v1.Message.direction:type_name -> whatevr.v1.MessageDirection
 	2,   // 65: whatevr.v1.Message.status:type_name -> whatevr.v1.MessageStatus
-	122, // 66: whatevr.v1.Message.reply_to:type_name -> whatevr.v1.MessageReply
-	121, // 67: whatevr.v1.Message.reactions:type_name -> whatevr.v1.Reaction
-	120, // 68: whatevr.v1.Message.mentions:type_name -> whatevr.v1.Mention
+	124, // 66: whatevr.v1.Message.reply_to:type_name -> whatevr.v1.MessageReply
+	123, // 67: whatevr.v1.Message.reactions:type_name -> whatevr.v1.Reaction
+	122, // 68: whatevr.v1.Message.mentions:type_name -> whatevr.v1.Mention
 	1,   // 69: whatevr.v1.MessageReply.direction:type_name -> whatevr.v1.MessageDirection
-	8,   // 70: whatevr.v1.DaemonService.GetStatus:input_type -> whatevr.v1.GetStatusRequest
-	10,  // 71: whatevr.v1.DaemonService.SubscribeEvents:input_type -> whatevr.v1.SubscribeEventsRequest
-	24,  // 72: whatevr.v1.DaemonService.Reconnect:input_type -> whatevr.v1.ReconnectRequest
-	30,  // 73: whatevr.v1.LoginService.SubscribeLoginEvents:input_type -> whatevr.v1.SubscribeLoginEventsRequest
-	33,  // 74: whatevr.v1.LoginService.Logout:input_type -> whatevr.v1.LogoutRequest
-	35,  // 75: whatevr.v1.FrontendService.HoldSession:input_type -> whatevr.v1.HoldSessionRequest
-	38,  // 76: whatevr.v1.FrontendService.UpdateSessionState:input_type -> whatevr.v1.UpdateSessionStateRequest
-	40,  // 77: whatevr.v1.ChatService.ListChats:input_type -> whatevr.v1.ListChatsRequest
-	42,  // 78: whatevr.v1.ChatService.GetMessages:input_type -> whatevr.v1.GetMessagesRequest
-	44,  // 79: whatevr.v1.ChatService.MarkChatRead:input_type -> whatevr.v1.MarkChatReadRequest
-	46,  // 80: whatevr.v1.ChatService.SetChatPinned:input_type -> whatevr.v1.SetChatPinnedRequest
-	48,  // 81: whatevr.v1.ChatService.SetChatArchived:input_type -> whatevr.v1.SetChatArchivedRequest
-	50,  // 82: whatevr.v1.ChatService.SetChatMuted:input_type -> whatevr.v1.SetChatMutedRequest
-	52,  // 83: whatevr.v1.ChatService.SetChatPresence:input_type -> whatevr.v1.SetChatPresenceRequest
-	54,  // 84: whatevr.v1.ChatService.SubscribeChatPresence:input_type -> whatevr.v1.SubscribeChatPresenceRequest
-	56,  // 85: whatevr.v1.ChatService.DownloadMessageMedia:input_type -> whatevr.v1.DownloadMessageMediaRequest
-	58,  // 86: whatevr.v1.ChatService.GetMessageInfo:input_type -> whatevr.v1.GetMessageInfoRequest
-	61,  // 87: whatevr.v1.ChatService.DeleteMessageForMe:input_type -> whatevr.v1.DeleteMessageForMeRequest
-	76,  // 88: whatevr.v1.ChatService.ListStarredMessages:input_type -> whatevr.v1.ListStarredMessagesRequest
-	78,  // 89: whatevr.v1.ChatService.ListPinnedMessages:input_type -> whatevr.v1.ListPinnedMessagesRequest
-	80,  // 90: whatevr.v1.ChatService.SearchChats:input_type -> whatevr.v1.SearchChatsRequest
-	83,  // 91: whatevr.v1.ChatService.SearchMessages:input_type -> whatevr.v1.SearchMessagesRequest
-	85,  // 92: whatevr.v1.ChatService.CheckPhoneOnWhatsApp:input_type -> whatevr.v1.CheckPhoneOnWhatsAppRequest
-	87,  // 93: whatevr.v1.ChatService.EnsureDirectChat:input_type -> whatevr.v1.EnsureDirectChatRequest
-	89,  // 94: whatevr.v1.ChatService.GetContactInfo:input_type -> whatevr.v1.GetContactInfoRequest
-	91,  // 95: whatevr.v1.ChatService.GetSelfProfile:input_type -> whatevr.v1.GetSelfProfileRequest
-	94,  // 96: whatevr.v1.ChatService.GetGroupInfo:input_type -> whatevr.v1.GetGroupInfoRequest
-	96,  // 97: whatevr.v1.ChatService.FetchProfilePicture:input_type -> whatevr.v1.FetchProfilePictureRequest
-	100, // 98: whatevr.v1.SendService.SendText:input_type -> whatevr.v1.SendTextRequest
-	102, // 99: whatevr.v1.SendService.SendMedia:input_type -> whatevr.v1.SendMediaRequest
-	63,  // 100: whatevr.v1.SendService.RevokeMessage:input_type -> whatevr.v1.RevokeMessageRequest
-	65,  // 101: whatevr.v1.SendService.EditMessage:input_type -> whatevr.v1.EditMessageRequest
-	67,  // 102: whatevr.v1.SendService.ForwardMessage:input_type -> whatevr.v1.ForwardMessageRequest
-	69,  // 103: whatevr.v1.SendService.SendReaction:input_type -> whatevr.v1.SendReactionRequest
-	71,  // 104: whatevr.v1.SendService.SetMessageStarred:input_type -> whatevr.v1.SetMessageStarredRequest
-	73,  // 105: whatevr.v1.SendService.PinMessage:input_type -> whatevr.v1.PinMessageRequest
-	106, // 106: whatevr.v1.StickerService.ListStickers:input_type -> whatevr.v1.ListStickersRequest
-	108, // 107: whatevr.v1.StickerService.ListStickerPacks:input_type -> whatevr.v1.ListStickerPacksRequest
-	110, // 108: whatevr.v1.StickerService.GetStickerPack:input_type -> whatevr.v1.GetStickerPackRequest
-	112, // 109: whatevr.v1.StickerService.DownloadSticker:input_type -> whatevr.v1.DownloadStickerRequest
-	114, // 110: whatevr.v1.StickerService.SetStickerPackInstalled:input_type -> whatevr.v1.SetStickerPackInstalledRequest
-	116, // 111: whatevr.v1.StickerService.SendSticker:input_type -> whatevr.v1.SendStickerRequest
-	98,  // 112: whatevr.v1.StickerService.SetStickerFavorite:input_type -> whatevr.v1.SetStickerFavoriteRequest
-	9,   // 113: whatevr.v1.DaemonService.GetStatus:output_type -> whatevr.v1.GetStatusResponse
-	11,  // 114: whatevr.v1.DaemonService.SubscribeEvents:output_type -> whatevr.v1.DaemonEvent
-	25,  // 115: whatevr.v1.DaemonService.Reconnect:output_type -> whatevr.v1.ReconnectResponse
-	31,  // 116: whatevr.v1.LoginService.SubscribeLoginEvents:output_type -> whatevr.v1.LoginEvent
-	34,  // 117: whatevr.v1.LoginService.Logout:output_type -> whatevr.v1.LogoutResponse
-	36,  // 118: whatevr.v1.FrontendService.HoldSession:output_type -> whatevr.v1.FrontendSessionEvent
-	39,  // 119: whatevr.v1.FrontendService.UpdateSessionState:output_type -> whatevr.v1.UpdateSessionStateResponse
-	41,  // 120: whatevr.v1.ChatService.ListChats:output_type -> whatevr.v1.ListChatsResponse
-	43,  // 121: whatevr.v1.ChatService.GetMessages:output_type -> whatevr.v1.GetMessagesResponse
-	45,  // 122: whatevr.v1.ChatService.MarkChatRead:output_type -> whatevr.v1.MarkChatReadResponse
-	47,  // 123: whatevr.v1.ChatService.SetChatPinned:output_type -> whatevr.v1.SetChatPinnedResponse
-	49,  // 124: whatevr.v1.ChatService.SetChatArchived:output_type -> whatevr.v1.SetChatArchivedResponse
-	51,  // 125: whatevr.v1.ChatService.SetChatMuted:output_type -> whatevr.v1.SetChatMutedResponse
-	53,  // 126: whatevr.v1.ChatService.SetChatPresence:output_type -> whatevr.v1.SetChatPresenceResponse
-	55,  // 127: whatevr.v1.ChatService.SubscribeChatPresence:output_type -> whatevr.v1.SubscribeChatPresenceResponse
-	57,  // 128: whatevr.v1.ChatService.DownloadMessageMedia:output_type -> whatevr.v1.DownloadMessageMediaResponse
-	60,  // 129: whatevr.v1.ChatService.GetMessageInfo:output_type -> whatevr.v1.GetMessageInfoResponse
-	62,  // 130: whatevr.v1.ChatService.DeleteMessageForMe:output_type -> whatevr.v1.DeleteMessageForMeResponse
-	77,  // 131: whatevr.v1.ChatService.ListStarredMessages:output_type -> whatevr.v1.ListStarredMessagesResponse
-	79,  // 132: whatevr.v1.ChatService.ListPinnedMessages:output_type -> whatevr.v1.ListPinnedMessagesResponse
-	81,  // 133: whatevr.v1.ChatService.SearchChats:output_type -> whatevr.v1.SearchChatsResponse
-	84,  // 134: whatevr.v1.ChatService.SearchMessages:output_type -> whatevr.v1.SearchMessagesResponse
-	86,  // 135: whatevr.v1.ChatService.CheckPhoneOnWhatsApp:output_type -> whatevr.v1.CheckPhoneOnWhatsAppResponse
-	88,  // 136: whatevr.v1.ChatService.EnsureDirectChat:output_type -> whatevr.v1.EnsureDirectChatResponse
-	90,  // 137: whatevr.v1.ChatService.GetContactInfo:output_type -> whatevr.v1.GetContactInfoResponse
-	92,  // 138: whatevr.v1.ChatService.GetSelfProfile:output_type -> whatevr.v1.GetSelfProfileResponse
-	95,  // 139: whatevr.v1.ChatService.GetGroupInfo:output_type -> whatevr.v1.GetGroupInfoResponse
-	97,  // 140: whatevr.v1.ChatService.FetchProfilePicture:output_type -> whatevr.v1.FetchProfilePictureResponse
-	101, // 141: whatevr.v1.SendService.SendText:output_type -> whatevr.v1.SendTextResponse
-	103, // 142: whatevr.v1.SendService.SendMedia:output_type -> whatevr.v1.SendMediaResponse
-	64,  // 143: whatevr.v1.SendService.RevokeMessage:output_type -> whatevr.v1.RevokeMessageResponse
-	66,  // 144: whatevr.v1.SendService.EditMessage:output_type -> whatevr.v1.EditMessageResponse
-	68,  // 145: whatevr.v1.SendService.ForwardMessage:output_type -> whatevr.v1.ForwardMessageResponse
-	70,  // 146: whatevr.v1.SendService.SendReaction:output_type -> whatevr.v1.SendReactionResponse
-	72,  // 147: whatevr.v1.SendService.SetMessageStarred:output_type -> whatevr.v1.SetMessageStarredResponse
-	74,  // 148: whatevr.v1.SendService.PinMessage:output_type -> whatevr.v1.PinMessageResponse
-	107, // 149: whatevr.v1.StickerService.ListStickers:output_type -> whatevr.v1.ListStickersResponse
-	109, // 150: whatevr.v1.StickerService.ListStickerPacks:output_type -> whatevr.v1.ListStickerPacksResponse
-	111, // 151: whatevr.v1.StickerService.GetStickerPack:output_type -> whatevr.v1.GetStickerPackResponse
-	113, // 152: whatevr.v1.StickerService.DownloadSticker:output_type -> whatevr.v1.DownloadStickerResponse
-	115, // 153: whatevr.v1.StickerService.SetStickerPackInstalled:output_type -> whatevr.v1.SetStickerPackInstalledResponse
-	117, // 154: whatevr.v1.StickerService.SendSticker:output_type -> whatevr.v1.SendStickerResponse
-	99,  // 155: whatevr.v1.StickerService.SetStickerFavorite:output_type -> whatevr.v1.SetStickerFavoriteResponse
-	113, // [113:156] is the sub-list for method output_type
-	70,  // [70:113] is the sub-list for method input_type
-	70,  // [70:70] is the sub-list for extension type_name
-	70,  // [70:70] is the sub-list for extension extendee
-	0,   // [0:70] is the sub-list for field type_name
+	8,   // 70: whatevr.v1.PrivacySettingsValues.last_seen:type_name -> whatevr.v1.PrivacyAudience
+	8,   // 71: whatevr.v1.PrivacySettingsValues.online:type_name -> whatevr.v1.PrivacyAudience
+	8,   // 72: whatevr.v1.PrivacySettingsValues.profile_photo:type_name -> whatevr.v1.PrivacyAudience
+	8,   // 73: whatevr.v1.PrivacySettingsValues.about:type_name -> whatevr.v1.PrivacyAudience
+	8,   // 74: whatevr.v1.PrivacySettingsValues.group_add:type_name -> whatevr.v1.PrivacyAudience
+	8,   // 75: whatevr.v1.PrivacySettingsValues.call_add:type_name -> whatevr.v1.PrivacyAudience
+	125, // 76: whatevr.v1.GetPrivacySettingsResponse.settings:type_name -> whatevr.v1.PrivacySettingsValues
+	9,   // 77: whatevr.v1.SetPrivacySettingRequest.category:type_name -> whatevr.v1.PrivacyCategory
+	8,   // 78: whatevr.v1.SetPrivacySettingRequest.audience:type_name -> whatevr.v1.PrivacyAudience
+	125, // 79: whatevr.v1.SetPrivacySettingResponse.settings:type_name -> whatevr.v1.PrivacySettingsValues
+	130, // 80: whatevr.v1.GetBlocklistResponse.contacts:type_name -> whatevr.v1.BlockedContact
+	130, // 81: whatevr.v1.UpdateBlocklistResponse.contacts:type_name -> whatevr.v1.BlockedContact
+	137, // 82: whatevr.v1.GetAppPreferencesResponse.preferences:type_name -> whatevr.v1.AppPreferences
+	137, // 83: whatevr.v1.SetAppPreferencesRequest.preferences:type_name -> whatevr.v1.AppPreferences
+	137, // 84: whatevr.v1.SetAppPreferencesResponse.preferences:type_name -> whatevr.v1.AppPreferences
+	10,  // 85: whatevr.v1.DaemonService.GetStatus:input_type -> whatevr.v1.GetStatusRequest
+	12,  // 86: whatevr.v1.DaemonService.SubscribeEvents:input_type -> whatevr.v1.SubscribeEventsRequest
+	26,  // 87: whatevr.v1.DaemonService.Reconnect:input_type -> whatevr.v1.ReconnectRequest
+	32,  // 88: whatevr.v1.LoginService.SubscribeLoginEvents:input_type -> whatevr.v1.SubscribeLoginEventsRequest
+	35,  // 89: whatevr.v1.LoginService.Logout:input_type -> whatevr.v1.LogoutRequest
+	37,  // 90: whatevr.v1.FrontendService.HoldSession:input_type -> whatevr.v1.HoldSessionRequest
+	40,  // 91: whatevr.v1.FrontendService.UpdateSessionState:input_type -> whatevr.v1.UpdateSessionStateRequest
+	42,  // 92: whatevr.v1.ChatService.ListChats:input_type -> whatevr.v1.ListChatsRequest
+	44,  // 93: whatevr.v1.ChatService.GetMessages:input_type -> whatevr.v1.GetMessagesRequest
+	46,  // 94: whatevr.v1.ChatService.MarkChatRead:input_type -> whatevr.v1.MarkChatReadRequest
+	48,  // 95: whatevr.v1.ChatService.SetChatPinned:input_type -> whatevr.v1.SetChatPinnedRequest
+	50,  // 96: whatevr.v1.ChatService.SetChatArchived:input_type -> whatevr.v1.SetChatArchivedRequest
+	52,  // 97: whatevr.v1.ChatService.SetChatMuted:input_type -> whatevr.v1.SetChatMutedRequest
+	54,  // 98: whatevr.v1.ChatService.SetChatPresence:input_type -> whatevr.v1.SetChatPresenceRequest
+	56,  // 99: whatevr.v1.ChatService.SubscribeChatPresence:input_type -> whatevr.v1.SubscribeChatPresenceRequest
+	58,  // 100: whatevr.v1.ChatService.DownloadMessageMedia:input_type -> whatevr.v1.DownloadMessageMediaRequest
+	60,  // 101: whatevr.v1.ChatService.GetMessageInfo:input_type -> whatevr.v1.GetMessageInfoRequest
+	63,  // 102: whatevr.v1.ChatService.DeleteMessageForMe:input_type -> whatevr.v1.DeleteMessageForMeRequest
+	78,  // 103: whatevr.v1.ChatService.ListStarredMessages:input_type -> whatevr.v1.ListStarredMessagesRequest
+	80,  // 104: whatevr.v1.ChatService.ListPinnedMessages:input_type -> whatevr.v1.ListPinnedMessagesRequest
+	82,  // 105: whatevr.v1.ChatService.SearchChats:input_type -> whatevr.v1.SearchChatsRequest
+	85,  // 106: whatevr.v1.ChatService.SearchMessages:input_type -> whatevr.v1.SearchMessagesRequest
+	87,  // 107: whatevr.v1.ChatService.CheckPhoneOnWhatsApp:input_type -> whatevr.v1.CheckPhoneOnWhatsAppRequest
+	89,  // 108: whatevr.v1.ChatService.EnsureDirectChat:input_type -> whatevr.v1.EnsureDirectChatRequest
+	91,  // 109: whatevr.v1.ChatService.GetContactInfo:input_type -> whatevr.v1.GetContactInfoRequest
+	93,  // 110: whatevr.v1.ChatService.GetSelfProfile:input_type -> whatevr.v1.GetSelfProfileRequest
+	96,  // 111: whatevr.v1.ChatService.GetGroupInfo:input_type -> whatevr.v1.GetGroupInfoRequest
+	98,  // 112: whatevr.v1.ChatService.FetchProfilePicture:input_type -> whatevr.v1.FetchProfilePictureRequest
+	102, // 113: whatevr.v1.SendService.SendText:input_type -> whatevr.v1.SendTextRequest
+	104, // 114: whatevr.v1.SendService.SendMedia:input_type -> whatevr.v1.SendMediaRequest
+	65,  // 115: whatevr.v1.SendService.RevokeMessage:input_type -> whatevr.v1.RevokeMessageRequest
+	67,  // 116: whatevr.v1.SendService.EditMessage:input_type -> whatevr.v1.EditMessageRequest
+	69,  // 117: whatevr.v1.SendService.ForwardMessage:input_type -> whatevr.v1.ForwardMessageRequest
+	71,  // 118: whatevr.v1.SendService.SendReaction:input_type -> whatevr.v1.SendReactionRequest
+	73,  // 119: whatevr.v1.SendService.SetMessageStarred:input_type -> whatevr.v1.SetMessageStarredRequest
+	75,  // 120: whatevr.v1.SendService.PinMessage:input_type -> whatevr.v1.PinMessageRequest
+	126, // 121: whatevr.v1.SettingsService.GetPrivacySettings:input_type -> whatevr.v1.GetPrivacySettingsRequest
+	128, // 122: whatevr.v1.SettingsService.SetPrivacySetting:input_type -> whatevr.v1.SetPrivacySettingRequest
+	131, // 123: whatevr.v1.SettingsService.GetBlocklist:input_type -> whatevr.v1.GetBlocklistRequest
+	133, // 124: whatevr.v1.SettingsService.UpdateBlocklist:input_type -> whatevr.v1.UpdateBlocklistRequest
+	135, // 125: whatevr.v1.SettingsService.SetProfileStatus:input_type -> whatevr.v1.SetProfileStatusRequest
+	138, // 126: whatevr.v1.SettingsService.GetAppPreferences:input_type -> whatevr.v1.GetAppPreferencesRequest
+	140, // 127: whatevr.v1.SettingsService.SetAppPreferences:input_type -> whatevr.v1.SetAppPreferencesRequest
+	108, // 128: whatevr.v1.StickerService.ListStickers:input_type -> whatevr.v1.ListStickersRequest
+	110, // 129: whatevr.v1.StickerService.ListStickerPacks:input_type -> whatevr.v1.ListStickerPacksRequest
+	112, // 130: whatevr.v1.StickerService.GetStickerPack:input_type -> whatevr.v1.GetStickerPackRequest
+	114, // 131: whatevr.v1.StickerService.DownloadSticker:input_type -> whatevr.v1.DownloadStickerRequest
+	116, // 132: whatevr.v1.StickerService.SetStickerPackInstalled:input_type -> whatevr.v1.SetStickerPackInstalledRequest
+	118, // 133: whatevr.v1.StickerService.SendSticker:input_type -> whatevr.v1.SendStickerRequest
+	100, // 134: whatevr.v1.StickerService.SetStickerFavorite:input_type -> whatevr.v1.SetStickerFavoriteRequest
+	11,  // 135: whatevr.v1.DaemonService.GetStatus:output_type -> whatevr.v1.GetStatusResponse
+	13,  // 136: whatevr.v1.DaemonService.SubscribeEvents:output_type -> whatevr.v1.DaemonEvent
+	27,  // 137: whatevr.v1.DaemonService.Reconnect:output_type -> whatevr.v1.ReconnectResponse
+	33,  // 138: whatevr.v1.LoginService.SubscribeLoginEvents:output_type -> whatevr.v1.LoginEvent
+	36,  // 139: whatevr.v1.LoginService.Logout:output_type -> whatevr.v1.LogoutResponse
+	38,  // 140: whatevr.v1.FrontendService.HoldSession:output_type -> whatevr.v1.FrontendSessionEvent
+	41,  // 141: whatevr.v1.FrontendService.UpdateSessionState:output_type -> whatevr.v1.UpdateSessionStateResponse
+	43,  // 142: whatevr.v1.ChatService.ListChats:output_type -> whatevr.v1.ListChatsResponse
+	45,  // 143: whatevr.v1.ChatService.GetMessages:output_type -> whatevr.v1.GetMessagesResponse
+	47,  // 144: whatevr.v1.ChatService.MarkChatRead:output_type -> whatevr.v1.MarkChatReadResponse
+	49,  // 145: whatevr.v1.ChatService.SetChatPinned:output_type -> whatevr.v1.SetChatPinnedResponse
+	51,  // 146: whatevr.v1.ChatService.SetChatArchived:output_type -> whatevr.v1.SetChatArchivedResponse
+	53,  // 147: whatevr.v1.ChatService.SetChatMuted:output_type -> whatevr.v1.SetChatMutedResponse
+	55,  // 148: whatevr.v1.ChatService.SetChatPresence:output_type -> whatevr.v1.SetChatPresenceResponse
+	57,  // 149: whatevr.v1.ChatService.SubscribeChatPresence:output_type -> whatevr.v1.SubscribeChatPresenceResponse
+	59,  // 150: whatevr.v1.ChatService.DownloadMessageMedia:output_type -> whatevr.v1.DownloadMessageMediaResponse
+	62,  // 151: whatevr.v1.ChatService.GetMessageInfo:output_type -> whatevr.v1.GetMessageInfoResponse
+	64,  // 152: whatevr.v1.ChatService.DeleteMessageForMe:output_type -> whatevr.v1.DeleteMessageForMeResponse
+	79,  // 153: whatevr.v1.ChatService.ListStarredMessages:output_type -> whatevr.v1.ListStarredMessagesResponse
+	81,  // 154: whatevr.v1.ChatService.ListPinnedMessages:output_type -> whatevr.v1.ListPinnedMessagesResponse
+	83,  // 155: whatevr.v1.ChatService.SearchChats:output_type -> whatevr.v1.SearchChatsResponse
+	86,  // 156: whatevr.v1.ChatService.SearchMessages:output_type -> whatevr.v1.SearchMessagesResponse
+	88,  // 157: whatevr.v1.ChatService.CheckPhoneOnWhatsApp:output_type -> whatevr.v1.CheckPhoneOnWhatsAppResponse
+	90,  // 158: whatevr.v1.ChatService.EnsureDirectChat:output_type -> whatevr.v1.EnsureDirectChatResponse
+	92,  // 159: whatevr.v1.ChatService.GetContactInfo:output_type -> whatevr.v1.GetContactInfoResponse
+	94,  // 160: whatevr.v1.ChatService.GetSelfProfile:output_type -> whatevr.v1.GetSelfProfileResponse
+	97,  // 161: whatevr.v1.ChatService.GetGroupInfo:output_type -> whatevr.v1.GetGroupInfoResponse
+	99,  // 162: whatevr.v1.ChatService.FetchProfilePicture:output_type -> whatevr.v1.FetchProfilePictureResponse
+	103, // 163: whatevr.v1.SendService.SendText:output_type -> whatevr.v1.SendTextResponse
+	105, // 164: whatevr.v1.SendService.SendMedia:output_type -> whatevr.v1.SendMediaResponse
+	66,  // 165: whatevr.v1.SendService.RevokeMessage:output_type -> whatevr.v1.RevokeMessageResponse
+	68,  // 166: whatevr.v1.SendService.EditMessage:output_type -> whatevr.v1.EditMessageResponse
+	70,  // 167: whatevr.v1.SendService.ForwardMessage:output_type -> whatevr.v1.ForwardMessageResponse
+	72,  // 168: whatevr.v1.SendService.SendReaction:output_type -> whatevr.v1.SendReactionResponse
+	74,  // 169: whatevr.v1.SendService.SetMessageStarred:output_type -> whatevr.v1.SetMessageStarredResponse
+	76,  // 170: whatevr.v1.SendService.PinMessage:output_type -> whatevr.v1.PinMessageResponse
+	127, // 171: whatevr.v1.SettingsService.GetPrivacySettings:output_type -> whatevr.v1.GetPrivacySettingsResponse
+	129, // 172: whatevr.v1.SettingsService.SetPrivacySetting:output_type -> whatevr.v1.SetPrivacySettingResponse
+	132, // 173: whatevr.v1.SettingsService.GetBlocklist:output_type -> whatevr.v1.GetBlocklistResponse
+	134, // 174: whatevr.v1.SettingsService.UpdateBlocklist:output_type -> whatevr.v1.UpdateBlocklistResponse
+	136, // 175: whatevr.v1.SettingsService.SetProfileStatus:output_type -> whatevr.v1.SetProfileStatusResponse
+	139, // 176: whatevr.v1.SettingsService.GetAppPreferences:output_type -> whatevr.v1.GetAppPreferencesResponse
+	141, // 177: whatevr.v1.SettingsService.SetAppPreferences:output_type -> whatevr.v1.SetAppPreferencesResponse
+	109, // 178: whatevr.v1.StickerService.ListStickers:output_type -> whatevr.v1.ListStickersResponse
+	111, // 179: whatevr.v1.StickerService.ListStickerPacks:output_type -> whatevr.v1.ListStickerPacksResponse
+	113, // 180: whatevr.v1.StickerService.GetStickerPack:output_type -> whatevr.v1.GetStickerPackResponse
+	115, // 181: whatevr.v1.StickerService.DownloadSticker:output_type -> whatevr.v1.DownloadStickerResponse
+	117, // 182: whatevr.v1.StickerService.SetStickerPackInstalled:output_type -> whatevr.v1.SetStickerPackInstalledResponse
+	119, // 183: whatevr.v1.StickerService.SendSticker:output_type -> whatevr.v1.SendStickerResponse
+	101, // 184: whatevr.v1.StickerService.SetStickerFavorite:output_type -> whatevr.v1.SetStickerFavoriteResponse
+	135, // [135:185] is the sub-list for method output_type
+	85,  // [85:135] is the sub-list for method input_type
+	85,  // [85:85] is the sub-list for extension type_name
+	85,  // [85:85] is the sub-list for extension extendee
+	0,   // [0:85] is the sub-list for field type_name
 }
 
 func init() { file_whatevr_proto_init() }
@@ -8337,10 +9457,10 @@ func file_whatevr_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_whatevr_proto_rawDesc), len(file_whatevr_proto_rawDesc)),
-			NumEnums:      8,
-			NumMessages:   115,
+			NumEnums:      10,
+			NumMessages:   132,
 			NumExtensions: 0,
-			NumServices:   6,
+			NumServices:   7,
 		},
 		GoTypes:           file_whatevr_proto_goTypes,
 		DependencyIndexes: file_whatevr_proto_depIdxs,

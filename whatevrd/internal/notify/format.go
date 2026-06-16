@@ -28,6 +28,14 @@ type Content struct {
 	Hints   map[string]any
 }
 
+// Options carries the user's notification preferences into formatting. Preview
+// off hides the message text (sender/chat only); Sound asks the server to play
+// its default message sound when the daemon supports it.
+type Options struct {
+	Preview bool
+	Sound   bool
+}
+
 func ParseCapabilities(values []string) Capabilities {
 	var caps Capabilities
 	for _, value := range values {
@@ -51,15 +59,21 @@ func ParseCapabilities(values []string) Capabilities {
 	return caps
 }
 
-func FormatMessage(caps Capabilities, message app.Message, chat app.Chat) Content {
+func FormatMessage(caps Capabilities, message app.Message, chat app.Chat, opts Options) Content {
 	chatName := strings.TrimSpace(chat.Name)
 	if chatName == "" {
 		chatName = chat.ID
 	}
 
-	preview := previewText(message)
-	if chat.IsGroup && message.SenderID != "" && message.SenderID != "me" {
-		preview = senderDisplay(message) + ": " + preview
+	var preview string
+	if opts.Preview {
+		preview = previewText(message)
+		if chat.IsGroup && message.SenderID != "" && message.SenderID != "me" {
+			preview = senderDisplay(message) + ": " + preview
+		}
+	} else {
+		// Preview disabled: never leak message content.
+		preview = "New message"
 	}
 
 	content := Content{
@@ -69,6 +83,10 @@ func FormatMessage(caps Capabilities, message app.Message, chat app.Chat) Conten
 			"desktop-entry": "in.codelif.Whatevr",
 			"category":      "im.received",
 		},
+	}
+
+	if opts.Sound && caps.Sound {
+		content.Hints["sound-name"] = "message-new-instant"
 	}
 
 	if caps.Actions {
