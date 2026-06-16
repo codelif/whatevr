@@ -19,6 +19,31 @@
   </provides>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.5.0" date="2026-06-16">
+      <description>
+        <p><em>Gimme those knobs! (and more)</em></p>
+        <p>New stuff:</p>
+        <ul>
+          <li>Closing a chat with non-empty composer will leave it as a draft</li>
+          <li>You can edit sent message and received messages will be edited (no more fun)</li>
+          <li>Messages can be pinned and they show up on top of the chat</li>
+          <li>You can star/unstar and see starred messages (global and chat-wise)</li>
+          <li>Archived chats</li>
+          <li>Mute chats</li>
+          <li>Search (wow), you can search contacts and messages and both</li>
+          <li>There is a quick side bar with home, groups, DMs and Starred messages, settings and profile buttons</li>
+          <li>Wait whaaaaa!! SETTINGS!!! HELL YEAHH!!! BASIC FEATURES IN 2026!</li>
+          <li>Tags are now expanded, so you'll actuall see @Ma Home Boi instead of @453243mumbojumbo in chat</li>
+        </ul>
+        <p>Fixed stuff:</p>
+        <ul>
+          <li>Read more now shows a dialog box instead of changing the chat geometry</li>
+          <li>Clear composer after sending media</li>
+          <li>Clicks were leaking through avatar in contact info</li>
+          <li>smol fixes and perf improvements</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.4.0" date="2026-06-12">
       <description>
         <p><em>I react to Context Menus</em> Again lots of stuff</p>
