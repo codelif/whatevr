@@ -48,7 +48,8 @@ void ChatListFilterModel::setChatCategory(Category category)
         return;
     }
     m_chatCategory = category;
-    invalidateFilter();
+    beginFilterChange();
+    endFilterChange();
     Q_EMIT chatCategoryChanged();
 }
 
