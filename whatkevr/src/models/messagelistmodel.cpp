@@ -1124,6 +1124,7 @@ MessageListModel::MessageItem MessageListModel::fromProto(const whatevr::v1::Mes
         .replyToMediaMimeType = {},
         .replyToDirection = 0,
         .reactions = {},
+        .mentions = {},
     };
     const auto &replyTo = message.replyTo();
     item.replyToMessageId = replyTo.messageId();

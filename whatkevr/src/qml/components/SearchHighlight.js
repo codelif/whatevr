@@ -1,8 +1,8 @@
+.pragma library
 // Shared search-term highlighting, used by both the global search-result
 // snippets and the in-conversation bubble highlighting so matches look
 // identical in both places. Pure functions over (text, query, colors) — colors
 // are passed in from QML (opaque "#rrggbb" strings) so theming stays in QML.
-.pragma library
 
 // Qt rich text only accepts "#rrggbb"; a QML color stringifies to "#aarrggbb",
 // which it silently drops. Normalize either form to an opaque hex string.
