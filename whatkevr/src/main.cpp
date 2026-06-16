@@ -63,12 +63,47 @@ int main(int argc, char *argv[])
                          QStringLiteral(WHATEVR_VERSION_STRING));
     aboutData.setDesktopFileName(QStringLiteral("in.codelif.Whatevr"));
     aboutData.setShortDescription(
-        i18nc("@info", "Kirigami frontend bootstrap for the whatevrd background daemon."));
+        i18nc("@info", "Native WhatsApp client for Linux (Qt/Kirigami frontend)"));
     aboutData.setHomepage(QStringLiteral("https://github.com/codelif/whatevr"));
     aboutData.setBugAddress("https://github.com/codelif/whatevr/issues");
-    aboutData.setLicense(KAboutLicense::BSD_3_Clause);
+    // KAboutLicense::BSD_3_Clause ships no bundled full text, so it renders a
+    // bare "see the SPDX website" stub. Point at the repo's LICENSE (embedded in
+    // the qrc) so the About dialog shows the real terms.
+    aboutData.setLicenseTextFile(QStringLiteral(":/LICENSE"));
     aboutData.setCopyrightStatement(i18nc("@info:credit", "Copyright (c) 2026 Harsh Sharma"));
     aboutData.addAuthor(QStringLiteral("Harsh Sharma"));
+
+    // Third-party libraries and bundled data, surfaced in the About page's
+    // Components section. The emoji data licenses (MIT / Apache-2.0) require
+    // attribution; the rest are credited as a courtesy. Qt and KDE Frameworks
+    // are injected automatically by the formcard AboutComponent, so they are
+    // deliberately not added here.
+    aboutData.addComponent(QStringLiteral("Kirigami Addons"),
+                           i18nc("@info:credit", "Form, About and convergent UI components"),
+                           QString(),
+                           QStringLiteral("https://invent.kde.org/libraries/kirigami-addons"),
+                           KAboutLicense::LGPL_V2_1);
+    aboutData.addComponent(QStringLiteral("rlottie"),
+                           i18nc("@info:credit", "Lottie animation rendering for animated stickers"),
+                           QString(),
+                           QStringLiteral("https://github.com/Samsung/rlottie"),
+                           KAboutLicense::MIT);
+    aboutData.addComponent(QStringLiteral("whatsmeow"),
+                           i18nc("@info:credit", "WhatsApp Web multidevice protocol library (via the whatevrd daemon)"),
+                           QString(),
+                           QStringLiteral("https://github.com/tulir/whatsmeow"),
+                           KAboutLicense::MPL_V2);
+    aboutData.addComponent(QStringLiteral("emojilib"),
+                           i18nc("@info:credit", "Emoji keyword / shortcode data — © 2014 Mu-An Chiou"),
+                           QString(),
+                           QStringLiteral("https://github.com/muan/emojilib"),
+                           KAboutLicense::MIT);
+    aboutData.addComponent(QStringLiteral("Google Fonts emoji metadata"),
+                           i18nc("@info:credit", "Emoji ordering & grouping data"),
+                           QStringLiteral("Emoji 17.0"),
+                           QStringLiteral("https://github.com/googlefonts/emoji-metadata"),
+                           KAboutLicense::Apache_V2);
+
     KAboutData::setApplicationData(aboutData);
 
     QQmlApplicationEngine engine;

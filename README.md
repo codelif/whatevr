@@ -209,8 +209,15 @@ I also have a TUI frontend and a scriptable CLI in mind, though they are far int
 Whatevr will be Linux-first for now until its stable. I am open to contributions for porting functionality to other platforms as long as they don't affect existing performance and Linux functionality significantly. 
 
 ## Acknowledgements
-Whatevr uses [whatsmeow](https://github.com/tulir/whatsmeow) to access WhatsApp web multidevice API\
-...
+Whatevr stands on the shoulders of:
+
+- [whatsmeow](https://github.com/tulir/whatsmeow) — WhatsApp Web multidevice protocol library (MPL-2.0)
+- [Qt](https://www.qt.io) — cross-platform application framework (LGPL-3.0)
+- [KDE Frameworks](https://kde.org) / [Kirigami](https://develop.kde.org/frameworks/kirigami/) — UI toolkit and helpers (LGPL)
+- [Kirigami Addons](https://invent.kde.org/libraries/kirigami-addons) — convergent UI components (LGPL)
+- [rlottie](https://github.com/Samsung/rlottie) — Lottie rendering for animated stickers (MIT)
+- [emojilib](https://github.com/muan/emojilib) — emoji keyword / shortcode data, © 2014 Mu-An Chiou (MIT)
+- [Google Fonts emoji metadata](https://github.com/googlefonts/emoji-metadata) — emoji ordering & grouping data (Apache-2.0)
 
 ## License
 This program is licensed under the BSD-3-Clause License

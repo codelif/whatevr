@@ -214,6 +214,7 @@ qt_add_qml_module(whatkevr
         src/qml/settings/StoragePage.qml
         src/qml/settings/EmojiStickersPage.qml
         src/qml/settings/KeyboardShortcutsPage.qml
+        src/qml/settings/AboutPage.qml
 )
 
 qt6_add_shaders(whatkevr "roundedimage_shaders"
@@ -230,6 +231,14 @@ qt_add_resources(whatkevr emoji_metadata
         data/emoji/LICENSE.googlefonts-emoji-metadata
         data/emoji/LICENSE.emojilib
         data/icons/checkmark-bold.svg
+)
+
+# Embed the repo-root LICENSE (one dir up from this project) so the About page can
+# show the full BSD-3-Clause text via KAboutData::setLicenseTextFile(":/LICENSE").
+qt_add_resources(whatkevr app_license
+    PREFIX /
+    BASE ${CMAKE_CURRENT_SOURCE_DIR}/..
+    FILES ${CMAKE_CURRENT_SOURCE_DIR}/../LICENSE
 )
 
 target_link_libraries(whatkevr PRIVATE
