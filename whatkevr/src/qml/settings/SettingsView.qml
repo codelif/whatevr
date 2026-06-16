@@ -305,7 +305,7 @@ QtObject {
             moduleId: "about"
             text: Whatevr.I18n.i18nc("@title settings category", "About")
             icon.name: "help-about-symbolic"
-            page: () => Qt.createComponent("org.kde.kirigamiaddons.formcard", "AboutPage")
+            page: () => Qt.createComponent("Whatevr", "AboutPage")
         }
     ]
 }

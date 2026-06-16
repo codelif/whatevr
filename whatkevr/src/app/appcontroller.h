@@ -332,6 +332,9 @@ public:
     Q_INVOKABLE void refreshBlocklist();
     Q_INVOKABLE void setContactBlocked(const QString &jid, bool blocked);
     Q_INVOKABLE void setProfileStatus(const QString &statusText);
+    // Fetch the logged-in user's own profile (name/avatar/status), refreshing
+    // the currentUser* properties. Also called internally on connect.
+    Q_INVOKABLE void fetchSelfProfile();
     Q_INVOKABLE void refreshAppPreferences();
     // Update one app-preference key (see appPreferences) and persist the whole set.
     Q_INVOKABLE void setAppPreference(const QString &key, bool value);
@@ -433,9 +436,6 @@ private:
     void applyLoginEvent(const whatevr::v1::LoginEvent &event);
     void applyChatUpdated(const whatevr::v1::ChatUpdated &update);
     void applyAvatarUpdated(const whatevr::v1::AvatarUpdated &update);
-    // Fetch the logged-in user's own profile (name/avatar/status) for the
-    // chat-list profile footer, refreshing the currentUser* properties.
-    void fetchSelfProfile();
     void applyContactInfoUpdated(const whatevr::v1::ContactInfoUpdated &update);
     void applyGroupInfoUpdated(const whatevr::v1::GroupInfoUpdated &update);
     void applyChatPresenceChanged(const whatevr::v1::ChatPresenceChanged &presence);

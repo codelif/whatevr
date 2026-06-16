@@ -44,6 +44,11 @@ Kirigami.ApplicationWindow {
 
     pageStack {
         columnView.columnWidth: Kirigami.Units.gridUnit * 13
+        // Settings is intentionally animation-free. This is scoped locally (not
+        // via the app-wide Kirigami AnimationDurationFactor, which must stay 1 so
+        // the chat-list/conversation slide and the starred-messages drill-in
+        // still animate) so only the settings page transitions are instant.
+        columnView.scrollDuration: 0
 
         popHiddenPages: true
 
@@ -96,17 +101,23 @@ Kirigami.ApplicationWindow {
                 }
             }
 
-            QQC2.ScrollView {
+            ListView {
+                id: listview
+
+                // ListView is its own Flickable; wrapping it in a ScrollView
+                // double-managed the scrollbar and made the desktop style read
+                // 'horizontal' off a null control on creation. Fill + attach the
+                // vertical bar directly instead.
                 Layout.fillWidth: true
                 Layout.fillHeight: true
+                clip: true
 
-                ListView {
-                    id: listview
+                QQC2.ScrollBar.vertical: QQC2.ScrollBar {}
 
-                    property string filterText: ""
-                    readonly property bool searching: filterText.trim().length !== 0
+                property string filterText: ""
+                readonly property bool searching: filterText.trim().length !== 0
 
-                    currentIndex: -1
+                currentIndex: -1
 
                     onWidthChanged: if (!root.initDone) {
                         let module = getModuleByName(root.defaultModule);
@@ -208,7 +219,6 @@ Kirigami.ApplicationWindow {
                         text: Whatevr.I18n.i18nc("@info:placeholder", "No matching settings")
                     }
                 }
-            }
         }
     }
 
