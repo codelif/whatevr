@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["marko"]
+# ///
 """One-command release driver for whatevr.
 
 `just release x.y.z` funnels here. This is the single point where a new
@@ -20,6 +24,8 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import NoReturn
+
+from marko import Markdown
 
 VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$")
 
@@ -77,8 +83,10 @@ def open_editor(version: str) -> str:
     template = (
         "<!--\n"
         f"Release notes for v{version}.\n"
-        "Write Markdown. Supported in AppStream: headings, paragraphs, "
-        "bullets, numbered lists, emphasis, and inline code.\n"
+        "Write GitHub-Flavored Markdown; the GitHub release shows it verbatim.\n"
+        "The AppStream store description is a reduced rendering: headings become\n"
+        "emphasised text, links keep their URL inline, bold/italic both become\n"
+        "emphasis, plus lists and inline code. Anything else flattens to text.\n"
         "Delete these comments or leave them here; they are ignored.\n"
         "Save empty notes to abort.\n"
         "-->\n\n"
@@ -194,12 +202,17 @@ def update_lines(path: Path, replacements: dict[str, str]) -> None:
 
 
 HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
-BULLET_RE = re.compile(r"^\s*[-*+]\s+(.+)$")
-ORDERED_RE = re.compile(r"^\s*\d+[.)]\s+(.+)$")
-FENCE_RE = re.compile(r"^\s*(```|~~~)")
-HEADING_RE = re.compile(r"^\s*#{1,6}\s+(.+?)\s*#*\s*$")
-INLINE_LINK_RE = re.compile(r"!?\[([^\]]*)\]\([^)]*\)")
-INLINE_MARKUP_RE = re.compile(r"`([^`\n]+)`|\*\*([^*\n]+)\*\*|__([^_\n]+)__")
+
+# The notes are authored once as GitHub-Flavored Markdown and reach the GitHub
+# release verbatim (via the annotated tag). AppStream's <description> is far more
+# restrictive: it allows only <p>, <ul>, <ol>, <li>, <em> and <code>. The
+# converter below downgrades every other construct into that subset without
+# dropping information -- headings become emphasised paragraphs, links keep their
+# URL inline, code blocks collapse to inline <code>, and so on. Only CommonMark
+# is interpreted; rare GFM extras (tables, strikethrough) pass through as text,
+# which still renders fully on GitHub.
+BLOCK_INDENT = "        "   # 8 spaces: matches the metainfo's <p>/<ul>/<ol>
+ITEM_INDENT = "          "  # 10 spaces: matches the metainfo's <li>
 
 
 def strip_html_comments(markdown: str) -> str:
@@ -207,128 +220,125 @@ def strip_html_comments(markdown: str) -> str:
 
 
 def markdown_to_appstream_description(markdown: str) -> list[str]:
+    document = Markdown().parse(markdown)
     lines: list[str] = []
-    for kind, items in markdown_blocks(markdown):
-        if kind == "p":
-            lines.append(f"        <p>{render_inline_markdown(items[0])}</p>")
-            continue
-
-        lines.append(f"        <{kind}>")
-        for item in items:
-            lines.append(f"          <li>{render_inline_markdown(item)}</li>")
-        lines.append(f"        </{kind}>")
-
+    for block in document.children:
+        lines.extend(render_block(block))
     if not lines:
         fail("release notes do not contain AppStream-compatible text")
     return lines
 
 
-def markdown_blocks(markdown: str) -> list[tuple[str, list[str]]]:
-    blocks: list[tuple[str, list[str]]] = []
-    source = markdown.replace("\r\n", "\n").replace("\r", "\n").split("\n")
-    i = 0
-    while i < len(source):
-        line = source[i]
-        if not line.strip():
-            i += 1
-            continue
+def render_block(block) -> list[str]:
+    name = block.__class__.__name__
 
-        if FENCE_RE.match(line):
-            text: list[str] = []
-            fence = line.strip()[:3]
-            i += 1
-            while i < len(source) and not source[i].strip().startswith(fence):
-                if source[i].strip():
-                    text.append(source[i].strip())
-                i += 1
-            if i < len(source):
-                i += 1
-            if text:
-                blocks.append(("p", [" ".join(text)]))
-            continue
+    if name == "Paragraph":
+        return [f"{BLOCK_INDENT}<p>{render_inline(block)}</p>"]
 
-        if match := HEADING_RE.match(line):
-            blocks.append(("p", [clean_block_text(match.group(1))]))
-            i += 1
-            continue
+    if name in ("Heading", "SetextHeading"):
+        return [f"{BLOCK_INDENT}<p><em>{render_inline(block)}</em></p>"]
 
-        list_match = list_item_match(line)
-        if list_match is not None:
-            kind, text = list_match
-            items = [text]
-            i += 1
+    if name == "List":
+        tag = "ol" if block.ordered else "ul"
+        lines = [f"{BLOCK_INDENT}<{tag}>"]
+        for item in block.children:
+            lines.extend(render_list_item(item))
+        lines.append(f"{BLOCK_INDENT}</{tag}>")
+        return lines
 
-            while i < len(source):
-                line = source[i]
-                if not line.strip():
-                    i += 1
-                    break
+    if name == "Quote":
+        lines: list[str] = []
+        for child in block.children:
+            lines.extend(render_block(child))
+        return lines
 
-                next_match = list_item_match(line)
-                if next_match is not None:
-                    next_kind, next_text = next_match
-                    if next_kind != kind:
-                        break
-                    items.append(next_text)
-                    i += 1
-                    continue
+    if name in ("FencedCode", "CodeBlock"):
+        code = collapse_code(block)
+        return [f"{BLOCK_INDENT}<p><code>{xml_escape(code)}</code></p>"] if code else []
 
-                if items and (line.startswith(" ") or line.startswith("\t")):
-                    items[-1] = f"{items[-1]} {line.strip()}"
-                    i += 1
-                    continue
+    if name == "HTMLBlock" and isinstance(block.children, str):
+        text = xml_escape(block.children.strip())
+        return [f"{BLOCK_INDENT}<p>{text}</p>"] if text else []
 
-                break
-
-            blocks.append((kind, items))
-            continue
-
-        paragraph: list[str] = []
-        while i < len(source):
-            line = source[i]
-            if (
-                not line.strip()
-                or list_item_match(line) is not None
-                or FENCE_RE.match(line)
-                or HEADING_RE.match(line)
-            ):
-                break
-            paragraph.append(line.strip().removeprefix("> ").removeprefix(">"))
-            i += 1
-        blocks.append(("p", [" ".join(paragraph)]))
-
-    return blocks
+    # BlankLine, ThematicBreak, LinkRefDef and anything else: nothing to emit.
+    return []
 
 
-def list_item_match(line: str) -> tuple[str, str] | None:
-    if match := BULLET_RE.match(line):
-        return "ul", clean_block_text(match.group(1))
-    if match := ORDERED_RE.match(line):
-        return "ol", clean_block_text(match.group(1))
-    return None
+def render_list_item(item) -> list[str]:
+    """Render one <li>, flattening any nested list into sibling <li> entries."""
+    text_parts: list[str] = []
+    nested: list = []
+    for child in item.children:
+        cname = child.__class__.__name__
+        if cname == "List":
+            nested.append(child)
+        elif cname in ("Paragraph", "Heading", "SetextHeading"):
+            text_parts.append(render_inline(child))
+        elif cname in ("FencedCode", "CodeBlock"):
+            code = collapse_code(child)
+            if code:
+                text_parts.append(f"<code>{xml_escape(code)}</code>")
+
+    lines: list[str] = []
+    text = " ".join(part for part in text_parts if part)
+    if text:
+        lines.append(f"{ITEM_INDENT}<li>{text}</li>")
+    for sublist in nested:
+        for subitem in sublist.children:
+            lines.extend(render_list_item(subitem))
+    return lines
 
 
-def clean_block_text(text: str) -> str:
-    return re.sub(r"^#{1,6}\s+", "", text.strip())
+def collapse_code(block) -> str:
+    """Flatten a code block to one line -- AppStream has no <pre>/code block."""
+    raw = block.children[0].children if block.children else ""
+    return " ".join(line for line in raw.splitlines() if line.strip())
 
 
-def render_inline_markdown(text: str) -> str:
-    text = clean_block_text(INLINE_LINK_RE.sub(r"\1", text))
-    result: list[str] = []
-    cursor = 0
+def render_inline(element) -> str:
+    name = element.__class__.__name__
 
-    for match in INLINE_MARKUP_RE.finditer(text):
-        result.append(xml_escape(text[cursor:match.start()]))
-        code, strong_star, strong_underscore = match.groups()
-        if code is not None:
-            result.append(f"<code>{xml_escape(code)}</code>")
-        else:
-            content = strong_star if strong_star is not None else strong_underscore
-            result.append(f"<em>{xml_escape(content or '')}</em>")
-        cursor = match.end()
+    if name in ("RawText", "Literal", "InlineHTML"):
+        return xml_escape(element.children)
 
-    result.append(xml_escape(text[cursor:]))
-    return "".join(result)
+    if name == "LineBreak":
+        return " "
+
+    if name == "CodeSpan":
+        return f"<code>{xml_escape(element.children)}</code>"
+
+    if name in ("Emphasis", "StrongEmphasis"):
+        return f"<em>{render_children(element)}</em>"
+
+    if name in ("Link", "Image"):
+        text = render_children(element)
+        url = strip_url_scheme(element.dest)
+        if not url:
+            return text
+        return f"{text} ({xml_escape(url)})" if text else f"({xml_escape(url)})"
+
+    if name == "AutoLink":
+        return xml_escape(strip_url_scheme(element.dest))
+
+    if isinstance(getattr(element, "children", None), str):
+        return xml_escape(element.children)
+
+    return render_children(element)
+
+
+def render_children(element) -> str:
+    return "".join(render_inline(child) for child in element.children)
+
+
+def strip_url_scheme(url: str | None) -> str:
+    """Drop the leading scheme (https://, ...) from a URL.
+
+    AppStream forbids 'scheme://' URLs in release descriptions and refuses to let
+    such files validate. Stripping the scheme keeps the destination visible
+    (e.g. `docs (codelif.in/x)`) while passing `appstreamcli validate`; the full
+    clickable link still lives in the verbatim GitHub release notes.
+    """
+    return re.sub(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", "", (url or "").strip())
 
 
 def xml_escape(s: str) -> str:
@@ -375,8 +385,23 @@ def main() -> None:
     git("commit", "-m", f"version: {version}", capture=False)
 
     tag = f"v{version}"
-    tag_message = f"{tag}\n\n{notes}"
-    subprocess.run(["git", "tag", "-a", tag, "-m", tag_message], check=True)
+    # Pass the notes through a file with --cleanup=verbatim so Markdown survives
+    # byte-for-byte. The default `git tag -m` cleanup strips every line starting
+    # with '#', which would silently delete headings before they reach the
+    # GitHub release (the workflow reads them back from the annotated tag body).
+    tag_message = f"{tag}\n\n{notes}\n"
+    with tempfile.NamedTemporaryFile(
+        "w", suffix=".txt", prefix="whatevr-tag-", delete=False, encoding="utf-8"
+    ) as tag_file:
+        tag_file.write(tag_message)
+        tag_msg_path = tag_file.name
+    try:
+        subprocess.run(
+            ["git", "tag", "-a", tag, "--cleanup=verbatim", "-F", tag_msg_path],
+            check=True,
+        )
+    finally:
+        os.unlink(tag_msg_path)
 
     print()
     print(f"Tagged {tag}. Nothing has been pushed.")
