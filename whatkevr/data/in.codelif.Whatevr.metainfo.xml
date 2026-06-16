@@ -19,6 +19,19 @@
   </provides>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.5.1" date="2026-06-16">
+      <description>
+        <p><em>I am a dumbass!</em></p>
+        <p>Well look who decided it would be a great idea to leave -DCMAKE_BUILD_TYPE to DEBUG</p>
+        <p>Yeah, me. Well that gave me an excuse to iron out some things so win-win</p>
+        <ul>
+          <li>moved root Makefile to a justfile, its cleaner</li>
+          <li>fixed some cmake and compiler warnings</li>
+          <li>changed the release markdown renderer so it now supports a bigger subset of the spec (I can add links (youtu.be/dQw4w9WgXcQ))</li>
+        </ul>
+        <p>See ya next time! (no one is reading these)</p>
+      </description>
+    </release>
     <release version="0.5.0" date="2026-06-16">
       <description>
         <p><em>Gimme those knobs! (and more)</em></p>
