@@ -1,6 +1,7 @@
 #include "messagemarkup.h"
 
 #include <QFont>
+#include <QFontDatabase>
 #include <QGuiApplication>
 #include <QHash>
 #include <QScreen>
@@ -460,6 +461,26 @@ QString escapedHtmlAttribute(const QString &text)
     return html;
 }
 
+QString escapedCssSingleQuotedAttributeValue(const QString &text)
+{
+    QString html;
+    html.reserve(text.size());
+    for (QChar ch : text) {
+        if (ch == QLatin1Char('\\') || ch == QLatin1Char('\'')) {
+            html += QLatin1Char('\\');
+        }
+        appendEscapedChar(ch, html, false);
+    }
+    return html;
+}
+
+QString codeSpanOpenTag()
+{
+    static const QString family = QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
+    return QStringLiteral("<span style=\"font-family:'%1'\">")
+        .arg(escapedCssSingleQuotedAttributeValue(family));
+}
+
 void appendEscapedWithEmoji(const QString &text, int start, int end, QString &html, HtmlBuildContext &context, bool preserveSpaces = false)
 {
     if (start >= end) {
@@ -630,9 +651,9 @@ void appendInline(const QString &text, int start, int end, QString &html, QStrin
             const int close = findClosingTripleBacktick(text, i, end);
             if (close >= 0) {
                 context.hasFormatting = true;
-                html += QStringLiteral("<code>");
+                html += codeSpanOpenTag();
                 appendEscapedWithEmoji(text, i + 3, close, html, context, true);
-                html += QStringLiteral("</code>");
+                html += QStringLiteral("</span>");
                 appendLayoutText(text, i + 3, close, layoutText);
                 i = close + 3;
                 continue;
@@ -648,9 +669,9 @@ void appendInline(const QString &text, int start, int end, QString &html, QStrin
             const int close = findClosingBacktick(text, i, end);
             if (close >= 0) {
                 context.hasFormatting = true;
-                html += QStringLiteral("<code>");
+                html += codeSpanOpenTag();
                 appendEscapedWithEmoji(text, i + 1, close, html, context, true);
-                html += QStringLiteral("</code>");
+                html += QStringLiteral("</span>");
                 appendLayoutText(text, i + 1, close, layoutText);
                 i = close + 1;
                 continue;
@@ -810,7 +831,7 @@ void appendCodeText(const QString &text, int start, int end, bool forceLineBreak
         html += QStringLiteral("<br/>");
         layoutText += QLatin1Char('\n');
     }
-    html += QStringLiteral("<code>");
+    html += codeSpanOpenTag();
     int lineStart = start;
     while (lineStart <= end) {
         const int newline = text.indexOf(QLatin1Char('\n'), lineStart);
@@ -826,7 +847,7 @@ void appendCodeText(const QString &text, int start, int end, bool forceLineBreak
         }
         lineStart = lineEnd + 1;
     }
-    html += QStringLiteral("</code>");
+    html += QStringLiteral("</span>");
 }
 
 int findNextClosedTripleBacktick(const QString &text, int start, int end, int *close)

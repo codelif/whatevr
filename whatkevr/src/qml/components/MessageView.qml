@@ -1011,6 +1011,23 @@ Item {
         flickDeceleration: 4000
         maximumFlickVelocity: 8000
 
+        readonly property real effectiveBodyPointSize: Whatevr.Settings.messageFontSize > 0
+            ? Whatevr.Settings.messageFontSize
+            : (Kirigami.Theme.defaultFont.pointSize > 0
+                ? Kirigami.Theme.defaultFont.pointSize
+                : 10)
+        readonly property font bodyMetricsFont: Qt.font({
+            family: Kirigami.Theme.defaultFont.family,
+            pointSize: effectiveBodyPointSize
+        })
+        function syncBodyMetricsFont() {
+            if (list.model && typeof list.model.setBodyMetricsFont === "function") {
+                list.model.setBodyMetricsFont(bodyMetricsFont)
+            }
+        }
+        onBodyMetricsFontChanged: syncBodyMetricsFont()
+        onModelChanged: syncBodyMetricsFont()
+
         delegate: ChatBubble {
             id: messageDelegate
 
@@ -1144,7 +1161,10 @@ Item {
             }
         }
 
-        Component.onCompleted: Qt.callLater(root.scrollToNewest)
+        Component.onCompleted: {
+            syncBodyMetricsFont()
+            Qt.callLater(root.scrollToNewest)
+        }
     }
 
     Connections {

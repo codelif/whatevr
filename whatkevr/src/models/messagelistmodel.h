@@ -2,6 +2,8 @@
 
 #include <QAbstractListModel>
 #include <QDate>
+#include <QFont>
+#include <QFontMetricsF>
 #include <QHash>
 #include <QList>
 #include <QString>
@@ -130,6 +132,7 @@ public:
     [[nodiscard]] QString oldestMessageId() const;
     [[nodiscard]] Q_INVOKABLE int indexOf(const QString &messageId) const;
     [[nodiscard]] Q_INVOKABLE QString dateTextForRow(int row) const;
+    Q_INVOKABLE void setBodyMetricsFont(const QFont &font);
     Q_INVOKABLE bool expandMessageText(const QString &messageId);
     // WhatsApp-style multi-message copy: chronological "[date, time] Sender:
     // text" lines. A single message copies its bare full text.
@@ -176,7 +179,7 @@ private:
         mutable QString previewRichText;
         mutable bool textTruncated = false;
         // Unwrapped advance width of the widest and last line of the displayed
-        // body text, measured with the application font. Replaces per-delegate
+        // body text, measured with the same font the delegate renders with. Replaces per-delegate
         // TextMetrics + JS line splitting in ChatBubble (it ran for every
         // delegate created during scrolling).
         mutable qreal widestLineWidth = 0;
@@ -229,7 +232,7 @@ private:
     };
 
     static MessageItem fromProto(const whatevr::v1::Message &message);
-    static void ensurePreviewParsed(const MessageItem &item);
+    void ensurePreviewParsed(const MessageItem &item) const;
     static void transplantParsedState(const MessageItem &target, const MessageItem &source);
     static QString formatTime(qint64 timestampUnix);
     static QString formatRelativeDate(qint64 timestampUnix);
@@ -257,6 +260,8 @@ private:
     // pays ensurePreviewParsed() inside a frame. Never emits signals.
     QTimer m_warmupTimer;
     int m_warmupCursor = 0;
+    QFont m_bodyFont;
+    QFontMetricsF m_bodyMetrics;
     // Relative date strings ("Today", "Monday", …) memoized per local Julian
     // day; data() is hot during scrolling and formatRelativeDate allocates.
     // The cache resets when the calendar day rolls over.
