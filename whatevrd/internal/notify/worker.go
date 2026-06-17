@@ -125,6 +125,12 @@ func (w *Worker) send(ctx context.Context, message app.Message, chat app.Chat, o
 		return
 	}
 
+	// Play the sound ourselves rather than trusting the server to honour the
+	// sound-name hint — many notification daemons ignore or never advertise it.
+	if opts.Sound {
+		playSound()
+	}
+
 	w.mu.Lock()
 	w.active[id] = chat.ID
 	w.mu.Unlock()

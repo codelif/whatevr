@@ -203,6 +203,49 @@ Item {
     readonly property bool animationActive: mediaSourceActive && activeInViewport
     readonly property real imageSourceScale: Math.max(1, Screen.devicePixelRatio)
 
+    // ---- Visibility-based media auto-download ----
+    // Media is fetched lazily, when a message scrolls into view, rather than
+    // eagerly on the daemon when it arrives. Whether it auto-fetches is gated by
+    // the per-kind "auto-download" preferences; with the toggle off the user
+    // downloads manually via the in-bubble button.
+    readonly property bool mediaIsLocal: isSticker ? hasLocalSticker : mediaLocalPath.length > 0
+    readonly property bool hasDownloadableMedia: !mediaIsLocal
+        && (mediaMimeType.length > 0 || mediaCacheKey.length > 0 || mediaKind.length > 0)
+    readonly property bool autoDownloadWanted: {
+        if (!hasDownloadableMedia)
+            return false;
+        const prefs = Whatevr.AppController.appPreferences;
+        if (isSticker)
+            return prefs.autoDownloadStickers ?? false;
+        if (isImage)
+            return prefs.autoDownloadPhotos ?? false;
+        if (mediaMimeType.startsWith("video/"))
+            return prefs.autoDownloadVideos ?? false;
+        if (mediaMimeType.startsWith("audio/"))
+            return prefs.autoDownloadAudio ?? false;
+        return prefs.autoDownloadDocuments ?? false;
+    }
+    // Latches once a download is kicked off for the current message so viewport
+    // churn doesn't re-fire it. Reset when the delegate is reused (see the
+    // onMessageIdChanged handler further down).
+    property bool autoDownloadTriggered: false
+
+    function maybeAutoDownloadMedia() {
+        if (autoDownloadTriggered || messageId.length === 0)
+            return;
+        // Skip while flinging so a fast scroll doesn't spray download requests;
+        // it retries when the fling settles (onFastFlickingChanged).
+        if (!activeInViewport || fastFlicking)
+            return;
+        if (!autoDownloadWanted || mediaDownloading || mediaDownloadError.length > 0)
+            return;
+        autoDownloadTriggered = true;
+        Whatevr.AppController.downloadMessageMedia(messageId);
+    }
+
+    onActiveInViewportChanged: maybeAutoDownloadMedia()
+    onAutoDownloadWantedChanged: maybeAutoDownloadMedia()
+
     // Decode images at a stable, layout-independent resolution. Binding
     // sourceSize to the live displayed width re-decodes the image on every
     // resize frame (flashing the loading state); these caps match the largest
@@ -284,11 +327,16 @@ Item {
         resetReservedImageGeometry()
         hoverLatched = false
         selectionLatched = false
+        autoDownloadTriggered = false
+        maybeAutoDownloadMedia()
     }
     onMediaMimeTypeChanged: resetReservedImageGeometry()
     onMediaIntrinsicWidthChanged: resetReservedImageGeometry()
     onMediaIntrinsicHeightChanged: resetReservedImageGeometry()
-    Component.onCompleted: resetReservedImageGeometry()
+    Component.onCompleted: {
+        resetReservedImageGeometry()
+        maybeAutoDownloadMedia()
+    }
 
     readonly property real imageDisplayWidth: {
         if (!isImage) {
@@ -566,6 +614,9 @@ Item {
         if (!fastFlicking && rowHoverHandler.hovered) {
             hoverLatched = true
             selectionLatched = true
+        }
+        if (!fastFlicking) {
+            maybeAutoDownloadMedia()
         }
     }
 

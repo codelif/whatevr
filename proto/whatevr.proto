@@ -191,8 +191,24 @@ message DaemonEvent {
     MessageDeleted message_deleted = 13;
     ContactInfoUpdated contact_info_updated = 14;
     GroupInfoUpdated group_info_updated = 15;
+    PrivacySettingsChanged privacy_settings_changed = 16;
+    SelfProfileChanged self_profile_changed = 17;
+    BlocklistChanged blocklist_changed = 18;
   }
 }
+
+// Published when the account's privacy settings change (including edits made on
+// the phone), so the open settings window reflects them live.
+message PrivacySettingsChanged {
+  PrivacySettingsValues settings = 1;
+}
+
+// Published when the logged-in user's own profile (name, about, avatar) changes,
+// so the settings window re-fetches it. Carries no data — the client refetches.
+message SelfProfileChanged {}
+
+// Published when the blocklist changes, so the blocked-contacts page refetches.
+message BlocklistChanged {}
 
 // Second phase of GetContactInfo: the contact card is returned immediately from
 // local data, then this event delivers the network-fetched "about"/status text
@@ -1010,6 +1026,7 @@ message AppPreferences {
   bool auto_download_videos = 5;
   bool auto_download_audio = 6;
   bool auto_download_documents = 7;
+  bool auto_download_stickers = 8;
 }
 
 message GetAppPreferencesRequest {}

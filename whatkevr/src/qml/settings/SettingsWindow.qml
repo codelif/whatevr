@@ -35,6 +35,9 @@ Kirigami.ApplicationWindow {
     // Do not use Map, it crashes very frequently
     property var pageCache: Object.create(null)
 
+    // Guards the one-shot search-index augmentation (see ensureSearchCoverage).
+    property bool searchCoverageDone: false
+
     modality: Qt.WindowModal
 
     // The first category page is pushed exactly once. Kept at window scope (not
@@ -89,7 +92,16 @@ Kirigami.ApplicationWindow {
                 Kirigami.SearchField {
                     id: searchField
                     placeholderText: Whatevr.I18n.i18nc("@info:placeholder", "Search settings…")
-                    onTextChanged: listview.filterText = text
+                    // Only emit accepted on an explicit Enter. With the default
+                    // autoAccept the field fires accepted after every typing
+                    // pause, which jumped to and flashed the top result while the
+                    // user was still typing.
+                    autoAccept: false
+                    onTextChanged: {
+                        listview.filterText = text
+                        if (text.trim().length !== 0)
+                            root.ensureSearchCoverage()
+                    }
                     anchors {
                         verticalCenter: parent.verticalCenter
                         left: parent.left
@@ -245,6 +257,46 @@ Kirigami.ApplicationWindow {
         if (rowId && typeof page.flashRow === "function") {
             Qt.callLater(() => page.flashRow(rowId));
         }
+    }
+
+    // Guarantee the search index covers every option, even ones never added to
+    // the curated SettingsView.searchIndex. Runs once, lazily on first search:
+    // instantiates each category page (cached via pageForModule) and appends a
+    // minimal entry for any objectName+text delegate the curated list is
+    // missing. Curated entries win on rowId collision, keeping their richer
+    // keywords/descriptions.
+    function ensureSearchCoverage(): void {
+        if (searchCoverageDone)
+            return;
+        searchCoverageDone = true;
+
+        const known = Object.create(null);
+        for (const rec of root.searchIndex)
+            known[rec.rowId] = true;
+
+        const additions = [];
+        for (const module of root.modules) {
+            const page = pageForModule(module);
+            if (!page)
+                continue;
+            const rows = Search.collectRows(page, []);
+            for (const row of rows) {
+                if (known[row.rowId])
+                    continue;
+                known[row.rowId] = true;
+                additions.push({
+                    moduleId: module.moduleId,
+                    category: module.text,
+                    rowId: row.rowId,
+                    label: row.label,
+                    description: row.description,
+                    keywords: []
+                });
+            }
+        }
+
+        if (additions.length > 0)
+            root.searchIndex = root.searchIndex.concat(additions);
     }
 
     function pageForModule(module: KirigamiSettings.ConfigurationModule): var {

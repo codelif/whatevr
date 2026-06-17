@@ -68,6 +68,41 @@ function rank(query, index) {
     return out.map(e => e.rec)
 }
 
+// Depth-first walk collecting every descendant Item that carries a non-empty
+// objectName and a non-empty `text` (i.e. a settings row delegate). Returns an
+// array of { rowId, label, description }. Used to auto-cover settings that were
+// never added to the curated searchIndex, so search stays complete.
+function collectRows(item, out) {
+    out = out || []
+    if (!item)
+        return out
+
+    // Most delegates expose `text`; sliders/spinboxes use `label` instead.
+    const name = item.objectName
+    let label = ""
+    if (typeof item.text === "string" && item.text.length > 0)
+        label = item.text
+    else if (typeof item.label === "string" && item.label.length > 0)
+        label = item.label
+    if (name && name.length > 0 && label.length > 0) {
+        out.push({
+            rowId: name,
+            label: label,
+            description: (typeof item.description === "string") ? item.description : ""
+        })
+    }
+
+    const kids = item.children || []
+    for (let i = 0; i < kids.length; ++i)
+        collectRows(kids[i], out)
+
+    const content = item.contentChildren || []
+    for (let i = 0; i < content.length; ++i)
+        collectRows(content[i], out)
+
+    return out
+}
+
 // Depth-first search for a child Item carrying objectName === name, so a search
 // result can scroll to / flash the exact delegate it points at.
 function findRow(item, name) {

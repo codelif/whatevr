@@ -2381,16 +2381,24 @@ void AppController::fetchSelfProfile()
             name = response->phoneNumber().trimmed();
         }
 
+        // SelfProfile resolves the About asynchronously, so the response status
+        // is often empty; the real value arrives via ContactInfoUpdated. Don't
+        // clobber a known About with an empty one.
+        QString statusText = response->statusText();
+        if (statusText.isEmpty()) {
+            statusText = m_currentUserStatusText;
+        }
+
         const bool changed = m_currentUserName != name
             || m_currentUserAvatarPath != response->avatarLocalPath()
-            || m_currentUserStatusText != response->statusText()
+            || m_currentUserStatusText != statusText
             || m_currentUserJid != response->jid();
         if (!changed) {
             return;
         }
         m_currentUserName = name;
         m_currentUserAvatarPath = response->avatarLocalPath();
-        m_currentUserStatusText = response->statusText();
+        m_currentUserStatusText = statusText;
         m_currentUserJid = response->jid();
         Q_EMIT currentUserChanged();
     });
@@ -3419,6 +3427,15 @@ void AppController::ensureDaemonStream()
         case whatevr::v1::DaemonEvent::PayloadFields::GroupInfoUpdated:
             applyGroupInfoUpdated(event->groupInfoUpdated());
             break;
+        case whatevr::v1::DaemonEvent::PayloadFields::PrivacySettingsChanged:
+            applyPrivacySettingsChanged(event->privacySettingsChanged().settings());
+            break;
+        case whatevr::v1::DaemonEvent::PayloadFields::SelfProfileChanged:
+            fetchSelfProfile();
+            break;
+        case whatevr::v1::DaemonEvent::PayloadFields::BlocklistChanged:
+            refreshBlocklist();
+            break;
         case whatevr::v1::DaemonEvent::PayloadFields::StickerLibraryChanged:
             m_stickerController->handleLibraryChanged(event->stickerLibraryChanged().source());
             break;
@@ -3714,6 +3731,12 @@ void AppController::applyAvatarUpdated(const AvatarUpdated &update)
 void AppController::applyContactInfoUpdated(const whatevr::v1::ContactInfoUpdated &update)
 {
     Q_EMIT contactInfoUpdated(update.jid(), update.statusText());
+    // When it's our own About, also patch the profile page's live value.
+    if (!update.jid().isEmpty() && update.jid() == m_currentUserJid
+        && m_currentUserStatusText != update.statusText()) {
+        m_currentUserStatusText = update.statusText();
+        Q_EMIT currentUserChanged();
+    }
 }
 
 void AppController::applyGroupInfoUpdated(const whatevr::v1::GroupInfoUpdated &update)
@@ -4267,6 +4290,7 @@ QVariantMap appPreferencesToMap(const AppPreferences &p)
     map[QStringLiteral("autoDownloadVideos")] = p.autoDownloadVideos();
     map[QStringLiteral("autoDownloadAudio")] = p.autoDownloadAudio();
     map[QStringLiteral("autoDownloadDocuments")] = p.autoDownloadDocuments();
+    map[QStringLiteral("autoDownloadStickers")] = p.autoDownloadStickers();
     return map;
 }
 
@@ -4280,6 +4304,7 @@ AppPreferences appPreferencesFromMap(const QVariantMap &map)
     p.setAutoDownloadVideos(map.value(QStringLiteral("autoDownloadVideos"), false).toBool());
     p.setAutoDownloadAudio(map.value(QStringLiteral("autoDownloadAudio"), false).toBool());
     p.setAutoDownloadDocuments(map.value(QStringLiteral("autoDownloadDocuments"), false).toBool());
+    p.setAutoDownloadStickers(map.value(QStringLiteral("autoDownloadStickers"), false).toBool());
     return p;
 }
 
@@ -4311,6 +4336,12 @@ PrivacyCategory privacyCategoryFromKey(const QString &key)
 QVariantMap AppController::privacySettings() const
 {
     return m_privacySettings;
+}
+
+void AppController::applyPrivacySettingsChanged(const PrivacySettingsValues &settings)
+{
+    m_privacySettings = privacyToMap(settings);
+    Q_EMIT privacySettingsChanged();
 }
 
 QVariantList AppController::blockedContacts() const

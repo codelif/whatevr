@@ -50,6 +50,15 @@ QtObject {
         })
     }
 
+    // Close the settings window if it is open. Used on logout so the window
+    // does not linger over the login screen.
+    function close() {
+        if (root.configViewItem) {
+            root.configViewItem.destroy()
+            root.configViewItem = null
+        }
+    }
+
     // Open settings at a specific option and flash it.
     function openAt(moduleId, rowId) {
         if (root.configViewItem) {
@@ -108,6 +117,10 @@ QtObject {
           rowId: "appearance.colorScheme", label: Whatevr.I18n.i18nc("@label", "Color scheme"),
           description: Whatevr.I18n.i18nc("@info", "Pick a specific color scheme instead of just light or dark."),
           keywords: ["theme", "scheme", "color", "colour", "breeze"] },
+        { moduleId: "appearance", category: Whatevr.I18n.i18nc("@title settings category", "Appearance"),
+          rowId: "appearance.messageFontSizeExact", label: Whatevr.I18n.i18nc("@label:spinbox", "Exact message font size"),
+          description: "",
+          keywords: ["font", "text", "size", "exact", "point", "pixel", "zoom"] },
 
         { moduleId: "chats", category: Whatevr.I18n.i18nc("@title settings category", "Chats"),
           rowId: "chats.enterToSend", label: Whatevr.I18n.i18nc("@label", "Press Enter to send"),
@@ -122,9 +135,49 @@ QtObject {
           description: Whatevr.I18n.i18nc("@info", "Background shown behind conversations."),
           keywords: ["wallpaper", "background", "chat", "conversation"] },
         { moduleId: "chats", category: Whatevr.I18n.i18nc("@title settings category", "Chats"),
-          rowId: "chats.autoDownloadPhotos", label: Whatevr.I18n.i18nc("@label", "Media auto-download"),
-          description: Whatevr.I18n.i18nc("@info", "Download incoming photos, videos, audio and documents automatically."),
-          keywords: ["media", "auto", "download", "photos", "videos", "documents", "audio"] },
+          rowId: "chats.wallpaperPattern", label: Whatevr.I18n.i18nc("@label:listbox", "Doodle pattern"),
+          description: "",
+          keywords: ["wallpaper", "pattern", "doodle", "motif", "background"] },
+        { moduleId: "chats", category: Whatevr.I18n.i18nc("@title settings category", "Chats"),
+          rowId: "chats.wallpaperCustomSvg", label: Whatevr.I18n.i18nc("@action:button", "Choose SVG…"),
+          description: "",
+          keywords: ["wallpaper", "svg", "custom", "image", "background"] },
+        { moduleId: "chats", category: Whatevr.I18n.i18nc("@title settings category", "Chats"),
+          rowId: "chats.wallpaperScale", label: Whatevr.I18n.i18nc("@label:slider", "Pattern scale"),
+          description: Whatevr.I18n.i18nc("@info", "Tile size of the motif."),
+          keywords: ["wallpaper", "scale", "size", "tile", "pattern"] },
+        { moduleId: "chats", category: Whatevr.I18n.i18nc("@title settings category", "Chats"),
+          rowId: "chats.wallpaperOpacity", label: Whatevr.I18n.i18nc("@label:slider", "Pattern opacity"),
+          description: Whatevr.I18n.i18nc("@info", "How prominent the motif is. Lower is subtler."),
+          keywords: ["wallpaper", "opacity", "transparency", "prominent", "pattern"] },
+        { moduleId: "chats", category: Whatevr.I18n.i18nc("@title settings category", "Chats"),
+          rowId: "chats.wallpaperTintAuto", label: Whatevr.I18n.i18nc("@option:check", "Adapt colour to background"),
+          description: "",
+          keywords: ["wallpaper", "tint", "colour", "color", "adapt", "auto", "pattern"] },
+        { moduleId: "chats", category: Whatevr.I18n.i18nc("@title settings category", "Chats"),
+          rowId: "chats.wallpaperTintColor", label: Whatevr.I18n.i18nc("@label", "Pattern colour"),
+          description: "",
+          keywords: ["wallpaper", "tint", "colour", "color", "pattern"] },
+        { moduleId: "chats", category: Whatevr.I18n.i18nc("@title settings category", "Chats"),
+          rowId: "chats.autoDownloadPhotos", label: Whatevr.I18n.i18nc("@label", "Auto-download photos"),
+          description: Whatevr.I18n.i18nc("@info", "Download incoming photos automatically when they scroll into view."),
+          keywords: ["media", "auto", "download", "photos", "images", "pictures"] },
+        { moduleId: "chats", category: Whatevr.I18n.i18nc("@title settings category", "Chats"),
+          rowId: "chats.autoDownloadVideos", label: Whatevr.I18n.i18nc("@label", "Auto-download videos"),
+          description: "",
+          keywords: ["media", "auto", "download", "videos", "video", "mp4"] },
+        { moduleId: "chats", category: Whatevr.I18n.i18nc("@title settings category", "Chats"),
+          rowId: "chats.autoDownloadAudio", label: Whatevr.I18n.i18nc("@label", "Auto-download voice and audio"),
+          description: "",
+          keywords: ["media", "auto", "download", "audio", "voice", "ptt", "music"] },
+        { moduleId: "chats", category: Whatevr.I18n.i18nc("@title settings category", "Chats"),
+          rowId: "chats.autoDownloadDocuments", label: Whatevr.I18n.i18nc("@label", "Auto-download documents"),
+          description: "",
+          keywords: ["media", "auto", "download", "documents", "pdf", "files"] },
+        { moduleId: "chats", category: Whatevr.I18n.i18nc("@title settings category", "Chats"),
+          rowId: "chats.autoDownloadStickers", label: Whatevr.I18n.i18nc("@label", "Auto-download stickers"),
+          description: "",
+          keywords: ["media", "auto", "download", "stickers", "sticker"] },
 
         { moduleId: "notifications", category: Whatevr.I18n.i18nc("@title settings category", "Notifications"),
           rowId: "notifications.enabled", label: Whatevr.I18n.i18nc("@label", "Show notifications"),
@@ -180,6 +233,10 @@ QtObject {
           rowId: "profile.name", label: Whatevr.I18n.i18nc("@label", "Name"),
           description: "",
           keywords: ["profile", "name", "display"] },
+        { moduleId: "account", category: Whatevr.I18n.i18nc("@title settings category", "Profile & Account"),
+          rowId: "profile.phone", label: Whatevr.I18n.i18nc("@label", "Phone number"),
+          description: "",
+          keywords: ["profile", "phone", "number", "msisdn"] },
         { moduleId: "account", category: Whatevr.I18n.i18nc("@title settings category", "Profile & Account"),
           rowId: "account.status", label: Whatevr.I18n.i18nc("@label", "Status"),
           description: "",

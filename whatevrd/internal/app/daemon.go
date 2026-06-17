@@ -129,6 +129,9 @@ type DaemonEvent struct {
 	ContactInfo ContactInfo
 	GroupInfo   GroupInfo
 	GroupChatID string
+
+	// Privacy snapshot for DaemonEventPrivacySettingsChanged.
+	PrivacySettings PrivacySettings
 }
 
 type presenceState struct {
@@ -164,6 +167,9 @@ const (
 	DaemonEventMessageDeleted
 	DaemonEventContactInfoUpdated
 	DaemonEventGroupInfoUpdated
+	DaemonEventPrivacySettingsChanged
+	DaemonEventSelfProfileChanged
+	DaemonEventBlocklistChanged
 )
 
 type StickerSource int32
@@ -425,6 +431,7 @@ type AppPreferences struct {
 	AutoDownloadVideos    bool
 	AutoDownloadAudio     bool
 	AutoDownloadDocuments bool
+	AutoDownloadStickers  bool
 }
 
 // DefaultAppPreferences are applied the first time the daemon runs, before the
@@ -745,6 +752,24 @@ func (d *Daemon) PublishAvatarUpdated(avatar Avatar) {
 // contact card was already returned from local data.
 func (d *Daemon) PublishContactInfoUpdated(info ContactInfo) {
 	d.broadcastDaemonEvent(DaemonEvent{Kind: DaemonEventContactInfoUpdated, ContactInfo: info})
+}
+
+// PublishPrivacySettingsChanged delivers a fresh privacy snapshot so an open
+// settings window updates live (e.g. after a change made on the phone).
+func (d *Daemon) PublishPrivacySettingsChanged(settings PrivacySettings) {
+	d.broadcastDaemonEvent(DaemonEvent{Kind: DaemonEventPrivacySettingsChanged, PrivacySettings: settings})
+}
+
+// PublishSelfProfileChanged signals that the user's own profile (name, about,
+// avatar) changed, so the client re-fetches it.
+func (d *Daemon) PublishSelfProfileChanged() {
+	d.broadcastDaemonEvent(DaemonEvent{Kind: DaemonEventSelfProfileChanged})
+}
+
+// PublishBlocklistChanged signals that the blocklist changed, so the client
+// re-fetches it.
+func (d *Daemon) PublishBlocklistChanged() {
+	d.broadcastDaemonEvent(DaemonEvent{Kind: DaemonEventBlocklistChanged})
 }
 
 // PublishGroupInfoUpdated delivers the live-fetched group fields (subject,
