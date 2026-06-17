@@ -595,6 +595,9 @@ Kirigami.Page {
                 originX: timelineArea.x
                 originY: timelineArea.y
                 source: {
+                    if (!Whatevr.AppController.hasSelectedChat) {
+                        return "";
+                    }
                     switch (Whatevr.Settings.chatWallpaperPattern) {
                     case "doodle": return "qrc:/data/wallpapers/doodle.svg";
                     case "custom": return Whatevr.Settings.chatWallpaperPath.length > 0
