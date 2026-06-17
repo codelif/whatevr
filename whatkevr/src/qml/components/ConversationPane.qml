@@ -5,6 +5,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 import Whatevr as Whatevr
+import "Wallpapers.js" as Wallpapers
 
 Kirigami.Page {
     id: root
@@ -575,6 +576,37 @@ Kirigami.Page {
 
             Layout.fillWidth: true
             Layout.fillHeight: true
+
+            // Conversation wallpaper lives outside MessageView so it stays visible
+            // while messages are loading, empty, or switching between chats.
+            Rectangle {
+                id: wallpaperBackground
+
+                anchors.fill: parent
+                readonly property string wallpaperColor: Wallpapers.colorFor(Whatevr.Settings.chatWallpaper)
+                color: wallpaperColor.length > 0 ? wallpaperColor : Kirigami.Theme.backgroundColor
+            }
+
+            // Optional doodle pattern layered over the background colour. Hidden
+            // when the pattern is "None" or its source resolves to empty.
+            ChatWallpaper {
+                anchors.fill: parent
+                backgroundColor: wallpaperBackground.color
+                originX: timelineArea.x
+                originY: timelineArea.y
+                source: {
+                    switch (Whatevr.Settings.chatWallpaperPattern) {
+                    case "doodle": return "qrc:/data/wallpapers/doodle.svg";
+                    case "custom": return Whatevr.Settings.chatWallpaperPath.length > 0
+                        ? Qt.resolvedUrl("file://" + Whatevr.Settings.chatWallpaperPath)
+                        : "";
+                    default: return "";
+                    }
+                }
+                scalePercent: Whatevr.Settings.chatWallpaperScale
+                intensity: Whatevr.Settings.chatWallpaperOpacity / 100
+                tint: Whatevr.Settings.chatWallpaperTint
+            }
 
             MouseArea {
                 anchors.fill: parent
