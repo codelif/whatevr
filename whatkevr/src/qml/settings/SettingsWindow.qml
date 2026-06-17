@@ -242,15 +242,18 @@ Kirigami.ApplicationWindow {
             return;
         }
         const page = pageForModule(module);
-        const idx = modules.findIndex(m => m.moduleId == moduleId);
+        const idx = visibleModuleIndex(moduleId);
 
         while (pageStack.length > 1) {
             pageStack.pop(null);
         }
+        clearSearch();
         if (pageStack.currentItem !== page) {
             pageStack.replace(page);
         }
-        listview.currentIndex = idx;
+        if (idx >= 0) {
+            listview.currentIndex = idx;
+        }
         if (page.title.length === 0) {
             page.title = module.text;
         }
@@ -297,6 +300,27 @@ Kirigami.ApplicationWindow {
 
         if (additions.length > 0)
             root.searchIndex = root.searchIndex.concat(additions);
+    }
+
+    function clearSearch(): void {
+        if (searchField.text.length > 0) {
+            searchField.text = "";
+        }
+        listview.filterText = "";
+    }
+
+    function visibleModuleIndex(moduleId: string): int {
+        let idx = 0;
+        for (const module of root.modules) {
+            if (!module.visible) {
+                continue;
+            }
+            if (module.moduleId == moduleId) {
+                return idx;
+            }
+            ++idx;
+        }
+        return -1;
     }
 
     function pageForModule(module: KirigamiSettings.ConfigurationModule): var {

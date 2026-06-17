@@ -1,4 +1,5 @@
 import QtQuick
+import org.kde.kirigami as Kirigami
 import org.kde.kirigamiaddons.formcard as FormCard
 
 import "SettingsSearch.js" as Search
@@ -22,11 +23,33 @@ FormCard.FormCardPage {
     function flashRow(rowId) {
         if (!rowId)
             return
-        const item = Search.findRow(page, rowId)
-        if (!item)
+        Qt.callLater(() => {
+            const item = Search.findRow(page, rowId)
+            if (!item)
+                return
+            scrollRowIntoView(item)
+            flashAnimation.item = item
+            flashAnimation.restart()
+        })
+    }
+
+    function scrollRowIntoView(item) {
+        if (!page.flickable || !page.flickable.contentItem || !item)
             return
-        flashAnimation.item = item
-        flashAnimation.restart()
+
+        const margin = Kirigami.Units.largeSpacing * 2
+        const pos = item.mapToItem(page.flickable.contentItem, 0, 0)
+        const rowTop = pos.y
+        const rowBottom = rowTop + item.height
+        const viewportTop = page.flickable.contentY
+        const viewportBottom = viewportTop + page.flickable.height
+        const maxY = Math.max(0, page.flickable.contentHeight - page.flickable.height)
+
+        if (rowTop < viewportTop + margin) {
+            page.flickable.contentY = Math.max(0, rowTop - margin)
+        } else if (rowBottom > viewportBottom - margin) {
+            page.flickable.contentY = Math.min(maxY, rowBottom - page.flickable.height + margin)
+        }
     }
 
     SequentialAnimation {
