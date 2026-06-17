@@ -55,17 +55,50 @@ Item {
             ? motif.implicitHeight / motif.implicitWidth
             : 1
 
-    // Rasterise the motif once at a crisp resolution, preserving its aspect ratio
-    // (only the width is fixed; the height follows from the SVG's own ratio). The
-    // shader handles tiling and on-screen sizing, so this is independent of tilePx.
+    // Keep slider feedback cheap: the shader's tileSize changes live, while SVG
+    // re-rasterisation waits until movement settles and snaps to coarse texture
+    // buckets. This avoids decoding a fresh SVG texture for every slider tick.
+    readonly property int targetRasterWidth: bucketedRasterWidth(tilePx * Screen.devicePixelRatio)
+    property int rasterWidth: targetRasterWidth
+
+    function bucketedRasterWidth(rawWidth) {
+        const wanted = Math.max(512, Math.ceil(rawWidth))
+        const buckets = [512, 768, 1024, 1536, 2048, 3072, 4096]
+        for (let i = 0; i < buckets.length; ++i) {
+            if (wanted <= buckets[i]) {
+                return buckets[i]
+            }
+        }
+        return buckets[buckets.length - 1]
+    }
+
+    function scheduleTextureUpdate() {
+        Qt.callLater(() => motifTexture.scheduleUpdate())
+    }
+
+    onTargetRasterWidthChanged: rasterDebounce.restart()
+
+    Timer {
+        id: rasterDebounce
+
+        interval: 120
+        repeat: false
+        onTriggered: root.rasterWidth = root.targetRasterWidth
+    }
+
+    // Rasterise the motif at a crisp resolution, preserving its aspect ratio
+    // (only the width is fixed; the height follows from the SVG's own ratio).
     Image {
         id: motif
         source: root.source
-        sourceSize.width: 512
+        sourceSize.width: root.rasterWidth
         smooth: true
+        mipmap: true
         asynchronous: true
         cache: true
-        onStatusChanged: if (status === Image.Ready) motifTexture.scheduleUpdate()
+        onStatusChanged: if (status === Image.Ready) root.scheduleTextureUpdate()
+        onImplicitWidthChanged: if (status === Image.Ready) root.scheduleTextureUpdate()
+        onImplicitHeightChanged: if (status === Image.Ready) root.scheduleTextureUpdate()
     }
 
     // Repeat wrap lets the shader sample outside [0,1] to tile seamlessly.
