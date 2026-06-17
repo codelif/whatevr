@@ -19,6 +19,23 @@
   </provides>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.6.0" date="2026-06-17">
+      <description>
+        <p><em>Doooooooooodless!!</em></p>
+        <p>New stuff:</p>
+        <ul>
+          <li>Fully customizable doodle wallpaper (inbuilt + bring your own doodle)</li>
+          <li>Can enable notification sounds</li>
+        </ul>
+        <p>Fixed stuff:</p>
+        <ul>
+          <li>Bubble geometry follows font size</li>
+          <li>search settings won't activate first option and show weird states now</li>
+          <li>Auto downloads now downloads based on what is visible instead of downloading every incoming media</li>
+        </ul>
+        <p>Small release, but really close to my heart. See ya!</p>
+      </description>
+    </release>
     <release version="0.5.1" date="2026-06-16">
       <description>
         <p><em>I am a dumbass!</em></p>
