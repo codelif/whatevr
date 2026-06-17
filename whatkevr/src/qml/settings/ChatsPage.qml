@@ -240,5 +240,14 @@ SettingsPage {
             checked: Whatevr.AppController.appPreferences.autoDownloadDocuments ?? false
             onToggled: Whatevr.AppController.setAppPreference("autoDownloadDocuments", checked)
         }
+
+        FormCard.FormDelegateSeparator {}
+
+        FormCard.FormSwitchDelegate {
+            objectName: "chats.autoDownloadStickers"
+            text: Whatevr.I18n.i18nc("@option:check", "Stickers")
+            checked: Whatevr.AppController.appPreferences.autoDownloadStickers ?? false
+            onToggled: Whatevr.AppController.setAppPreference("autoDownloadStickers", checked)
+        }
     }
 }

@@ -73,18 +73,12 @@ SettingsPage {
 
         FormCard.FormDelegateSeparator {}
 
-        FormCard.FormTextFieldDelegate {
-            id: aboutField
+        FormCard.FormTextDelegate {
             objectName: "profile.about"
-            label: Whatevr.I18n.i18nc("@label", "About")
-            text: Whatevr.AppController.currentUserStatusText
-            enabled: page.connected
-            onEditingFinished: {
-                const trimmed = text.trim();
-                if (trimmed !== Whatevr.AppController.currentUserStatusText) {
-                    Whatevr.AppController.setProfileStatus(trimmed);
-                }
-            }
+            text: Whatevr.I18n.i18nc("@label", "About")
+            description: Whatevr.AppController.currentUserStatusText.length > 0
+                ? Whatevr.AppController.currentUserStatusText
+                : Whatevr.I18n.i18nc("@info", "No About set")
         }
 
         FormCard.FormDelegateSeparator {}

@@ -235,6 +235,26 @@ func toProtoDaemonEvent(event app.DaemonEvent) *pb.DaemonEvent {
 				},
 			},
 		}
+	case app.DaemonEventPrivacySettingsChanged:
+		return &pb.DaemonEvent{
+			Payload: &pb.DaemonEvent_PrivacySettingsChanged{
+				PrivacySettingsChanged: &pb.PrivacySettingsChanged{
+					Settings: toProtoPrivacy(event.PrivacySettings),
+				},
+			},
+		}
+	case app.DaemonEventSelfProfileChanged:
+		return &pb.DaemonEvent{
+			Payload: &pb.DaemonEvent_SelfProfileChanged{
+				SelfProfileChanged: &pb.SelfProfileChanged{},
+			},
+		}
+	case app.DaemonEventBlocklistChanged:
+		return &pb.DaemonEvent{
+			Payload: &pb.DaemonEvent_BlocklistChanged{
+				BlocklistChanged: &pb.BlocklistChanged{},
+			},
+		}
 	default:
 		return nil
 	}

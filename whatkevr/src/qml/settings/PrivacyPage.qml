@@ -11,10 +11,11 @@ SettingsPage {
     Component.onCompleted: Whatevr.AppController.refreshPrivacySettings()
 
     // PrivacyAudience enum values from the proto: 1 everyone, 2 contacts,
-    // 4 nobody, 5 match-last-seen, 6 known.
+    // 3 contacts-except, 4 nobody, 5 match-last-seen, 6 known.
     readonly property var everyoneContactsNobody: [
         { value: 1, text: Whatevr.I18n.i18nc("@item privacy audience", "Everyone") },
         { value: 2, text: Whatevr.I18n.i18nc("@item privacy audience", "My contacts") },
+        { value: 3, text: Whatevr.I18n.i18nc("@item privacy audience", "My contacts except…") },
         { value: 4, text: Whatevr.I18n.i18nc("@item privacy audience", "Nobody") }
     ]
     readonly property var onlineModel: [
@@ -72,11 +73,22 @@ SettingsPage {
 
     FormCard.FormCard {
         FormCard.FormSwitchDelegate {
+            id: readReceiptsSwitch
             objectName: "privacy.readReceipts"
             text: Whatevr.I18n.i18nc("@option:check", "Read receipts")
             description: Whatevr.I18n.i18nc("@info", "When off, you won't send or receive read receipts. Read receipts are always sent in group chats.")
             checked: Whatevr.AppController.privacySettings.readReceipts ?? true
             onToggled: Whatevr.AppController.setReadReceipts(checked)
+
+            // Toggling a switch breaks its `checked` binding, so an external
+            // change (e.g. from the phone) would stop reflecting. Re-establish
+            // the binding whenever the privacy settings change.
+            Connections {
+                target: Whatevr.AppController
+                function onPrivacySettingsChanged() {
+                    readReceiptsSwitch.checked = Qt.binding(() => Whatevr.AppController.privacySettings.readReceipts ?? true)
+                }
+            }
         }
 
         FormCard.FormDelegateSeparator {}

@@ -85,9 +85,9 @@ func FormatMessage(caps Capabilities, message app.Message, chat app.Chat, opts O
 		},
 	}
 
-	if opts.Sound && caps.Sound {
-		content.Hints["sound-name"] = "message-new-instant"
-	}
+	// Sound is played by the worker itself (see playSound); we deliberately do
+	// not set the "sound-name" hint, so servers that honour it don't double up
+	// with our own playback. caps.Sound is still parsed for capability probing.
 
 	if caps.Actions {
 		content.Actions = []string{"default", "Open Chat"}

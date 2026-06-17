@@ -437,6 +437,7 @@ private:
     void applyChatUpdated(const whatevr::v1::ChatUpdated &update);
     void applyAvatarUpdated(const whatevr::v1::AvatarUpdated &update);
     void applyContactInfoUpdated(const whatevr::v1::ContactInfoUpdated &update);
+    void applyPrivacySettingsChanged(const whatevr::v1::PrivacySettingsValues &settings);
     void applyGroupInfoUpdated(const whatevr::v1::GroupInfoUpdated &update);
     void applyChatPresenceChanged(const whatevr::v1::ChatPresenceChanged &presence);
     void applyMediaDownloadChanged(const whatevr::v1::MediaDownloadChanged &download);

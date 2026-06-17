@@ -555,42 +555,14 @@ func (c *Client) ingestMessage(ctx context.Context, evt *events.Message, opts in
 					c.notifier.NotifyMessage(ctx, message, chat, opts)
 				}
 			}
-			c.maybeAutoDownloadMedia(ctx, saved.Message)
+			// Media is no longer downloaded eagerly on receipt. The frontend
+			// requests downloads lazily, when a message scrolls into view and
+			// the user's auto-download policy covers its kind (see ChatBubble).
 		}
 		return saved, true
 	}
 
 	return appstore.SavedTextMessage{}, false
-}
-
-// maybeAutoDownloadMedia kicks off a background download of a freshly-received
-// media message when the user's auto-download policy covers its kind. Best
-// effort: failures surface through the normal on-demand download path later.
-func (c *Client) maybeAutoDownloadMedia(ctx context.Context, message appstore.Message) {
-	if message.Direction != appstore.DirectionIncoming || message.MediaLocalPath != "" {
-		return
-	}
-	prefs := c.appPreferences()
-	var want bool
-	switch {
-	case strings.HasPrefix(message.MediaMimeType, "image/"):
-		want = prefs.AutoDownloadPhotos
-	case strings.HasPrefix(message.MediaMimeType, "video/"):
-		want = prefs.AutoDownloadVideos
-	case strings.HasPrefix(message.MediaMimeType, "audio/"):
-		want = prefs.AutoDownloadAudio
-	case message.MediaMimeType != "" || message.MediaLocalPath != "":
-		want = prefs.AutoDownloadDocuments
-	}
-	if !want {
-		return
-	}
-	messageID := message.ID
-	go func() {
-		if _, err := c.DownloadMessageMedia(context.WithoutCancel(ctx), messageID); err != nil {
-			c.log.Debugf("Auto-download failed for %s: %v", messageID, err)
-		}
-	}()
 }
 
 func (c *Client) clearComposingAfterLiveIncomingMessage(message app.Message) {

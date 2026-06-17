@@ -214,6 +214,7 @@ func toProtoAppPreferences(p app.AppPreferences) *pb.AppPreferences {
 		AutoDownloadVideos:    p.AutoDownloadVideos,
 		AutoDownloadAudio:     p.AutoDownloadAudio,
 		AutoDownloadDocuments: p.AutoDownloadDocuments,
+		AutoDownloadStickers:  p.AutoDownloadStickers,
 	}
 }
 
@@ -229,5 +230,6 @@ func fromProtoAppPreferences(p *pb.AppPreferences) app.AppPreferences {
 		AutoDownloadVideos:    p.GetAutoDownloadVideos(),
 		AutoDownloadAudio:     p.GetAutoDownloadAudio(),
 		AutoDownloadDocuments: p.GetAutoDownloadDocuments(),
+		AutoDownloadStickers:  p.GetAutoDownloadStickers(),
 	}
 }

@@ -122,6 +122,10 @@ func (c *Client) handleEvent(eventGen uint64, raw any) {
 		c.handleGroupInfoEvent(c.backgroundContext(), evt)
 	case *events.Picture:
 		c.handlePictureEvent(c.backgroundContext(), evt)
+		if c.isSelfJID(evt.JID) {
+			// Our own profile photo changed: refresh the settings profile page.
+			c.daemon.PublishSelfProfileChanged()
+		}
 	case *events.ChatPresence:
 		chatJID := c.normalizeJIDForChat(c.backgroundContext(), evt.Chat)
 		isComposing := evt.State == types.ChatPresenceComposing
@@ -138,7 +142,44 @@ func (c *Client) handleEvent(eventGen uint64, raw any) {
 			}
 		}
 		c.daemon.PublishContactAvailability(chatJID.String(), availability, lastSeenUnix)
+	case *events.PrivacySettings:
+		// Privacy changed (here or on the phone): push a fresh snapshot so an
+		// open settings window updates live. The event only carries the changed
+		// categories (evt.NewSettings is empty), so read the full, already-updated
+		// settings from the cache rather than the event.
+		if settings, err := c.GetPrivacySettings(c.backgroundContext()); err == nil {
+			c.daemon.PublishPrivacySettingsChanged(settings)
+		} else {
+			c.log.Warnf("Failed to read privacy settings after change event: %v", err)
+		}
+	case *events.UserAbout:
+		// A user's About/status changed. For our own account, re-fetch the self
+		// profile: that path resolves the status with the same normalized JID the
+		// profile page is keyed on (evt.JID may be a raw PN/LID that won't match).
+		// For others, patch their contact card directly.
+		if c.isSelfJID(evt.JID) {
+			c.daemon.PublishSelfProfileChanged()
+		} else {
+			c.daemon.PublishContactInfoUpdated(app.ContactInfo{
+				JID:        evt.JID.ToNonAD().String(),
+				StatusText: evt.Status,
+			})
+		}
+	case *events.PushNameSetting:
+		// Our own display name was changed (on the phone): refetch self profile.
+		c.daemon.PublishSelfProfileChanged()
+	case *events.Blocklist:
+		c.daemon.PublishBlocklistChanged()
 	}
+}
+
+// isSelfJID reports whether jid is the logged-in user's own account.
+func (c *Client) isSelfJID(jid types.JID) bool {
+	client := c.currentClient()
+	if client == nil || client.Store.ID == nil {
+		return false
+	}
+	return jid.ToNonAD().User == client.Store.ID.ToNonAD().User
 }
 
 func (c *Client) handlePinEvent(ctx context.Context, evt *events.Pin) {

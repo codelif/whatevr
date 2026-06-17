@@ -314,6 +314,10 @@ Kirigami.ApplicationWindow {
         function onStateChanged() {
             // Coalesce bursts of state changes into one rebuild per frame.
             Qt.callLater(root.rebuildPageStack)
+            // Logging out returns to the login screen; don't leave settings open.
+            if (Whatevr.AppController.loginRequired) {
+                settingsView.close()
+            }
         }
 
         function onActivateWindowRequested() {
