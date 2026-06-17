@@ -79,26 +79,10 @@ QString collapsedMessageText(const QString &text)
     return preview + QStringLiteral("...");
 }
 
-// Metrics for the message body font (the bubble renders body text with the
-// application default font). Rebuilt if the application font changes; items
-// parsed before such a change keep their old widths until their text changes,
-// which is acceptable for a rare runtime event.
-const QFontMetricsF &bodyFontMetrics()
-{
-    static QFont cachedFont = QGuiApplication::font();
-    static QFontMetricsF metrics(cachedFont);
-    if (cachedFont != QGuiApplication::font()) {
-        cachedFont = QGuiApplication::font();
-        metrics = QFontMetricsF(cachedFont);
-    }
-    return metrics;
-}
-
 // Unwrapped advance width of the widest and the last line. Mirrors the layout
 // decisions ChatBubble makes (natural bubble width, inline time+ticks fit).
-std::pair<qreal, qreal> measureLineWidths(const QString &text)
+std::pair<qreal, qreal> measureLineWidths(const QString &text, const QFontMetricsF &metrics)
 {
-    const QFontMetricsF &metrics = bodyFontMetrics();
     qreal widest = 0;
     qreal last = 0;
     for (const auto line : QStringView(text).split(QLatin1Char('\n'))) {
@@ -113,11 +97,41 @@ std::pair<qreal, qreal> measureLineWidths(const QString &text)
 
 MessageListModel::MessageListModel(QObject *parent)
     : QAbstractListModel(parent)
+    , m_bodyFont(QGuiApplication::font())
+    , m_bodyMetrics(m_bodyFont)
 {
     // Interval 0: one slice per event-loop pass, yielding to input and render
     // work between slices.
     m_warmupTimer.setInterval(0);
     connect(&m_warmupTimer, &QTimer::timeout, this, &MessageListModel::parseWarmupTick);
+}
+
+void MessageListModel::setBodyMetricsFont(const QFont &font)
+{
+    if (font == m_bodyFont) {
+        return;
+    }
+
+    m_bodyFont = font;
+    m_bodyMetrics = QFontMetricsF(m_bodyFont);
+
+    bool remeasured = false;
+    for (const auto &message : m_messages) {
+        if (!message.previewParsed) {
+            continue;
+        }
+        const QString measureText = message.textTruncated && message.fullMarkupParsed
+            ? (message.layoutText.isEmpty() ? message.text : message.layoutText)
+            : (message.layoutTextPreview.isEmpty() ? message.textPreview : message.layoutTextPreview);
+        std::tie(message.widestLineWidth, message.lastLineWidth) = measureLineWidths(measureText, m_bodyMetrics);
+        remeasured = true;
+    }
+
+    if (remeasured && !m_messages.isEmpty()) {
+        Q_EMIT dataChanged(index(0, 0),
+                           index(static_cast<int>(m_messages.size()) - 1, 0),
+                           {WidestLineWidthRole, LastLineWidthRole});
+    }
 }
 
 void MessageListModel::scheduleParseWarmup(int fromRow)
@@ -1060,7 +1074,7 @@ bool MessageListModel::expandMessageText(const QString &messageId)
     message.richText = markup.richText;
     message.fullMarkupParsed = true;
     const QString &measureText = markup.layoutText.isEmpty() ? message.text : markup.layoutText;
-    std::tie(message.widestLineWidth, message.lastLineWidth) = measureLineWidths(measureText);
+    std::tie(message.widestLineWidth, message.lastLineWidth) = measureLineWidths(measureText, m_bodyMetrics);
 
     const QModelIndex changedIndex = index(messageIndex, 0);
     Q_EMIT dataChanged(changedIndex,
@@ -1165,7 +1179,7 @@ MessageListModel::MessageItem MessageListModel::fromProto(const whatevr::v1::Mes
     return item;
 }
 
-void MessageListModel::ensurePreviewParsed(const MessageItem &item)
+void MessageListModel::ensurePreviewParsed(const MessageItem &item) const
 {
     if (item.previewParsed) {
         return;
@@ -1196,7 +1210,7 @@ void MessageListModel::ensurePreviewParsed(const MessageItem &item)
     // Measure the collapsed (displayed) variant; expandMessageText re-measures
     // when the full text becomes the displayed one.
     const QString &measureText = item.layoutTextPreview.isEmpty() ? item.textPreview : item.layoutTextPreview;
-    std::tie(item.widestLineWidth, item.lastLineWidth) = measureLineWidths(measureText);
+    std::tie(item.widestLineWidth, item.lastLineWidth) = measureLineWidths(measureText, m_bodyMetrics);
     // Links come from the full text: the context menu must offer links the
     // collapse cut off.
     item.links = whatevr::util::extractMessageLinks(item.text);
