@@ -48,6 +48,10 @@ version:
 release version:
     @uv run scripts/release.py "{{version}}"
 
+# Regenerate the bundled chat-wallpaper doodle (seed defaults to the version).
+gen-doodle seed=version_numeric:
+    @scripts/gen_doodle.py --seed "{{seed}}"
+
 uninstall prefix="/usr/local" destdir="":
     @prefix="{{prefix}}"; \
     destdir="{{destdir}}"; \

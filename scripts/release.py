@@ -112,6 +112,21 @@ def write_version_file(root: Path, version: str) -> Path:
     return path
 
 
+def regenerate_doodle(root: Path, version: str) -> Path:
+    """Regenerate the bundled chat-wallpaper doodle, seeded by the release
+    version (numeric x.y.z, any -suffix dropped) so each release ships a
+    deterministic, version-specific pattern. Mirrors the `just gen-doodle` call.
+    """
+    seed = version.split("-")[0]
+    output = root / "whatkevr/data/wallpapers/doodle.svg"
+    subprocess.run(
+        [sys.executable, str(root / "scripts/gen_doodle.py"),
+         "--seed", seed, "--output", str(output)],
+        check=True,
+    )
+    return output
+
+
 def update_metainfo(root: Path, version: str, notes: str, date: str) -> Path:
     path = root / "whatkevr/data/in.codelif.Whatevr.metainfo.xml"
     text = path.read_text(encoding="utf-8")
@@ -371,6 +386,7 @@ def main() -> None:
 
     changed = [
         write_version_file(root, version),
+        regenerate_doodle(root, version),
         update_metainfo(root, version, notes, date),
         *update_aur_packages(root, version),
     ]

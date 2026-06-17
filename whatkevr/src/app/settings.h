@@ -45,6 +45,18 @@ class Settings final : public QObject
     Q_PROPERTY(bool showAvatars READ showAvatars WRITE setShowAvatars NOTIFY showAvatarsChanged FINAL)
     // Conversation wallpaper preset id; empty is the plain default background.
     Q_PROPERTY(QString chatWallpaper READ chatWallpaper WRITE setChatWallpaper NOTIFY chatWallpaperChanged FINAL)
+    // Doodle pattern drawn over the wallpaper background: "" none, "doodle" the
+    // bundled motif, "custom" the user's own SVG at chatWallpaperPath.
+    Q_PROPERTY(QString chatWallpaperPattern READ chatWallpaperPattern WRITE setChatWallpaperPattern NOTIFY chatWallpaperPatternChanged FINAL)
+    // Absolute path of the imported custom pattern SVG (copied into the app data dir).
+    Q_PROPERTY(QString chatWallpaperPath READ chatWallpaperPath WRITE setChatWallpaperPath NOTIFY chatWallpaperPathChanged FINAL)
+    // Pattern tile size as a percentage of the motif's natural size (50..300).
+    Q_PROPERTY(int chatWallpaperScale READ chatWallpaperScale WRITE setChatWallpaperScale NOTIFY chatWallpaperScaleChanged FINAL)
+    // Pattern opacity/intensity as a percentage (0..25); kept subtle by default.
+    Q_PROPERTY(int chatWallpaperOpacity READ chatWallpaperOpacity WRITE setChatWallpaperOpacity NOTIFY chatWallpaperOpacityChanged FINAL)
+    // Manual pattern tint as a "#rrggbb" string; empty means "auto" (derived from
+    // the active background's lightness so the motif stays visible).
+    Q_PROPERTY(QString chatWallpaperTint READ chatWallpaperTint WRITE setChatWallpaperTint NOTIFY chatWallpaperTintChanged FINAL)
 
     // --- Behavior ---
     Q_PROPERTY(bool persistDrafts READ persistDrafts WRITE setPersistDrafts NOTIFY persistDraftsChanged FINAL)
@@ -97,6 +109,16 @@ public:
     void setShowAvatars(bool show);
     [[nodiscard]] QString chatWallpaper() const;
     void setChatWallpaper(const QString &wallpaperId);
+    [[nodiscard]] QString chatWallpaperPattern() const;
+    void setChatWallpaperPattern(const QString &pattern);
+    [[nodiscard]] QString chatWallpaperPath() const;
+    void setChatWallpaperPath(const QString &path);
+    [[nodiscard]] int chatWallpaperScale() const;
+    void setChatWallpaperScale(int percent);
+    [[nodiscard]] int chatWallpaperOpacity() const;
+    void setChatWallpaperOpacity(int percent);
+    [[nodiscard]] QString chatWallpaperTint() const;
+    void setChatWallpaperTint(const QString &tint);
 
     [[nodiscard]] bool persistDrafts() const;
     void setPersistDrafts(bool persist);
@@ -130,6 +152,11 @@ public:
     Q_INVOKABLE [[nodiscard]] QString formattedCacheSize() const;
     Q_INVOKABLE void clearMediaCache();
 
+    // Copy a user-picked SVG (passed as a file path or "file://" URL) into the
+    // app data dir so it survives the original being moved/deleted, and return
+    // the new absolute path. Returns an empty string on failure.
+    Q_INVOKABLE [[nodiscard]] QString importWallpaperSvg(const QString &sourceUrl);
+
     // --- Window geometry persistence (driven from Main.qml) ---
     Q_INVOKABLE void saveWindowGeometry(int x, int y, int width, int height);
     Q_INVOKABLE [[nodiscard]] bool hasSavedWindowGeometry() const;
@@ -146,6 +173,11 @@ Q_SIGNALS:
     void messageFontSizeChanged();
     void showAvatarsChanged();
     void chatWallpaperChanged();
+    void chatWallpaperPatternChanged();
+    void chatWallpaperPathChanged();
+    void chatWallpaperScaleChanged();
+    void chatWallpaperOpacityChanged();
+    void chatWallpaperTintChanged();
     void persistDraftsChanged();
     void enterToSendChanged();
     void rememberWindowGeometryChanged();
@@ -166,6 +198,11 @@ private:
     int m_messageFontSize = 0;
     bool m_showAvatars = true;
     QString m_chatWallpaper;
+    QString m_chatWallpaperPattern;
+    QString m_chatWallpaperPath;
+    int m_chatWallpaperScale = 100;
+    int m_chatWallpaperOpacity = 10;
+    QString m_chatWallpaperTint;
     bool m_persistDrafts = true;
     bool m_enterToSend = true;
     bool m_rememberWindowGeometry = true;
