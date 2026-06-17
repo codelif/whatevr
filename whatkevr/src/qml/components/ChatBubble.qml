@@ -747,8 +747,11 @@ Item {
         corners.bottomLeftRadius: !root.outgoing && !root.groupEnd ? bubbleRadius * 0.45 : bubbleRadius
         corners.bottomRightRadius: root.outgoing && !root.groupEnd ? bubbleRadius * 0.45 : bubbleRadius
 
+        // Opaque so the wallpaper doodle never shows through. The outgoing tint
+        // is the old translucent highlight composited onto the theme background,
+        // preserving the prior look on the default wallpaper while staying solid.
         color: root.outgoing
-                ? Qt.alpha(activePalette.highlight, 0.30)
+                ? Qt.tint(Kirigami.Theme.backgroundColor, Qt.alpha(activePalette.highlight, 0.30))
                 : Kirigami.Theme.backgroundColor
         border.color: Qt.alpha(Kirigami.Theme.textColor, root.outgoing ? 0.05 : 0.12)
         border.width: 1
@@ -1429,6 +1432,17 @@ Item {
                         ? animatedSticker.status === AnimatedImage.Ready
                         : staticSticker.status === Image.Ready
 
+        // While the sticker is still decoding it draws nothing, which over the
+        // wallpaper doodle reads as an empty hole. A faint plate fills the slot
+        // until the real sticker (or its thumbnail) is on screen.
+        Rectangle {
+            anchors.fill: parent
+            radius: Kirigami.Units.cornerRadius
+            visible: !parent.stickerContentReady
+                     && !(root.isSticker && root.hasThumbnailImage && stickerThumb.status === Image.Ready)
+            color: Qt.alpha(Kirigami.Theme.textColor, 0.06)
+        }
+
         Image {
             id: stickerThumb
 
@@ -1628,9 +1642,12 @@ Item {
         width: root.tntWidth + root.framelessFooterHPadding * 2
         height: root.tntHeight + root.framelessFooterVPadding * 2
         radius: Kirigami.Units.cornerRadius
+        // Opaque so the wallpaper doodle never shows through the time/ticks pill
+        // on frameless (sticker / jumbo-emoji) rows. Mirrors the bubble fill: the
+        // old translucent tints composited onto the theme background.
         color: root.outgoing
-               ? Qt.alpha(Kirigami.Theme.highlightColor, 0.30)
-               : Qt.alpha(Kirigami.Theme.backgroundColor, 0.76)
+               ? Qt.tint(Kirigami.Theme.backgroundColor, Qt.alpha(Kirigami.Theme.highlightColor, 0.30))
+               : Kirigami.Theme.backgroundColor
         border.color: Qt.alpha(Kirigami.Theme.textColor, root.outgoing ? 0.05 : 0.12)
 
         // The footer content (status ticks + time label) is only built for

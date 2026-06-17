@@ -171,6 +171,7 @@ qt_add_qml_module(whatkevr
         src/qml/components/RowScrollBar.qml
         src/qml/components/ReplyPreview.qml
         src/qml/components/RoundedImage.qml
+        src/qml/components/ChatWallpaper.qml
         src/qml/components/ChatBubble.qml
         src/qml/components/QuickReactionBar.qml
         src/qml/components/QuickReactionPopup.qml
@@ -195,6 +196,7 @@ qt_add_qml_module(whatkevr
         src/qml/settings/SettingsWindow.qml
         src/qml/settings/SettingsPage.qml
         src/qml/settings/PreviewSelector.qml
+        src/qml/settings/FormSliderDelegate.qml
         src/qml/settings/PrivacyAudienceCombo.qml
         src/qml/settings/AppearancePage.qml
         src/qml/settings/ChatsPage.qml
@@ -212,7 +214,9 @@ qt_add_qml_module(whatkevr
 qt6_add_shaders(whatkevr "roundedimage_shaders"
     PREFIX "/qt/qml/Whatevr"
     BASE "src/qml"
-    FILES src/qml/shaders/roundedimage.frag
+    FILES
+        src/qml/shaders/roundedimage.frag
+        src/qml/shaders/chatwallpaper.frag
 )
 
 qt_add_resources(whatkevr emoji_metadata
@@ -223,6 +227,7 @@ qt_add_resources(whatkevr emoji_metadata
         data/emoji/LICENSE.googlefonts-emoji-metadata
         data/emoji/LICENSE.emojilib
         data/icons/checkmark-bold.svg
+        data/wallpapers/doodle.svg
 )
 
 # Embed the repo-root LICENSE (one dir up from this project) so the About page can

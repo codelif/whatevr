@@ -8,6 +8,7 @@
 #include <QQmlEngine>
 #include <QSettings>
 #include <QStandardPaths>
+#include <QUrl>
 #include <QVariantMap>
 
 #include <KColorSchemeManager>
@@ -21,6 +22,11 @@ constexpr auto kDensity = "settings/density";
 // Legacy boolean replaced by kDensity; read once at load to migrate.
 constexpr auto kCompactMode = "settings/compactMode";
 constexpr auto kChatWallpaper = "settings/chatWallpaper";
+constexpr auto kChatWallpaperPattern = "settings/chatWallpaperPattern";
+constexpr auto kChatWallpaperPath = "settings/chatWallpaperPath";
+constexpr auto kChatWallpaperScale = "settings/chatWallpaperScale";
+constexpr auto kChatWallpaperOpacity = "settings/chatWallpaperOpacity";
+constexpr auto kChatWallpaperTint = "settings/chatWallpaperTint";
 constexpr auto kMessageFontSize = "settings/messageFontSize";
 constexpr auto kShowAvatars = "settings/showAvatars";
 constexpr auto kPersistDrafts = "settings/persistDrafts";
@@ -94,6 +100,11 @@ void Settings::load()
         m_density = settings.value(QLatin1String(kCompactMode), false).toBool() ? DensityCompact : DensityStandard;
     }
     m_chatWallpaper = settings.value(QLatin1String(kChatWallpaper)).toString();
+    m_chatWallpaperPattern = settings.value(QLatin1String(kChatWallpaperPattern)).toString();
+    m_chatWallpaperPath = settings.value(QLatin1String(kChatWallpaperPath)).toString();
+    m_chatWallpaperScale = qBound(50, settings.value(QLatin1String(kChatWallpaperScale), 100).toInt(), 300);
+    m_chatWallpaperOpacity = qBound(0, settings.value(QLatin1String(kChatWallpaperOpacity), 10).toInt(), 25);
+    m_chatWallpaperTint = settings.value(QLatin1String(kChatWallpaperTint)).toString();
     m_messageFontSize = settings.value(QLatin1String(kMessageFontSize), 0).toInt();
     m_showAvatars = settings.value(QLatin1String(kShowAvatars), true).toBool();
     m_persistDrafts = settings.value(QLatin1String(kPersistDrafts), true).toBool();
@@ -236,6 +247,83 @@ void Settings::setChatWallpaper(const QString &wallpaperId)
     m_chatWallpaper = wallpaperId;
     QSettings().setValue(QLatin1String(kChatWallpaper), m_chatWallpaper);
     Q_EMIT chatWallpaperChanged();
+}
+
+QString Settings::chatWallpaperPattern() const
+{
+    return m_chatWallpaperPattern;
+}
+
+void Settings::setChatWallpaperPattern(const QString &pattern)
+{
+    if (m_chatWallpaperPattern == pattern) {
+        return;
+    }
+    m_chatWallpaperPattern = pattern;
+    QSettings().setValue(QLatin1String(kChatWallpaperPattern), m_chatWallpaperPattern);
+    Q_EMIT chatWallpaperPatternChanged();
+}
+
+QString Settings::chatWallpaperPath() const
+{
+    return m_chatWallpaperPath;
+}
+
+void Settings::setChatWallpaperPath(const QString &path)
+{
+    if (m_chatWallpaperPath == path) {
+        return;
+    }
+    m_chatWallpaperPath = path;
+    QSettings().setValue(QLatin1String(kChatWallpaperPath), m_chatWallpaperPath);
+    Q_EMIT chatWallpaperPathChanged();
+}
+
+int Settings::chatWallpaperScale() const
+{
+    return m_chatWallpaperScale;
+}
+
+void Settings::setChatWallpaperScale(int percent)
+{
+    const int clamped = qBound(50, percent, 300);
+    if (m_chatWallpaperScale == clamped) {
+        return;
+    }
+    m_chatWallpaperScale = clamped;
+    QSettings().setValue(QLatin1String(kChatWallpaperScale), m_chatWallpaperScale);
+    Q_EMIT chatWallpaperScaleChanged();
+}
+
+int Settings::chatWallpaperOpacity() const
+{
+    return m_chatWallpaperOpacity;
+}
+
+void Settings::setChatWallpaperOpacity(int percent)
+{
+    const int clamped = qBound(0, percent, 25);
+    if (m_chatWallpaperOpacity == clamped) {
+        return;
+    }
+    m_chatWallpaperOpacity = clamped;
+    QSettings().setValue(QLatin1String(kChatWallpaperOpacity), m_chatWallpaperOpacity);
+    Q_EMIT chatWallpaperOpacityChanged();
+}
+
+QString Settings::chatWallpaperTint() const
+{
+    return m_chatWallpaperTint;
+}
+
+void Settings::setChatWallpaperTint(const QString &tint)
+{
+    if (m_chatWallpaperTint == tint) {
+        return;
+    }
+    m_chatWallpaperTint = tint;
+    QSettings().setValue(QLatin1String(kChatWallpaperTint), m_chatWallpaperTint);
+    Q_EMIT chatWallpaperTintChanged();
 }
 
 int Settings::messageFontSize() const
@@ -422,6 +510,32 @@ void Settings::clearMediaCache()
         }
     }
     Q_EMIT cacheChanged();
+}
+
+QString Settings::importWallpaperSvg(const QString &sourceUrl)
+{
+    // Accept either a bare path or a "file://" URL (the FileDialog hands back URLs).
+    const QUrl url(sourceUrl);
+    const QString source = url.isLocalFile() ? url.toLocalFile() : sourceUrl;
+    const QFileInfo info(source);
+    if (!info.exists() || !info.isFile()) {
+        return QString();
+    }
+
+    const QString destDir =
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral("/wallpapers");
+    if (!QDir().mkpath(destDir)) {
+        return QString();
+    }
+
+    // Use a stable name so re-importing the same file overwrites in place rather
+    // than accumulating copies; suffix-prefixed by base name keeps it recognisable.
+    const QString dest = destDir + QStringLiteral("/") + info.fileName();
+    QFile::remove(dest); // QFile::copy won't overwrite an existing file
+    if (!QFile::copy(source, dest)) {
+        return QString();
+    }
+    return dest;
 }
 
 void Settings::saveWindowGeometry(int x, int y, int width, int height)
