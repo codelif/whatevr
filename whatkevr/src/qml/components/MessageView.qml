@@ -5,49 +5,11 @@ import QtQuick.Controls
 import Qt.labs.platform as Platform
 import org.kde.kirigami as Kirigami
 import Whatevr as Whatevr
-import "Wallpapers.js" as Wallpapers
 
 Item {
     id: root
 
     Kirigami.Theme.colorSet: Kirigami.Theme.View
-
-    // Conversation wallpaper (live): falls back to the theme background when the
-    // chosen preset has no color or "Default" is selected.
-    Rectangle {
-        id: wallpaperBackground
-        anchors.fill: parent
-        z: -1
-        readonly property string wallpaperColor: Wallpapers.colorFor(Whatevr.Settings.chatWallpaper)
-        color: wallpaperColor.length > 0 ? wallpaperColor : Kirigami.Theme.backgroundColor
-    }
-
-    // Optional doodle pattern layered over the background colour. Hidden when the
-    // pattern is "None" or its source resolves to empty.
-    //
-    // The tile grid is pinned to this view's position within its container
-    // (parent) rather than to the view itself, so a pinned-message banner or
-    // reply preview that shifts/resizes the view slides it over a fixed pattern
-    // instead of dragging the pattern along.
-    ChatWallpaper {
-        anchors.fill: parent
-        z: -1
-        backgroundColor: wallpaperBackground.color
-        originX: root.parent ? root.parent.x : 0
-        originY: root.parent ? root.parent.y : 0
-        source: {
-            switch (Whatevr.Settings.chatWallpaperPattern) {
-            case "doodle": return "qrc:/data/wallpapers/doodle.svg";
-            case "custom": return Whatevr.Settings.chatWallpaperPath.length > 0
-                ? Qt.resolvedUrl("file://" + Whatevr.Settings.chatWallpaperPath)
-                : "";
-            default: return "";
-            }
-        }
-        scalePercent: Whatevr.Settings.chatWallpaperScale
-        intensity: Whatevr.Settings.chatWallpaperOpacity / 100
-        tint: Whatevr.Settings.chatWallpaperTint
-    }
 
     property string chatId: ""
     property alias model: list.model
