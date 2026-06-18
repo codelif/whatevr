@@ -8,12 +8,12 @@ default:
     @just --list
 
 # Debug build for local testing.
-build:
-    @just _build debug
+build dir=build_dir:
+    @just _build debug "{{dir}}"
 
 # Optimized release build.
-build-release:
-    @just _build release
+build-release dir=build_dir:
+    @just _build release "{{dir}}"
 
 # Build and install an optimized release.
 install prefix="/usr/local" destdir="":
@@ -67,14 +67,18 @@ uninstall prefix="/usr/local" destdir="":
 clean:
     @rm -rf {{build_dir}}
 
-_build profile:
+_build profile dir=build_dir:
     @test "{{profile}}" = debug -o "{{profile}}" = release
-    @just _build-daemon "{{profile}}"
-    @just _build-frontend "{{profile}}"
+    @just _build-daemon "{{profile}}" "{{dir}}"
+    @just _build-frontend "{{profile}}" "{{dir}}"
 
-_build-daemon profile:
+_build-daemon profile dir=build_dir:
     @profile="{{profile}}"; \
-    out_dir="{{build_dir}}/$profile"; \
+    build_root="{{dir}}"; \
+    case "$build_root" in \
+        /*) out_dir="$build_root/$profile" ;; \
+        *) out_dir="$(pwd)/$build_root/$profile" ;; \
+    esac; \
     ldflags="-X whatevrd/internal/rpc.Version={{version}}"; \
     go_flags=(-buildvcs=false -tags sqlite_fts5); \
     if [ "$profile" = release ]; then \
@@ -83,16 +87,16 @@ _build-daemon profile:
     fi; \
     mkdir -p "$out_dir"; \
     CGO_ENABLED=1 go -C whatevrd build "${go_flags[@]}" -ldflags "$ldflags" \
-        -o "../$out_dir/whatevrd" ./cmd/whatevrd
+        -o "$out_dir/whatevrd" ./cmd/whatevrd
 
-_build-frontend profile:
+_build-frontend profile dir=build_dir:
     @profile="{{profile}}"; \
     if [ "$profile" = release ]; then build_type=Release; else build_type=Debug; fi; \
-    cmake -S whatkevr -B "{{build_dir}}/$profile/whatkevr" -G Ninja \
+    cmake -S whatkevr -B "{{dir}}/$profile/whatkevr" -G Ninja \
         -DCMAKE_BUILD_TYPE="$build_type" \
         -DWHATEVR_VERSION={{version_numeric}} \
         -DWHATEVR_VERSION_FULL={{version}}; \
-    cmake --build "{{build_dir}}/$profile/whatkevr"
+    cmake --build "{{dir}}/$profile/whatkevr"
 
 _install profile prefix destdir:
     @just _build "{{profile}}"
