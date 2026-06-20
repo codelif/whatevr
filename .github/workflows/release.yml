@@ -33,7 +33,7 @@ jobs:
           pacman -Syu --noconfirm --needed \
             git openssh sudo base-devel go just cmake ninja extra-cmake-modules zstd vulkan-headers \
             qt6-base qt6-declarative qt6-shadertools qt6-grpc \
-            kcoreaddons kdbusaddons ki18n kirigami kirigami-addons prison sqlite \
+            kcoreaddons kdbusaddons ki18n kirigami kirigami-addons prison qqc2-desktop-style sqlite \
             desktop-file-utils appstream libxml2
           useradd -m -G wheel builduser
           printf 'builduser ALL=(ALL) NOPASSWD: ALL\n' >> /etc/sudoers
