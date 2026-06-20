@@ -178,7 +178,7 @@ target_link_libraries(whatkevr PRIVATE
     KF6::I18n
     KF6::Kirigami
     KF6::Prison
-    rlottie::rlottie
+    PkgConfig::RLottie
 )
 
 install(TARGETS whatkevr RUNTIME DESTINATION ${KDE_INSTALL_BINDIR})

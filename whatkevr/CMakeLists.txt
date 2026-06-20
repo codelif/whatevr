@@ -59,7 +59,8 @@ find_package(KF6 ${KF_MIN_VERSION} REQUIRED COMPONENTS
 )
 
 find_package(KF6KirigamiAddons ${KIRIGAMI_ADDONS_MIN_VERSION} REQUIRED)
-find_package(rlottie REQUIRED)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(RLottie REQUIRED IMPORTED_TARGET rlottie)
 
 ecm_find_qmlmodule(org.kde.ki18n REQUIRED)
 ecm_find_qmlmodule(org.kde.desktop REQUIRED)
