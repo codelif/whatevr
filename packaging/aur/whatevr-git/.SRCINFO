@@ -24,6 +24,7 @@ pkgbase = whatevr-git
 	depends = ki18n
 	depends = kirigami
 	depends = prison
+	depends = qqc2-desktop-style
 	depends = kirigami-addons
 	depends = rlottie
 	depends = sqlite
