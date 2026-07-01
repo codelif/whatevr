@@ -948,6 +948,9 @@ func (db *DB) updateMessageStatus(ctx context.Context, id, status string, nextSt
 	if err != nil {
 		return Message{}, false, err
 	}
+	if err := attachReactionsOne(ctx, tx, &message); err != nil {
+		return Message{}, false, err
+	}
 
 	updatedStatus, changed := nextStatus(message.Status, status)
 	if !changed {
@@ -1053,6 +1056,9 @@ func (db *DB) MarkMessageRevoked(ctx context.Context, id string) (Message, Chat,
 	if err != nil {
 		return Message{}, Chat{}, false, err
 	}
+	if err := attachReactionsOne(ctx, tx, &updated); err != nil {
+		return Message{}, Chat{}, false, err
+	}
 	chat, err := getChatTx(ctx, tx, message.ChatID)
 	if err != nil {
 		return Message{}, Chat{}, false, err
@@ -1121,6 +1127,9 @@ func (db *DB) UpdateMessageText(ctx context.Context, id, newText string, mention
 	if err != nil {
 		return Message{}, Chat{}, false, err
 	}
+	if err := attachReactionsOne(ctx, tx, &updated); err != nil {
+		return Message{}, Chat{}, false, err
+	}
 	chat, err := getChatTx(ctx, tx, message.ChatID)
 	if err != nil {
 		return Message{}, Chat{}, false, err
@@ -1169,6 +1178,9 @@ func (db *DB) SetMessageStarred(ctx context.Context, id string, starred bool) (M
 	if err != nil {
 		return Message{}, false, err
 	}
+	if err := attachReactionsOne(ctx, tx, &updated); err != nil {
+		return Message{}, false, err
+	}
 	if err := tx.Commit(); err != nil {
 		return Message{}, false, err
 	}
@@ -1199,6 +1211,9 @@ func (db *DB) SetMessagePinned(ctx context.Context, id string, pinnedAt, pinnedU
 
 	updated, err := getMessageTx(ctx, tx, id)
 	if err != nil {
+		return Message{}, false, err
+	}
+	if err := attachReactionsOne(ctx, tx, &updated); err != nil {
 		return Message{}, false, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -1500,6 +1515,9 @@ func (db *DB) UpdateMessageMediaLocalPathWithDimensions(ctx context.Context, id,
 	if err != nil {
 		return Message{}, err
 	}
+	if err := attachReactionsOne(ctx, tx, &message); err != nil {
+		return Message{}, err
+	}
 
 	if err := tx.Commit(); err != nil {
 		return Message{}, err
@@ -1528,6 +1546,9 @@ func (db *DB) UpdateMessageMediaPayload(ctx context.Context, id string, payload 
 
 	message, err := getMessageTx(ctx, tx, id)
 	if err != nil {
+		return Message{}, err
+	}
+	if err := attachReactionsOne(ctx, tx, &message); err != nil {
 		return Message{}, err
 	}
 

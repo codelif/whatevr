@@ -258,6 +258,45 @@ func TestUpdateMessageMediaLocalPathWithDimensionsPersistsDimensions(t *testing.
 	}
 }
 
+func TestUpdateMessageMediaLocalPathWithDimensionsKeepsReactions(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	if _, err := db.SaveMediaMessage(ctx, MediaMessageInput{
+		TextMessageInput: TextMessageInput{
+			ID:        "chat-1:image-1",
+			ChatID:    "chat-1",
+			ChatName:  "Test Chat",
+			SenderID:  "sender-1",
+			Timestamp: time.Unix(100, 0),
+		},
+		MediaKind:     MediaKindImage,
+		MediaMimeType: "image/jpeg",
+	}); err != nil {
+		t.Fatalf("save image message: %v", err)
+	}
+
+	if _, _, changed, err := db.SaveReaction(ctx, "chat-1:image-1", "sender-2", "Bob", "🔥", 150, false); err != nil {
+		t.Fatalf("save reaction: %v", err)
+	} else if !changed {
+		t.Fatal("expected reaction to change the message")
+	}
+
+	// Simulating media download completion must not drop the reaction from the
+	// republished message.
+	updated, err := db.UpdateMessageMediaLocalPathWithDimensions(ctx, "chat-1:image-1", "/tmp/image.jpg", 1200, 240)
+	if err != nil {
+		t.Fatalf("UpdateMessageMediaLocalPathWithDimensions() error = %v", err)
+	}
+	if len(updated.Reactions) != 1 || updated.Reactions[0].Emoji != "🔥" || updated.Reactions[0].SenderName != "Bob" {
+		t.Fatalf("updated reactions = %+v, want one 🔥 from Bob", updated.Reactions)
+	}
+}
+
 func TestMarkMessageRevokedClearsReplyContext(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
