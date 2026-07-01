@@ -6,6 +6,7 @@ import (
 	"unicode/utf8"
 
 	"whatevrd/internal/app"
+	"whatevrd/internal/textutil"
 )
 
 const previewLimit = 200
@@ -118,7 +119,7 @@ func FormatMessage(caps Capabilities, message app.Message, chat app.Chat, opts O
 }
 
 func previewText(message app.Message) string {
-	text := strings.TrimSpace(message.Text)
+	text := textutil.ExpandMentions(strings.TrimSpace(message.Text), toTextutilMentions(message.Mentions))
 	if text == "" {
 		switch {
 		case strings.HasPrefix(message.MediaMimeType, "image/"):
@@ -135,6 +136,17 @@ func previewText(message app.Message) string {
 	}
 	text = strings.Join(strings.Fields(text), " ")
 	return truncate(text, previewLimit)
+}
+
+func toTextutilMentions(mentions []app.Mention) []textutil.Mention {
+	if len(mentions) == 0 {
+		return nil
+	}
+	out := make([]textutil.Mention, len(mentions))
+	for i, m := range mentions {
+		out[i] = textutil.Mention{JID: m.JID, DisplayName: m.DisplayName}
+	}
+	return out
 }
 
 func senderDisplay(message app.Message) string {
