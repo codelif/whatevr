@@ -1967,7 +1967,7 @@ Item {
 
                 visible: root.senderName.length > 0
                 x: bubble.x + root.innerPadding / 2
-                y: root.dateSeparatorHeight + Math.max(0, (root.senderHeaderHeight - height) / 2)
+                y: root.dateSeparatorHeight + root.unreadSeparatorHeight + Math.max(0, (root.senderHeaderHeight - height) / 2)
                 width: Math.max(0, root.width - x - root.outerMargin)
                 text: root.senderName
                 elide: Text.ElideRight
@@ -1979,7 +1979,7 @@ Item {
 
             AvatarImage {
                 x: root.outerMargin + Math.max(0, root.senderGutterWidth - width) / 2
-                y: root.dateSeparatorHeight + Math.max(0, (root.senderHeaderHeight - height) / 2)
+                y: root.dateSeparatorHeight + root.unreadSeparatorHeight + Math.max(0, (root.senderHeaderHeight - height) / 2)
                 width: root.senderAvatarSize
                 height: root.senderAvatarSize
                 avatarLocalPath: root.senderAvatarLocalPath
