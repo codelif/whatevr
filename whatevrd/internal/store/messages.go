@@ -1013,7 +1013,14 @@ func (db *DB) MarkMessageRevoked(ctx context.Context, id string) (Message, Chat,
 			media_height = 0,
 			media_animated = 0,
 			media_payload = x'',
-			media_cache_key = ''
+			media_cache_key = '',
+			reply_to_message_id = '',
+			reply_to_sender_id = '',
+			reply_to_sender_name = '',
+			reply_to_text = '',
+			reply_to_media_kind = '',
+			reply_to_media_mime_type = '',
+			reply_to_direction = ''
 		WHERE id = ?
 	`, id); err != nil {
 		return Message{}, Chat{}, false, err

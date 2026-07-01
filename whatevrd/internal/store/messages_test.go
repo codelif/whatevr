@@ -258,6 +258,49 @@ func TestUpdateMessageMediaLocalPathWithDimensionsPersistsDimensions(t *testing.
 	}
 }
 
+func TestMarkMessageRevokedClearsReplyContext(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	if _, err := db.SaveTextMessage(ctx, TextMessageInput{
+		ID:        "chat-1:reply-1",
+		ChatID:    "chat-1",
+		ChatName:  "Test Chat",
+		SenderID:  "sender-1",
+		Text:      "an answer",
+		Timestamp: time.Unix(100, 0),
+		Direction: DirectionOutgoing,
+		Status:    StatusSent,
+		ReplyTo: MessageReply{
+			MessageID:  "chat-1:orig-1",
+			SenderID:   "sender-2",
+			SenderName: "Bob",
+			Text:       "the question",
+			Direction:  DirectionIncoming,
+		},
+	}); err != nil {
+		t.Fatalf("save reply message: %v", err)
+	}
+
+	if _, _, changed, err := db.MarkMessageRevoked(ctx, "chat-1:reply-1"); err != nil {
+		t.Fatalf("mark revoked: %v", err)
+	} else if !changed {
+		t.Fatal("expected revoke to change the message")
+	}
+
+	loaded, err := db.GetMessage(ctx, "chat-1:reply-1")
+	if err != nil {
+		t.Fatalf("GetMessage() error = %v", err)
+	}
+	if loaded.ReplyTo != (MessageReply{}) {
+		t.Fatalf("revoked message kept reply context: %+v", loaded.ReplyTo)
+	}
+}
+
 func TestRecordUndecryptableMessageTimestampCorrectsExistingMessageAndChatSummary(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
