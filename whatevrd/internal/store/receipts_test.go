@@ -138,7 +138,8 @@ func TestUpdateMessageTextEditsBodyAndUpdatesSummary(t *testing.T) {
 	if !message.IsEdited || message.Text != "edited hello" {
 		t.Fatalf("unexpected edited message: %+v", message)
 	}
-	if chat.LastMessage != "edited hello" {
+	// Group previews carry the author prefix ("You:" for our own messages).
+	if chat.LastMessage != "You: edited hello" {
 		t.Fatalf("unexpected chat summary: %q", chat.LastMessage)
 	}
 

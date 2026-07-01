@@ -6,6 +6,8 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	"whatevrd/internal/textutil"
 )
 
 const (
@@ -255,7 +257,7 @@ func saveTextMessageTx(ctx context.Context, tx *sql.Tx, input TextMessageInput) 
 	inserted := rowsAffected > 0
 
 	if inserted {
-		if err := bumpChatForInsertedMessage(ctx, tx, input, input.Text); err != nil {
+		if err := bumpChatForInsertedMessage(ctx, tx, input, previewSummary(input, input.Text)); err != nil {
 			return SavedTextMessage{}, err
 		}
 	}
@@ -414,7 +416,7 @@ func saveMediaMessageTx(ctx context.Context, tx *sql.Tx, input MediaMessageInput
 	inserted := rowsAffected > 0
 
 	if inserted {
-		if err := bumpChatForInsertedMessage(ctx, tx, input.TextMessageInput, lastMessage); err != nil {
+		if err := bumpChatForInsertedMessage(ctx, tx, input.TextMessageInput, previewSummary(input.TextMessageInput, lastMessage)); err != nil {
 			return SavedTextMessage{}, err
 		}
 	}
@@ -494,6 +496,37 @@ func (db *DB) SaveMessages(ctx context.Context, items []MessageSaveItem) ([]Save
 		return nil, err
 	}
 	return saved, nil
+}
+
+// previewSummary composes the chat-list last-message preview from a base
+// summary: mentions are expanded to display names, and in group chats the
+// author is prefixed ("You:" for our own messages, otherwise the sender name).
+func previewSummary(input TextMessageInput, summary string) string {
+	summary = textutil.ExpandMentions(summary, toTextutilMentions(input.Mentions))
+	if !input.IsGroup {
+		return summary
+	}
+	author := ""
+	if input.Direction == DirectionOutgoing {
+		author = "You"
+	} else if name := strings.TrimSpace(input.SenderName); name != "" {
+		author = name
+	}
+	if author == "" {
+		return summary
+	}
+	return author + ": " + summary
+}
+
+func toTextutilMentions(mentions []MessageMention) []textutil.Mention {
+	if len(mentions) == 0 {
+		return nil
+	}
+	out := make([]textutil.Mention, len(mentions))
+	for i, m := range mentions {
+		out[i] = textutil.Mention{JID: m.JID, DisplayName: m.DisplayName}
+	}
+	return out
 }
 
 func messageSummary(text, mediaKind, mediaMimeType string) string {
@@ -619,47 +652,56 @@ func (db *DB) PruneUndecryptableMessageTimestamps(ctx context.Context, olderThan
 	return err
 }
 
+// recomputeChatSummaryTx rebuilds a chat's last-message preview from its newest
+// surviving message. The preview is composed in Go (rather than SQL) so it stays
+// consistent with the insert path: mentions are expanded and, in groups, the
+// author is prefixed. Deleted messages tombstone to a fixed string with no
+// author prefix.
 func recomputeChatSummaryTx(ctx context.Context, tx *sql.Tx, chatID string) error {
-	_, err := tx.ExecContext(ctx, `
+	var latestID string
+	err := tx.QueryRowContext(ctx, `
+		SELECT id
+		FROM messages
+		WHERE chat_id = ?
+		ORDER BY timestamp DESC, rowid DESC
+		LIMIT 1
+	`, chatID).Scan(&latestID)
+	if errors.Is(err, sql.ErrNoRows) {
+		_, err := tx.ExecContext(ctx, `
+			UPDATE chats
+			SET last_message = '', last_message_time = 0, last_message_direction = '', last_message_status = ''
+			WHERE id = ?
+		`, chatID)
+		return err
+	}
+	if err != nil {
+		return err
+	}
+
+	latest, err := getMessageTx(ctx, tx, latestID)
+	if err != nil {
+		return err
+	}
+
+	summary := "This message was deleted"
+	if !latest.IsRevoked {
+		chat, err := getChatTx(ctx, tx, chatID)
+		if err != nil {
+			return err
+		}
+		summary = previewSummary(TextMessageInput{
+			IsGroup:    chat.IsGroup,
+			Direction:  latest.Direction,
+			SenderName: latest.SenderName,
+			Mentions:   latest.Mentions,
+		}, messageSummary(latest.Text, latest.MediaKind, latest.MediaMimeType))
+	}
+
+	_, err = tx.ExecContext(ctx, `
 		UPDATE chats
-		SET last_message = COALESCE((
-				SELECT CASE
-					WHEN is_revoked = 1 THEN 'This message was deleted'
-					WHEN text != '' THEN text
-					WHEN media_kind = 'sticker' THEN '[Sticker]'
-					WHEN media_mime_type IN ('image/jpeg', 'image/png', 'image/webp', 'image/gif') THEN '[Image]'
-					WHEN media_mime_type IN ('video/mp4', 'video/webm') THEN '[Video]'
-					WHEN media_mime_type IN ('audio/ogg', 'audio/mpeg') THEN '[Audio]'
-					ELSE '[Media]'
-				END
-				FROM messages
-				WHERE chat_id = ?
-				ORDER BY timestamp DESC, rowid DESC
-				LIMIT 1
-			), ''),
-			last_message_time = COALESCE((
-				SELECT timestamp
-				FROM messages
-				WHERE chat_id = ?
-				ORDER BY timestamp DESC, rowid DESC
-				LIMIT 1
-			), 0),
-			last_message_direction = COALESCE((
-				SELECT direction
-				FROM messages
-				WHERE chat_id = ?
-				ORDER BY timestamp DESC, rowid DESC
-				LIMIT 1
-			), ''),
-			last_message_status = COALESCE((
-				SELECT status
-				FROM messages
-				WHERE chat_id = ?
-				ORDER BY timestamp DESC, rowid DESC
-				LIMIT 1
-			), '')
+		SET last_message = ?, last_message_time = ?, last_message_direction = ?, last_message_status = ?
 		WHERE id = ?
-	`, chatID, chatID, chatID, chatID, chatID)
+	`, summary, latest.TimestampUnix, latest.Direction, latest.Status, chatID)
 	return err
 }
 
