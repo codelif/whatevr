@@ -63,3 +63,30 @@ func TestPinnedChatsFromEvents(t *testing.T) {
 		t.Fatal("pin event with nil action was included")
 	}
 }
+
+func TestMutedChatsFromEvents(t *testing.T) {
+	forever := types.NewJID("111", types.DefaultUserServer)
+	timed := types.NewJID("222", types.DefaultUserServer)
+	unmuted := types.NewJID("333", types.DefaultUserServer)
+
+	mutes := mutedChatsFromEvents([]any{
+		&events.Mute{JID: forever, Action: &waSyncAction.MuteAction{Muted: proto.Bool(true)}},
+		&events.Mute{JID: timed, Action: &waSyncAction.MuteAction{Muted: proto.Bool(true), MuteEndTimestamp: proto.Int64(9999)}},
+		&events.Mute{JID: unmuted, Action: &waSyncAction.MuteAction{Muted: proto.Bool(true)}},
+		&events.Mute{JID: unmuted, Action: &waSyncAction.MuteAction{Muted: proto.Bool(false)}},
+		"not a mute",
+	})
+
+	if len(mutes) != 2 {
+		t.Fatalf("len(mutes) = %d, want 2", len(mutes))
+	}
+	if got := mutes[forever]; got != -1 {
+		t.Fatalf("mutes[forever] = %d, want -1 (muted forever)", got)
+	}
+	if got := mutes[timed]; got != 9999 {
+		t.Fatalf("mutes[timed] = %d, want 9999", got)
+	}
+	if _, ok := mutes[unmuted]; ok {
+		t.Fatal("unmuted chat remained muted")
+	}
+}
