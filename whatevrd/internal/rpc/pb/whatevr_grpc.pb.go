@@ -510,6 +510,8 @@ const (
 	ChatService_GetSelfProfile_FullMethodName        = "/whatevr.v1.ChatService/GetSelfProfile"
 	ChatService_GetGroupInfo_FullMethodName          = "/whatevr.v1.ChatService/GetGroupInfo"
 	ChatService_FetchProfilePicture_FullMethodName   = "/whatevr.v1.ChatService/FetchProfilePicture"
+	ChatService_RequestAvatars_FullMethodName        = "/whatevr.v1.ChatService/RequestAvatars"
+	ChatService_RequestOlderMessages_FullMethodName  = "/whatevr.v1.ChatService/RequestOlderMessages"
 )
 
 // ChatServiceClient is the client API for ChatService service.
@@ -546,6 +548,16 @@ type ChatServiceClient interface {
 	GetGroupInfo(ctx context.Context, in *GetGroupInfoRequest, opts ...grpc.CallOption) (*GetGroupInfoResponse, error)
 	// Fetch a full-resolution profile picture for the avatar viewer.
 	FetchProfilePicture(ctx context.Context, in *FetchProfilePictureRequest, opts ...grpc.CallOption) (*FetchProfilePictureResponse, error)
+	// Demand-driven avatar loading: the frontend reports the subjects it is
+	// about to show (visible chat rows, member lists, pickers) and gets the
+	// cached avatar rows back immediately; anything stale or missing is
+	// enqueued and lands later via AvatarUpdated events.
+	RequestAvatars(ctx context.Context, in *RequestAvatarsRequest, opts ...grpc.CallOption) (*RequestAvatarsResponse, error)
+	// Ask the phone for messages older than the oldest one stored locally
+	// (on-demand history sync). Fire-and-forget: backfilled messages land via
+	// HistoryBackfilled events; when the phone has nothing older, the chat's
+	// history_exhausted flag flips via ChatUpdated.
+	RequestOlderMessages(ctx context.Context, in *RequestOlderMessagesRequest, opts ...grpc.CallOption) (*RequestOlderMessagesResponse, error)
 }
 
 type chatServiceClient struct {
@@ -766,6 +778,26 @@ func (c *chatServiceClient) FetchProfilePicture(ctx context.Context, in *FetchPr
 	return out, nil
 }
 
+func (c *chatServiceClient) RequestAvatars(ctx context.Context, in *RequestAvatarsRequest, opts ...grpc.CallOption) (*RequestAvatarsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RequestAvatarsResponse)
+	err := c.cc.Invoke(ctx, ChatService_RequestAvatars_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *chatServiceClient) RequestOlderMessages(ctx context.Context, in *RequestOlderMessagesRequest, opts ...grpc.CallOption) (*RequestOlderMessagesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RequestOlderMessagesResponse)
+	err := c.cc.Invoke(ctx, ChatService_RequestOlderMessages_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ChatServiceServer is the server API for ChatService service.
 // All implementations must embed UnimplementedChatServiceServer
 // for forward compatibility.
@@ -800,6 +832,16 @@ type ChatServiceServer interface {
 	GetGroupInfo(context.Context, *GetGroupInfoRequest) (*GetGroupInfoResponse, error)
 	// Fetch a full-resolution profile picture for the avatar viewer.
 	FetchProfilePicture(context.Context, *FetchProfilePictureRequest) (*FetchProfilePictureResponse, error)
+	// Demand-driven avatar loading: the frontend reports the subjects it is
+	// about to show (visible chat rows, member lists, pickers) and gets the
+	// cached avatar rows back immediately; anything stale or missing is
+	// enqueued and lands later via AvatarUpdated events.
+	RequestAvatars(context.Context, *RequestAvatarsRequest) (*RequestAvatarsResponse, error)
+	// Ask the phone for messages older than the oldest one stored locally
+	// (on-demand history sync). Fire-and-forget: backfilled messages land via
+	// HistoryBackfilled events; when the phone has nothing older, the chat's
+	// history_exhausted flag flips via ChatUpdated.
+	RequestOlderMessages(context.Context, *RequestOlderMessagesRequest) (*RequestOlderMessagesResponse, error)
 	mustEmbedUnimplementedChatServiceServer()
 }
 
@@ -872,6 +914,12 @@ func (UnimplementedChatServiceServer) GetGroupInfo(context.Context, *GetGroupInf
 }
 func (UnimplementedChatServiceServer) FetchProfilePicture(context.Context, *FetchProfilePictureRequest) (*FetchProfilePictureResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method FetchProfilePicture not implemented")
+}
+func (UnimplementedChatServiceServer) RequestAvatars(context.Context, *RequestAvatarsRequest) (*RequestAvatarsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RequestAvatars not implemented")
+}
+func (UnimplementedChatServiceServer) RequestOlderMessages(context.Context, *RequestOlderMessagesRequest) (*RequestOlderMessagesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RequestOlderMessages not implemented")
 }
 func (UnimplementedChatServiceServer) mustEmbedUnimplementedChatServiceServer() {}
 func (UnimplementedChatServiceServer) testEmbeddedByValue()                     {}
@@ -1272,6 +1320,42 @@ func _ChatService_FetchProfilePicture_Handler(srv interface{}, ctx context.Conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ChatService_RequestAvatars_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RequestAvatarsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ChatServiceServer).RequestAvatars(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ChatService_RequestAvatars_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ChatServiceServer).RequestAvatars(ctx, req.(*RequestAvatarsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ChatService_RequestOlderMessages_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RequestOlderMessagesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ChatServiceServer).RequestOlderMessages(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ChatService_RequestOlderMessages_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ChatServiceServer).RequestOlderMessages(ctx, req.(*RequestOlderMessagesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ChatService_ServiceDesc is the grpc.ServiceDesc for ChatService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1362,6 +1446,14 @@ var ChatService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "FetchProfilePicture",
 			Handler:    _ChatService_FetchProfilePicture_Handler,
+		},
+		{
+			MethodName: "RequestAvatars",
+			Handler:    _ChatService_RequestAvatars_Handler,
+		},
+		{
+			MethodName: "RequestOlderMessages",
+			Handler:    _ChatService_RequestOlderMessages_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

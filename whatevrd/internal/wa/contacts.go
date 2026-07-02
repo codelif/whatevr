@@ -91,7 +91,7 @@ func (c *Client) EnsureDirectChat(ctx context.Context, jidStr string) (appstore.
 		return appstore.Chat{}, err
 	}
 
-	c.refreshAvatarIfDue(ctx, appstore.AvatarSubject{Kind: appstore.AvatarSubjectChat, ID: chatID})
+	c.refreshAvatarIfDue(ctx, appstore.AvatarSubject{Kind: appstore.AvatarSubjectChat, ID: chatID}, avatarPriorityVisible)
 	if chat.ID != "" {
 		c.daemon.PublishChatUpdated(toDaemonChat(chat))
 	}
@@ -208,7 +208,7 @@ func (c *Client) GetGroupInfo(ctx context.Context, chatID string) (app.GroupInfo
 		out.Subject = chat.Name
 		out.AvatarLocalPath = chat.AvatarLocalPath
 	}
-	c.refreshAvatarIfDue(ctx, appstore.AvatarSubject{Kind: appstore.AvatarSubjectChat, ID: chatJID.String()})
+	c.refreshAvatarIfDue(ctx, appstore.AvatarSubject{Kind: appstore.AvatarSubjectChat, ID: chatJID.String()}, avatarPriorityVisible)
 
 	// Members from stored participants resolve without a network call, so the
 	// card opens instantly. The live subject/description/roles/creation time

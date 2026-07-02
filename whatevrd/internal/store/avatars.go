@@ -106,6 +106,26 @@ func (db *DB) ListChatAvatarSubjects(ctx context.Context, limit int) ([]AvatarSu
 	return subjects, rows.Err()
 }
 
+// ListAvatarLocalPaths returns every non-empty local_path referenced by an
+// avatar row; used by the orphan-file sweep.
+func (db *DB) ListAvatarLocalPaths(ctx context.Context) ([]string, error) {
+	rows, err := db.reader().QueryContext(ctx, `SELECT DISTINCT local_path FROM avatars WHERE local_path != ''`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var paths []string
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return nil, err
+		}
+		paths = append(paths, path)
+	}
+	return paths, rows.Err()
+}
+
 func (db *DB) UpdateAvatarAvailable(ctx context.Context, subject AvatarSubject, fetchJID, picID, localPath string, nextCheck time.Time) (Avatar, error) {
 	now := time.Now().Unix()
 	_, err := db.conn.ExecContext(ctx, `

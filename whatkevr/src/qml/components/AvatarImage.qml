@@ -11,9 +11,14 @@ Item {
     property color backgroundColor: Qt.alpha(activePalette.highlight, 0.14)
     property color foregroundColor: activePalette.highlight
     readonly property string avatarSource: avatarLocalPath.length > 0 ? "file://" + avatarLocalPath : ""
-    readonly property bool hasUsableAvatar: avatarLocalPath.length > 0
+    readonly property bool avatarBroken: statusProbe.status === Image.Error
+    readonly property bool hasUsableAvatar: avatarLocalPath.length > 0 && !avatarBroken
     readonly property bool initialsAreAlphabetic: /^[A-Za-z]+$/.test(initials)
     readonly property bool showInitials: !hasUsableAvatar && initialsAreAlphabetic
+
+    // Emitted when the avatar file could not be loaded (e.g. a stale path
+    // whose file the daemon pruned); consumers may re-request the avatar.
+    signal avatarUnavailable()
 
     implicitWidth: Kirigami.Units.gridUnit * 2.45
     implicitHeight: implicitWidth
@@ -49,6 +54,26 @@ Item {
         cache: true
         sourceSize.width: decodeSize
         sourceSize.height: decodeSize
+    }
+
+    Image {
+        // KirigamiAddons.Avatar doesn't expose its internal Image status, and
+        // with AlwaysShowImage a missing or unreadable file renders as an
+        // empty circle. This invisible probe shares the avatar's pixmap-cache
+        // entry (same source and sourceSize) and flips the component to the
+        // initials fallback when the file can't load.
+        id: statusProbe
+        visible: false
+        source: root.avatarSource
+        asynchronous: true
+        cache: true
+        sourceSize.width: avatarImage.decodeSize
+        sourceSize.height: avatarImage.decodeSize
+        onStatusChanged: {
+            if (status === Image.Error) {
+                root.avatarUnavailable();
+            }
+        }
     }
 
     Label {

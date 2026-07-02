@@ -10,7 +10,7 @@ import (
 	"github.com/mattn/go-sqlite3"
 )
 
-const schemaVersion = 5
+const schemaVersion = 6
 const SQLiteDriverName = "whatevrd-sqlite"
 
 // SQLiteReadDriverName backs the read-only connection pool. Its ConnectHook
@@ -215,7 +215,8 @@ func (db *DB) migrate(ctx context.Context) error {
 			pinned_order INTEGER NOT NULL DEFAULT 0,
 			is_archived INTEGER NOT NULL DEFAULT 0,
 			is_muted INTEGER NOT NULL DEFAULT 0,
-			mute_end_timestamp INTEGER NOT NULL DEFAULT 0
+			mute_end_timestamp INTEGER NOT NULL DEFAULT 0,
+			history_exhausted INTEGER NOT NULL DEFAULT 0
 		)`,
 		`CREATE TABLE IF NOT EXISTS messages (
 			id TEXT PRIMARY KEY,
@@ -312,6 +313,15 @@ func (db *DB) migrate(ctx context.Context) error {
 	}
 	if err := db.ensureAvatarTable(ctx); err != nil {
 		return err
+	}
+	if version < 6 {
+		// v6: repair avatar rows poisoned by the old nil-info bug (a fetch
+		// that never downloaded anything was cached as "available" for a full
+		// TTL). Forcing next_check_at to 0 costs one cheap ExistingID
+		// re-verification per row under the new TTL rules.
+		if _, err := db.conn.ExecContext(ctx, `UPDATE avatars SET next_check_at = 0 WHERE status = ''`); err != nil {
+			return err
+		}
 	}
 
 	if err := db.ensureChatSummaryColumns(ctx); err != nil {
@@ -660,6 +670,7 @@ func (db *DB) ensureChatPinColumns(ctx context.Context) error {
 		{"is_archived", `ALTER TABLE chats ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0`},
 		{"is_muted", `ALTER TABLE chats ADD COLUMN is_muted INTEGER NOT NULL DEFAULT 0`},
 		{"mute_end_timestamp", `ALTER TABLE chats ADD COLUMN mute_end_timestamp INTEGER NOT NULL DEFAULT 0`},
+		{"history_exhausted", `ALTER TABLE chats ADD COLUMN history_exhausted INTEGER NOT NULL DEFAULT 0`},
 	}
 	for _, a := range alterations {
 		if existing[a.col] {

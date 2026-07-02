@@ -10,6 +10,7 @@
 #include <QImage>
 #include <QLocalSocket>
 #include <QMimeData>
+#include <QPixmapCache>
 #include <QProcess>
 #include <QQmlEngine>
 #include <QLocale>
@@ -47,7 +48,11 @@
 
 using whatevr::v1::ChatUpdated;
 using whatevr::v1::AvatarSubjectKindGadget::AvatarSubjectKind;
+using whatevr::v1::AvatarPriorityGadget::AvatarPriority;
+using whatevr::v1::AvatarRef;
 using whatevr::v1::AvatarUpdated;
+using whatevr::v1::RequestAvatarsRequest;
+using whatevr::v1::RequestAvatarsResponse;
 using whatevr::v1::ChatPresenceChanged;
 using whatevr::v1::ConnectionChanged;
 using whatevr::v1::DaemonStateGadget::DaemonState;
@@ -55,6 +60,8 @@ using whatevr::v1::GetStatusRequest;
 using whatevr::v1::GetStatusResponse;
 using whatevr::v1::GetMessagesRequest;
 using whatevr::v1::GetMessagesResponse;
+using whatevr::v1::RequestOlderMessagesRequest;
+using whatevr::v1::RequestOlderMessagesResponse;
 using whatevr::v1::HistorySyncProgress;
 using whatevr::v1::ListChatsRequest;
 using whatevr::v1::ListChatsResponse;
@@ -328,6 +335,10 @@ int historySyncPhaseRank(HistorySyncPhase phase)
         return 3;
     case HistorySyncPhase::HISTORY_SYNC_PHASE_COMPLETE:
         return 4;
+    case HistorySyncPhase::HISTORY_SYNC_PHASE_STALLED:
+        // Never displaces a live phase; applyHistorySyncProgress handles
+        // stalls before the cursor comparisons anyway.
+        return 0;
     }
     return 3;
 }
@@ -365,8 +376,6 @@ QString syncTypeLabel(HistorySyncType type)
         return i18nc("@label", "Syncing background data");
     case HistorySyncType::HISTORY_SYNC_TYPE_ON_DEMAND:
         return i18nc("@label", "Loading requested history");
-    case HistorySyncType::HISTORY_SYNC_TYPE_PROFILE_PICTURE:
-        return i18nc("@label", "Syncing profile pictures");
     case HistorySyncType::HISTORY_SYNC_TYPE_OFFLINE_CATCHUP:
         return i18nc("@label", "Syncing missed messages");
     case HistorySyncType::HISTORY_SYNC_TYPE_UNSPECIFIED:
@@ -470,6 +479,35 @@ AppController::AppController(QObject *parent)
     m_markChatReadTimer->setSingleShot(true);
     m_markChatReadTimer->setInterval(120);
     connect(m_markChatReadTimer, &QTimer::timeout, this, &AppController::sendSelectedChatReadIfActive);
+
+    // One coalesced chat-list refresh when history sync finishes (each sync
+    // type reports its own completion; refetching per type is wasted work).
+    m_syncCompleteRefreshTimer = new QTimer(this);
+    m_syncCompleteRefreshTimer->setSingleShot(true);
+    m_syncCompleteRefreshTimer->setInterval(1000);
+    connect(m_syncCompleteRefreshTimer, &QTimer::timeout, this, [this]() {
+        requestChats();
+    });
+
+    // The phone answers an on-demand history request via events, not the RPC
+    // reply; if it is offline nothing ever arrives, so time the spinner out
+    // and let the user retry.
+    m_phoneHistoryTimeoutTimer = new QTimer(this);
+    m_phoneHistoryTimeoutTimer->setSingleShot(true);
+    m_phoneHistoryTimeoutTimer->setInterval(45000);
+    connect(m_phoneHistoryTimeoutTimer, &QTimer::timeout, this, [this]() {
+        if (clearPhoneHistoryRequest()) {
+            Q_EMIT messagesChanged();
+        }
+    });
+
+    // Chat-list delegates report the avatars they need as they instantiate;
+    // batch those into one RequestAvatars call per settle instead of a gRPC
+    // round-trip per row.
+    m_avatarRequestTimer = new QTimer(this);
+    m_avatarRequestTimer->setSingleShot(true);
+    m_avatarRequestTimer->setInterval(150);
+    connect(m_avatarRequestTimer, &QTimer::timeout, this, &AppController::flushAvatarRequests);
 
     connect(qGuiApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
         updateFrontendSessionState();
@@ -792,6 +830,16 @@ bool AppController::canLoadOlderMessages() const
     return m_canLoadOlderMessages;
 }
 
+bool AppController::selectedChatHistoryExhausted() const
+{
+    return m_selectedChatHistoryExhausted;
+}
+
+bool AppController::phoneHistoryRequesting() const
+{
+    return m_phoneHistoryRequesting;
+}
+
 bool AppController::messagesEmpty() const
 {
     return m_messageListModel->isEmpty();
@@ -1067,6 +1115,7 @@ void AppController::selectChat(const QString &chatId)
     m_canLoadOlderMessages = false;
     m_olderMessagesLoadingChatId.clear();
     m_olderMessagesReply.reset();
+    clearPhoneHistoryRequest();
     m_jumpToMessageChatId.clear();
     m_jumpToMessageId.clear();
     m_jumpToMessageReply.reset();
@@ -1526,8 +1575,12 @@ void AppController::logout()
         m_messagesLoading = false;
         m_olderMessagesLoading = false;
         m_canLoadOlderMessages = false;
+        m_chatListModel->clearDrafts();
         m_chatListModel->replaceChats({});
         m_messageListModel->clear();
+        m_starredMessagesModel->clear();
+        m_pinnedMessagesModel->clear();
+        m_searchResultsModel->clear();
         m_displayedMessagesChatId.clear();
         m_messageCache.clear();
         m_messageCacheOrder.clear();
@@ -1537,11 +1590,35 @@ void AppController::logout()
         m_mediaDownloadReplies.clear();
         m_messageErrorText.clear();
         m_composerErrorText.clear();
+        m_currentUserName.clear();
+        m_currentUserAvatarPath.clear();
+        m_currentUserStatusText.clear();
+        m_currentUserJid.clear();
+        m_privacySettings.clear();
+        m_blockedContacts.clear();
+        m_searchQuery.clear();
+        m_chatSearchQuery.clear();
+        m_chatSearchMatchIds.clear();
+        m_chatSearchIndex = -1;
+        m_chatSearchActive = false;
+        m_requestedAvatarChatIds.clear();
+        m_pendingAvatarChatIds.clear();
+        m_avatarRequestTimer->stop();
+        m_requestAvatarsReply.reset();
+        // Old avatar/media paths never recur (files are wiped daemon-side and
+        // avatar filenames are content-addressed), but drop decoded pixmaps so
+        // a logout in a long-lived process also releases the memory.
+        QPixmapCache::clear();
         Q_EMIT selectionChanged();
         Q_EMIT chatsChanged();
         Q_EMIT messagesChanged();
         Q_EMIT composerChanged();
         Q_EMIT historySyncChanged();
+        Q_EMIT currentUserChanged();
+        Q_EMIT privacySettingsChanged();
+        Q_EMIT blockedContactsChanged();
+        Q_EMIT searchChanged();
+        Q_EMIT chatSearchChanged();
         for (const auto &id : downloadingIds) {
             Q_EMIT mediaDownloadChanged(id);
         }
@@ -2956,6 +3033,60 @@ void AppController::requestOlderMessages()
     });
 }
 
+bool AppController::clearPhoneHistoryRequest()
+{
+    const bool hadState = m_phoneHistoryRequesting || m_phoneHistoryReply || !m_phoneHistoryRequestChatId.isEmpty();
+    m_phoneHistoryRequesting = false;
+    m_phoneHistoryRequestChatId.clear();
+    m_phoneHistoryReply.reset();
+    if (m_phoneHistoryTimeoutTimer) {
+        m_phoneHistoryTimeoutTimer->stop();
+    }
+    return hadState;
+}
+
+void AppController::requestOlderMessagesFromPhone()
+{
+    if (!m_chatClient || m_selectedChatId.isEmpty() || m_phoneHistoryRequesting
+        || m_selectedChatHistoryExhausted) {
+        return;
+    }
+
+    RequestOlderMessagesRequest request;
+    request.setChatId(m_selectedChatId);
+
+    m_phoneHistoryRequesting = true;
+    m_phoneHistoryRequestChatId = m_selectedChatId;
+    m_phoneHistoryTimeoutTimer->start();
+    Q_EMIT messagesChanged();
+
+    m_phoneHistoryReply = m_chatClient->RequestOlderMessages(request);
+    auto *reply = m_phoneHistoryReply.get();
+    if (!reply) {
+        clearPhoneHistoryRequest();
+        Q_EMIT messagesChanged();
+        return;
+    }
+    const QString chatId = m_selectedChatId;
+
+    connect(reply, &QGrpcCallReply::finished, this, [this, reply, chatId](const QGrpcStatus &status) {
+        if (m_phoneHistoryReply.get() != reply) {
+            return;
+        }
+
+        // The RPC only confirms the request went out; backfilled messages
+        // arrive later as HistoryBackfilled / ChatUpdated events. Keep the
+        // spinner while requested, drop it when nothing was asked.
+        const auto response = reply->read<RequestOlderMessagesResponse>();
+        m_phoneHistoryReply.reset();
+        if (!status.isOk() || !response || !response->requested()) {
+            if (clearPhoneHistoryRequest()) {
+                Q_EMIT messagesChanged();
+            }
+        }
+    });
+}
+
 void AppController::requestSelectedChatReadIfActive()
 {
     if (!m_chatClient || m_selectedChatId.isEmpty() || QGuiApplication::applicationState() != Qt::ApplicationActive) {
@@ -3668,6 +3799,14 @@ void AppController::applyChatUpdated(const ChatUpdated &update)
     m_chatListModel->upsertChat(update.chat(), update.previousChatId());
     updateSelectedChatData();
 
+    // A chat flipping to history-exhausted answers any pending phone-history
+    // request for it ("nothing older exists").
+    if (m_phoneHistoryRequesting && update.chat().historyExhausted()
+        && update.chat().id_proto() == m_phoneHistoryRequestChatId) {
+        clearPhoneHistoryRequest();
+        Q_EMIT messagesChanged();
+    }
+
     Q_EMIT chatsChanged();
     Q_EMIT selectionChanged();
 }
@@ -3677,8 +3816,83 @@ void AppController::applyAvatarUpdated(const AvatarUpdated &update)
     if (!update.hasAvatar()) {
         return;
     }
+    applyAvatar(update.avatar());
+}
 
-    const auto &avatar = update.avatar();
+// requestChatAvatar is called by chat-list delegates (and pickers reusing the
+// model) as rows without a cached avatar become visible. Requests are deduped
+// per session and coalesced into batched RequestAvatars calls; results stream
+// back through AvatarUpdated events and the batch response.
+void AppController::requestChatAvatar(const QString &chatId, bool force)
+{
+    const QString id = chatId.trimmed();
+    if (id.isEmpty()) {
+        return;
+    }
+    if (!force && m_requestedAvatarChatIds.contains(id)) {
+        return;
+    }
+    m_requestedAvatarChatIds.insert(id);
+    m_pendingAvatarChatIds.insert(id);
+    if (!m_avatarRequestTimer->isActive()) {
+        m_avatarRequestTimer->start();
+    }
+}
+
+void AppController::flushAvatarRequests()
+{
+    if (!m_chatClient || m_pendingAvatarChatIds.isEmpty()) {
+        return;
+    }
+    if (m_requestAvatarsReply) {
+        // A batch is in flight; re-arm so the remainder flushes after it.
+        m_avatarRequestTimer->start();
+        return;
+    }
+
+    constexpr int kMaxAvatarRefsPerRequest = 200;
+    QList<AvatarRef> refs;
+    for (auto it = m_pendingAvatarChatIds.begin(); it != m_pendingAvatarChatIds.end() && refs.size() < kMaxAvatarRefsPerRequest;) {
+        AvatarRef ref;
+        ref.setKind(AvatarSubjectKind::AVATAR_SUBJECT_KIND_CHAT);
+        ref.setId_proto(*it);
+        refs.append(ref);
+        it = m_pendingAvatarChatIds.erase(it);
+    }
+    RequestAvatarsRequest request;
+    request.setRefs(refs);
+    request.setPriority(AvatarPriority::AVATAR_PRIORITY_VISIBLE);
+
+    auto reply = m_chatClient->RequestAvatars(request);
+    auto *replyPtr = reply.get();
+    m_requestAvatarsReply = std::move(reply);
+    connect(replyPtr, &QGrpcCallReply::finished, this, [this, replyPtr](const QGrpcStatus &status) {
+        if (m_requestAvatarsReply.get() != replyPtr) {
+            return;
+        }
+        const auto reply = std::move(m_requestAvatarsReply);
+        if (!m_pendingAvatarChatIds.isEmpty()) {
+            m_avatarRequestTimer->start();
+        }
+        if (!status.isOk()) {
+            return;
+        }
+        const auto response = reply->read<RequestAvatarsResponse>();
+        if (!response) {
+            return;
+        }
+        for (const auto &avatar : response->avatars()) {
+            // Cached paths paint immediately; refs still fetching update
+            // later via AvatarUpdated events.
+            if (!avatar.localPath().isEmpty()) {
+                applyAvatar(avatar);
+            }
+        }
+    });
+}
+
+void AppController::applyAvatar(const whatevr::v1::Avatar &avatar)
+{
     const QString &id = avatar.id_proto();
     const QString &localPath = avatar.localPath();
     if (id.isEmpty()) {
@@ -4046,12 +4260,38 @@ bool AppController::resetHistorySyncDisplay(int percent)
 
 void AppController::applyHistorySyncProgress(const HistorySyncProgress &progress)
 {
+    // On-demand (per-chat) history responses never drive the sync strip; the
+    // message list shows its own loading state for them.
+    if (progress.syncType() == whatevr::v1::HistorySyncTypeGadget::HistorySyncType::HISTORY_SYNC_TYPE_ON_DEMAND) {
+        return;
+    }
+
+    // The phone went quiet mid-sync. Keep the strip visible as an honest
+    // "paused" notice, but drop the active cursor so a resumed chunk takes
+    // over the display immediately.
+    if (progress.phase() == whatevr::v1::HistorySyncPhaseGadget::HistorySyncPhase::HISTORY_SYNC_PHASE_STALLED) {
+        if (!m_historySyncVisible) {
+            return;
+        }
+        m_historySyncCursorActive = false;
+        m_historySyncCursorSyncType = progress.syncType();
+        m_historySyncCursorChunkOrder = progress.chunkOrder();
+        m_historySyncCursorPhase = progress.phase();
+        m_historySyncDetail = i18nc("@info", "Sync paused — open WhatsApp on your phone to continue");
+        Q_EMIT historySyncChanged();
+        return;
+    }
+
     if (progress.isComplete()) {
         if (shouldCompleteHistorySyncDisplay(progress)) {
             resetHistorySyncDisplay(100);
             Q_EMIT historySyncChanged();
         }
-        requestChats();
+        // The live ChatUpdated stream keeps the model current during sync;
+        // one debounced refresh reconciles anything the daemon's bounded
+        // event buffer may have dropped. Sync types complete independently,
+        // so coalesce instead of refetching per type.
+        m_syncCompleteRefreshTimer->start();
         return;
     }
 
@@ -4069,9 +4309,7 @@ void AppController::applyHistorySyncProgress(const HistorySyncProgress &progress
     m_historySyncPercent = wasVisible ? qMax(m_historySyncPercent, progressPercent) : progressPercent;
     m_historySyncTitle = syncTypeLabel(progress.syncType());
 
-    if (progress.syncType() == whatevr::v1::HistorySyncTypeGadget::HistorySyncType::HISTORY_SYNC_TYPE_PROFILE_PICTURE) {
-        m_historySyncDetail = i18nc("@info", "%1 of %2 profile pictures", progress.conversationsInChunk(), progress.messagesInChunk());
-    } else if (progress.syncType() == whatevr::v1::HistorySyncTypeGadget::HistorySyncType::HISTORY_SYNC_TYPE_OFFLINE_CATCHUP) {
+    if (progress.syncType() == whatevr::v1::HistorySyncTypeGadget::HistorySyncType::HISTORY_SYNC_TYPE_OFFLINE_CATCHUP) {
         const QString messagesText = progress.messagesInChunk() > 0
             ? i18nc("@info", "%1/%2 messages", progress.processedMessages(), progress.messagesInChunk())
             : i18ncp("@info", "%1 message", "%1 messages", progress.processedMessages());
@@ -4118,6 +4356,22 @@ void AppController::applyHistoryBackfilled(const whatevr::v1::HistoryBackfilled 
     const QString chatId = backfilled.chatId().trimmed();
     if (chatId.isEmpty()) {
         return;
+    }
+
+    // Backfilled history answers a pending phone-history request for the chat.
+    if (m_phoneHistoryRequesting && chatId == m_phoneHistoryRequestChatId) {
+        const bool wasSelected = m_selectedChatId == chatId;
+        clearPhoneHistoryRequest();
+        if (wasSelected && !m_messagesLoading) {
+            // The backfilled messages are older than everything loaded, so a
+            // newest-page reload would never show them; append them through
+            // the normal local pagination instead.
+            m_canLoadOlderMessages = true;
+            Q_EMIT messagesChanged();
+            requestOlderMessages();
+            return;
+        }
+        Q_EMIT messagesChanged();
     }
 
     if (m_selectedChatId == chatId) {
@@ -4238,6 +4492,7 @@ void AppController::updateSelectedChatData()
         m_selectedChatAvailability = 0;
         m_selectedChatLastSeenUnix = 0;
         m_selectedChatUnreadCount = 0;
+        m_selectedChatHistoryExhausted = false;
         return;
     }
 
@@ -4245,6 +4500,7 @@ void AppController::updateSelectedChatData()
     m_selectedChatAvatarLocalPath = m_chatListModel->chatAvatarLocalPath(m_selectedChatId);
     m_selectedChatIsGroup = m_chatListModel->chatIsGroup(m_selectedChatId);
     m_selectedChatUnreadCount = m_chatListModel->chatUnreadCount(m_selectedChatId);
+    m_selectedChatHistoryExhausted = m_chatListModel->chatHistoryExhausted(m_selectedChatId);
     m_messageListModel->setGroupChat(m_selectedChatIsGroup);
 }
 
