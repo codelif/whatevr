@@ -780,6 +780,30 @@ func (db *DB) ListMessages(ctx context.Context, chatID string, limit int, before
 	return messages, nil
 }
 
+// OldestStoredMessage returns the chat's oldest stored message with only the
+// fields an on-demand history request needs (id, sender, direction,
+// timestamp); ok=false when the chat has no messages.
+func (db *DB) OldestStoredMessage(ctx context.Context, chatID string) (Message, bool, error) {
+	if chatID == "" {
+		return Message{}, false, nil
+	}
+	var msg Message
+	err := db.reader().QueryRowContext(ctx, `
+		SELECT id, chat_id, sender_id, direction, timestamp
+		FROM messages
+		WHERE chat_id = ?
+		ORDER BY timestamp ASC, rowid ASC
+		LIMIT 1
+	`, chatID).Scan(&msg.ID, &msg.ChatID, &msg.SenderID, &msg.Direction, &msg.TimestampUnix)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Message{}, false, nil
+	}
+	if err != nil {
+		return Message{}, false, err
+	}
+	return msg, true, nil
+}
+
 func (db *DB) ListMessagesAround(ctx context.Context, chatID string, limit int, targetMessageID string) ([]Message, error) {
 	if limit <= 0 {
 		limit = 50
@@ -1710,8 +1734,9 @@ func getChatRow(ctx context.Context, queryer interface {
 	var isPinned int
 	var isArchived int
 	var isMuted int
+	var historyExhausted int
 	err := queryer.QueryRowContext(ctx, `
-		SELECT c.id, c.name, c.name_source, c.last_message, c.last_message_time, c.last_message_direction, c.last_message_status, c.unread_count, c.is_group, c.is_pinned, c.pinned_order, c.updated_at, c.is_archived, c.is_muted, c.mute_end_timestamp,
+		SELECT c.id, c.name, c.name_source, c.last_message, c.last_message_time, c.last_message_direction, c.last_message_status, c.unread_count, c.is_group, c.is_pinned, c.pinned_order, c.updated_at, c.is_archived, c.is_muted, c.mute_end_timestamp, c.history_exhausted,
 		       COALESCE(NULLIF(a.local_path, ''), c.avatar_local_path), COALESCE(NULLIF(a.picture_id, ''), c.avatar_picture_id), COALESCE(NULLIF(a.status, ''), c.avatar_status), COALESCE(NULLIF(a.checked_at, 0), c.avatar_checked_at)
 		FROM chats c
 		LEFT JOIN avatars a ON a.subject_kind = 'chat' AND a.subject_id = c.id
@@ -1732,6 +1757,7 @@ func getChatRow(ctx context.Context, queryer interface {
 		&isArchived,
 		&isMuted,
 		&chat.MuteEndTimestamp,
+		&historyExhausted,
 		&chat.AvatarLocalPath,
 		&chat.AvatarPictureID,
 		&chat.AvatarStatus,
@@ -1741,6 +1767,7 @@ func getChatRow(ctx context.Context, queryer interface {
 	chat.IsPinned = isPinned != 0
 	chat.IsArchived = isArchived != 0
 	chat.IsMuted = isMuted != 0
+	chat.HistoryExhausted = historyExhausted != 0
 	return chat, err
 }
 
@@ -1834,6 +1861,7 @@ func scanChat(scanner interface{ Scan(...any) error }) (Chat, error) {
 	var isPinned int
 	var isArchived int
 	var isMuted int
+	var historyExhausted int
 	err := scanner.Scan(
 		&chat.ID,
 		&chat.Name,
@@ -1850,6 +1878,7 @@ func scanChat(scanner interface{ Scan(...any) error }) (Chat, error) {
 		&isArchived,
 		&isMuted,
 		&chat.MuteEndTimestamp,
+		&historyExhausted,
 		&chat.AvatarLocalPath,
 		&chat.AvatarPictureID,
 		&chat.AvatarStatus,
@@ -1859,6 +1888,7 @@ func scanChat(scanner interface{ Scan(...any) error }) (Chat, error) {
 	chat.IsPinned = isPinned != 0
 	chat.IsArchived = isArchived != 0
 	chat.IsMuted = isMuted != 0
+	chat.HistoryExhausted = historyExhausted != 0
 	return chat, err
 }
 

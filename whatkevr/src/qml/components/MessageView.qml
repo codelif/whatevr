@@ -16,6 +16,11 @@ Item {
     property bool loadingOlderMessages: false
     property bool showLoadingOlderMessages: false
     property bool canLoadOlderMessages: false
+    // On-demand history from the phone: shown at the visual top once the
+    // daemon's local history is fully loaded. historyExhausted means the
+    // phone already answered "nothing older exists".
+    property bool historyExhausted: false
+    property bool phoneHistoryRequesting: false
 
     // The list is inverted (newest at index 0, rendered bottom-to-top). Loading
     // older history therefore appends at the *end* of the model, which can never
@@ -93,6 +98,7 @@ Item {
     property bool unreadAnchorPositioned: false
 
     signal loadOlderMessagesRequested()
+    signal loadPhoneHistoryRequested()
     signal conversationFocusRequested()
     signal typeIntoComposerRequested(string text)
     signal replyToMessageRequested(string messageId, string senderName, string text, string mediaKind, string mediaMimeType, bool outgoing)
@@ -877,6 +883,64 @@ Item {
 
         // Newest at the bottom; older history stacks upward off the top edge.
         verticalLayoutDirection: ListView.BottomToTop
+
+        // In a BottomToTop list the footer sits above the oldest message —
+        // the visual top. Once the daemon's local history is fully loaded it
+        // offers pulling older messages from the phone (on-demand sync), or
+        // states that nothing older exists there.
+        footer: Item {
+            width: list.width
+            height: phoneHistoryColumn.visible
+                    ? phoneHistoryColumn.implicitHeight + Kirigami.Units.largeSpacing * 2
+                    : 0
+
+            Column {
+                id: phoneHistoryColumn
+
+                anchors.centerIn: parent
+                spacing: Kirigami.Units.smallSpacing
+                visible: list.count > 0 && !root.canLoadOlderMessages && !root.openingChat
+
+                Label {
+                    visible: root.historyExhausted
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: Math.min(implicitWidth, list.width - Kirigami.Units.gridUnit * 4)
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.WordWrap
+                    text: Whatevr.I18n.i18nc("@info", "Messages older than these are only available on your phone")
+                    font.pointSize: Kirigami.Theme.smallFont.pointSize
+                    color: Kirigami.Theme.disabledTextColor
+                }
+
+                Row {
+                    visible: !root.historyExhausted && root.phoneHistoryRequesting
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    spacing: Kirigami.Units.smallSpacing
+
+                    BusyIndicator {
+                        anchors.verticalCenter: parent.verticalCenter
+                        running: visible
+                        implicitWidth: Kirigami.Units.iconSizes.smallMedium
+                        implicitHeight: implicitWidth
+                    }
+
+                    Label {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: Whatevr.I18n.i18nc("@info", "Requesting older messages from your phone…")
+                        font.pointSize: Kirigami.Theme.smallFont.pointSize
+                        color: Kirigami.Theme.disabledTextColor
+                    }
+                }
+
+                ToolButton {
+                    visible: !root.historyExhausted && !root.phoneHistoryRequesting
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: Whatevr.I18n.i18nc("@action:button", "Load older messages from phone")
+                    icon.name: "cloud-download-symbolic"
+                    onClicked: root.loadPhoneHistoryRequested()
+                }
+            }
+        }
 
         // Inter-message gap follows the appearance density setting (live):
         // compact tightens it, comfortable opens it up.
