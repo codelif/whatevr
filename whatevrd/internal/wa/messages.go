@@ -78,14 +78,13 @@ func (c *Client) processHistorySyncData(ctx context.Context, data *waHistorySync
 	syncType := historySyncType(data.GetSyncType())
 	progressPercent := data.GetProgress()
 	chunkOrder := data.GetChunkOrder()
-	c.markHistorySyncAvatarDeferralActive(syncType)
 	conversations := data.GetConversations()
 	totalMessages := uint32(0)
 	for _, conv := range conversations {
 		totalMessages += uint32(len(conv.GetMessages()))
 	}
 
-	c.daemon.PublishHistorySyncProgress(app.HistorySyncEvent{
+	initialEvt := app.HistorySyncEvent{
 		SyncType:             syncType,
 		ProgressPercent:      progressPercent,
 		ChunkOrder:           chunkOrder,
@@ -93,7 +92,9 @@ func (c *Client) processHistorySyncData(ctx context.Context, data *waHistorySync
 		MessagesInChunk:      totalMessages,
 		IsComplete:           false,
 		Phase:                app.HistorySyncPhaseProcessing,
-	})
+	}
+	c.noteHistorySyncActivity(initialEvt)
+	c.daemon.PublishHistorySyncProgress(initialEvt)
 	processedConversations := uint32(0)
 	processedMessages := uint32(0)
 	lastProgressPublish := time.Now()
@@ -102,7 +103,7 @@ func (c *Client) processHistorySyncData(ctx context.Context, data *waHistorySync
 			return
 		}
 		lastProgressPublish = time.Now()
-		c.daemon.PublishHistorySyncProgress(app.HistorySyncEvent{
+		evt := app.HistorySyncEvent{
 			SyncType:               syncType,
 			ProgressPercent:        progressPercent,
 			ChunkOrder:             chunkOrder,
@@ -112,7 +113,16 @@ func (c *Client) processHistorySyncData(ctx context.Context, data *waHistorySync
 			Phase:                  app.HistorySyncPhaseProcessing,
 			ProcessedConversations: processedConversations,
 			ProcessedMessages:      processedMessages,
-		})
+		}
+		c.noteHistorySyncActivity(evt)
+		c.daemon.PublishHistorySyncProgress(evt)
+	}
+
+	// On-demand responses resolve their originating backfill request by
+	// comparing how many messages the phone returned per chat (backfill.go).
+	var onDemandCounts map[string]int
+	if syncType == app.HistorySyncTypeOnDemand {
+		onDemandCounts = make(map[string]int, len(conversations))
 	}
 
 	for _, conv := range conversations {
@@ -134,6 +144,9 @@ func (c *Client) processHistorySyncData(ctx context.Context, data *waHistorySync
 			chatNameOverride, chatNameSource = c.displayNameForChat(ctx, chatJID, false, "", "")
 		}
 		chatID := chatJID.String()
+		if onDemandCounts != nil {
+			onDemandCounts[chatID] += len(conv.GetMessages())
+		}
 		if _, err := c.store.EnsureChatWithNameSource(ctx, chatID, chatNameOverride, chatNameSource, chatJID.Server == types.GroupServer); err != nil {
 			if ctx.Err() != nil {
 				return
@@ -280,8 +293,12 @@ func (c *Client) processHistorySyncData(ctx context.Context, data *waHistorySync
 		return
 	}
 
+	if onDemandCounts != nil {
+		c.resolveBackfillRequests(ctx, onDemandCounts)
+	}
+
 	complete := historySyncIsComplete(syncType, progressPercent)
-	c.daemon.PublishHistorySyncProgress(app.HistorySyncEvent{
+	finalEvt := app.HistorySyncEvent{
 		SyncType:               syncType,
 		ProgressPercent:        progressPercent,
 		ChunkOrder:             chunkOrder,
@@ -291,9 +308,21 @@ func (c *Client) processHistorySyncData(ctx context.Context, data *waHistorySync
 		Phase:                  historySyncProgressPhase(complete),
 		ProcessedConversations: processedConversations,
 		ProcessedMessages:      processedMessages,
-	})
+	}
 	if complete {
-		c.finishHistorySyncAvatarDeferral(syncType, progressPercent)
+		c.clearHistorySyncStallWatch()
+	} else {
+		c.noteHistorySyncActivity(finalEvt)
+	}
+	c.daemon.PublishHistorySyncProgress(finalEvt)
+	if complete && historySyncTypeCarriesMessages(syncType) {
+		// The initial sync has settled: merge LID-duplicated chats, apply any
+		// app-state entries that were parked awaiting LID→PN mappings, and
+		// let the background refresher start filling in chat avatars.
+		go func() {
+			c.reconcileAfterHistorySync(ctx)
+			c.kickAvatarBackgroundRefresh()
+		}()
 	}
 }
 
@@ -464,13 +493,13 @@ func (c *Client) internalMessageIDFromInfo(ctx context.Context, info types.Messa
 }
 
 func (c *Client) refreshLiveMessageAvatars(ctx context.Context, evt *events.Message) {
-	if evt == nil || c.historySyncBlocksAvatarFetch() {
+	if evt == nil {
 		return
 	}
 	chatJID := c.normalizeJIDForChat(ctx, evt.Info.Chat)
-	c.refreshAvatarIfDue(ctx, appstore.AvatarSubject{Kind: appstore.AvatarSubjectChat, ID: bareAvatarJID(chatJID).String()})
+	c.refreshAvatarIfDue(ctx, appstore.AvatarSubject{Kind: appstore.AvatarSubjectChat, ID: bareAvatarJID(chatJID).String()}, avatarPriorityBackground)
 	if evt.Info.IsGroup && !evt.Info.Sender.IsEmpty() {
-		c.refreshAvatarIfDue(ctx, appstore.AvatarSubject{Kind: appstore.AvatarSubjectSender, ID: bareAvatarJID(evt.Info.Sender).String()})
+		c.refreshAvatarIfDue(ctx, appstore.AvatarSubject{Kind: appstore.AvatarSubjectSender, ID: bareAvatarJID(evt.Info.Sender).String()}, avatarPriorityBackground)
 	}
 }
 
@@ -511,7 +540,7 @@ func (c *Client) ingestMessage(ctx context.Context, evt *events.Message, opts in
 			c.clearComposingAfterLiveIncomingMessage(message)
 			if c.notifier != nil && c.shouldNotifyLiveMessage(message, chat, textInput.CountUnread) {
 				if opts, enabled := c.notificationOptions(); enabled {
-					c.notifier.NotifyMessage(ctx, message, chat, opts)
+					c.notifyWithAvatar(ctx, message, chat, opts)
 				}
 			}
 		}
@@ -552,7 +581,7 @@ func (c *Client) ingestMessage(ctx context.Context, evt *events.Message, opts in
 			c.clearComposingAfterLiveIncomingMessage(message)
 			if c.notifier != nil && c.shouldNotifyLiveMessage(message, chat, mediaInput.CountUnread) {
 				if opts, enabled := c.notificationOptions(); enabled {
-					c.notifier.NotifyMessage(ctx, message, chat, opts)
+					c.notifyWithAvatar(ctx, message, chat, opts)
 				}
 			}
 			// Media is no longer downloaded eagerly on receipt. The frontend
@@ -1411,6 +1440,7 @@ func toDaemonChat(chat appstore.Chat) app.Chat {
 		IsArchived:           chat.IsArchived,
 		IsMuted:              chat.IsMuted,
 		MuteEndTimestamp:     chat.MuteEndTimestamp,
+		HistoryExhausted:     chat.HistoryExhausted,
 		UpdatedAtUnix:        chat.UpdatedAt,
 		AvatarLocalPath:      chat.AvatarLocalPath,
 	}

@@ -633,7 +633,10 @@ Kirigami.Page {
                 model: Whatevr.AppController.messageListModel
                 loadingOlderMessages: Whatevr.AppController.olderMessagesLoading
                 canLoadOlderMessages: Whatevr.AppController.canLoadOlderMessages
+                historyExhausted: Whatevr.AppController.selectedChatHistoryExhausted
+                phoneHistoryRequesting: Whatevr.AppController.phoneHistoryRequesting
                 onLoadOlderMessagesRequested: Whatevr.AppController.loadOlderMessages()
+                onLoadPhoneHistoryRequested: Whatevr.AppController.requestOlderMessagesFromPhone()
                 onConversationFocusRequested: root.forceActiveFocus(Qt.MouseFocusReason)
                 onTypeIntoComposerRequested: text => root.typeIntoComposer(text)
                 onReplyToMessageRequested: (messageId, senderName, text, mediaKind, mediaMimeType, outgoing) => root.setReplyTarget(messageId, senderName, text, mediaKind, mediaMimeType, outgoing)
