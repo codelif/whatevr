@@ -36,6 +36,13 @@ type Client struct {
 	// full syncs so rapid pin toggles don't encode against stale state.
 	appStateMu sync.Mutex
 
+	// pendingAppState parks pin/archive/mute state for chats whose JID has no
+	// canonical chat yet (a LID without a PN mapping and without a chat row).
+	// Entries are re-applied by reconcilePendingAppState as LID→PN mappings
+	// land with history sync chunks; see pins.go.
+	pendingAppStateMu sync.Mutex
+	pendingAppState   map[types.JID]pendingAppStateEntry
+
 	lifecycleMu sync.Mutex
 	runMu       sync.Mutex
 	runCtx      context.Context
@@ -46,10 +53,17 @@ type Client struct {
 	frontendSessions map[string]frontendSession
 	lastPresence     types.Presence
 
-	avatarMu       sync.Mutex
-	avatarQueue    chan avatarJob
-	avatarQueued   map[appstore.AvatarSubject]bool
-	avatarDeferred map[appstore.AvatarSubject]avatarJob
+	// Two-priority avatar fetch queue (see avatars.go): visible subjects
+	// drain first, background ones pass through a token bucket.
+	avatarMu          sync.Mutex
+	avatarHigh        []avatarJob
+	avatarLow         []avatarJob
+	avatarQueued      map[appstore.AvatarSubject]avatarPriority
+	avatarWake        chan struct{}
+	avatarRefreshKick chan struct{}
+	avatarTokenMu     sync.Mutex
+	avatarTokens      float64
+	avatarTokensAt    time.Time
 
 	// Group member lists back the all-members receipt aggregation. The
 	// freshness map throttles GetGroupInfo fetches: a stale group is
@@ -71,14 +85,19 @@ type Client struct {
 	// Serializes sticker store index refreshes (cheap, but no point racing).
 	stickerIndexMu sync.Mutex
 
-	historySyncMu             sync.Mutex
-	historySyncRunning        bool
-	historySyncWake           bool
-	historySyncActive         bool
-	historySyncLastActivity   time.Time
-	historySyncIdleTimer      *time.Timer
-	profilePictureSyncActive  bool
-	profilePictureSyncRunning bool
+	historySyncMu      sync.Mutex
+	historySyncRunning bool
+	historySyncWake    bool
+	// Stall watchdog: armed while a message-carrying initial sync is below
+	// 100%. When the phone goes quiet past the timeout, the settle work runs
+	// early and a STALLED phase event is published; see history_sync.go.
+	historySyncStallTimer   *time.Timer
+	historySyncLastActivity time.Time
+	historySyncLastEvent    app.HistorySyncEvent
+
+	// In-flight on-demand history requests, keyed by chat ID; see backfill.go.
+	backfillMu       sync.Mutex
+	backfillInFlight map[string]*backfillRequest
 
 	offlineSyncMu                sync.Mutex
 	offlineSyncActive            bool
@@ -426,6 +445,9 @@ func (c *Client) migrateLIDChats(ctx context.Context) {
 			c.daemon.PublishChatMigrated(lidChatID, toDaemonChat(chat))
 		}
 	}
+
+	// Fresh mappings may also unblock app-state entries parked on LID JIDs.
+	c.reconcilePendingAppState(ctx, false)
 }
 
 func sqliteDSN(path string) string {

@@ -50,7 +50,7 @@ func (c *Client) handleEvent(eventGen uint64, raw any) {
 		c.syncPresence(ctx, true)
 		c.signalSendQueue()
 		c.signalHistorySyncWorker()
-		c.startPinnedChatBackfill(ctx)
+		c.startAppStateReconcile(ctx)
 		c.startUnresolvedGroupNameBackfill(ctx)
 		go c.migrateLIDChats(ctx)
 		go c.backfillAnimatedWebPFlags(c.backgroundContext())
@@ -187,7 +187,19 @@ func (c *Client) handlePinEvent(ctx context.Context, evt *events.Pin) {
 		return
 	}
 
-	chatJID := c.normalizeJIDForChat(ctx, evt.JID)
+	pinned := evt.Action.GetPinned()
+	order := uint32(0)
+	if pinned && !evt.Timestamp.IsZero() {
+		order = uint32(evt.Timestamp.Unix())
+	}
+
+	chatJID, resolved := c.resolveAppStateChatJID(ctx, evt.JID)
+	if !resolved {
+		c.parkPendingAppState(chatJID, func(e *pendingAppStateEntry) {
+			e.hasPin, e.pinned, e.pinOrder = true, pinned, order
+		})
+		return
+	}
 	chatID := chatJID.String()
 	name, nameSource := c.displayNameForChat(ctx, chatJID, false, "", "")
 	if chatJID.Server == types.GroupServer && nameSource == "" {
@@ -198,11 +210,6 @@ func (c *Client) handlePinEvent(ctx context.Context, evt *events.Pin) {
 		return
 	}
 
-	pinned := evt.Action.GetPinned()
-	order := uint32(0)
-	if pinned && !evt.Timestamp.IsZero() {
-		order = uint32(evt.Timestamp.Unix())
-	}
 	chat, changed, err := c.store.UpdateChatPinState(ctx, chatID, pinned, order)
 	if err != nil {
 		c.log.Warnf("Failed to update pinned state for %s: %v", chatID, err)
@@ -218,7 +225,14 @@ func (c *Client) handleArchiveEvent(ctx context.Context, evt *events.Archive) {
 		return
 	}
 
-	chatJID := c.normalizeJIDForChat(ctx, evt.JID)
+	chatJID, resolved := c.resolveAppStateChatJID(ctx, evt.JID)
+	if !resolved {
+		archived := evt.Action.GetArchived()
+		c.parkPendingAppState(chatJID, func(e *pendingAppStateEntry) {
+			e.hasArchive, e.archived = true, archived
+		})
+		return
+	}
 	chatID := chatJID.String()
 	name, nameSource := c.displayNameForChat(ctx, chatJID, false, "", "")
 	if chatJID.Server == types.GroupServer && nameSource == "" {
@@ -244,17 +258,6 @@ func (c *Client) handleMuteEvent(ctx context.Context, evt *events.Mute) {
 		return
 	}
 
-	chatJID := c.normalizeJIDForChat(ctx, evt.JID)
-	chatID := chatJID.String()
-	name, nameSource := c.displayNameForChat(ctx, chatJID, false, "", "")
-	if chatJID.Server == types.GroupServer && nameSource == "" {
-		nameSource = appstore.ChatNameSourceGroup
-	}
-	if _, err := c.store.EnsureChatWithNameSource(ctx, chatID, name, nameSource, chatJID.Server == types.GroupServer); err != nil {
-		c.log.Warnf("Failed to ensure muted chat %s: %v", chatID, err)
-		return
-	}
-
 	muted := evt.Action.GetMuted()
 	var muteEnd int64
 	if muted {
@@ -263,6 +266,23 @@ func (c *Client) handleMuteEvent(ctx context.Context, evt *events.Mute) {
 		if muteEnd == 0 {
 			muteEnd = -1
 		}
+	}
+
+	chatJID, resolved := c.resolveAppStateChatJID(ctx, evt.JID)
+	if !resolved {
+		c.parkPendingAppState(chatJID, func(e *pendingAppStateEntry) {
+			e.hasMute, e.muted, e.muteEnd = true, muted, muteEnd
+		})
+		return
+	}
+	chatID := chatJID.String()
+	name, nameSource := c.displayNameForChat(ctx, chatJID, false, "", "")
+	if chatJID.Server == types.GroupServer && nameSource == "" {
+		nameSource = appstore.ChatNameSourceGroup
+	}
+	if _, err := c.store.EnsureChatWithNameSource(ctx, chatID, name, nameSource, chatJID.Server == types.GroupServer); err != nil {
+		c.log.Warnf("Failed to ensure muted chat %s: %v", chatID, err)
+		return
 	}
 
 	chat, changed, err := c.store.UpdateChatMuteState(ctx, chatID, muted, muteEnd)
