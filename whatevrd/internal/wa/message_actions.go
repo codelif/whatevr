@@ -129,7 +129,7 @@ func (c *Client) participantDisplay(ctx context.Context, jid string) (string, st
 	}
 
 	for _, id := range ids {
-		c.refreshAvatarIfDue(ctx, appstore.AvatarSubject{Kind: appstore.AvatarSubjectSender, ID: id})
+		c.refreshAvatarIfDue(ctx, appstore.AvatarSubject{Kind: appstore.AvatarSubjectSender, ID: id}, avatarPriorityVisible)
 	}
 
 	if fallbackName == "" {
@@ -381,7 +381,7 @@ func (c *Client) ForwardMessage(ctx context.Context, sourceMessageID string, tar
 			c.log.Infof("Queued forwarded message %s to %s", result.Message.ID, chatID)
 			c.daemon.PublishNewMessage(toDaemonMessage(result.Message), toDaemonChat(result.Chat))
 		}
-		c.refreshAvatarIfDue(ctx, appstore.AvatarSubject{Kind: appstore.AvatarSubjectChat, ID: chatID})
+		c.refreshAvatarIfDue(ctx, appstore.AvatarSubject{Kind: appstore.AvatarSubjectChat, ID: chatID}, avatarPriorityVisible)
 		saved = append(saved, result)
 	}
 

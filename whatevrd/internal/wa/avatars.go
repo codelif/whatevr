@@ -2,6 +2,8 @@ package wa
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"net/http"
@@ -15,21 +17,44 @@ import (
 	"go.mau.fi/whatsmeow/types/events"
 
 	"whatevrd/internal/app"
+	"whatevrd/internal/notify"
 	appstore "whatevrd/internal/store"
 )
 
 const maxAvatarBytes = 5 * 1024 * 1024
 
 const (
-	availableAvatarTTL            = 24 * time.Hour
-	notSetAvatarTTL               = 24 * time.Hour
-	errorAvatarTTL                = 24 * time.Hour
-	avatarQueueSize               = 256
-	historySyncAvatarDeferralIdle = 45 * time.Second
-	// profilePictureSyncChatLimit bounds the eager post-history-sync avatar
-	// prefetch to the chats actually visible on the chat list. Everything else
-	// loads lazily on demand (chat open, paging older messages, live messages).
-	profilePictureSyncChatLimit = 100
+	// Available avatars are re-verified with a cheap ExistingID round trip;
+	// real changes arrive as events.Picture, so verification can be lazy.
+	availableAvatarTTL    = 7 * 24 * time.Hour
+	notSetAvatarTTL       = 24 * time.Hour
+	unauthorizedAvatarTTL = 7 * 24 * time.Hour
+	unresolvedAvatarTTL   = 24 * time.Hour
+	// Transient errors back off exponentially per retry_count instead of a
+	// flat day: min(1min * 2^retries, 1h).
+	avatarTransientErrorBase = time.Minute
+	avatarTransientErrorMax  = time.Hour
+
+	// Concurrent avatar fetches. Small on purpose: visible avatars should
+	// load promptly without crowding the socket that live traffic uses.
+	avatarWorkerCount = 2
+	// Background fetches pass through a token bucket so a fresh pair with a
+	// huge chat list can't hammer the server; visible fetches are unthrottled.
+	avatarBackgroundRatePerSec = 2.0
+	avatarBackgroundBurst      = 5.0
+	// Cap per queue; anything beyond this is dropped (callers re-request).
+	avatarQueueLimit = 2048
+)
+
+type avatarPriority int
+
+const (
+	// avatarPriorityVisible is for subjects that are on screen or about to
+	// be (open chat senders, info pages, RequestAvatars from the frontend).
+	avatarPriorityVisible avatarPriority = iota
+	// avatarPriorityBackground is opportunistic refresh (live messages in
+	// unopened chats, the periodic refresher); rate limited.
+	avatarPriorityBackground
 )
 
 type avatarJob struct {
@@ -38,32 +63,115 @@ type avatarJob struct {
 }
 
 func (c *Client) startAvatarWorker(ctx context.Context) {
-	if c.avatarQueue == nil {
-		c.avatarQueue = make(chan avatarJob, avatarQueueSize)
-		c.avatarQueued = make(map[appstore.AvatarSubject]bool)
-		c.avatarDeferred = make(map[appstore.AvatarSubject]avatarJob)
+	c.avatarMu.Lock()
+	if c.avatarQueued == nil {
+		c.avatarQueued = make(map[appstore.AvatarSubject]avatarPriority)
 	}
-	c.startRunGoroutine(func() { c.runAvatarWorker(ctx) })
+	if c.avatarWake == nil {
+		c.avatarWake = make(chan struct{}, 1)
+	}
+	if c.avatarRefreshKick == nil {
+		c.avatarRefreshKick = make(chan struct{}, 1)
+	}
+	c.avatarMu.Unlock()
+	for range avatarWorkerCount {
+		c.startRunGoroutine(func() { c.runAvatarWorker(ctx) })
+	}
+	c.startRunGoroutine(func() { c.runAvatarBackgroundRefresher(ctx) })
 }
 
 func (c *Client) runAvatarWorker(ctx context.Context) {
 	for {
-		select {
-		case <-ctx.Done():
+		if ctx.Err() != nil {
 			return
-		case job := <-c.avatarQueue:
-			c.avatarMu.Lock()
-			delete(c.avatarQueued, job.subject)
-			c.avatarMu.Unlock()
-			if c.deferAvatarJobIfHistorySyncActive(job) {
+		}
+		job, priority, ok := c.popAvatarJob()
+		if !ok {
+			select {
+			case <-ctx.Done():
+				return
+			case <-c.avatarWake:
+			}
+			continue
+		}
+		if priority == avatarPriorityBackground {
+			if delay := c.takeAvatarBackgroundToken(); delay > 0 {
+				// Bucket is empty: put the job back and wait for the refill,
+				// yielding immediately if new (possibly visible) work lands.
+				c.requeueAvatarJob(job, priority)
+				timer := time.NewTimer(delay)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return
+				case <-timer.C:
+				case <-c.avatarWake:
+					timer.Stop()
+				}
 				continue
 			}
-			c.fetchAvatarJob(ctx, job)
-			if !c.historySyncBlocksAvatarFetch() {
-				c.flushDeferredAvatarJobs()
-			}
+		}
+		c.fetchAvatarJob(ctx, job)
+	}
+}
+
+// popAvatarJob returns the next queued job, visible-priority first.
+func (c *Client) popAvatarJob() (avatarJob, avatarPriority, bool) {
+	c.avatarMu.Lock()
+	defer c.avatarMu.Unlock()
+	if len(c.avatarHigh) > 0 {
+		job := c.avatarHigh[0]
+		c.avatarHigh = c.avatarHigh[1:]
+		delete(c.avatarQueued, job.subject)
+		return job, avatarPriorityVisible, true
+	}
+	if len(c.avatarLow) > 0 {
+		job := c.avatarLow[0]
+		c.avatarLow = c.avatarLow[1:]
+		delete(c.avatarQueued, job.subject)
+		return job, avatarPriorityBackground, true
+	}
+	return avatarJob{}, 0, false
+}
+
+// requeueAvatarJob puts a popped job back at the front of its queue.
+func (c *Client) requeueAvatarJob(job avatarJob, priority avatarPriority) {
+	c.avatarMu.Lock()
+	if _, queued := c.avatarQueued[job.subject]; !queued {
+		c.avatarQueued[job.subject] = priority
+		if priority == avatarPriorityVisible {
+			c.avatarHigh = append([]avatarJob{job}, c.avatarHigh...)
+		} else {
+			c.avatarLow = append([]avatarJob{job}, c.avatarLow...)
 		}
 	}
+	c.avatarMu.Unlock()
+}
+
+func (c *Client) wakeAvatarWorkers() {
+	select {
+	case c.avatarWake <- struct{}{}:
+	default:
+	}
+}
+
+// takeAvatarBackgroundToken consumes one background-fetch token, or returns
+// how long until the bucket refills enough for one.
+func (c *Client) takeAvatarBackgroundToken() time.Duration {
+	c.avatarTokenMu.Lock()
+	defer c.avatarTokenMu.Unlock()
+	now := time.Now()
+	if c.avatarTokensAt.IsZero() {
+		c.avatarTokens = avatarBackgroundBurst
+	} else {
+		c.avatarTokens = min(avatarBackgroundBurst, c.avatarTokens+now.Sub(c.avatarTokensAt).Seconds()*avatarBackgroundRatePerSec)
+	}
+	c.avatarTokensAt = now
+	if c.avatarTokens >= 1 {
+		c.avatarTokens--
+		return 0
+	}
+	return time.Duration((1 - c.avatarTokens) / avatarBackgroundRatePerSec * float64(time.Second))
 }
 
 func normalizeAvatarSubject(subject appstore.AvatarSubject) appstore.AvatarSubject {
@@ -80,14 +188,11 @@ func normalizeAvatarSubject(subject appstore.AvatarSubject) appstore.AvatarSubje
 	return subject
 }
 
-func (c *Client) refreshAvatarIfDue(ctx context.Context, subject appstore.AvatarSubject) {
-	if c.historySyncBlocksAvatarFetch() {
-		return
-	}
-	c.ensureAvatarQueuedIfDue(ctx, subject)
+func (c *Client) refreshAvatarIfDue(ctx context.Context, subject appstore.AvatarSubject, priority avatarPriority) {
+	c.ensureAvatarQueuedIfDue(ctx, subject, priority)
 }
 
-func (c *Client) ensureAvatarQueuedIfDue(ctx context.Context, subject appstore.AvatarSubject) bool {
+func (c *Client) ensureAvatarQueuedIfDue(ctx context.Context, subject appstore.AvatarSubject, priority avatarPriority) bool {
 	if c.store == nil {
 		return false
 	}
@@ -104,7 +209,7 @@ func (c *Client) ensureAvatarQueuedIfDue(ctx context.Context, subject appstore.A
 	if !c.avatarNeedsFetch(avatar, false) {
 		return false
 	}
-	return c.enqueueAvatar(subject, false)
+	return c.enqueueAvatar(subject, false, priority)
 }
 
 func (c *Client) ensureAvatar(ctx context.Context, subject appstore.AvatarSubject) (appstore.Avatar, error) {
@@ -114,13 +219,13 @@ func (c *Client) ensureAvatar(ctx context.Context, subject appstore.AvatarSubjec
 		return appstore.Avatar{}, err
 	}
 	if fetchJID == "" && avatar.Status == "" {
-		return c.store.UpdateAvatarStatus(ctx, subject, appstore.AvatarStatusUnresolved, "", time.Now().Add(errorAvatarTTL))
+		return c.store.UpdateAvatarStatus(ctx, subject, appstore.AvatarStatusUnresolved, "", time.Now().Add(unresolvedAvatarTTL))
 	}
 	return avatar, nil
 }
 
 func (c *Client) RefreshLoadedChatAvatars(ctx context.Context, chatID string, messages []appstore.Message) {
-	if c.store == nil || strings.TrimSpace(chatID) == "" || c.historySyncBlocksAvatarFetch() {
+	if c.store == nil || strings.TrimSpace(chatID) == "" {
 		return
 	}
 	seen := map[appstore.AvatarSubject]bool{}
@@ -137,215 +242,168 @@ func (c *Client) RefreshLoadedChatAvatars(ctx context.Context, chatID string, me
 			continue
 		}
 		seen[subject] = true
-		c.ensureAvatarQueuedIfDue(ctx, subject)
+		// The user is looking at (or about to look at) this chat.
+		c.ensureAvatarQueuedIfDue(ctx, subject, avatarPriorityVisible)
 	}
 }
 
 func (c *Client) refreshOpenedChatAvatars(ctx context.Context, chatID string) {
-	if c.store == nil || strings.TrimSpace(chatID) == "" || c.historySyncBlocksAvatarFetch() {
+	if c.store == nil || strings.TrimSpace(chatID) == "" {
 		return
 	}
 	messages, err := c.store.ListMessages(ctx, chatID, 200, "")
 	if err != nil {
-		c.refreshAvatarIfDue(ctx, appstore.AvatarSubject{Kind: appstore.AvatarSubjectChat, ID: chatID})
+		c.refreshAvatarIfDue(ctx, appstore.AvatarSubject{Kind: appstore.AvatarSubjectChat, ID: chatID}, avatarPriorityVisible)
 		return
 	}
 	c.RefreshLoadedChatAvatars(ctx, chatID, messages)
 }
 
-func (c *Client) startProfilePictureSync(ctx context.Context) {
-	if c.store == nil {
-		return
-	}
-	c.historySyncMu.Lock()
-	if c.profilePictureSyncRunning {
-		c.historySyncMu.Unlock()
-		return
-	}
-	c.profilePictureSyncRunning = true
-	c.profilePictureSyncActive = true
-	c.historySyncMu.Unlock()
-
-	go c.runProfilePictureSync(ctx)
-}
-
-func (c *Client) runProfilePictureSync(ctx context.Context) {
-	defer func() {
-		c.historySyncMu.Lock()
-		c.profilePictureSyncActive = false
-		c.profilePictureSyncRunning = false
-		c.historySyncMu.Unlock()
-		c.daemon.PublishHistorySyncProgress(app.HistorySyncEvent{
-			SyncType:        app.HistorySyncTypeProfilePicture,
-			ProgressPercent: 100,
-			IsComplete:      true,
-		})
-		c.flushDeferredAvatarJobs()
-	}()
-
-	// History sync has settled: LID→PN mappings and the regular_low app state are
-	// now populated, so merge any LID-duplicated chats and reconcile pins onto the
-	// canonical PN chats before prefetching avatars.
-	c.reconcileAfterHistorySync(ctx)
-
-	jobs, err := c.profilePictureSyncJobs(ctx)
-	if err != nil {
-		c.log.Warnf("Failed to list profile picture sync subjects: %v", err)
-		return
-	}
-	total := len(jobs)
-	c.publishProfilePictureSyncProgress(0, total)
-	if total == 0 {
-		return
-	}
-
-	for i, job := range jobs {
-		if ctx.Err() != nil {
-			return
-		}
-		avatar, err := c.ensureAvatar(ctx, job.subject)
-		if err != nil {
-			c.log.Warnf("Failed to ensure profile picture %s/%s: %v", job.subject.Kind, job.subject.ID, err)
-			c.publishProfilePictureSyncProgress(i+1, total)
-			continue
-		}
-		if c.avatarNeedsFetch(avatar, job.force) {
-			c.fetchAvatarJob(ctx, job)
-		}
-		c.publishProfilePictureSyncProgress(i+1, total)
-	}
-}
-
-func (c *Client) profilePictureSyncJobs(ctx context.Context) ([]avatarJob, error) {
-	subjects, err := c.store.ListChatAvatarSubjects(ctx, profilePictureSyncChatLimit)
-	if err != nil {
-		return nil, err
-	}
-	seen := make(map[appstore.AvatarSubject]bool, len(subjects))
-	out := make([]avatarJob, 0, len(subjects))
-	appendJob := func(job avatarJob) {
-		subject := job.subject
-		subject = normalizeAvatarSubject(subject)
-		if subject.Kind == "" || subject.ID == "" || seen[subject] {
-			return
-		}
-		seen[subject] = true
-		job.subject = subject
-		out = append(out, job)
-	}
-	for _, subject := range subjects {
-		appendJob(avatarJob{subject: subject})
-	}
-
+// enqueueAvatar queues a fetch for the subject, deduping against jobs already
+// queued and promoting a queued background job when a visible request for the
+// same subject arrives. Returns false when the queue is saturated.
+func (c *Client) enqueueAvatar(subject appstore.AvatarSubject, force bool, priority avatarPriority) bool {
 	c.avatarMu.Lock()
-	for subject, job := range c.avatarDeferred {
-		appendJob(job)
-		delete(c.avatarDeferred, subject)
+	if c.avatarQueued == nil {
+		c.avatarQueued = make(map[appstore.AvatarSubject]avatarPriority)
 	}
-	c.avatarMu.Unlock()
-	return out, nil
-}
-
-func (c *Client) publishProfilePictureSyncProgress(done, total int) {
-	progress := uint32(100)
-	if total > 0 {
-		progress = uint32(done * 100 / total)
+	if c.avatarWake == nil {
+		c.avatarWake = make(chan struct{}, 1)
 	}
-	c.daemon.PublishHistorySyncProgress(app.HistorySyncEvent{
-		SyncType:             app.HistorySyncTypeProfilePicture,
-		ProgressPercent:      progress,
-		ConversationsInChunk: uint32(done),
-		MessagesInChunk:      uint32(total),
-	})
-}
-
-func (c *Client) enqueueAvatar(subject appstore.AvatarSubject, force bool) bool {
-	c.avatarMu.Lock()
-	if c.avatarQueue == nil {
-		c.avatarQueue = make(chan avatarJob, avatarQueueSize)
-		c.avatarQueued = make(map[appstore.AvatarSubject]bool)
-		c.avatarDeferred = make(map[appstore.AvatarSubject]avatarJob)
-	}
-	if c.avatarQueued[subject] {
-		c.avatarMu.Unlock()
-		return true
-	}
-	if existing, ok := c.avatarDeferred[subject]; ok {
-		if force && !existing.force {
-			existing.force = true
-			c.avatarDeferred[subject] = existing
+	if existing, queued := c.avatarQueued[subject]; queued {
+		if priority == avatarPriorityVisible && existing == avatarPriorityBackground {
+			// Promote: the subject is now on screen.
+			for i, job := range c.avatarLow {
+				if job.subject == subject {
+					job.force = job.force || force
+					c.avatarLow = append(c.avatarLow[:i], c.avatarLow[i+1:]...)
+					c.avatarHigh = append(c.avatarHigh, job)
+					c.avatarQueued[subject] = avatarPriorityVisible
+					break
+				}
+			}
+		} else if force {
+			queue := c.avatarHigh
+			if existing == avatarPriorityBackground {
+				queue = c.avatarLow
+			}
+			for i, job := range queue {
+				if job.subject == subject {
+					queue[i].force = true
+					break
+				}
+			}
 		}
 		c.avatarMu.Unlock()
+		c.wakeAvatarWorkers()
 		return true
 	}
-	if c.historySyncBlocksAvatarFetch() {
-		c.avatarDeferred[subject] = avatarJob{subject: subject, force: force}
-		c.avatarMu.Unlock()
-		return true
+	if priority == avatarPriorityVisible {
+		if len(c.avatarHigh) >= avatarQueueLimit {
+			c.avatarMu.Unlock()
+			return false
+		}
+		c.avatarHigh = append(c.avatarHigh, avatarJob{subject: subject, force: force})
+	} else {
+		if len(c.avatarLow) >= avatarQueueLimit {
+			c.avatarMu.Unlock()
+			return false
+		}
+		c.avatarLow = append(c.avatarLow, avatarJob{subject: subject, force: force})
 	}
-	c.avatarQueued[subject] = true
+	c.avatarQueued[subject] = priority
 	c.avatarMu.Unlock()
-
-	select {
-	case c.avatarQueue <- avatarJob{subject: subject, force: force}:
-		return true
-	default:
-		c.avatarMu.Lock()
-		delete(c.avatarQueued, subject)
-		c.avatarMu.Unlock()
-		return false
-	}
-}
-
-func (c *Client) deferAvatarJobIfHistorySyncActive(job avatarJob) bool {
-	if !c.historySyncBlocksAvatarFetch() {
-		return false
-	}
-	c.avatarMu.Lock()
-	if c.avatarDeferred == nil {
-		c.avatarDeferred = make(map[appstore.AvatarSubject]avatarJob)
-	}
-	if existing, ok := c.avatarDeferred[job.subject]; ok {
-		job.force = job.force || existing.force
-	}
-	c.avatarDeferred[job.subject] = job
-	c.avatarMu.Unlock()
+	c.wakeAvatarWorkers()
 	return true
 }
 
-func (c *Client) flushDeferredAvatarJobs() {
-	c.avatarMu.Lock()
-	if len(c.avatarDeferred) == 0 {
-		c.avatarMu.Unlock()
-		return
+// RequestAvatars serves the demand-driven avatar RPC: it returns the current
+// cached row for every subject immediately and enqueues fetches for anything
+// stale or missing; those land later as AvatarUpdated events.
+func (c *Client) RequestAvatars(ctx context.Context, subjects []appstore.AvatarSubject, background bool) []app.Avatar {
+	priority := avatarPriorityVisible
+	if background {
+		priority = avatarPriorityBackground
 	}
-	deferred := len(c.avatarDeferred)
-	flushed := 0
-	if c.avatarQueue == nil {
-		c.avatarQueue = make(chan avatarJob, avatarQueueSize)
-	}
-	if c.avatarQueued == nil {
-		c.avatarQueued = make(map[appstore.AvatarSubject]bool)
-	}
-	for subject, job := range c.avatarDeferred {
-		if c.avatarQueued[subject] {
-			delete(c.avatarDeferred, subject)
+	out := make([]app.Avatar, 0, len(subjects))
+	seen := make(map[appstore.AvatarSubject]bool, len(subjects))
+	for _, subject := range subjects {
+		subject = normalizeAvatarSubject(subject)
+		if subject.Kind == "" || subject.ID == "" || seen[subject] || ctx.Err() != nil {
 			continue
 		}
+		seen[subject] = true
+		avatar, err := c.ensureAvatar(ctx, subject)
+		if err != nil {
+			c.log.Warnf("Failed to ensure requested avatar %s/%s: %v", subject.Kind, subject.ID, err)
+			continue
+		}
+		fetching := false
+		if c.avatarNeedsFetch(avatar, false) {
+			fetching = c.enqueueAvatar(subject, false, priority)
+		}
+		daemonAvatar := toDaemonAvatar(avatar)
+		daemonAvatar.Fetching = fetching
+		out = append(out, daemonAvatar)
+	}
+	return out
+}
+
+// kickAvatarBackgroundRefresh asks the refresher for an immediate pass; used
+// when the initial history sync settles so the chat list fills in soon after
+// pairing without waiting for the periodic tick.
+func (c *Client) kickAvatarBackgroundRefresh() {
+	c.avatarMu.Lock()
+	kick := c.avatarRefreshKick
+	c.avatarMu.Unlock()
+	if kick == nil {
+		return
+	}
+	select {
+	case kick <- struct{}{}:
+	default:
+	}
+}
+
+// runAvatarBackgroundRefresher periodically re-enqueues due avatars for the
+// most recent chats at background priority. This is the tamed replacement for
+// the old post-history-sync bulk prefetch: rate-limited, repeatable, and
+// never in the way of visible fetches.
+func (c *Client) runAvatarBackgroundRefresher(ctx context.Context) {
+	const refreshInterval = 6 * time.Hour
+	const refreshChatLimit = 200
+	ticker := time.NewTicker(refreshInterval)
+	defer ticker.Stop()
+	for {
 		select {
-		case c.avatarQueue <- job:
-			c.avatarQueued[subject] = true
-			delete(c.avatarDeferred, subject)
-			flushed++
-		default:
-			remaining := len(c.avatarDeferred)
-			c.avatarMu.Unlock()
-			c.log.Debugf("Avatar deferral flush queued %d/%d jobs; %d remain deferred", flushed, deferred, remaining)
+		case <-ctx.Done():
 			return
+		case <-ticker.C:
+		case <-c.avatarRefreshKick:
+		}
+		client := c.currentClient()
+		if client == nil || !client.IsLoggedIn() {
+			continue
+		}
+		c.sweepOrphanAvatarFiles(ctx)
+		subjects, err := c.store.ListChatAvatarSubjects(ctx, refreshChatLimit)
+		if err != nil {
+			c.log.Warnf("Failed to list chats for avatar refresh: %v", err)
+			continue
+		}
+		queued := 0
+		for _, subject := range subjects {
+			if ctx.Err() != nil {
+				return
+			}
+			if c.ensureAvatarQueuedIfDue(ctx, subject, avatarPriorityBackground) {
+				queued++
+			}
+		}
+		if queued > 0 {
+			c.log.Debugf("Avatar background refresh queued %d/%d subjects", queued, len(subjects))
 		}
 	}
-	c.avatarMu.Unlock()
-	c.log.Debugf("Avatar deferral flush queued %d/%d jobs", flushed, deferred)
 }
 
 func (c *Client) avatarNeedsFetch(avatar appstore.Avatar, force bool) bool {
@@ -376,7 +434,7 @@ func (c *Client) fetchAvatarJob(ctx context.Context, job avatarJob) {
 	}
 	jid, err := types.ParseJID(avatar.FetchJID)
 	if err != nil || shouldSkipAvatarJID(jid) {
-		updated, updateErr := c.store.UpdateAvatarStatus(ctx, job.subject, appstore.AvatarStatusUnresolved, "", time.Now().Add(errorAvatarTTL))
+		updated, updateErr := c.store.UpdateAvatarStatus(ctx, job.subject, appstore.AvatarStatusUnresolved, "", time.Now().Add(unresolvedAvatarTTL))
 		if updateErr == nil {
 			c.publishAvatarUpdated(updated)
 		}
@@ -392,7 +450,7 @@ func (c *Client) fetchAvatarJob(ctx context.Context, job avatarJob) {
 		if ctx.Err() != nil {
 			return
 		}
-		updated, updateErr := c.updateAvatarError(ctx, job.subject, err)
+		updated, updateErr := c.updateAvatarError(ctx, job.subject, err, avatar.RetryCount)
 		if updateErr == nil {
 			c.publishAvatarUpdated(updated)
 		}
@@ -409,19 +467,34 @@ func (c *Client) fetchAvatarJob(ctx context.Context, job avatarJob) {
 	}
 }
 
-func (c *Client) updateAvatarError(ctx context.Context, subject appstore.AvatarSubject, err error) (appstore.Avatar, error) {
+func (c *Client) updateAvatarError(ctx context.Context, subject appstore.AvatarSubject, err error, retryCount int32) (appstore.Avatar, error) {
 	if status := avatarStatusForError(err); status != "" {
-		ttl := errorAvatarTTL
+		ttl := unauthorizedAvatarTTL
 		if status == appstore.AvatarStatusNotSet {
 			ttl = notSetAvatarTTL
 		}
 		return c.store.UpdateAvatarStatus(ctx, subject, status, err.Error(), time.Now().Add(ttl))
 	}
-	if isTransientAvatarError(err) {
-		return c.store.UpdateAvatarTransientError(ctx, subject, err.Error(), time.Now().Add(errorAvatarTTL))
+	if !isTransientAvatarError(err) {
+		c.log.Warnf("Avatar refresh: failed for %s/%s: %v", subject.Kind, subject.ID, err)
 	}
-	c.log.Warnf("Avatar refresh: failed for %s/%s: %v", subject.Kind, subject.ID, err)
-	return c.store.UpdateAvatarTransientError(ctx, subject, err.Error(), time.Now().Add(errorAvatarTTL))
+	return c.store.UpdateAvatarTransientError(ctx, subject, err.Error(), time.Now().Add(avatarTransientErrorBackoff(retryCount)))
+}
+
+// avatarTransientErrorBackoff returns min(base * 2^retries, max) so flaky
+// fetches retry quickly at first instead of going dark for a day.
+func avatarTransientErrorBackoff(retryCount int32) time.Duration {
+	if retryCount < 0 {
+		retryCount = 0
+	}
+	backoff := avatarTransientErrorBase
+	for range retryCount {
+		backoff *= 2
+		if backoff >= avatarTransientErrorMax {
+			return avatarTransientErrorMax
+		}
+	}
+	return backoff
 }
 
 func (c *Client) publishAvatarUpdated(avatar appstore.Avatar) {
@@ -478,7 +551,12 @@ func shouldSkipAvatarJID(jid types.JID) bool {
 	return jid.IsEmpty() || jid.User == "0" || jid.Server == types.BroadcastServer || jid.Server == types.NewsletterServer
 }
 
+var errAvatarClientNotReady = errors.New("whatsapp client is not connected")
+
 func isTransientAvatarError(err error) bool {
+	if errors.Is(err, errAvatarClientNotReady) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
 	message := err.Error()
 	return strings.Contains(message, "websocket not connected") ||
 		strings.Contains(message, "websocket disconnected before info query returned response")
@@ -496,8 +574,13 @@ func avatarStatusForError(err error) string {
 
 func (c *Client) fetchAndCacheAvatar(ctx context.Context, jid types.JID, existingPicID string) (picID, localPath string, err error) {
 	client := c.currentClient()
-	if client == nil || !client.IsLoggedIn() || ctx.Err() != nil {
-		return "", "", nil
+	if client == nil || !client.IsLoggedIn() {
+		// Must be an error: a (nil, nil)-style success here used to be cached
+		// as "unchanged" for a full TTL, leaving avatars blank for a day.
+		return "", "", errAvatarClientNotReady
+	}
+	if ctx.Err() != nil {
+		return "", "", ctx.Err()
 	}
 
 	info, err := client.GetProfilePictureInfo(ctx, jid, &whatsmeow.GetProfilePictureParams{
@@ -508,6 +591,12 @@ func (c *Client) fetchAndCacheAvatar(ctx context.Context, jid types.JID, existin
 		return "", "", err
 	}
 	if info == nil {
+		// nil info means "unchanged relative to ExistingID". Without an
+		// ExistingID there is nothing to be unchanged relative to; record it
+		// as "no picture set" rather than a bogus available state.
+		if existingPicID == "" {
+			return "", "", whatsmeow.ErrProfilePictureNotSet
+		}
 		return "", "", nil
 	}
 
@@ -523,7 +612,12 @@ func (c *Client) fetchAndCacheAvatar(ctx context.Context, jid types.JID, existin
 		_ = os.Remove(tmpPath)
 		return "", "", err
 	}
-	destPath := filepath.Join(avatarDir, safeID+ext)
+	// Content-addressed destination: a changed picture gets a new path, so
+	// file:// consumers (Qt keys its pixmap cache on the URL) can never show
+	// a stale image for a reused path. Old files are removed by the orphan
+	// sweep once no avatar row references them.
+	picIDSum := sha256.Sum256([]byte(info.ID))
+	destPath := filepath.Join(avatarDir, safeID+"-"+hex.EncodeToString(picIDSum[:8])+ext)
 	if err := os.Rename(tmpPath, destPath); err != nil {
 		_ = os.Remove(tmpPath)
 		return "", "", err
@@ -568,6 +662,90 @@ func downloadAvatarFile(ctx context.Context, url, destPath string) (string, erro
 	return ext, nil
 }
 
+// sweepOrphanAvatarFiles deletes files in the avatar cache directory that no
+// avatars row references: leftovers from the legacy stable-name scheme,
+// content-addressed files replaced by a newer picture, and stray .tmp files.
+// Files modified within the last hour are kept — they may belong to a fetch
+// whose DB row hasn't committed yet.
+func (c *Client) sweepOrphanAvatarFiles(ctx context.Context) {
+	avatarDir := filepath.Join(c.paths.MediaCacheDir, "avatars")
+	entries, err := os.ReadDir(avatarDir)
+	if err != nil || len(entries) == 0 {
+		return
+	}
+	referenced, err := c.store.ListAvatarLocalPaths(ctx)
+	if err != nil {
+		c.log.Warnf("Failed to list avatar paths for sweep: %v", err)
+		return
+	}
+	refSet := make(map[string]bool, len(referenced))
+	for _, path := range referenced {
+		refSet[path] = true
+	}
+	cutoff := time.Now().Add(-time.Hour)
+	removed := 0
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		path := filepath.Join(avatarDir, entry.Name())
+		if refSet[path] {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || info.ModTime().After(cutoff) {
+			continue
+		}
+		if err := os.Remove(path); err == nil {
+			removed++
+		}
+	}
+	if removed > 0 {
+		c.log.Debugf("Swept %d orphaned avatar files", removed)
+	}
+}
+
+// notifyWithAvatar delivers a message notification, first giving a missing
+// chat avatar a brief bounded chance to arrive so the toast shows a face
+// instead of the generic app icon. The wait runs detached: the whatsmeow
+// event handler must never block, and the notify worker queues asynchronously
+// anyway.
+func (c *Client) notifyWithAvatar(ctx context.Context, message app.Message, chat app.Chat, opts notify.Options) {
+	if c.notifier == nil {
+		return
+	}
+	if strings.TrimSpace(chat.AvatarLocalPath) != "" || c.store == nil {
+		c.notifier.NotifyMessage(ctx, message, chat, opts)
+		return
+	}
+	subject := normalizeAvatarSubject(appstore.AvatarSubject{Kind: appstore.AvatarSubjectChat, ID: chat.ID})
+	if !c.ensureAvatarQueuedIfDue(ctx, subject, avatarPriorityVisible) {
+		// Nothing in flight to wait for (no picture, unauthorized, ...).
+		c.notifier.NotifyMessage(ctx, message, chat, opts)
+		return
+	}
+	go func() {
+		const pollInterval = 150 * time.Millisecond
+		deadline := time.Now().Add(1500 * time.Millisecond)
+		for time.Now().Before(deadline) && ctx.Err() == nil {
+			time.Sleep(pollInterval)
+			avatar, err := c.store.GetAvatar(ctx, subject)
+			if err != nil {
+				break
+			}
+			if avatar.LocalPath != "" && avatarLocalFileExists(avatar.LocalPath) {
+				chat.AvatarLocalPath = avatar.LocalPath
+				break
+			}
+			if avatar.Status != "" {
+				// Terminal for this attempt: not set, unauthorized, error.
+				break
+			}
+		}
+		c.notifier.NotifyMessage(ctx, message, chat, opts)
+	}()
+}
+
 func (c *Client) handlePictureEvent(ctx context.Context, evt *events.Picture) {
 	if evt == nil || ctx.Err() != nil {
 		return
@@ -586,6 +764,7 @@ func (c *Client) handlePictureEvent(ctx context.Context, evt *events.Picture) {
 			}
 			continue
 		}
-		c.ensureAvatarQueuedIfDue(ctx, subject)
+		// The picture definitely changed: skip TTL checks and re-fetch now.
+		c.enqueueAvatar(subject, true, avatarPriorityVisible)
 	}
 }

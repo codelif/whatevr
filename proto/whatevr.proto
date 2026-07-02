@@ -38,7 +38,9 @@ enum HistorySyncType {
   HISTORY_SYNC_TYPE_PUSH_NAME = 5;
   HISTORY_SYNC_TYPE_NON_BLOCKING_DATA = 6;
   HISTORY_SYNC_TYPE_ON_DEMAND = 7;
-  HISTORY_SYNC_TYPE_PROFILE_PICTURE = 8;
+  // 8 was HISTORY_SYNC_TYPE_PROFILE_PICTURE: the post-sync bulk avatar
+  // prefetch was replaced by demand-driven fetching (RequestAvatars).
+  reserved 8;
   HISTORY_SYNC_TYPE_OFFLINE_CATCHUP = 9;
 }
 
@@ -48,6 +50,11 @@ enum HistorySyncPhase {
   HISTORY_SYNC_PHASE_DOWNLOADING = 2;
   HISTORY_SYNC_PHASE_PROCESSING = 3;
   HISTORY_SYNC_PHASE_COMPLETE = 4;
+  // The phone stopped delivering chunks mid-sync (below 100%) and has been
+  // idle past the daemon's stall timeout. The sync may still resume; clients
+  // should stop showing an active progress state and hint that the phone
+  // needs to come online with WhatsApp open.
+  HISTORY_SYNC_PHASE_STALLED = 5;
 }
 
 enum ContactAvailability {
@@ -116,6 +123,16 @@ service ChatService {
   rpc GetGroupInfo(GetGroupInfoRequest) returns (GetGroupInfoResponse);
   // Fetch a full-resolution profile picture for the avatar viewer.
   rpc FetchProfilePicture(FetchProfilePictureRequest) returns (FetchProfilePictureResponse);
+  // Demand-driven avatar loading: the frontend reports the subjects it is
+  // about to show (visible chat rows, member lists, pickers) and gets the
+  // cached avatar rows back immediately; anything stale or missing is
+  // enqueued and lands later via AvatarUpdated events.
+  rpc RequestAvatars(RequestAvatarsRequest) returns (RequestAvatarsResponse);
+  // Ask the phone for messages older than the oldest one stored locally
+  // (on-demand history sync). Fire-and-forget: backfilled messages land via
+  // HistoryBackfilled events; when the phone has nothing older, the chat's
+  // history_exhausted flag flips via ChatUpdated.
+  rpc RequestOlderMessages(RequestOlderMessagesRequest) returns (RequestOlderMessagesResponse);
 }
 
 service SendService {
@@ -264,6 +281,30 @@ message AvatarUpdated {
   Avatar avatar = 1;
 }
 
+message AvatarRef {
+  AvatarSubjectKind kind = 1;
+  string id = 2;
+}
+
+enum AvatarPriority {
+  // The subject is on screen or about to be: fetch ahead of everything else.
+  AVATAR_PRIORITY_VISIBLE = 0;
+  // Opportunistic refresh; rate-limited so it never crowds out live traffic.
+  AVATAR_PRIORITY_BACKGROUND = 1;
+}
+
+message RequestAvatarsRequest {
+  repeated AvatarRef refs = 1;
+  AvatarPriority priority = 2;
+}
+
+message RequestAvatarsResponse {
+  // Current cached state for every requested ref (same order not guaranteed);
+  // refs that need fetching come back with fetching=true and update later via
+  // AvatarUpdated.
+  repeated Avatar avatars = 1;
+}
+
 message HistorySyncProgress {
   HistorySyncType sync_type = 1;
   // 0..100, taken from waHistorySync.HistorySync.progress when present.
@@ -404,6 +445,16 @@ message GetMessagesRequest {
 
 message GetMessagesResponse {
   repeated Message messages = 1;
+}
+
+message RequestOlderMessagesRequest {
+  string chat_id = 1;
+}
+
+message RequestOlderMessagesResponse {
+  // False when nothing was asked of the phone: the chat has no stored
+  // messages, its history is already exhausted, or a request is in flight.
+  bool requested = 1;
 }
 
 message MarkChatReadRequest {
@@ -854,6 +905,10 @@ message Chat {
   bool is_muted = 14;
   // unix millis when the mute expires; -1 = forever, 0 = not muted.
   int64 mute_end_timestamp = 15;
+  // True once the phone answered an on-demand history request for this chat
+  // with nothing older: anything before the locally stored messages exists
+  // only on the phone.
+  bool history_exhausted = 16;
 }
 
 message Message {

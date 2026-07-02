@@ -53,6 +53,8 @@ type ChatActionController interface {
 	SelfProfile(context.Context) (app.ContactInfo, error)
 	GetGroupInfo(context.Context, string) (app.GroupInfo, error)
 	FetchProfilePicture(context.Context, string) (string, error)
+	RequestAvatars(context.Context, []appstore.AvatarSubject, bool) []app.Avatar
+	RequestOlderMessages(context.Context, string) (bool, error)
 }
 
 type ChatService struct {
@@ -157,6 +159,24 @@ func (s *ChatService) MarkChatRead(ctx context.Context, req *pb.MarkChatReadRequ
 		s.daemon.PublishChatUpdated(toAppChat(chat))
 	}
 	return &pb.MarkChatReadResponse{}, nil
+}
+
+func (s *ChatService) RequestOlderMessages(ctx context.Context, req *pb.RequestOlderMessagesRequest) (*pb.RequestOlderMessagesResponse, error) {
+	if s.actions == nil {
+		return nil, status.Error(codes.Unimplemented, "chat action controller is not available")
+	}
+	if strings.TrimSpace(req.GetChatId()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "chat_id is required")
+	}
+
+	requested, err := s.actions.RequestOlderMessages(ctx, req.GetChatId())
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, status.Error(codes.NotFound, "chat not found")
+		}
+		return nil, err
+	}
+	return &pb.RequestOlderMessagesResponse{Requested: requested}, nil
 }
 
 func (s *ChatService) SetChatPinned(ctx context.Context, req *pb.SetChatPinnedRequest) (*pb.SetChatPinnedResponse, error) {
@@ -531,6 +551,43 @@ func (s *ChatService) FetchProfilePicture(ctx context.Context, req *pb.FetchProf
 	return &pb.FetchProfilePictureResponse{LocalPath: localPath}, nil
 }
 
+const maxAvatarRequestRefs = 200
+
+func (s *ChatService) RequestAvatars(ctx context.Context, req *pb.RequestAvatarsRequest) (*pb.RequestAvatarsResponse, error) {
+	if s.actions == nil {
+		return nil, status.Error(codes.Unimplemented, "avatars are not available")
+	}
+	refs := req.GetRefs()
+	if len(refs) == 0 {
+		return &pb.RequestAvatarsResponse{}, nil
+	}
+	if len(refs) > maxAvatarRequestRefs {
+		return nil, status.Errorf(codes.InvalidArgument, "at most %d refs per request", maxAvatarRequestRefs)
+	}
+
+	subjects := make([]appstore.AvatarSubject, 0, len(refs))
+	for _, ref := range refs {
+		var kind string
+		switch ref.GetKind() {
+		case pb.AvatarSubjectKind_AVATAR_SUBJECT_KIND_CHAT:
+			kind = appstore.AvatarSubjectChat
+		case pb.AvatarSubjectKind_AVATAR_SUBJECT_KIND_SENDER:
+			kind = appstore.AvatarSubjectSender
+		default:
+			continue
+		}
+		subjects = append(subjects, appstore.AvatarSubject{Kind: kind, ID: ref.GetId()})
+	}
+
+	background := req.GetPriority() == pb.AvatarPriority_AVATAR_PRIORITY_BACKGROUND
+	avatars := s.actions.RequestAvatars(ctx, subjects, background)
+	resp := &pb.RequestAvatarsResponse{Avatars: make([]*pb.Avatar, 0, len(avatars))}
+	for _, avatar := range avatars {
+		resp.Avatars = append(resp.Avatars, toProtoAvatar(avatar))
+	}
+	return resp, nil
+}
+
 func normalizePage(limit int32, offset int32, defaultLimit int, maxLimit int) (int, int, error) {
 	if offset < 0 {
 		return 0, 0, status.Error(codes.InvalidArgument, "offset must be non-negative")
@@ -562,6 +619,7 @@ func toAppChat(chat appstore.Chat) app.Chat {
 		IsArchived:           chat.IsArchived,
 		IsMuted:              chat.IsMuted,
 		MuteEndTimestamp:     chat.MuteEndTimestamp,
+		HistoryExhausted:     chat.HistoryExhausted,
 		UpdatedAtUnix:        chat.UpdatedAt,
 		AvatarLocalPath:      chat.AvatarLocalPath,
 	}

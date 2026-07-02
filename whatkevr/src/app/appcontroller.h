@@ -125,6 +125,10 @@ class AppController final : public QObject
     Q_PROPERTY(bool messagesLoading READ messagesLoading NOTIFY messagesChanged FINAL)
     Q_PROPERTY(bool olderMessagesLoading READ olderMessagesLoading NOTIFY messagesChanged FINAL)
     Q_PROPERTY(bool canLoadOlderMessages READ canLoadOlderMessages NOTIFY messagesChanged FINAL)
+    // On-demand history from the phone: whether the selected chat can still ask
+    // for more (not exhausted), and whether a request is currently in flight.
+    Q_PROPERTY(bool selectedChatHistoryExhausted READ selectedChatHistoryExhausted NOTIFY selectionChanged FINAL)
+    Q_PROPERTY(bool phoneHistoryRequesting READ phoneHistoryRequesting NOTIFY messagesChanged FINAL)
     Q_PROPERTY(bool messagesEmpty READ messagesEmpty NOTIFY messagesChanged FINAL)
     Q_PROPERTY(QString displayedMessagesChatId READ displayedMessagesChatId NOTIFY messagesChanged FINAL)
     Q_PROPERTY(QString messageErrorText READ messageErrorText NOTIFY messagesChanged FINAL)
@@ -208,6 +212,8 @@ public:
     [[nodiscard]] bool messagesLoading() const;
     [[nodiscard]] bool olderMessagesLoading() const;
     [[nodiscard]] bool canLoadOlderMessages() const;
+    [[nodiscard]] bool selectedChatHistoryExhausted() const;
+    [[nodiscard]] bool phoneHistoryRequesting() const;
     [[nodiscard]] bool messagesEmpty() const;
     [[nodiscard]] QString displayedMessagesChatId() const;
     [[nodiscard]] QString messageErrorText() const;
@@ -238,6 +244,10 @@ public:
     Q_INVOKABLE void selectChat(const QString &chatId);
     Q_INVOKABLE void retryMessages();
     Q_INVOKABLE void loadOlderMessages();
+    // Ask the phone for history older than what the daemon has stored for the
+    // selected chat (on-demand sync). Messages land asynchronously via
+    // HistoryBackfilled; exhaustion lands via ChatUpdated.
+    Q_INVOKABLE void requestOlderMessagesFromPhone();
     Q_INVOKABLE void jumpToMessage(const QString &messageId);
     // Opens chatId (if not already current) and scrolls to messageId once its
     // page has loaded. Drives "Show in chat" from the starred-messages view.
@@ -305,6 +315,7 @@ public:
     // Fetch a full-resolution profile picture for the avatar viewer; result on
     // profilePictureReady (or profilePictureFailed).
     Q_INVOKABLE void viewProfilePicture(const QString &jid);
+    Q_INVOKABLE void requestChatAvatar(const QString &chatId, bool force = false);
     // In-chat search of the selected conversation. open/close toggle the search
     // bar; setChatSearchQuery refreshes matches (debounced) and jumps to the
     // newest; next/previous step through them.
@@ -436,6 +447,8 @@ private:
     void applyLoginEvent(const whatevr::v1::LoginEvent &event);
     void applyChatUpdated(const whatevr::v1::ChatUpdated &update);
     void applyAvatarUpdated(const whatevr::v1::AvatarUpdated &update);
+    void applyAvatar(const whatevr::v1::Avatar &avatar);
+    void flushAvatarRequests();
     void applyContactInfoUpdated(const whatevr::v1::ContactInfoUpdated &update);
     void applyPrivacySettingsChanged(const whatevr::v1::PrivacySettingsValues &settings);
     void applyGroupInfoUpdated(const whatevr::v1::GroupInfoUpdated &update);
@@ -453,6 +466,9 @@ private:
     void clearBanner();
     void emitStateChanged();
     void updateSelectedChatData();
+    // Drops the in-flight phone-history request state (reply, spinner, timer);
+    // returns true when something was actually cleared.
+    bool clearPhoneHistoryRequest();
     void cacheMessages(const QString &chatId, const QList<whatevr::v1::Message> &messages, bool canLoadOlderMessages);
     bool restoreCachedMessages(const QString &chatId);
     // Finds a message by id in the selected chat's cache and copies it into out.
@@ -495,6 +511,9 @@ private:
     bool m_messagesLoading = false;
     bool m_olderMessagesLoading = false;
     bool m_canLoadOlderMessages = false;
+    bool m_selectedChatHistoryExhausted = false;
+    bool m_phoneHistoryRequesting = false;
+    QString m_phoneHistoryRequestChatId;
     QString m_messagesLoadingChatId;
     QString m_olderMessagesLoadingChatId;
     QString m_jumpToMessageChatId;
@@ -579,6 +598,7 @@ private:
     std::unique_ptr<QGrpcCallReply> m_chatsReply;
     std::unique_ptr<QGrpcCallReply> m_messagesReply;
     std::unique_ptr<QGrpcCallReply> m_olderMessagesReply;
+    std::unique_ptr<QGrpcCallReply> m_phoneHistoryReply;
     std::unique_ptr<QGrpcCallReply> m_jumpToMessageReply;
     std::unique_ptr<QGrpcCallReply> m_markChatReadReply;
     std::unique_ptr<QGrpcCallReply> m_subscribeChatPresenceReply;
@@ -612,6 +632,11 @@ private:
     QString m_currentUserStatusText;
     QString m_currentUserJid;
     std::unique_ptr<QGrpcCallReply> m_profilePictureReply;
+    std::unique_ptr<QGrpcCallReply> m_requestAvatarsReply;
+    // Session-scoped dedupe of delegate-driven avatar requests plus the batch
+    // awaiting the next flush; both cleared on logout.
+    QSet<QString> m_requestedAvatarChatIds;
+    QSet<QString> m_pendingAvatarChatIds;
     std::unique_ptr<QGrpcCallReply> m_chatSearchReply;
     int m_forwardBatchChatCount = 0;
     bool m_forwardBatchFailed = false;
@@ -641,6 +666,11 @@ private:
     QTimer *m_selectedChatReloadTimer = nullptr;
     QTimer *m_updateSessionStateTimer = nullptr;
     QTimer *m_markChatReadTimer = nullptr;
+    QTimer *m_syncCompleteRefreshTimer = nullptr;
+    // Clears the phone-history-request spinner when the phone never answers
+    // (offline); the affordance becomes retryable again.
+    QTimer *m_phoneHistoryTimeoutTimer = nullptr;
+    QTimer *m_avatarRequestTimer = nullptr;
     QString m_pendingSelectedChatReloadId;
     // A cross-chat "show in chat" jump deferred until the target chat's first
     // message page lands (set by showMessageInChat, consumed in requestMessages).

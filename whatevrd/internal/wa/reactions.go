@@ -92,7 +92,7 @@ func (c *Client) applyReaction(ctx context.Context, internalID, reactorID, react
 		notificationTimestampFresh(timestamp.Unix(), time.Now()) && c.ShouldNotifyChat(chat.ID) &&
 		!chatNotificationsMuted(chat.IsMuted, chat.MuteEndTimestamp) {
 		if opts, enabled := c.notificationOptions(); enabled {
-			c.notifier.NotifyMessage(ctx, reactionNotification(message, reactorID, reactorName, emoji), toDaemonChat(chat), opts)
+			c.notifyWithAvatar(ctx, reactionNotification(message, reactorID, reactorName, emoji), toDaemonChat(chat), opts)
 		}
 	}
 }
