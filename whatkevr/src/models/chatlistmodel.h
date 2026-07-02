@@ -67,10 +67,14 @@ public:
     // Drafts never pin. Stored client-side and re-applied across daemon refreshes.
     Q_INVOKABLE void setChatDraft(const QString &chatId, const QString &text);
     [[nodiscard]] Q_INVOKABLE QString chatDraft(const QString &chatId) const;
+    // Drops all drafts, in memory and persisted; account data must not
+    // survive a logout into the next session.
+    void clearDrafts();
     [[nodiscard]] QString chatName(const QString &chatId) const;
     [[nodiscard]] QString chatAvatarLocalPath(const QString &chatId) const;
     [[nodiscard]] bool chatIsGroup(const QString &chatId) const;
     [[nodiscard]] int chatUnreadCount(const QString &chatId) const;
+    [[nodiscard]] bool chatHistoryExhausted(const QString &chatId) const;
     [[nodiscard]] int indexOf(const QString &chatId) const;
     [[nodiscard]] bool isEmpty() const;
     [[nodiscard]] int archivedCount() const;
@@ -94,6 +98,7 @@ private:
         quint32 pinnedOrder = 0;
         bool isArchived = false;
         bool isMuted = false;
+        bool historyExhausted = false;
         qint64 updatedAtUnix = 0;
         QString avatarLocalPath;
         bool isTyping = false;

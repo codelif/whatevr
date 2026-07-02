@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"strings"
 	"time"
 
@@ -24,6 +25,7 @@ type Chat struct {
 	IsArchived           bool
 	IsMuted              bool
 	MuteEndTimestamp     int64
+	HistoryExhausted     bool
 	UpdatedAt            int64
 	AvatarLocalPath      string
 	AvatarPictureID      string
@@ -79,7 +81,7 @@ func (db *DB) ListChats(ctx context.Context, limit, offset int, afterChatID stri
 	}
 
 	const selectColumns = `
-		SELECT c.id, c.name, c.name_source, c.last_message, c.last_message_time, c.last_message_direction, c.last_message_status, c.unread_count, c.is_group, c.is_pinned, c.pinned_order, c.updated_at, c.is_archived, c.is_muted, c.mute_end_timestamp,
+		SELECT c.id, c.name, c.name_source, c.last_message, c.last_message_time, c.last_message_direction, c.last_message_status, c.unread_count, c.is_group, c.is_pinned, c.pinned_order, c.updated_at, c.is_archived, c.is_muted, c.mute_end_timestamp, c.history_exhausted,
 		       COALESCE(NULLIF(a.local_path, ''), c.avatar_local_path), COALESCE(NULLIF(a.picture_id, ''), c.avatar_picture_id), COALESCE(NULLIF(a.status, ''), c.avatar_status), COALESCE(NULLIF(a.checked_at, 0), c.avatar_checked_at)
 		FROM chats c
 		LEFT JOIN avatars a ON a.subject_kind = 'chat' AND a.subject_id = c.id
@@ -167,7 +169,7 @@ func (db *DB) SearchChats(ctx context.Context, query string, limit int) ([]Chat,
 	}
 
 	rows, err := db.reader().QueryContext(ctx, `
-		SELECT c.id, c.name, c.name_source, c.last_message, c.last_message_time, c.last_message_direction, c.last_message_status, c.unread_count, c.is_group, c.is_pinned, c.pinned_order, c.updated_at, c.is_archived, c.is_muted, c.mute_end_timestamp,
+		SELECT c.id, c.name, c.name_source, c.last_message, c.last_message_time, c.last_message_direction, c.last_message_status, c.unread_count, c.is_group, c.is_pinned, c.pinned_order, c.updated_at, c.is_archived, c.is_muted, c.mute_end_timestamp, c.history_exhausted,
 		       COALESCE(NULLIF(a.local_path, ''), c.avatar_local_path), COALESCE(NULLIF(a.picture_id, ''), c.avatar_picture_id), COALESCE(NULLIF(a.status, ''), c.avatar_status), COALESCE(NULLIF(a.checked_at, 0), c.avatar_checked_at)
 		FROM chats c
 		LEFT JOIN avatars a ON a.subject_kind = 'chat' AND a.subject_id = c.id
@@ -304,6 +306,38 @@ func (db *DB) UpdateChatArchiveState(ctx context.Context, chatID string, archive
 		SET is_archived = ?
 		WHERE id = ? AND is_archived != ?
 	`, boolToInt(archived), chatID, boolToInt(archived))
+	if err != nil {
+		return Chat{}, false, err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return Chat{}, false, err
+	}
+	if rowsAffected == 0 {
+		return Chat{}, false, nil
+	}
+
+	chat, err := db.GetChat(ctx, chatID)
+	if err != nil {
+		return Chat{}, false, err
+	}
+	return chat, true, nil
+}
+
+// UpdateChatHistoryExhausted records whether the phone has answered an
+// on-demand history request for this chat with nothing older than what is
+// stored locally.
+func (db *DB) UpdateChatHistoryExhausted(ctx context.Context, chatID string, exhausted bool) (Chat, bool, error) {
+	if chatID == "" {
+		return Chat{}, false, nil
+	}
+
+	result, err := db.conn.ExecContext(ctx, `
+		UPDATE chats
+		SET history_exhausted = ?
+		WHERE id = ? AND history_exhausted != ?
+	`, boolToInt(exhausted), chatID, boolToInt(exhausted))
 	if err != nil {
 		return Chat{}, false, err
 	}
@@ -499,6 +533,76 @@ func (db *DB) ReconcileChatPins(ctx context.Context, pins map[string]uint32) ([]
 	return changed, nil
 }
 
+// ReconcileChatMutes sets mute state to match the given map exactly (chats
+// not in the map are unmuted), returning the rows that changed. Mirrors
+// ReconcileChatPins; used when a full app-state sync lands. Map values are
+// the mute end in unix millis, -1 meaning "muted forever".
+func (db *DB) ReconcileChatMutes(ctx context.Context, mutes map[string]int64) ([]Chat, error) {
+	tx, err := db.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.QueryContext(ctx, `SELECT id, is_muted, mute_end_timestamp FROM chats`)
+	if err != nil {
+		return nil, err
+	}
+
+	type muteState struct {
+		muted bool
+		end   int64
+	}
+	current := make(map[string]muteState)
+	for rows.Next() {
+		var id string
+		var isMuted int
+		var end int64
+		if err := rows.Scan(&id, &isMuted, &end); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		current[id] = muteState{muted: isMuted != 0, end: end}
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	changedIDs := make([]string, 0)
+	for id, state := range current {
+		end, shouldMute := mutes[id]
+		if !shouldMute {
+			end = 0
+		}
+		if state.muted == shouldMute && state.end == end {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE chats SET is_muted = ?, mute_end_timestamp = ? WHERE id = ?
+		`, boolToInt(shouldMute), end, id); err != nil {
+			return nil, err
+		}
+		changedIDs = append(changedIDs, id)
+	}
+
+	changed := make([]Chat, 0, len(changedIDs))
+	for _, id := range changedIDs {
+		chat, err := getChatTx(ctx, tx, id)
+		if err != nil {
+			return nil, err
+		}
+		changed = append(changed, chat)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return changed, nil
+}
+
 func (db *DB) ClearChatPins(ctx context.Context) error {
 	_, err := db.conn.ExecContext(ctx, `
 		UPDATE chats
@@ -508,25 +612,96 @@ func (db *DB) ClearChatPins(ctx context.Context) error {
 	return err
 }
 
+// clearSessionKeepTables are the tables that survive a logout because they
+// hold machine-level preferences rather than account data. Every other table
+// in sqlite_master is wiped, so a newly added table is cleared by default
+// instead of leaking into the next account's session.
+var clearSessionKeepTables = map[string]bool{
+	"daemon_config": true,
+}
+
 func (db *DB) ClearSessionData(ctx context.Context) error {
+	regular, virtual, err := db.listTables(ctx)
+	if err != nil {
+		return err
+	}
+
 	tx, err := db.conn.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 
-	for _, statement := range []string{
-		`DELETE FROM history_sync_chunks`,
-		`DELETE FROM messages`,
-		`DELETE FROM chats`,
-		`DELETE FROM app_state`,
-	} {
-		if _, err := tx.ExecContext(ctx, statement); err != nil {
-			return err
+	// Every row of every table goes at once, so enforce foreign keys at
+	// commit time; delete order across tables then doesn't matter.
+	if _, err := tx.ExecContext(ctx, `PRAGMA defer_foreign_keys = ON`); err != nil {
+		return err
+	}
+	for _, table := range regular {
+		if clearSessionKeepTables[table] {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM "`+table+`"`); err != nil {
+			return fmt.Errorf("clear table %s: %w", table, err)
 		}
 	}
+	// The only virtual tables in the schema are external-content FTS5 indexes
+	// (messages_fts). Their content tables were just emptied, so 'rebuild'
+	// resets the index to a consistent empty state.
+	for _, table := range virtual {
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`INSERT INTO "%s"("%s") VALUES('rebuild')`, table, table)); err != nil {
+			return fmt.Errorf("rebuild virtual table %s: %w", table, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
 
-	return tx.Commit()
+	_, err = db.conn.ExecContext(ctx, `VACUUM`)
+	return err
+}
+
+// listTables enumerates user tables from sqlite_master, separating virtual
+// tables from regular ones. Shadow tables backing a virtual table (e.g.
+// messages_fts_data) are excluded entirely: they are managed by the virtual
+// table module and must never be written directly.
+func (db *DB) listTables(ctx context.Context) (regular, virtual []string, err error) {
+	rows, err := db.conn.QueryContext(ctx, `SELECT name, sql FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+
+	var all []string
+	for rows.Next() {
+		var name string
+		var createSQL sql.NullString
+		if err := rows.Scan(&name, &createSQL); err != nil {
+			return nil, nil, err
+		}
+		if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(createSQL.String)), "CREATE VIRTUAL TABLE") {
+			virtual = append(virtual, name)
+			continue
+		}
+		all = append(all, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+
+	for _, name := range all {
+		shadow := false
+		for _, v := range virtual {
+			if strings.HasPrefix(name, v+"_") {
+				shadow = true
+				break
+			}
+		}
+		if !shadow {
+			regular = append(regular, name)
+		}
+	}
+	return regular, virtual, nil
 }
 
 // OverwriteChatUnreadCount sets the chat's unread_count to the given value
@@ -874,8 +1049,8 @@ func (db *DB) MigrateChatID(ctx context.Context, fromChatID, toChatID string) (C
 	}
 
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO chats (id, name, name_source, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group, is_pinned, pinned_order, is_archived, is_muted, mute_end_timestamp, avatar_local_path, avatar_picture_id)
-		SELECT ?, name, name_source, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group, is_pinned, pinned_order, is_archived, is_muted, mute_end_timestamp, avatar_local_path, avatar_picture_id
+		INSERT INTO chats (id, name, name_source, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group, is_pinned, pinned_order, is_archived, is_muted, mute_end_timestamp, history_exhausted, avatar_local_path, avatar_picture_id)
+		SELECT ?, name, name_source, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group, is_pinned, pinned_order, is_archived, is_muted, mute_end_timestamp, history_exhausted, avatar_local_path, avatar_picture_id
 		FROM chats
 		WHERE id = ?
 		ON CONFLICT(id) DO UPDATE SET

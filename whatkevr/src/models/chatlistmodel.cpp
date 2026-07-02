@@ -38,6 +38,14 @@ void ChatListModel::loadPersistedDrafts()
     }
 }
 
+void ChatListModel::clearDrafts()
+{
+    m_drafts.clear();
+    // Remove the stored key unconditionally: drafts may have been persisted
+    // while the setting was on, even if it is off now.
+    QSettings().remove(QLatin1String(kDraftsKey));
+}
+
 void ChatListModel::savePersistedDrafts() const
 {
     const Settings *settings = Settings::instance();
@@ -458,6 +466,15 @@ int ChatListModel::chatUnreadCount(const QString &chatId) const
     return m_chats.at(index).unreadCount;
 }
 
+bool ChatListModel::chatHistoryExhausted(const QString &chatId) const
+{
+    const int index = indexOf(chatId);
+    if (index < 0) {
+        return false;
+    }
+    return m_chats.at(index).historyExhausted;
+}
+
 int ChatListModel::indexOf(const QString &chatId) const
 {
     return m_chatIndexById.value(chatId, -1);
@@ -502,6 +519,7 @@ ChatListModel::ChatItem ChatListModel::fromProto(const whatevr::v1::Chat &chat)
         .pinnedOrder = chat.pinnedOrder(),
         .isArchived = chat.isArchived(),
         .isMuted = muted,
+        .historyExhausted = chat.historyExhausted(),
         .updatedAtUnix = chat.updatedAtUnix(),
         .avatarLocalPath = chat.avatarLocalPath(),
         .isTyping = false,
@@ -568,6 +586,7 @@ bool ChatListModel::sameChatData(const ChatItem &left, const ChatItem &right)
         && left.pinnedOrder == right.pinnedOrder
         && left.isArchived == right.isArchived
         && left.isMuted == right.isMuted
+        && left.historyExhausted == right.historyExhausted
         && left.avatarLocalPath == right.avatarLocalPath
         && left.isTyping == right.isTyping
         && left.hasDraft == right.hasDraft

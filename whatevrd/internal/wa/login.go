@@ -14,6 +14,7 @@ import (
 	"go.mau.fi/whatsmeow/types"
 
 	"whatevrd/internal/app"
+	appstore "whatevrd/internal/store"
 )
 
 const (
@@ -251,9 +252,8 @@ func (c *Client) resetAfterExternalLogout() {
 	defer c.lifecycleMu.Unlock()
 	c.eventGen.Add(1)
 
-	ctx := c.backgroundContext()
+	ctx := context.Background()
 	c.cancelRunContextLocked()
-	ctx = context.Background()
 
 	c.mu.Lock()
 	old := c.client
@@ -268,13 +268,11 @@ func (c *Client) resetAfterExternalLogout() {
 		}
 	}
 
-	if err := c.resetClient(ctx); err != nil {
-		c.log.Errorf("Failed to reset client after remote logout: %v", err)
+	if err := c.wipeAccountData(ctx); err != nil {
+		c.log.Errorf("Failed to wipe account data after remote logout: %v", err)
 		return
 	}
-	runCtx := c.replaceRunContextLocked(context.Background())
-	c.startRunGoroutine(func() { c.runConnectionSupervisor(runCtx) })
-	c.startRunGoroutine(func() { c.runSendQueue(runCtx) })
+	c.restartRunLoopsLocked()
 }
 
 func (c *Client) Logout(ctx context.Context) error {
@@ -298,15 +296,25 @@ func (c *Client) Logout(ctx context.Context) error {
 	}
 	c.cancelRunContextLocked()
 
-	localCtx := context.Background()
-	backupPath := filepath.Join(c.paths.DataDir, fmt.Sprintf("whatevrd-before-logout-%d.db", time.Now().Unix()))
-	if err := c.store.Backup(localCtx, backupPath); err != nil {
-		c.log.Warnf("Failed to back up local database before logout: %v", err)
-	} else {
-		c.log.Infof("Backed up local database before logout to %s", backupPath)
+	if err := c.wipeAccountData(context.Background()); err != nil {
+		return err
 	}
 
-	if err := c.store.ClearSessionData(localCtx); err != nil {
+	c.daemon.SetStateDetail(app.StateNeedLogin, "Logged out")
+	c.restartRunLoopsLocked()
+	return nil
+}
+
+// wipeAccountData clears every piece of account-scoped state: the app DB
+// (all tables except machine-level preferences), the media cache (avatars,
+// stickers, media files), the whatsmeow session store, and in-memory caches
+// keyed by account data. It is shared by user-initiated Logout and
+// resetAfterExternalLogout so both paths reset identically. Callers must
+// hold lifecycleMu and have cancelled the run context first.
+func (c *Client) wipeAccountData(ctx context.Context) error {
+	c.backupBeforeWipe(ctx)
+
+	if err := c.store.ClearSessionData(ctx); err != nil {
 		return err
 	}
 
@@ -339,7 +347,7 @@ func (c *Client) Logout(ctx context.Context) error {
 		return err
 	}
 
-	container, err := openSessionStore(localCtx, c.paths.SessionDBPath, c.log.Sub("DB"))
+	container, err := openSessionStore(ctx, c.paths.SessionDBPath, c.log.Sub("DB"))
 	if err != nil {
 		return err
 	}
@@ -347,15 +355,95 @@ func (c *Client) Logout(ctx context.Context) error {
 	c.container = container
 	c.mu.Unlock()
 
-	if err := c.resetClient(localCtx); err != nil {
-		return err
-	}
+	c.resetInMemoryAccountState()
 
-	c.daemon.SetStateDetail(app.StateNeedLogin, "Logged out")
+	return c.resetClient(ctx)
+}
+
+// backupBeforeWipe snapshots the app DB before a wipe, keeping only the most
+// recent snapshot so repeated logouts don't accumulate backups. Failure to
+// back up never blocks the wipe.
+func (c *Client) backupBeforeWipe(ctx context.Context) {
+	backupPath := filepath.Join(c.paths.DataDir, fmt.Sprintf("whatevrd-before-logout-%d.db", time.Now().Unix()))
+	if err := c.store.Backup(ctx, backupPath); err != nil {
+		c.log.Warnf("Failed to back up local database before logout: %v", err)
+		return
+	}
+	c.log.Infof("Backed up local database before logout to %s", backupPath)
+
+	entries, err := filepath.Glob(filepath.Join(c.paths.DataDir, "whatevrd-before-logout-*.db"))
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if entry == backupPath {
+			continue
+		}
+		if err := os.Remove(entry); err != nil {
+			c.log.Warnf("Failed to remove old logout backup %s: %v", entry, err)
+		}
+	}
+}
+
+// resetInMemoryAccountState drops in-memory caches keyed by account data so
+// nothing bleeds into the next login. The run context must be cancelled
+// (workers stopped) before calling.
+func (c *Client) resetInMemoryAccountState() {
+	c.avatarMu.Lock()
+	c.avatarHigh = nil
+	c.avatarLow = nil
+	c.avatarQueued = make(map[appstore.AvatarSubject]avatarPriority)
+	c.avatarMu.Unlock()
+
+	c.offlineSyncMu.Lock()
+	c.offlineSyncActive = false
+	c.offlineSyncTotalEvents = 0
+	c.offlineSyncTotalMessages = 0
+	c.offlineSyncProcessedEvents = 0
+	c.offlineSyncProcessedMessages = 0
+	c.offlineSyncChangedChats = nil
+	c.offlineSyncLastPublish = time.Time{}
+	c.offlineSyncMu.Unlock()
+
+	c.groupParticipantsMu.Lock()
+	c.groupParticipantsFresh = make(map[string]time.Time)
+	c.groupParticipantsInFlight = make(map[string]bool)
+	c.groupParticipantsMu.Unlock()
+
+	c.sendTimingsMu.Lock()
+	c.sendTimings = make(map[string]*sendTiming)
+	c.sendTimingsMu.Unlock()
+
+	c.pendingAppStateMu.Lock()
+	c.pendingAppState = nil
+	c.pendingAppStateMu.Unlock()
+
+	c.clearHistorySyncStallWatch()
+	c.historySyncMu.Lock()
+	c.historySyncLastEvent = app.HistorySyncEvent{}
+	c.historySyncLastActivity = time.Time{}
+	c.historySyncMu.Unlock()
+
+	c.backfillMu.Lock()
+	pendingBackfills := c.backfillInFlight
+	c.backfillInFlight = nil
+	c.backfillMu.Unlock()
+	for _, req := range pendingBackfills {
+		if req.timer != nil {
+			req.timer.Stop()
+		}
+	}
+}
+
+// restartRunLoopsLocked restarts the background loops torn down by a wipe.
+// It must start the same set of loops as Start(); notably the avatar worker,
+// which was previously left dead after logout so avatars never fetched again
+// until the daemon restarted.
+func (c *Client) restartRunLoopsLocked() {
 	runCtx := c.replaceRunContextLocked(context.Background())
 	c.startRunGoroutine(func() { c.runConnectionSupervisor(runCtx) })
 	c.startRunGoroutine(func() { c.runSendQueue(runCtx) })
-	return nil
+	c.startAvatarWorker(runCtx)
 }
 
 func connBackoffDelay(attempt int) time.Duration {
