@@ -229,7 +229,9 @@ const (
 	HistorySyncTypePushName
 	HistorySyncTypeNonBlockingData
 	HistorySyncTypeOnDemand
-	HistorySyncTypeProfilePicture
+	// The slot after OnDemand was HistorySyncTypeProfilePicture, removed with
+	// the bulk avatar prefetch; keep numbering stable for OfflineCatchup.
+	historySyncTypeRetiredProfilePicture //nolint:unused
 	HistorySyncTypeOfflineCatchup
 )
 
@@ -241,6 +243,9 @@ const (
 	HistorySyncPhaseDownloading
 	HistorySyncPhaseProcessing
 	HistorySyncPhaseComplete
+	// The phone stopped delivering chunks below 100% and has been idle past
+	// the stall timeout; the sync may still resume later.
+	HistorySyncPhaseStalled
 )
 
 type HistorySyncEvent struct {
@@ -283,6 +288,7 @@ type Chat struct {
 	IsArchived           bool
 	IsMuted              bool
 	MuteEndTimestamp     int64
+	HistoryExhausted     bool
 	UpdatedAtUnix        int64
 	AvatarLocalPath      string
 }

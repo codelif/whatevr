@@ -408,8 +408,12 @@ Kirigami.Page {
                     width: Math.min(parent.width - Kirigami.Units.largeSpacing * 4,
                                     Kirigami.Units.gridUnit * 16)
                     visible: !Whatevr.AppController.chatsLoading && Whatevr.AppController.chatsEmpty
-                    text: Whatevr.I18n.i18nc("@info", "No chats yet")
-                    explanation: Whatevr.I18n.i18nc("@info", "Chats will appear here as history sync stores them locally.")
+                    text: Whatevr.AppController.historySyncVisible
+                          ? Whatevr.I18n.i18nc("@info", "Syncing your messages…")
+                          : Whatevr.I18n.i18nc("@info", "No chats yet")
+                    explanation: Whatevr.AppController.historySyncVisible
+                                 ? Whatevr.I18n.i18nc("@info", "Your chats will appear here in a moment. You can start using them as they arrive.")
+                                 : Whatevr.I18n.i18nc("@info", "Chats will appear here as history sync stores them locally.")
                 }
             }
 
