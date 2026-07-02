@@ -339,8 +339,6 @@ func toProtoHistorySyncType(t app.HistorySyncType) pb.HistorySyncType {
 		return pb.HistorySyncType_HISTORY_SYNC_TYPE_NON_BLOCKING_DATA
 	case app.HistorySyncTypeOnDemand:
 		return pb.HistorySyncType_HISTORY_SYNC_TYPE_ON_DEMAND
-	case app.HistorySyncTypeProfilePicture:
-		return pb.HistorySyncType_HISTORY_SYNC_TYPE_PROFILE_PICTURE
 	case app.HistorySyncTypeOfflineCatchup:
 		return pb.HistorySyncType_HISTORY_SYNC_TYPE_OFFLINE_CATCHUP
 	default:
@@ -358,6 +356,8 @@ func toProtoHistorySyncPhase(phase app.HistorySyncPhase) pb.HistorySyncPhase {
 		return pb.HistorySyncPhase_HISTORY_SYNC_PHASE_PROCESSING
 	case app.HistorySyncPhaseComplete:
 		return pb.HistorySyncPhase_HISTORY_SYNC_PHASE_COMPLETE
+	case app.HistorySyncPhaseStalled:
+		return pb.HistorySyncPhase_HISTORY_SYNC_PHASE_STALLED
 	default:
 		return pb.HistorySyncPhase_HISTORY_SYNC_PHASE_UNSPECIFIED
 	}
@@ -376,6 +376,7 @@ func toProtoChat(chat app.Chat) *pb.Chat {
 		IsArchived:           chat.IsArchived,
 		IsMuted:              chat.IsMuted,
 		MuteEndTimestamp:     chat.MuteEndTimestamp,
+		HistoryExhausted:     chat.HistoryExhausted,
 		UpdatedAtUnix:        chat.UpdatedAtUnix,
 		AvatarLocalPath:      chat.AvatarLocalPath,
 		LastMessageDirection: toProtoMessageDirection(chat.LastMessageDirection),

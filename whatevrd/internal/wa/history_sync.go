@@ -28,7 +28,6 @@ func (c *Client) handleManualHistorySyncNotification(ctx context.Context, evt *e
 		return false
 	}
 	syncType := historySyncTypeFromNotification(notif.GetSyncType())
-	c.markHistorySyncAvatarDeferralActive(syncType)
 
 	chunk := historySyncChunkFromNotification(evt.Info.ID, notif)
 	if _, err := c.store.SaveHistorySyncChunk(ctx, chunk); err != nil {
@@ -199,6 +198,9 @@ func (c *Client) processHistorySyncChunk(ctx context.Context, chunk appstore.His
 			c.log.Errorf("Failed to mark history sync chunk %s processed: %v", chunk.ID, err)
 			return false
 		}
+		// Each chunk brings LID→PN mappings with it; retry any pin/archive/mute
+		// state that was parked because its mapping hadn't landed yet.
+		c.reconcilePendingAppState(ctx, false)
 	} else {
 		if err := client.SendProtocolMessageReceipt(ctx, chunk.ID, types.ReceiptTypeHistorySync); err != nil {
 			c.log.Warnf("Failed to acknowledge processed history sync chunk %s: %v", chunk.ID, err)
@@ -221,12 +223,82 @@ func (c *Client) processHistorySyncChunk(ctx context.Context, chunk appstore.His
 }
 
 func (c *Client) publishHistorySyncChunkProgress(chunk appstore.HistorySyncChunk, syncType app.HistorySyncType, phase app.HistorySyncPhase) {
-	c.daemon.PublishHistorySyncProgress(app.HistorySyncEvent{
+	evt := app.HistorySyncEvent{
 		SyncType:        syncType,
 		ProgressPercent: chunk.Progress,
 		ChunkOrder:      chunk.ChunkOrder,
 		Phase:           phase,
+	}
+	c.noteHistorySyncActivity(evt)
+	c.daemon.PublishHistorySyncProgress(evt)
+}
+
+// The initial sync is phone-driven: the phone pushes chunks and the daemon
+// can only wait. When it goes quiet below 100% for this long, the sync is
+// declared stalled so the settle work isn't held hostage and the UI can stop
+// pretending progress is being made. A later chunk resumes everything.
+const historySyncStallTimeout = 3 * time.Minute
+
+// historySyncTypeTracksStall limits the stall watchdog to the phone-driven
+// initial sync flow; on-demand responses have their own expiry (backfill.go)
+// and auxiliary types complete instantly.
+func historySyncTypeTracksStall(syncType app.HistorySyncType) bool {
+	switch syncType {
+	case app.HistorySyncTypeInitialBootstrap, app.HistorySyncTypeInitialStatusV3, app.HistorySyncTypeFull, app.HistorySyncTypeRecent:
+		return true
+	default:
+		return false
+	}
+}
+
+// noteHistorySyncActivity records sync progress for the stall watchdog and
+// arms it if idle. Cheap to call often: the timer is only created once and
+// re-arms itself from historySyncLastActivity.
+func (c *Client) noteHistorySyncActivity(evt app.HistorySyncEvent) {
+	if !historySyncTypeTracksStall(evt.SyncType) {
+		return
+	}
+	c.historySyncMu.Lock()
+	c.historySyncLastEvent = evt
+	c.historySyncLastActivity = time.Now()
+	if c.historySyncStallTimer == nil {
+		c.historySyncStallTimer = time.AfterFunc(historySyncStallTimeout, c.historySyncStallCheck)
+	}
+	c.historySyncMu.Unlock()
+}
+
+func (c *Client) clearHistorySyncStallWatch() {
+	c.historySyncMu.Lock()
+	if c.historySyncStallTimer != nil {
+		c.historySyncStallTimer.Stop()
+		c.historySyncStallTimer = nil
+	}
+	c.historySyncMu.Unlock()
+}
+
+func (c *Client) historySyncStallCheck() {
+	c.historySyncMu.Lock()
+	idle := time.Since(c.historySyncLastActivity)
+	if idle < historySyncStallTimeout {
+		c.historySyncStallTimer = time.AfterFunc(historySyncStallTimeout-idle, c.historySyncStallCheck)
+		c.historySyncMu.Unlock()
+		return
+	}
+	c.historySyncStallTimer = nil
+	last := c.historySyncLastEvent
+	c.historySyncMu.Unlock()
+
+	c.log.Warnf("History sync stalled: no activity for %s (type %d, chunk %d, progress %d%%); running settle work early", historySyncStallTimeout, last.SyncType, last.ChunkOrder, last.ProgressPercent)
+	c.daemon.PublishHistorySyncProgress(app.HistorySyncEvent{
+		SyncType:        last.SyncType,
+		ProgressPercent: last.ProgressPercent,
+		ChunkOrder:      last.ChunkOrder,
+		Phase:           app.HistorySyncPhaseStalled,
 	})
+
+	ctx := c.backgroundContext()
+	c.reconcileAfterHistorySync(ctx)
+	c.kickAvatarBackgroundRefresh()
 }
 
 func (c *Client) deleteHistorySyncMedia(ctx context.Context, client *whatsmeow.Client, chunk appstore.HistorySyncChunk) {
@@ -237,55 +309,10 @@ func (c *Client) deleteHistorySyncMedia(ctx context.Context, client *whatsmeow.C
 	}
 }
 
-func (c *Client) markHistorySyncAvatarDeferralActive(syncType app.HistorySyncType) {
-	if !historySyncBlocksAvatarFetch(syncType) {
-		return
-	}
-	c.historySyncMu.Lock()
-	c.historySyncLastActivity = time.Now()
-	c.historySyncActive = true
-	if c.historySyncIdleTimer != nil {
-		c.historySyncIdleTimer.Stop()
-	}
-	c.historySyncIdleTimer = time.AfterFunc(historySyncAvatarDeferralIdle, c.expireHistorySyncAvatarDeferral)
-	c.historySyncMu.Unlock()
-}
-
-func (c *Client) finishHistorySyncAvatarDeferral(syncType app.HistorySyncType, progress uint32) {
-	if !historySyncBlocksAvatarFetch(syncType) {
-		return
-	}
-	c.historySyncMu.Lock()
-	c.historySyncActive = false
-	if c.historySyncIdleTimer != nil {
-		c.historySyncIdleTimer.Stop()
-		c.historySyncIdleTimer = nil
-	}
-	c.historySyncMu.Unlock()
-	c.log.Debugf("History sync complete for avatar deferral (type %d, progress %d); starting profile picture sync", syncType, progress)
-	c.startProfilePictureSync(c.backgroundContext())
-}
-
-func (c *Client) expireHistorySyncAvatarDeferral() {
-	c.historySyncMu.Lock()
-	if !c.historySyncActive || time.Since(c.historySyncLastActivity) < historySyncAvatarDeferralIdle {
-		c.historySyncMu.Unlock()
-		return
-	}
-	c.historySyncActive = false
-	c.historySyncIdleTimer = nil
-	c.historySyncMu.Unlock()
-	c.log.Debugf("History sync idle for %s; starting profile picture sync", historySyncAvatarDeferralIdle)
-	c.startProfilePictureSync(c.backgroundContext())
-}
-
-func (c *Client) historySyncBlocksAvatarFetch() bool {
-	c.historySyncMu.Lock()
-	defer c.historySyncMu.Unlock()
-	return c.historySyncActive || c.profilePictureSyncActive
-}
-
-func historySyncBlocksAvatarFetch(syncType app.HistorySyncType) bool {
+// historySyncTypeCarriesMessages reports whether a sync type ingests message
+// history (as opposed to push names or non-blocking data); its completion is
+// what marks the initial sync as settled.
+func historySyncTypeCarriesMessages(syncType app.HistorySyncType) bool {
 	switch syncType {
 	case app.HistorySyncTypeInitialBootstrap, app.HistorySyncTypeInitialStatusV3, app.HistorySyncTypeFull, app.HistorySyncTypeRecent, app.HistorySyncTypeOnDemand:
 		return true
