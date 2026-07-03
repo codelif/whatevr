@@ -21,7 +21,11 @@ Item {
 
     signal messageActivated(string messageId)
 
-    implicitHeight: count > 0 ? bannerRow.implicitHeight + Kirigami.Units.smallSpacing * 2 : 0
+    // Keep the banner's layout height independent of async model/text changes.
+    // The parent decides whether to reserve this height while pins are loading
+    // or collapse it after a confirmed no-pins result.
+    implicitHeight: Math.max(Kirigami.Units.gridUnit * 2.75,
+                             Kirigami.Units.iconSizes.small + Kirigami.Units.smallSpacing * 2)
 
     // Keep the accent at full strength when the window loses focus, instead of
     // letting the highlight dim to its inactive variant (matches ChatListDelegate).

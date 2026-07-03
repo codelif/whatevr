@@ -5,6 +5,8 @@
 
 #include <KLocalizedString>
 
+#include <utility>
+
 #include "whatevr/v1/whatevr.qpb.h"
 
 namespace {
@@ -131,16 +133,25 @@ QHash<int, QByteArray> PinnedMessagesModel::roleNames() const
 
 void PinnedMessagesModel::replace(const QList<whatevr::v1::Message> &messages)
 {
-    beginResetModel();
-    m_items.clear();
-    m_items.reserve(static_cast<int>(messages.size()));
+    QList<Item> next;
+    next.reserve(static_cast<int>(messages.size()));
     for (const auto &message : messages) {
         if (isActivePin(message)) {
-            m_items.append(fromProto(message));
+            next.append(fromProto(message));
         }
     }
+
+    if (sameItems(m_items, next)) {
+        return;
+    }
+
+    const int oldCount = static_cast<int>(m_items.size());
+    beginResetModel();
+    m_items = std::move(next);
     endResetModel();
-    Q_EMIT countChanged();
+    if (oldCount != m_items.size()) {
+        Q_EMIT countChanged();
+    }
 }
 
 void PinnedMessagesModel::clear()
@@ -214,6 +225,28 @@ int PinnedMessagesModel::insertionPos(qint64 pinnedUntilUnix) const
         }
     }
     return static_cast<int>(m_items.size());
+}
+
+bool PinnedMessagesModel::sameItems(const QList<Item> &left, const QList<Item> &right)
+{
+    if (left.size() != right.size()) {
+        return false;
+    }
+    for (int i = 0; i < left.size(); ++i) {
+        const Item &a = left.at(i);
+        const Item &b = right.at(i);
+        if (a.messageId != b.messageId
+            || a.chatId != b.chatId
+            || a.senderName != b.senderName
+            || a.preview != b.preview
+            || a.mediaKind != b.mediaKind
+            || a.timeText != b.timeText
+            || a.pinnedUntilUnix != b.pinnedUntilUnix
+            || a.isOutgoing != b.isOutgoing) {
+            return false;
+        }
+    }
+    return true;
 }
 
 PinnedMessagesModel::Item PinnedMessagesModel::fromProto(const whatevr::v1::Message &message)
