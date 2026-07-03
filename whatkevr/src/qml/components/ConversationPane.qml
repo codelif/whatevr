@@ -48,22 +48,48 @@ Kirigami.Page {
                                                    || Whatevr.AppController.messagesEmpty
                                                    || Whatevr.AppController.unreadAnchorResolving
                                                    || !root.pinnedLayoutReady)
+    property string pinnedLayoutChatId: ""
     property bool pinnedLayoutSettled: false
     readonly property bool pinnedSlotReserved: Whatevr.AppController.hasSelectedChat
                                                && root.messagesCurrent
                                                && (!Whatevr.AppController.pinnedMessagesReady
                                                    || pinnedBanner.count > 0)
     readonly property bool pinnedLayoutReady: !Whatevr.AppController.hasSelectedChat
-                                              || (Whatevr.AppController.pinnedMessagesReady
+                                              || (root.pinnedLayoutChatId === Whatevr.AppController.selectedChatId
+                                                  && Whatevr.AppController.pinnedMessagesReady
                                                   && root.pinnedLayoutSettled)
 
-    onMessagesCurrentChanged: resetPinnedLayoutSettle()
-    onPinnedSlotReservedChanged: resetPinnedLayoutSettle()
+    onMessagesCurrentChanged: requestPinnedLayoutSettle()
+    onPinnedSlotReservedChanged: requestPinnedLayoutSettle()
 
-    function resetPinnedLayoutSettle() {
+    function beginPinnedLayoutSettle() {
+        root.pinnedLayoutChatId = Whatevr.AppController.selectedChatId
         root.pinnedLayoutSettled = false
         pinnedLayoutSettleTimer.stop()
-        if (Whatevr.AppController.hasSelectedChat && Whatevr.AppController.pinnedMessagesReady) {
+        if (Whatevr.AppController.hasSelectedChat
+                && root.messagesCurrent
+                && Whatevr.AppController.pinnedMessagesReady) {
+            pinnedLayoutSettleTimer.start()
+        }
+    }
+
+    function requestPinnedLayoutSettle() {
+        if (!Whatevr.AppController.hasSelectedChat) {
+            root.pinnedLayoutChatId = ""
+            root.pinnedLayoutSettled = true
+            pinnedLayoutSettleTimer.stop()
+            return
+        }
+
+        if (root.pinnedLayoutChatId !== Whatevr.AppController.selectedChatId) {
+            root.beginPinnedLayoutSettle()
+            return
+        }
+
+        if (!root.pinnedLayoutSettled
+                && root.messagesCurrent
+                && Whatevr.AppController.pinnedMessagesReady
+                && !pinnedLayoutSettleTimer.running) {
             pinnedLayoutSettleTimer.start()
         }
     }
@@ -222,8 +248,10 @@ Kirigami.Page {
         target: Whatevr.AppController
 
         function onSelectionChanged() {
-            root.resetPinnedLayoutSettle()
             const newChatId = Whatevr.AppController.selectedChatId
+            if (newChatId !== root.pinnedLayoutChatId) {
+                root.beginPinnedLayoutSettle()
+            }
             // selectionChanged also fires for presence/avatar updates of the same
             // chat; only react when the open chat actually changed.
             if (newChatId !== root.composerChatId) {
@@ -262,8 +290,10 @@ Kirigami.Page {
 
         function onPinnedMessagesReadyChanged() {
             if (Whatevr.AppController.pinnedMessagesReady) {
-                root.resetPinnedLayoutSettle()
-            } else {
+                root.requestPinnedLayoutSettle()
+            } else if (root.pinnedLayoutChatId !== Whatevr.AppController.selectedChatId
+                       || !root.pinnedLayoutSettled) {
+                root.pinnedLayoutChatId = Whatevr.AppController.selectedChatId
                 root.pinnedLayoutSettled = false
                 pinnedLayoutSettleTimer.stop()
             }
@@ -275,7 +305,9 @@ Kirigami.Page {
 
         interval: 0
         onTriggered: root.pinnedLayoutSettled = Whatevr.AppController.hasSelectedChat
+                                                && root.messagesCurrent
                                                 && Whatevr.AppController.pinnedMessagesReady
+                                                && root.pinnedLayoutChatId === Whatevr.AppController.selectedChatId
     }
 
     titleDelegate: RowLayout {
