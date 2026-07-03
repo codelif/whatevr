@@ -41,8 +41,32 @@ Kirigami.Page {
     readonly property bool messagesCurrent: Whatevr.AppController.hasSelectedChat
                                             && Whatevr.AppController.displayedMessagesChatId === Whatevr.AppController.selectedChatId
     readonly property bool waitingForMessages: Whatevr.AppController.hasSelectedChat
-                                               && Whatevr.AppController.messagesLoading
-                                               && (!root.messagesCurrent || Whatevr.AppController.messagesEmpty)
+                                               && (Whatevr.AppController.messagesLoading
+                                                   || Whatevr.AppController.unreadAnchorResolving
+                                                   || !root.pinnedLayoutReady)
+                                               && (!root.messagesCurrent
+                                                   || Whatevr.AppController.messagesEmpty
+                                                   || Whatevr.AppController.unreadAnchorResolving
+                                                   || !root.pinnedLayoutReady)
+    property bool pinnedLayoutSettled: false
+    readonly property bool pinnedSlotReserved: Whatevr.AppController.hasSelectedChat
+                                               && root.messagesCurrent
+                                               && (!Whatevr.AppController.pinnedMessagesReady
+                                                   || pinnedBanner.count > 0)
+    readonly property bool pinnedLayoutReady: !Whatevr.AppController.hasSelectedChat
+                                              || (Whatevr.AppController.pinnedMessagesReady
+                                                  && root.pinnedLayoutSettled)
+
+    onMessagesCurrentChanged: resetPinnedLayoutSettle()
+    onPinnedSlotReservedChanged: resetPinnedLayoutSettle()
+
+    function resetPinnedLayoutSettle() {
+        root.pinnedLayoutSettled = false
+        pinnedLayoutSettleTimer.stop()
+        if (Whatevr.AppController.hasSelectedChat && Whatevr.AppController.pinnedMessagesReady) {
+            pinnedLayoutSettleTimer.start()
+        }
+    }
 
     signal closeChatRequested()
 
@@ -198,6 +222,7 @@ Kirigami.Page {
         target: Whatevr.AppController
 
         function onSelectionChanged() {
+            root.resetPinnedLayoutSettle()
             const newChatId = Whatevr.AppController.selectedChatId
             // selectionChanged also fires for presence/avatar updates of the same
             // chat; only react when the open chat actually changed.
@@ -230,6 +255,25 @@ Kirigami.Page {
                 root.clearEditTarget()
             }
         }
+
+        function onMessagesChanged() {
+            if (!Whatevr.AppController.hasSelectedChat || !Whatevr.AppController.pinnedMessagesReady) {
+                root.pinnedLayoutSettled = false
+                pinnedLayoutSettleTimer.stop()
+                return
+            }
+            if (!root.pinnedLayoutSettled && !pinnedLayoutSettleTimer.running) {
+                pinnedLayoutSettleTimer.start()
+            }
+        }
+    }
+
+    Timer {
+        id: pinnedLayoutSettleTimer
+
+        interval: 0
+        onTriggered: root.pinnedLayoutSettled = Whatevr.AppController.hasSelectedChat
+                                                && Whatevr.AppController.pinnedMessagesReady
     }
 
     titleDelegate: RowLayout {
@@ -563,12 +607,25 @@ Kirigami.Page {
             }
         }
 
-        PinnedMessagesBanner {
+        Item {
+            id: pinnedBannerSlot
+
             Layout.fillWidth: true
-            visible: Whatevr.AppController.hasSelectedChat
-                     && root.messagesCurrent
-                     && count > 0
-            onMessageActivated: messageId => messageView.jumpToReplyTarget(messageId)
+            Layout.preferredHeight: root.pinnedSlotReserved
+                                    ? pinnedBanner.implicitHeight
+                                    : 0
+            clip: true
+
+            PinnedMessagesBanner {
+                id: pinnedBanner
+
+                anchors.fill: parent
+                visible: Whatevr.AppController.hasSelectedChat
+                         && Whatevr.AppController.pinnedMessagesReady
+                         && root.messagesCurrent
+                         && count > 0
+                onMessageActivated: messageId => messageView.jumpToReplyTarget(messageId)
+            }
         }
 
         Item {
@@ -626,7 +683,9 @@ Kirigami.Page {
                 anchors.fill: parent
                 anchors.margins: Kirigami.Units.smallSpacing
                 visible: Whatevr.AppController.hasSelectedChat
+                         && root.pinnedLayoutReady
                          && root.messagesCurrent
+                         && !Whatevr.AppController.unreadAnchorResolving
                          && Whatevr.AppController.messageErrorText.length === 0
                          && !Whatevr.AppController.messagesEmpty
                 chatId: Whatevr.AppController.selectedChatId
@@ -647,8 +706,21 @@ Kirigami.Page {
 
             BusyIndicator {
                 anchors.centerIn: parent
-                running: root.waitingForMessages
+                running: root.waitingForMessages && busySpinnerDelay.expired
                 visible: running
+            }
+
+            // Delay the spinner so cached/small first paints do not flash it;
+            // only genuinely slow network or unread/pin resolution shows it.
+            Timer {
+                id: busySpinnerDelay
+
+                property bool expired: false
+
+                interval: 400
+                running: root.waitingForMessages
+                onTriggered: expired = true
+                onRunningChanged: if (!running) expired = false
             }
 
             Kirigami.Action {

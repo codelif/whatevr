@@ -66,6 +66,7 @@ private:
     };
 
     static Item fromProto(const whatevr::v1::Message &message);
+    static bool sameItems(const QList<Item> &left, const QList<Item> &right);
     [[nodiscard]] int indexOfMessage(const QString &messageId) const;
     // Keeps the list ordered by pin expiry so banner navigation is stable.
     [[nodiscard]] int insertionPos(qint64 pinnedUntilUnix) const;
