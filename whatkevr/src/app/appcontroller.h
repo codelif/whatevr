@@ -78,6 +78,11 @@ class AppController final : public QObject
     Q_OBJECT
     QML_NAMED_ELEMENT(AppController)
     QML_SINGLETON
+    // WHATKEVR_PERF=1: frame-gap and chat-open timing diagnostics on stderr.
+    Q_PROPERTY(bool perfLogging READ perfLogging CONSTANT FINAL)
+    // Set by the UI while a column slide runs (plus a short quiet period), for
+    // perf diagnostics/navigation state. Message loading itself starts async.
+    Q_PROPERTY(bool uiTransitionActive READ uiTransitionActive WRITE setUiTransitionActive NOTIFY uiTransitionActiveChanged FINAL)
     Q_PROPERTY(QString applicationId READ applicationId CONSTANT FINAL)
     Q_PROPERTY(QString applicationDisplayName READ applicationDisplayName CONSTANT FINAL)
     Q_PROPERTY(QString executableName READ executableName CONSTANT FINAL)
@@ -108,6 +113,7 @@ class AppController final : public QObject
     Q_PROPERTY(QAbstractItemModel *messageListModel READ messageListModel CONSTANT FINAL)
     Q_PROPERTY(QAbstractItemModel *starredMessagesModel READ starredMessagesModel CONSTANT FINAL)
     Q_PROPERTY(QAbstractItemModel *pinnedMessagesModel READ pinnedMessagesModel CONSTANT FINAL)
+    Q_PROPERTY(bool pinnedMessagesReady READ pinnedMessagesReady NOTIFY messagesChanged FINAL)
     Q_PROPERTY(QAbstractItemModel *searchResultsModel READ searchResultsModel CONSTANT FINAL)
     // Unified chat-list search (chat names + message text across all chats).
     Q_PROPERTY(QString searchQuery READ searchQuery NOTIFY searchChanged FINAL)
@@ -169,6 +175,9 @@ public:
     explicit AppController(QObject *parent = nullptr);
     ~AppController() override;
 
+    [[nodiscard]] static bool perfLogging();
+    [[nodiscard]] bool uiTransitionActive() const;
+    void setUiTransitionActive(bool active);
     [[nodiscard]] QString applicationId() const;
     [[nodiscard]] QString applicationDisplayName() const;
     [[nodiscard]] QString executableName() const;
@@ -199,6 +208,7 @@ public:
     [[nodiscard]] QAbstractItemModel *messageListModel() const;
     [[nodiscard]] QAbstractItemModel *starredMessagesModel() const;
     [[nodiscard]] QAbstractItemModel *pinnedMessagesModel() const;
+    [[nodiscard]] bool pinnedMessagesReady() const;
     [[nodiscard]] QAbstractItemModel *searchResultsModel() const;
     [[nodiscard]] QString searchQuery() const;
     [[nodiscard]] bool searchActive() const;
@@ -244,6 +254,10 @@ public:
     Q_INVOKABLE void copyToClipboard(const QString &text);
     Q_INVOKABLE void triggerPrimaryAction();
     Q_INVOKABLE void selectChat(const QString &chatId);
+    // Phase B of a chat open: restores/loads the selected chat's messages and
+    // pins. selectChat() only flips selection state; the UI calls this on the
+    // next tick so the click highlight paints before IO/model work begins.
+    Q_INVOKABLE void populateSelectedChat();
     Q_INVOKABLE void retryMessages();
     Q_INVOKABLE void loadOlderMessages();
     // Ask the phone for history older than what the daemon has stored for the
@@ -372,6 +386,7 @@ Q_SIGNALS:
     void messagesChanged();
     void composerChanged();
     void selectionChanged();
+    void uiTransitionActiveChanged();
     // The unread divider anchor for the selected chat was set or cleared.
     void unreadAnchorChanged();
     void historySyncChanged();
@@ -421,7 +436,7 @@ private:
     void requestStatus();
     void requestReconnect();
     void requestChats();
-    void requestMessages(const QString &chatId);
+    void requestMessages(const QString &chatId, bool fullPage = false, bool applyToVisible = true);
     void requestOlderMessages();
     void runSearch();
     void runChatSearch();
@@ -473,6 +488,11 @@ private:
     bool clearPhoneHistoryRequest();
     void cacheMessages(const QString &chatId, const QList<whatevr::v1::Message> &messages, bool canLoadOlderMessages);
     bool restoreCachedMessages(const QString &chatId);
+    void applyVisibleMessages(const QString &chatId,
+                              const QList<whatevr::v1::Message> &messages,
+                              bool canLoadOlder,
+                              int initialRevealCount = 0,
+                              const QString &unreadAnchorMessageId = QString());
     // Finds a message by id in the selected chat's cache and copies it into out.
     // Returns false when the message is not cached. Used to synthesize optimistic
     // updates (e.g. pin/unpin) without a daemon round-trip.
@@ -511,6 +531,7 @@ private:
     qint64 m_qrExpiresAtUnix = 0;
     bool m_chatsLoading = false;
     bool m_messagesLoading = false;
+    bool m_pinnedMessagesReady = true;
     bool m_olderMessagesLoading = false;
     bool m_canLoadOlderMessages = false;
     bool m_selectedChatHistoryExhausted = false;
@@ -634,6 +655,7 @@ private:
     QString m_currentUserStatusText;
     QString m_currentUserJid;
     std::unique_ptr<QGrpcCallReply> m_profilePictureReply;
+    QString m_pinnedMessagesLoadingChatId;
     std::unique_ptr<QGrpcCallReply> m_requestAvatarsReply;
     // Session-scoped dedupe of delegate-driven avatar requests plus the batch
     // awaiting the next flush; both cleared on logout.
@@ -666,6 +688,19 @@ private:
     bool m_startupGrace = true;
     QTimer *m_qrTimer = nullptr;
     QTimer *m_selectedChatReloadTimer = nullptr;
+    QTimer *m_populateFallbackTimer = nullptr;
+    // Which chat populateSelectedChat() last ran for; cleared on every
+    // selection change so rapid switches only populate the final chat.
+    QString m_populatedForChatId;
+    // Transition gate (see the uiTransitionActive property): work deferred
+    // while a column slide runs, flushed by setUiTransitionActive(false).
+    bool m_uiTransitionActive = false;
+    bool m_populateDeferred = false;
+    QString m_deferredMessagesChatId;
+    QList<whatevr::v1::Message> m_deferredMessages;
+    bool m_deferredCanLoadOlder = false;
+    int m_deferredInitialRevealCount = 0;
+    bool m_deferredRequestFullPage = false;
     QTimer *m_updateSessionStateTimer = nullptr;
     QTimer *m_markChatReadTimer = nullptr;
     QTimer *m_syncCompleteRefreshTimer = nullptr;

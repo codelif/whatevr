@@ -92,7 +92,11 @@ public:
     [[nodiscard]] QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
     [[nodiscard]] QHash<int, QByteArray> roleNames() const override;
 
-    void replaceMessages(const QList<whatevr::v1::Message> &messages);
+    // initialRevealCount > 0 stages a chat switch: only the newest N rows land
+    // in the reset (a fast first paint at the bottom of the view), the rest
+    // stream in above the viewport over the following event-loop passes.
+    // Ignored on same-chat refetches, which merge incrementally anyway.
+    void replaceMessages(const QList<whatevr::v1::Message> &messages, int initialRevealCount = 0);
     // Messages are stored newest-first (index 0 == newest). Older history pages
     // are therefore appended at the end of the list.
     void appendOlderMessages(const QList<whatevr::v1::Message> &messages);
@@ -250,7 +254,16 @@ private:
     void rebuildIndex();
     void emitGroupingRolesChanged(int firstRow, int lastRow);
     void scheduleParseWarmup(int fromRow);
+    // Parses the first count rows synchronously (one viewport worth) so their
+    // first delegate layout is final, then resumes the budgeted warmup behind
+    // them. Used on chat switches, where every row starts unparsed.
+    void warmFirstRows(int count);
     void parseWarmupTick();
+    void cancelStagedReveal();
+    // Synchronously lands all still-pending staged rows; called before
+    // operations that assume the full page is present (older-history appends).
+    void flushStagedReveal();
+    void stagedRevealTick();
 
     QList<MessageItem> m_messages;
     QHash<QString, int> m_messageIndexById;
@@ -260,6 +273,9 @@ private:
     // pays ensurePreviewParsed() inside a frame. Never emits signals.
     QTimer m_warmupTimer;
     int m_warmupCursor = 0;
+    // Staged chat-switch fill: rows not yet landed by stagedRevealTick().
+    QList<MessageItem> m_pendingRevealRows;
+    QTimer m_revealTimer;
     QFont m_bodyFont;
     QFontMetricsF m_bodyMetrics;
     // Relative date strings ("Today", "Monday", …) memoized per local Julian

@@ -147,6 +147,17 @@ Item {
         onTriggered: root.settlePendingJump()
     }
 
+    // Open-at-bottom settle window: while running, late contentHeight
+    // revisions (rows parsed after the eager window, image thumbnails
+    // resolving, the delayed height binding) re-pin the view to the newest
+    // message instead of leaving it a few pixels off the bottom.
+    Timer {
+        id: bottomSettleTimer
+
+        interval: 600
+        repeat: false
+    }
+
     Timer {
         id: jumpTimeoutTimer
 
@@ -515,6 +526,7 @@ Item {
             list.positionViewAtBeginning()
             floatingDateActive = false
             floatingDateIdleTimer.stop()
+            bottomSettleTimer.restart()
             Qt.callLater(() => { root.programmaticScroll = false })
         }
         pendingNewestMessageCount = 0
@@ -522,10 +534,10 @@ Item {
         atNewest = true
     }
 
-    // Place the unread divider at the top of the viewport (WhatsApp's chat-open
-    // position) so the unread messages run downward from it. Returns false when
-    // there is no anchor to position at, letting callers fall back to the
-    // bottom of the chat.
+    // Place the unread divider near the middle of the viewport so the user sees
+    // context above and unread messages below on the first painted frame.
+    // Returns false when there is no anchor to position at, letting callers
+    // fall back to the bottom of the chat.
     function positionAtUnreadAnchor() {
         if (unreadAnchorMessageId.length === 0 || !list.model || typeof list.model.indexOf !== "function") {
             return false
@@ -539,8 +551,9 @@ Item {
         floatingDateIdleTimer.stop()
         kineticWheelScroller.stopKinetic()
         if (list.flicking) list.cancelFlick()
-        // BottomToTop list: "End" is the visual top edge.
-        list.positionViewAtIndex(index, ListView.End)
+        list.positionViewAtIndex(index, ListView.Center)
+        // Synchronous layout before first visible paint prevents a marker jump
+        // after the timeline appears.
         list.forceLayout()
         unreadAnchorPositioned = true
         openingChat = false
@@ -840,13 +853,19 @@ Item {
             openingChat = false
         } else {
             openingChat = true
-            Qt.callLater(scrollToNewest)
+            // No scroll here: the model may still hold the previous chat's
+            // rows. afterModelReset()/onVisibleChanged positions once the new
+            // chat's first paint is ready.
         }
     }
 
     onVisibleChanged: {
-        if (visible && followNewest && pendingJumpMessageId.length === 0) {
-            Qt.callLater(scrollToNewest)
+        if (visible && pendingJumpMessageId.length === 0) {
+            if (unreadAnchorMessageId.length > 0) {
+                positionAtUnreadAnchor()
+            } else if (followNewest) {
+                Qt.callLater(scrollToNewest)
+            }
         }
     }
 
@@ -1160,7 +1179,24 @@ Item {
             root.updateScrollState()
             root.noteScroll()
         }
-        onContentHeightChanged: root.updateScrollState()
+        onContentHeightChanged: {
+            // During the post-open settle window, content-height revisions
+            // (late row parses, thumbnails resolving intrinsic size) would
+            // otherwise leave a bottom-opened chat parked a few pixels up.
+            // Re-pin synchronously so no drifted frame is painted. Guarded on
+            // followNewest so unread-anchor opens are never touched, and the
+            // window ends at the first real user scroll.
+            if (bottomSettleTimer.running
+                    && root.followNewest
+                    && !root.programmaticScroll
+                    && root.pendingJumpMessageId.length === 0
+                    && list.count > 0) {
+                root.programmaticScroll = true
+                list.positionViewAtBeginning()
+                Qt.callLater(() => { root.programmaticScroll = false })
+            }
+            root.updateScrollState()
+        }
         onMovementEnded: root.updateScrollState()
 
         Connections {

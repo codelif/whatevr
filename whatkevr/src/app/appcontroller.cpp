@@ -3,6 +3,7 @@
 #include <QClipboard>
 #include <QDir>
 #include <QDateTime>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QFileSystemWatcher>
@@ -141,6 +142,9 @@ namespace {
 AppController *s_appControllerInstance = nullptr;
 
 constexpr int kMessageLimit = MessageListModel::MaximumMessageCount;
+// First uncached chat-open page: enough to fill the bottom viewport quickly,
+// then the normal page hydrates in the background.
+constexpr int kInitialMessageLimit = 18;
 // Hard GetMessages page cap enforced by the daemon (rpc normalizePage).
 constexpr int kServerMessageLimit = 200;
 // Extra already-read messages requested above an unread region so the unread
@@ -471,8 +475,17 @@ AppController::AppController(QObject *parent)
         m_messageCache.remove(chatId);
         m_messageCacheOrder.removeAll(chatId);
         m_pinnedCache.remove(chatId);
-        requestMessages(chatId);
+        requestMessages(chatId, true);
     });
+
+    // Safety net for chat opens whose UI path never schedules population
+    // (deep links, tests): bounds how long a selected chat can sit unpopulated.
+    // Generous enough to fire after any column slide has settled, so the
+    // fallback itself can never populate mid-animation.
+    m_populateFallbackTimer = new QTimer(this);
+    m_populateFallbackTimer->setSingleShot(true);
+    m_populateFallbackTimer->setInterval(600);
+    connect(m_populateFallbackTimer, &QTimer::timeout, this, &AppController::populateSelectedChat);
 
     m_updateSessionStateTimer = new QTimer(this);
     m_updateSessionStateTimer->setSingleShot(true);
@@ -759,6 +772,11 @@ QAbstractItemModel *AppController::starredMessagesModel() const
 QAbstractItemModel *AppController::pinnedMessagesModel() const
 {
     return m_pinnedMessagesModel;
+}
+
+bool AppController::pinnedMessagesReady() const
+{
+    return m_pinnedMessagesReady;
 }
 
 QAbstractItemModel *AppController::searchResultsModel() const
@@ -1079,10 +1097,20 @@ void AppController::triggerPrimaryAction()
     refresh();
 }
 
+bool AppController::perfLogging()
+{
+    static const bool enabled = qEnvironmentVariableIsSet("WHATKEVR_PERF");
+    return enabled;
+}
+
 void AppController::selectChat(const QString &chatId)
 {
     if (m_selectedChatId == chatId) {
         return;
+    }
+    QElapsedTimer perfTimer;
+    if (perfLogging()) {
+        perfTimer.start();
     }
 
     // Drop any deferred "show in chat" jump unless this selection is the one it
@@ -1100,6 +1128,12 @@ void AppController::selectChat(const QString &chatId)
     m_pendingSelectedChatReloadId.clear();
     m_messagesReply.reset();
     m_messagesLoadingChatId.clear();
+    m_pinnedMessagesReady = chatId.isEmpty();
+    m_pinnedMessagesLoadingChatId.clear();
+    m_deferredMessagesChatId.clear();
+    m_deferredMessages.clear();
+    m_deferredInitialRevealCount = 0;
+    m_deferredRequestFullPage = false;
     m_markChatReadReply.reset();
     m_markChatReadChatId.clear();
     m_pendingMarkChatReadId.clear();
@@ -1137,31 +1171,93 @@ void AppController::selectChat(const QString &chatId)
     m_unreadAnchorResolved = false;
     Q_EMIT unreadAnchorChanged();
     updateSelectedChatData();
-    const bool restoredMessages = restoreCachedMessages(chatId);
-    if (restoredMessages) {
-        m_messagesLoading = false;
-        m_messagesLoadingChatId.clear();
-        resolveUnreadAnchor(false);
+    // Phase A ends here: selection state only, no model work. Populating the
+    // message list (cache restore, fetch, pins) is deferred to
+    // populateSelectedChat() so the click frame paints the selection highlight
+    // and the column slide starts unblocked; the UI schedules it around the
+    // slide, with the fallback timer as a bound for paths that never do.
+    m_populatedForChatId.clear();
+    if (chatId.isEmpty()) {
+        // Deselecting keeps the displayed rows, their delegates, and the pins:
+        // the pane is hidden behind the hasSelectedChat/messagesCurrent gates,
+        // and holding onto them makes reopening the same chat instant — the
+        // content rides the open slide and the post-slide populate merely
+        // refreshes it in place instead of rebuilding the view.
+        m_populateFallbackTimer->stop();
+    } else {
+        m_populateFallbackTimer->start();
     }
     Q_EMIT selectionChanged();
     Q_EMIT messagesChanged();
     Q_EMIT composerChanged();
     updateFrontendSessionState();
+    if (perfLogging()) {
+        qInfo("[perf] selectChat(%s): %lld ms", qPrintable(chatId), perfTimer.elapsed());
+    }
+}
+
+bool AppController::uiTransitionActive() const
+{
+    return m_uiTransitionActive;
+}
+
+void AppController::setUiTransitionActive(bool active)
+{
+    if (m_uiTransitionActive == active) {
+        return;
+    }
+    m_uiTransitionActive = active;
+    Q_EMIT uiTransitionActiveChanged();
+    if (active) {
+        return;
+    }
+
+}
+
+void AppController::populateSelectedChat()
+{
+    m_populateFallbackTimer->stop();
+    if (m_selectedChatId.isEmpty() || m_populatedForChatId == m_selectedChatId) {
+        return;
+    }
+    m_populatedForChatId = m_selectedChatId;
+    // Reopening the chat whose rows were kept across the last deselect: the
+    // view already shows the right content, so the work below only refreshes
+    // it (and must not clear a still-correct pinned banner).
+    const bool sameChatReopen = m_displayedMessagesChatId == m_selectedChatId;
+    QElapsedTimer perfTimer;
+    if (perfLogging()) {
+        perfTimer.start();
+    }
+
+    const bool unreadOpen = m_selectedChatUnreadSnapshot > 0 && !m_unreadAnchorResolved;
+    if (!unreadOpen && restoreCachedMessages(m_selectedChatId)) {
+        m_messagesLoading = false;
+        m_messagesLoadingChatId.clear();
+        resolveUnreadAnchor(false);
+        Q_EMIT messagesChanged();
+    }
 
     // Prime the pinned-message banner for the chat we're switching into. When a
     // previous open cached its pins, restore them synchronously so the banner is
     // present from the first frame (no late reflow / flicker); the async load
     // below then refreshes. Only fall back to clearing when nothing is cached.
     if (const auto cachedPins = m_pinnedCache.constFind(m_selectedChatId);
-            !m_selectedChatId.isEmpty() && cachedPins != m_pinnedCache.constEnd()) {
+            cachedPins != m_pinnedCache.constEnd()) {
         m_pinnedMessagesModel->replace(cachedPins.value());
-    } else {
+        m_pinnedMessagesReady = true;
+    } else if (!sameChatReopen) {
         m_pinnedMessagesModel->clear();
+        m_pinnedMessagesReady = false;
+    } else {
+        m_pinnedMessagesReady = true;
     }
-    if (!m_selectedChatId.isEmpty()) {
-        requestSelectedChatPresence();
-        requestMessages(m_selectedChatId);
-        loadPinnedMessages(m_selectedChatId);
+    requestSelectedChatPresence();
+    requestMessages(m_selectedChatId);
+    loadPinnedMessages(m_selectedChatId);
+    Q_EMIT messagesChanged();
+    if (perfLogging()) {
+        qInfo("[perf] populateSelectedChat(%s): %lld ms", qPrintable(m_selectedChatId), perfTimer.elapsed());
     }
 }
 
@@ -1594,6 +1690,15 @@ void AppController::logout()
         m_messageCache.clear();
         m_messageCacheOrder.clear();
         m_pinnedCache.clear();
+        m_pinnedMessagesReady = true;
+        m_pinnedMessagesLoadingChatId.clear();
+        m_populatedForChatId.clear();
+        m_populateFallbackTimer->stop();
+        m_populateDeferred = false;
+        m_deferredMessagesChatId.clear();
+        m_deferredMessages.clear();
+        m_deferredInitialRevealCount = 0;
+        m_deferredRequestFullPage = false;
         const auto downloadingIds = m_mediaDownloadingMessageIds.values();
         m_mediaDownloadingMessageIds.clear();
         m_mediaDownloadReplies.clear();
@@ -2164,9 +2269,14 @@ void AppController::loadStarredMessages(const QString &chatId)
 void AppController::loadPinnedMessages(const QString &chatId)
 {
     if (!m_chatClient || chatId.isEmpty()) {
+        if (chatId == m_selectedChatId) {
+            m_pinnedMessagesReady = true;
+            Q_EMIT messagesChanged();
+        }
         return;
     }
 
+    m_pinnedMessagesLoadingChatId = chatId;
     ListPinnedMessagesRequest request;
     request.setChatId(chatId);
 
@@ -2180,12 +2290,18 @@ void AppController::loadPinnedMessages(const QString &chatId)
         }
         const auto reply = std::move(m_listPinnedReply);
         if (!status.isOk()) {
+            if (chatId == m_selectedChatId && m_pinnedMessagesLoadingChatId == chatId) {
+                m_pinnedMessagesLoadingChatId.clear();
+                m_pinnedMessagesReady = true;
+                Q_EMIT messagesChanged();
+            }
             return;
         }
         // Ignore a stale response if the user has since switched chats.
         if (chatId != m_selectedChatId) {
             return;
         }
+        m_pinnedMessagesLoadingChatId.clear();
         if (const auto response = reply->read<ListPinnedMessagesResponse>()) {
             const auto &messages = response->messages();
             // Skip the replace (and its modelReset/banner reflow) when the
@@ -2196,6 +2312,8 @@ void AppController::loadPinnedMessages(const QString &chatId)
                 m_pinnedMessagesModel->replace(messages);
             }
         }
+        m_pinnedMessagesReady = true;
+        Q_EMIT messagesChanged();
     });
 }
 
@@ -2881,7 +2999,7 @@ void AppController::requestChats()
     });
 }
 
-void AppController::requestMessages(const QString &chatId)
+void AppController::requestMessages(const QString &chatId, bool fullPage, bool applyToVisible)
 {
     if (!m_chatClient || chatId.isEmpty()) {
         return;
@@ -2897,15 +3015,36 @@ void AppController::requestMessages(const QString &chatId)
     // A chat opened with more unread messages than one page holds gets a
     // larger first page (capped by the daemon's 200-message limit), so the
     // unread divider anchor — and some context above it — is actually loaded.
-    int limit = kMessageLimit;
+    int fullLimit = kMessageLimit;
     if (chatId == m_selectedChatId && !m_unreadAnchorResolved
         && m_selectedChatUnreadSnapshot + kUnreadContextMessages > kMessageLimit) {
-        limit = qMin(kServerMessageLimit, m_selectedChatUnreadSnapshot + kUnreadContextMessages);
+        fullLimit = qMin(kServerMessageLimit, m_selectedChatUnreadSnapshot + kUnreadContextMessages);
     }
+    const bool hasCachedMessages = m_messageCache.contains(chatId);
+    const bool hasPendingJump = m_pendingJumpChatId == chatId && !m_pendingJumpMessageId.isEmpty();
+    const bool unreadAnchorNeedsFullPage = chatId == m_selectedChatId
+        && !m_unreadAnchorResolved
+        && m_selectedChatUnreadSnapshot + kUnreadContextMessages > kInitialMessageLimit;
+    const bool unreadAroundPage = applyToVisible
+        && !fullPage
+        && chatId == m_selectedChatId
+        && !hasPendingJump
+        && m_selectedChatUnreadSnapshot > 0
+        && !m_unreadAnchorResolved;
+    const bool smallFirstPage = !fullPage
+        && !unreadAroundPage
+        && !hasCachedMessages
+        && !hasPendingJump
+        && !unreadAnchorNeedsFullPage
+        && fullLimit == kMessageLimit;
+    const int limit = smallFirstPage ? kInitialMessageLimit : fullLimit;
 
     GetMessagesRequest request;
     request.setChatId(chatId);
     request.setLimit(limit);
+    if (unreadAroundPage) {
+        request.setAroundUnreadCount(qMin(m_selectedChatUnreadSnapshot, kMaxUnreadAnchorAutoloadMessages));
+    }
 
     m_messagesLoading = true;
     m_olderMessagesLoading = false;
@@ -2920,7 +3059,7 @@ void AppController::requestMessages(const QString &chatId)
     m_messagesReply = m_chatClient->GetMessages(request);
     auto *reply = m_messagesReply.get();
 
-    connect(reply, &QGrpcCallReply::finished, this, [this, reply, chatId, limit](const QGrpcStatus &status) {
+    connect(reply, &QGrpcCallReply::finished, this, [this, reply, chatId, limit, smallFirstPage, unreadAroundPage, applyToVisible](const QGrpcStatus &status) {
         if (m_messagesReply.get() != reply) {
             return;
         }
@@ -2951,27 +3090,68 @@ void AppController::requestMessages(const QString &chatId)
 
         QList<whatevr::v1::Message> visibleMessages = response->messages();
         const auto cached = m_messageCache.constFind(chatId);
-        if (cached != m_messageCache.constEnd()) {
+        if (!unreadAroundPage && cached != m_messageCache.constEnd()) {
             visibleMessages = mergeMessages(cached->messages, response->messages());
         }
 
-        cacheMessages(chatId, visibleMessages, response->messages().size() >= limit);
-        if (m_selectedChatId == chatId) {
-            m_displayedMessagesChatId = chatId;
-            m_messageListModel->replaceMessages(visibleMessages);
-            m_canLoadOlderMessages = response->messages().size() >= limit;
-            resolveUnreadAnchor(true);
-            // A deferred "show in chat" jump for this chat fires now that its
-            // first page is loaded (jumpToMessage loads around it if off-page).
-            if (m_pendingJumpChatId == chatId && !m_pendingJumpMessageId.isEmpty()) {
-                const QString pendingMessageId = m_pendingJumpMessageId;
-                m_pendingJumpChatId.clear();
-                m_pendingJumpMessageId.clear();
-                jumpToMessage(pendingMessageId);
-            }
+        const bool pageFilled = response->messages().size() >= limit;
+        const bool canLoadOlder = !smallFirstPage && pageFilled;
+        if (cached != m_messageCache.constEnd()) {
+            cacheMessages(chatId, mergeMessages(cached->messages, response->messages()), pageFilled);
+        } else {
+            cacheMessages(chatId, visibleMessages, pageFilled);
+        }
+        if (!applyToVisible) {
+            Q_EMIT messagesChanged();
+            return;
+        }
+        const int initialRevealCount = (smallFirstPage || unreadAroundPage) ? 0 : kInitialMessageLimit;
+        applyVisibleMessages(chatId, visibleMessages, canLoadOlder, initialRevealCount, response->unreadAnchorMessageId());
+        if (smallFirstPage && pageFilled) {
+            QTimer::singleShot(0, this, [this, chatId] {
+                if (m_selectedChatId == chatId && !m_messagesReply) {
+                    requestMessages(chatId, true);
+                }
+            });
+        } else if (unreadAroundPage && pageFilled) {
+            QTimer::singleShot(0, this, [this, chatId] {
+                if (m_selectedChatId == chatId && !m_messagesReply) {
+                    requestMessages(chatId, true, false);
+                }
+            });
         }
         Q_EMIT messagesChanged();
     });
+}
+
+void AppController::applyVisibleMessages(const QString &chatId,
+                                         const QList<whatevr::v1::Message> &messages,
+                                         bool canLoadOlder,
+                                         int initialRevealCount,
+                                         const QString &unreadAnchorMessageId)
+{
+    if (m_selectedChatId != chatId) {
+        return;
+    }
+    m_displayedMessagesChatId = chatId;
+    m_messageListModel->replaceMessages(messages, initialRevealCount);
+    m_canLoadOlderMessages = canLoadOlder;
+    if (!unreadAnchorMessageId.isEmpty() && m_selectedChatUnreadSnapshot > 0) {
+        m_unreadAnchorMessageId = unreadAnchorMessageId;
+        m_unreadAnchorCount = m_selectedChatUnreadSnapshot;
+        m_unreadAnchorResolved = true;
+        Q_EMIT unreadAnchorChanged();
+    } else {
+        resolveUnreadAnchor(true);
+    }
+    // A deferred "show in chat" jump for this chat fires now that its
+    // first page is loaded (jumpToMessage loads around it if off-page).
+    if (m_pendingJumpChatId == chatId && !m_pendingJumpMessageId.isEmpty()) {
+        const QString pendingMessageId = m_pendingJumpMessageId;
+        m_pendingJumpChatId.clear();
+        m_pendingJumpMessageId.clear();
+        jumpToMessage(pendingMessageId);
+    }
 }
 
 void AppController::requestOlderMessages()
@@ -4217,7 +4397,7 @@ bool AppController::restoreCachedMessages(const QString &chatId)
     }
 
     m_displayedMessagesChatId = chatId;
-    m_messageListModel->replaceMessages(cached->messages);
+    m_messageListModel->replaceMessages(cached->messages, kInitialMessageLimit);
     m_canLoadOlderMessages = cached->canLoadOlderMessages;
     return true;
 }

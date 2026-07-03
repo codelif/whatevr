@@ -18,10 +18,15 @@ Kirigami.ApplicationWindow {
     property var chatListPageItem: null
     property var conversationPageItem: null
     property var transientPageItem: null
-    // Back-navigation in the single-column layout clears the chat selection,
-    // but only after the column slide settles, so the conversation does not
-    // visibly empty mid-transition. maybeClearSelectionAfterBack() owns this.
-    property bool pendingSelectionClear: false
+    // The chat id the settled navigation state must show ("" = chat list).
+    // Every open/close intent writes it; applyNavTarget() applies it once the
+    // column view has been still for a quiet period. The last intent always
+    // wins, so clicking a chat mid-close-transition can never resurrect the
+    // previous chat.
+    property string navTargetChatId: ""
+    // Distinguishes our own pageStack.currentIndex writes from user back
+    // navigation (back button / edge swipe) in onCurrentIndexChanged.
+    property bool navProgrammaticIndexChange: false
     // Set when a deep link (e.g. notification click) arrives before the chat
     // pages exist; consumed by rebuildPageStack once they do.
     property bool pendingShowConversation: false
@@ -166,6 +171,8 @@ Kirigami.ApplicationWindow {
     }
 
     function ensureChatPages() {
+        // Pushing pages moves currentIndex; none of it is user back-navigation.
+        navProgrammaticIndexChange = true
         if (!chatListPageItem) {
             const listPage = chatListPaneComponent.createObject(pageStack)
             if (listPage) {
@@ -191,48 +198,92 @@ Kirigami.ApplicationWindow {
         // Pushing the conversation page leaves currentIndex at 1. Anchor it to
         // the actual selection so the very first wide -> single-column switch
         // shows the right column instead of an empty conversation pane.
+        navTargetChatId = Whatevr.AppController.selectedChatId
         pageStack.currentIndex = Whatevr.AppController.hasSelectedChat ? 1 : 0
+        navProgrammaticIndexChange = false
     }
 
-    function showConversation() {
+    function showConversation(chatId) {
         if (currentMode !== "chat" || !Whatevr.AppController.hasSelectedChat) {
             return
         }
-        // Re-opening before a back-slide settled supersedes the pending clear.
-        pendingSelectionClear = false
+        navTargetChatId = chatId || Whatevr.AppController.selectedChatId
+        navProgrammaticIndexChange = true
         pageStack.currentIndex = 1
+        navProgrammaticIndexChange = false
+        // Start message/pin loading asynchronously right after the click frame;
+        // no wait-for-settle. The controller/model keep first paint atomic for
+        // unread opens and staged for no-unread hydration.
+        Qt.callLater(Whatevr.AppController.populateSelectedChat)
     }
 
     function closeConversation() {
-        pendingSelectionClear = false
-        if (Whatevr.AppController.hasSelectedChat) {
+        navTargetChatId = ""
+        if (chatWideLayout && Whatevr.AppController.hasSelectedChat) {
+            // No slide in the wide layout; clear immediately.
             Whatevr.AppController.selectChat("")
         }
         if (pageStack.currentIndex > 0) {
+            navProgrammaticIndexChange = true
             pageStack.currentIndex = 0
+            navProgrammaticIndexChange = false
+        }
+        // Clears the selection after the quiet period when there is no slide;
+        // while one runs the settle handler re-arms, so the conversation never
+        // empties mid-transition.
+        scheduleNavSettle()
+    }
+
+    // Navigation state is applied only once the column view has been still for
+    // a quiet period. Kirigami's ColumnView emits several moving cycles per
+    // navigation, so acting on a single settle edge lands the work inside the
+    // next animation phase — every nav intent funnels through this timer.
+    function scheduleNavSettle() {
+        if (currentMode !== "chat" || pageStack.columnView.moving) {
+            // The settle edge (onMovingChanged) re-arms the timer.
+            return
+        }
+        navQuietTimer.restart()
+    }
+
+    Timer {
+        id: navQuietTimer
+
+        interval: 150
+        onTriggered: {
+            // Lift the transition gate first: it flushes any populate/message
+            // page deferred while the slide ran, then the nav target settles.
+            Whatevr.AppController.uiTransitionActive = false
+            root.applyNavTarget()
         }
     }
 
-    // Single owner of the clear-selection-on-back flow. Called when the
-    // current column changes (back button or swipe) and again when the column
-    // animation settles; the selection is only dropped once the chat list is
-    // the settled, visible column, so the conversation never empties mid-slide.
-    function maybeClearSelectionAfterBack() {
-        if (currentMode !== "chat"
-                || !chatSingleColumnLayout
-                || pageStack.currentIndex !== 0
-                || !Whatevr.AppController.hasSelectedChat) {
-            pendingSelectionClear = false
+    // Single owner of settled navigation state; only ever runs from the quiet
+    // timer. Applies navTargetChatId: clears the selection once the chat list
+    // is the settled column, or ensures the conversation column is current and
+    // populates the selected chat.
+    function applyNavTarget() {
+        if (currentMode !== "chat" || pageStack.columnView.moving) {
             return
         }
-
-        if (pageStack.columnView.moving) {
-            pendingSelectionClear = true
+        if (navTargetChatId === "") {
+            if (chatSingleColumnLayout
+                    && pageStack.currentIndex === 0
+                    && Whatevr.AppController.hasSelectedChat) {
+                Whatevr.AppController.selectChat("")
+            }
             return
         }
-
-        pendingSelectionClear = false
-        Whatevr.AppController.selectChat("")
+        if (pageStack.currentIndex !== 1) {
+            navProgrammaticIndexChange = true
+            pageStack.currentIndex = 1
+            navProgrammaticIndexChange = false
+            if (pageStack.columnView.moving) {
+                // The re-target started another slide; populate at its settle.
+                return
+            }
+        }
+        Whatevr.AppController.populateSelectedChat()
     }
 
     function rebuildPageStack() {
@@ -276,15 +327,26 @@ Kirigami.ApplicationWindow {
         }
         // Land on the column matching the selection so a wide -> single-column
         // switch never reveals an empty conversation pane.
-        pendingSelectionClear = false
+        navTargetChatId = Whatevr.AppController.selectedChatId
+        navProgrammaticIndexChange = true
         pageStack.currentIndex = Whatevr.AppController.hasSelectedChat ? 1 : 0
+        navProgrammaticIndexChange = false
+        scheduleNavSettle()
     }
 
     Connections {
         target: root.pageStack
 
         function onCurrentIndexChanged() {
-            root.maybeClearSelectionAfterBack()
+            if (root.navProgrammaticIndexChange) {
+                return
+            }
+            // Back button / edge swipe land here without closeConversation();
+            // any user-initiated move to the chat list is a close intent.
+            if (root.chatSingleColumnLayout && root.pageStack.currentIndex === 0) {
+                root.navTargetChatId = ""
+            }
+            root.scheduleNavSettle()
         }
     }
 
@@ -292,8 +354,52 @@ Kirigami.ApplicationWindow {
         target: root.pageStack.columnView
 
         function onMovingChanged() {
-            if (!root.pageStack.columnView.moving && root.pendingSelectionClear) {
-                root.maybeClearSelectionAfterBack()
+            if (Whatevr.AppController.perfLogging) {
+                console.log("[perf] slide", root.pageStack.columnView.moving ? "start" : "settle")
+            }
+            if (root.pageStack.columnView.moving) {
+                // Gate model work for the whole animation; a bounce within the
+                // quiet period simply re-gates and the timer re-arms at its
+                // settle edge.
+                navQuietTimer.stop()
+                Whatevr.AppController.uiTransitionActive = true
+            } else {
+                navQuietTimer.restart()
+            }
+        }
+    }
+
+    // Frame-pacing diagnostics (WHATKEVR_PERF=1): while a column slide runs,
+    // logs every frame gap above ~1.5 vsync intervals (with its offset from
+    // the slide start), so animation hitches can be attributed instead of
+    // guessed at. Idle-time swap gaps are meaningless and stay unlogged.
+    Item {
+        id: framePacingProbe
+
+        visible: false
+
+        readonly property bool sliding: Whatevr.AppController.perfLogging
+                                        && root.pageStack.columnView.moving
+        property double lastSwapMs: 0
+        property double slideStartMs: 0
+
+        onSlidingChanged: {
+            lastSwapMs = 0
+            slideStartMs = sliding ? Date.now() : 0
+        }
+
+        Connections {
+            target: root
+            enabled: framePacingProbe.sliding
+
+            function onFrameSwapped() {
+                const now = Date.now()
+                const gap = now - framePacingProbe.lastSwapMs
+                if (framePacingProbe.lastSwapMs > 0 && gap > 25) {
+                    console.log("[perf] frame gap", gap.toFixed(0), "ms at",
+                                (now - framePacingProbe.slideStartMs).toFixed(0), "ms into slide")
+                }
+                framePacingProbe.lastSwapMs = now
             }
         }
     }
@@ -328,7 +434,7 @@ Kirigami.ApplicationWindow {
             root.activateWindow()
             // The controller has already selected the chat at this point.
             if (root.currentMode === "chat") {
-                root.showConversation()
+                root.showConversation(chatId)
             } else {
                 root.pendingShowConversation = true
             }
