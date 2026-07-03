@@ -849,6 +849,36 @@ func (db *DB) ListMessagesAround(ctx context.Context, chatID string, limit int, 
 	return messages, nil
 }
 
+// ListMessagesAroundUnread returns a bounded window around the oldest message
+// in the unread region. unreadCount comes from the chat badge snapshot: the
+// region is the unreadCount most recent incoming, non-revoked messages.
+func (db *DB) ListMessagesAroundUnread(ctx context.Context, chatID string, limit int, unreadCount int) ([]Message, string, error) {
+	defer db.timeOp("ListMessagesAroundUnread", time.Now())
+	if unreadCount <= 0 {
+		return nil, "", sql.ErrNoRows
+	}
+
+	var anchorID string
+	err := db.reader().QueryRowContext(ctx, `
+        SELECT id
+        FROM messages
+        WHERE chat_id = ?
+          AND direction = ?
+          AND is_revoked = 0
+        ORDER BY timestamp DESC, rowid DESC
+        LIMIT 1 OFFSET ?
+    `, chatID, DirectionIncoming, unreadCount-1).Scan(&anchorID)
+	if err != nil {
+		return nil, "", err
+	}
+
+	messages, err := db.ListMessagesAround(ctx, chatID, limit, anchorID)
+	if err != nil {
+		return nil, "", err
+	}
+	return messages, anchorID, nil
+}
+
 func (db *DB) listMessagesAroundSide(ctx context.Context, chatID string, timestamp int64, seq int64, limit int, newer bool) ([]Message, error) {
 	if limit <= 0 {
 		return nil, nil

@@ -440,11 +440,16 @@ message GetMessagesRequest {
   oneof anchor {
     string before_message_id = 3;
     string around_message_id = 4;
+    // Load a bounded window around the oldest unread-region message, derived
+    // from the chat badge count without the client paging through history.
+    int32 around_unread_count = 5;
   }
 }
 
 message GetMessagesResponse {
   repeated Message messages = 1;
+  // Set when around_unread_count was used and the daemon found an anchor.
+  string unread_anchor_message_id = 2;
 }
 
 message RequestOlderMessagesRequest {

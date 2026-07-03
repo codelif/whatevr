@@ -3157,6 +3157,7 @@ type GetMessagesRequest struct {
 	//
 	//	*GetMessagesRequest_BeforeMessageId
 	//	*GetMessagesRequest_AroundMessageId
+	//	*GetMessagesRequest_AroundUnreadCount
 	Anchor        isGetMessagesRequest_Anchor `protobuf_oneof:"anchor"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -3231,6 +3232,15 @@ func (x *GetMessagesRequest) GetAroundMessageId() string {
 	return ""
 }
 
+func (x *GetMessagesRequest) GetAroundUnreadCount() int32 {
+	if x != nil {
+		if x, ok := x.Anchor.(*GetMessagesRequest_AroundUnreadCount); ok {
+			return x.AroundUnreadCount
+		}
+	}
+	return 0
+}
+
 type isGetMessagesRequest_Anchor interface {
 	isGetMessagesRequest_Anchor()
 }
@@ -3243,15 +3253,25 @@ type GetMessagesRequest_AroundMessageId struct {
 	AroundMessageId string `protobuf:"bytes,4,opt,name=around_message_id,json=aroundMessageId,proto3,oneof"`
 }
 
+type GetMessagesRequest_AroundUnreadCount struct {
+	// Load a bounded window around the oldest unread-region message, derived
+	// from the chat badge count without the client paging through history.
+	AroundUnreadCount int32 `protobuf:"varint,5,opt,name=around_unread_count,json=aroundUnreadCount,proto3,oneof"`
+}
+
 func (*GetMessagesRequest_BeforeMessageId) isGetMessagesRequest_Anchor() {}
 
 func (*GetMessagesRequest_AroundMessageId) isGetMessagesRequest_Anchor() {}
 
+func (*GetMessagesRequest_AroundUnreadCount) isGetMessagesRequest_Anchor() {}
+
 type GetMessagesResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Messages      []*Message             `protobuf:"bytes,1,rep,name=messages,proto3" json:"messages,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Messages []*Message             `protobuf:"bytes,1,rep,name=messages,proto3" json:"messages,omitempty"`
+	// Set when around_unread_count was used and the daemon found an anchor.
+	UnreadAnchorMessageId string `protobuf:"bytes,2,opt,name=unread_anchor_message_id,json=unreadAnchorMessageId,proto3" json:"unread_anchor_message_id,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *GetMessagesResponse) Reset() {
@@ -3289,6 +3309,13 @@ func (x *GetMessagesResponse) GetMessages() []*Message {
 		return x.Messages
 	}
 	return nil
+}
+
+func (x *GetMessagesResponse) GetUnreadAnchorMessageId() string {
+	if x != nil {
+		return x.UnreadAnchorMessageId
+	}
+	return ""
 }
 
 type RequestOlderMessagesRequest struct {
@@ -9057,15 +9084,17 @@ const file_whatevr_proto_rawDesc = "" +
 	"\x06offset\x18\x02 \x01(\x05R\x06offset\x12\"\n" +
 	"\rafter_chat_id\x18\x03 \x01(\tR\vafterChatId\";\n" +
 	"\x11ListChatsResponse\x12&\n" +
-	"\x05chats\x18\x01 \x03(\v2\x10.whatevr.v1.ChatR\x05chats\"\xa9\x01\n" +
+	"\x05chats\x18\x01 \x03(\v2\x10.whatevr.v1.ChatR\x05chats\"\xdb\x01\n" +
 	"\x12GetMessagesRequest\x12\x17\n" +
 	"\achat_id\x18\x01 \x01(\tR\x06chatId\x12\x14\n" +
 	"\x05limit\x18\x02 \x01(\x05R\x05limit\x12,\n" +
 	"\x11before_message_id\x18\x03 \x01(\tH\x00R\x0fbeforeMessageId\x12,\n" +
-	"\x11around_message_id\x18\x04 \x01(\tH\x00R\x0faroundMessageIdB\b\n" +
-	"\x06anchor\"F\n" +
+	"\x11around_message_id\x18\x04 \x01(\tH\x00R\x0faroundMessageId\x120\n" +
+	"\x13around_unread_count\x18\x05 \x01(\x05H\x00R\x11aroundUnreadCountB\b\n" +
+	"\x06anchor\"\x7f\n" +
 	"\x13GetMessagesResponse\x12/\n" +
-	"\bmessages\x18\x01 \x03(\v2\x13.whatevr.v1.MessageR\bmessages\"6\n" +
+	"\bmessages\x18\x01 \x03(\v2\x13.whatevr.v1.MessageR\bmessages\x127\n" +
+	"\x18unread_anchor_message_id\x18\x02 \x01(\tR\x15unreadAnchorMessageId\"6\n" +
 	"\x1bRequestOlderMessagesRequest\x12\x17\n" +
 	"\achat_id\x18\x01 \x01(\tR\x06chatId\"<\n" +
 	"\x1cRequestOlderMessagesResponse\x12\x1c\n" +
@@ -9982,6 +10011,7 @@ func file_whatevr_proto_init() {
 	file_whatevr_proto_msgTypes[40].OneofWrappers = []any{
 		(*GetMessagesRequest_BeforeMessageId)(nil),
 		(*GetMessagesRequest_AroundMessageId)(nil),
+		(*GetMessagesRequest_AroundUnreadCount)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{

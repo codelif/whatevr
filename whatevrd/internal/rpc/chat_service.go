@@ -28,6 +28,7 @@ type ChatStore interface {
 	ListChats(context.Context, int, int, string) ([]appstore.Chat, error)
 	ListMessages(context.Context, string, int, string) ([]appstore.Message, error)
 	ListMessagesAround(context.Context, string, int, string) ([]appstore.Message, error)
+	ListMessagesAroundUnread(context.Context, string, int, int) ([]appstore.Message, string, error)
 	ListStarredMessages(context.Context, string, int, string) ([]appstore.StarredMessage, error)
 	ListPinnedMessages(context.Context, string) ([]appstore.Message, error)
 	SearchChats(context.Context, string, int) ([]appstore.Chat, error)
@@ -105,8 +106,12 @@ func (s *ChatService) GetMessages(ctx context.Context, req *pb.GetMessagesReques
 	}
 
 	var messages []appstore.Message
+	unreadAnchorMessageID := ""
+	aroundUnreadCount := int(req.GetAroundUnreadCount())
 	aroundMessageID := strings.TrimSpace(req.GetAroundMessageId())
-	if aroundMessageID != "" {
+	if aroundUnreadCount > 0 {
+		messages, unreadAnchorMessageID, err = s.store.ListMessagesAroundUnread(ctx, req.GetChatId(), limit, aroundUnreadCount)
+	} else if aroundMessageID != "" {
 		messages, err = s.store.ListMessagesAround(ctx, req.GetChatId(), limit, aroundMessageID)
 	} else {
 		messages, err = s.store.ListMessages(ctx, req.GetChatId(), limit, req.GetBeforeMessageId())
@@ -123,7 +128,10 @@ func (s *ChatService) GetMessages(ctx context.Context, req *pb.GetMessagesReques
 		messages = s.actions.FillReactionSenderNames(ctx, messages)
 	}
 
-	resp := &pb.GetMessagesResponse{Messages: make([]*pb.Message, 0, len(messages))}
+	resp := &pb.GetMessagesResponse{
+		Messages:              make([]*pb.Message, 0, len(messages)),
+		UnreadAnchorMessageId: unreadAnchorMessageID,
+	}
 	for _, message := range messages {
 		resp.Messages = append(resp.Messages, toProtoMessage(toAppMessage(message)))
 	}
