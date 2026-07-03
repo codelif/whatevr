@@ -779,6 +779,15 @@ bool AppController::pinnedMessagesReady() const
     return m_pinnedMessagesReady;
 }
 
+void AppController::setPinnedMessagesReady(bool ready)
+{
+    if (m_pinnedMessagesReady == ready) {
+        return;
+    }
+    m_pinnedMessagesReady = ready;
+    Q_EMIT pinnedMessagesReadyChanged();
+}
+
 QAbstractItemModel *AppController::searchResultsModel() const
 {
     return m_searchResultsModel;
@@ -1128,7 +1137,7 @@ void AppController::selectChat(const QString &chatId)
     m_pendingSelectedChatReloadId.clear();
     m_messagesReply.reset();
     m_messagesLoadingChatId.clear();
-    m_pinnedMessagesReady = chatId.isEmpty();
+    setPinnedMessagesReady(chatId.isEmpty());
     m_pinnedMessagesLoadingChatId.clear();
     m_deferredMessagesChatId.clear();
     m_deferredMessages.clear();
@@ -1245,12 +1254,12 @@ void AppController::populateSelectedChat()
     if (const auto cachedPins = m_pinnedCache.constFind(m_selectedChatId);
             cachedPins != m_pinnedCache.constEnd()) {
         m_pinnedMessagesModel->replace(cachedPins.value());
-        m_pinnedMessagesReady = true;
+        setPinnedMessagesReady(true);
     } else if (!sameChatReopen) {
         m_pinnedMessagesModel->clear();
-        m_pinnedMessagesReady = false;
+        setPinnedMessagesReady(false);
     } else {
-        m_pinnedMessagesReady = true;
+        setPinnedMessagesReady(true);
     }
     requestSelectedChatPresence();
     requestMessages(m_selectedChatId);
@@ -1690,7 +1699,7 @@ void AppController::logout()
         m_messageCache.clear();
         m_messageCacheOrder.clear();
         m_pinnedCache.clear();
-        m_pinnedMessagesReady = true;
+        setPinnedMessagesReady(true);
         m_pinnedMessagesLoadingChatId.clear();
         m_populatedForChatId.clear();
         m_populateFallbackTimer->stop();
@@ -2270,7 +2279,7 @@ void AppController::loadPinnedMessages(const QString &chatId)
 {
     if (!m_chatClient || chatId.isEmpty()) {
         if (chatId == m_selectedChatId) {
-            m_pinnedMessagesReady = true;
+            setPinnedMessagesReady(true);
             Q_EMIT messagesChanged();
         }
         return;
@@ -2292,7 +2301,7 @@ void AppController::loadPinnedMessages(const QString &chatId)
         if (!status.isOk()) {
             if (chatId == m_selectedChatId && m_pinnedMessagesLoadingChatId == chatId) {
                 m_pinnedMessagesLoadingChatId.clear();
-                m_pinnedMessagesReady = true;
+                setPinnedMessagesReady(true);
                 Q_EMIT messagesChanged();
             }
             return;
@@ -2312,7 +2321,7 @@ void AppController::loadPinnedMessages(const QString &chatId)
                 m_pinnedMessagesModel->replace(messages);
             }
         }
-        m_pinnedMessagesReady = true;
+        setPinnedMessagesReady(true);
         Q_EMIT messagesChanged();
     });
 }

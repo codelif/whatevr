@@ -384,6 +384,7 @@ Q_SIGNALS:
     void openChatRequested(const QString &chatId);
     void chatsChanged();
     void messagesChanged();
+    void pinnedMessagesReadyChanged();
     void composerChanged();
     void selectionChanged();
     void uiTransitionActiveChanged();
@@ -437,6 +438,7 @@ private:
     void requestReconnect();
     void requestChats();
     void requestMessages(const QString &chatId, bool fullPage = false, bool applyToVisible = true);
+    void setPinnedMessagesReady(bool ready);
     void requestOlderMessages();
     void runSearch();
     void runChatSearch();
