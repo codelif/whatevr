@@ -255,15 +255,17 @@ Kirigami.Page {
                 root.clearEditTarget()
             }
         }
+    }
 
-        function onMessagesChanged() {
-            if (!Whatevr.AppController.hasSelectedChat || !Whatevr.AppController.pinnedMessagesReady) {
+    Connections {
+        target: Whatevr.AppController
+
+        function onPinnedMessagesReadyChanged() {
+            if (Whatevr.AppController.pinnedMessagesReady) {
+                root.resetPinnedLayoutSettle()
+            } else {
                 root.pinnedLayoutSettled = false
                 pinnedLayoutSettleTimer.stop()
-                return
-            }
-            if (!root.pinnedLayoutSettled && !pinnedLayoutSettleTimer.running) {
-                pinnedLayoutSettleTimer.start()
             }
         }
     }
