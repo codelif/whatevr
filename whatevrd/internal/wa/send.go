@@ -950,9 +950,10 @@ func (c *Client) handleReceipt(evt *events.Receipt, offlineSync bool) {
 
 	isGroup := normalizedChat.Server == types.GroupServer || normalizedChat.Server == types.BroadcastServer
 	kind, isParticipantReceipt := participantReceiptKind(evt.Type)
+	clearUnread := receiptClearsLocalUnread(evt)
 
 	participant := ""
-	if isParticipantReceipt {
+	if isParticipantReceipt && !clearUnread {
 		own := c.ownParticipantJIDs()
 		canonical := c.canonicalParticipantJID(ctx, evt.Sender)
 		isSelf := canonical == "" || own[canonical]
@@ -962,7 +963,7 @@ func (c *Client) handleReceipt(evt *events.Receipt, offlineSync bool) {
 			// come from the peer.
 			participant = c.canonicalParticipantJID(ctx, normalizedChat)
 		case isSelf:
-			// A group receipt from our own device says nothing about other
+			// A non-read group receipt from our own device says nothing about other
 			// members; treat it as a plain status update.
 			isParticipantReceipt = false
 		default:
@@ -973,31 +974,64 @@ func (c *Client) handleReceipt(evt *events.Receipt, offlineSync bool) {
 		}
 	}
 
-	for _, messageID := range evt.MessageIDs {
-		internalID := internalMessageIDForChat(chatID, messageID)
+	if !clearUnread {
+		for _, messageID := range evt.MessageIDs {
+			internalID := internalMessageIDForChat(chatID, messageID)
 
-		var message appstore.Message
-		var changed bool
-		var err error
-		if isParticipantReceipt {
-			message, changed, err = c.applyParticipantReceipt(ctx, normalizedChat, internalID, participant, kind, evt.Timestamp, status, isGroup)
-		} else {
-			message, changed, err = c.store.UpdateMessageStatus(ctx, internalID, status)
-		}
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
+			var message appstore.Message
+			var changed bool
+			var err error
+			if isParticipantReceipt {
+				message, changed, err = c.applyParticipantReceipt(ctx, normalizedChat, internalID, participant, kind, evt.Timestamp, status, isGroup)
+			} else {
+				message, changed, err = c.store.UpdateMessageStatus(ctx, internalID, status)
+			}
+			if err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					continue
+				}
+				c.log.Errorf("Failed to update message status for %s: %v", internalID, err)
 				continue
 			}
-			c.log.Errorf("Failed to update message status for %s: %v", internalID, err)
-			continue
-		}
-		if !changed {
-			continue
-		}
+			if !changed {
+				continue
+			}
 
-		if !offlineSync {
-			c.publishMessageStatusUpdated(ctx, message)
+			if !offlineSync {
+				c.publishMessageStatusUpdated(ctx, message)
+			}
 		}
+	}
+
+	// A self receipt means we read these messages on another device (the
+	// phone): clear them from the chat's unread badge. Published even during
+	// offline sync — one ChatUpdated per receipt keeps the badge honest.
+	if clearUnread {
+		internalIDs := make([]string, 0, len(evt.MessageIDs))
+		for _, messageID := range evt.MessageIDs {
+			internalIDs = append(internalIDs, internalMessageIDForChat(chatID, messageID))
+		}
+		chat, changed, err := c.store.MarkMessagesReadByIDs(ctx, chatID, internalIDs)
+		if err != nil {
+			if !errors.Is(err, sql.ErrNoRows) {
+				c.log.Warnf("Failed to mark self-read messages in %s: %v", chatID, err)
+			}
+			return
+		}
+		if changed {
+			c.daemon.PublishChatUpdated(toDaemonChat(chat))
+		}
+	}
+}
+
+func receiptClearsLocalUnread(evt *events.Receipt) bool {
+	switch evt.Type {
+	case types.ReceiptTypeReadSelf, types.ReceiptTypePlayedSelf:
+		return true
+	case types.ReceiptTypeRead, types.ReceiptTypePlayed:
+		return evt.IsFromMe
+	default:
+		return false
 	}
 }
 
