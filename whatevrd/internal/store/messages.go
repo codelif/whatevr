@@ -1726,6 +1726,113 @@ func (db *DB) MarkMessagesRead(ctx context.Context, chatID string) (Chat, error)
 	return chat, nil
 }
 
+// MarkChatReadUpTo marks incoming messages up to the given timestamp as read
+// and recomputes the chat badge from what is actually still unread. The bound
+// keeps a replayed (stale) mark-read from a linked device from clobbering
+// messages that arrived after it. Returns sql.ErrNoRows for unknown chats:
+// mark-read must never create a chat row.
+func (db *DB) MarkChatReadUpTo(ctx context.Context, chatID string, uptoUnix int64) (Chat, bool, error) {
+	tx, err := db.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return Chat{}, false, err
+	}
+	defer tx.Rollback()
+
+	result, err := tx.ExecContext(ctx, `
+		UPDATE messages
+		SET is_read = 1
+		WHERE chat_id = ? AND direction = ? AND is_read = 0 AND timestamp <= ?
+	`, chatID, DirectionIncoming, uptoUnix)
+	if err != nil {
+		return Chat{}, false, err
+	}
+	messagesChanged, err := result.RowsAffected()
+	if err != nil {
+		return Chat{}, false, err
+	}
+
+	chat, changed, err := recomputeChatUnreadTx(ctx, tx, chatID)
+	if err != nil {
+		return Chat{}, false, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return Chat{}, false, err
+	}
+	return chat, changed || messagesChanged > 0, nil
+}
+
+// MarkMessagesReadByIDs marks the given incoming messages as read (self read
+// receipts name exact messages) and recomputes the chat badge. Returns
+// sql.ErrNoRows for unknown chats.
+func (db *DB) MarkMessagesReadByIDs(ctx context.Context, chatID string, internalIDs []string) (Chat, bool, error) {
+	if len(internalIDs) == 0 {
+		chat, err := db.GetChat(ctx, chatID)
+		return chat, false, err
+	}
+
+	tx, err := db.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return Chat{}, false, err
+	}
+	defer tx.Rollback()
+
+	args := make([]any, 0, len(internalIDs)+3)
+	args = append(args, chatID, DirectionIncoming)
+	for _, id := range internalIDs {
+		args = append(args, id)
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(internalIDs)), ",")
+	result, err := tx.ExecContext(ctx, `
+		UPDATE messages
+		SET is_read = 1
+		WHERE chat_id = ? AND direction = ? AND is_read = 0 AND id IN (`+placeholders+`)
+	`, args...)
+	if err != nil {
+		return Chat{}, false, err
+	}
+	messagesChanged, err := result.RowsAffected()
+	if err != nil {
+		return Chat{}, false, err
+	}
+
+	chat, changed, err := recomputeChatUnreadTx(ctx, tx, chatID)
+	if err != nil {
+		return Chat{}, false, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return Chat{}, false, err
+	}
+	return chat, changed || messagesChanged > 0, nil
+}
+
+// recomputeChatUnreadTx re-derives the chat badge from unread incoming message
+// rows and reports whether the stored value moved. Fails with sql.ErrNoRows
+// when the chat does not exist.
+func recomputeChatUnreadTx(ctx context.Context, tx *sql.Tx, chatID string) (Chat, bool, error) {
+	var before int32
+	if err := tx.QueryRowContext(ctx, `SELECT unread_count FROM chats WHERE id = ?`, chatID).Scan(&before); err != nil {
+		return Chat{}, false, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE chats
+		SET unread_count = (
+			SELECT COUNT(*)
+			FROM messages
+			WHERE chat_id = ? AND direction = ? AND is_read = 0
+		)
+		WHERE id = ?
+	`, chatID, DirectionIncoming, chatID); err != nil {
+		return Chat{}, false, err
+	}
+	chat, err := getChatTx(ctx, tx, chatID)
+	if err != nil {
+		return Chat{}, false, err
+	}
+	return chat, chat.UnreadCount != before, nil
+}
+
 func getChatRow(ctx context.Context, queryer interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }, id string) (Chat, error) {

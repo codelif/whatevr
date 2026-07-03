@@ -2,6 +2,8 @@ package wa
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -116,6 +118,8 @@ func (c *Client) handleEvent(eventGen uint64, raw any) {
 		c.handleMuteEvent(c.backgroundContext(), evt)
 	case *events.Star:
 		c.handleStarEvent(c.backgroundContext(), evt)
+	case *events.MarkChatAsRead:
+		c.handleMarkChatAsReadEvent(c.backgroundContext(), evt)
 	case *events.JoinedGroup:
 		c.handleJoinedGroup(c.backgroundContext(), evt)
 	case *events.GroupInfo:
@@ -292,6 +296,87 @@ func (c *Client) handleMuteEvent(ctx context.Context, evt *events.Mute) {
 	}
 	if changed {
 		c.daemon.PublishChatUpdated(toDaemonChat(chat))
+	}
+}
+
+// handleMarkChatAsReadEvent mirrors a chat being marked read (or unread) on the
+// phone or another linked device onto the local unread state.
+func (c *Client) handleMarkChatAsReadEvent(ctx context.Context, evt *events.MarkChatAsRead) {
+	if evt == nil || evt.JID.IsEmpty() || evt.Action == nil {
+		return
+	}
+
+	read := evt.Action.GetRead()
+	uptoUnix := markChatAsReadHorizon(evt)
+
+	chatJID, resolved := c.resolveAppStateChatJID(ctx, evt.JID)
+	if !resolved {
+		c.parkPendingAppState(chatJID, func(e *pendingAppStateEntry) {
+			e.hasMarkRead, e.markRead, e.markReadUpTo = true, read, uptoUnix
+		})
+		return
+	}
+	c.applyMarkChatAsRead(ctx, chatJID.String(), read, uptoUnix)
+}
+
+func markChatAsReadHorizon(evt *events.MarkChatAsRead) int64 {
+	// Only messages up to the action's own horizon are marked read, so a
+	// replayed (full-sync/recovery) action can't swallow newer messages.
+	uptoUnix := time.Now().Unix()
+	if evt == nil {
+		return uptoUnix
+	}
+	if !evt.Timestamp.IsZero() {
+		uptoUnix = evt.Timestamp.Unix()
+	}
+	if raw := evt.Action.GetMessageRange().GetLastMessageTimestamp(); raw > 0 {
+		if ts, ok := whatsAppUnixTimestamp(uint64(raw)); ok {
+			uptoUnix = ts.Unix()
+		}
+	}
+	return uptoUnix
+}
+
+// applyMarkChatAsRead applies a mark-read/mark-unread action to a chat we may
+// or may not know about. Unlike pins/mutes it never creates a chat row: read
+// state on an unknown chat carries no information worth materializing.
+func (c *Client) applyMarkChatAsRead(ctx context.Context, chatID string, read bool, uptoUnix int64) {
+	if chatID == "" {
+		return
+	}
+	if read {
+		chat, changed, err := c.store.MarkChatReadUpTo(ctx, chatID, uptoUnix)
+		if err != nil {
+			if !errors.Is(err, sql.ErrNoRows) {
+				c.log.Warnf("Failed to mark chat %s read from app state: %v", chatID, err)
+			}
+			return
+		}
+		if changed {
+			c.daemon.PublishChatUpdated(toDaemonChat(chat))
+		}
+		return
+	}
+
+	// Marked unread on the phone: WhatsApp shows a dot, not a count. Approximate
+	// with a badge of 1 unless real unread messages already exist.
+	chat, err := c.store.GetChat(ctx, chatID)
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			c.log.Warnf("Failed to load chat %s for mark-unread: %v", chatID, err)
+		}
+		return
+	}
+	if chat.UnreadCount > 0 {
+		return
+	}
+	updated, changed, err := c.store.OverwriteChatUnreadCount(ctx, chatID, 1)
+	if err != nil {
+		c.log.Warnf("Failed to mark chat %s unread from app state: %v", chatID, err)
+		return
+	}
+	if changed {
+		c.daemon.PublishChatUpdated(toDaemonChat(updated))
 	}
 }
 

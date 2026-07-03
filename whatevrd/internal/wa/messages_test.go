@@ -10,10 +10,13 @@ import (
 	"testing"
 	"time"
 
+	"go.mau.fi/whatsmeow"
 	waE2E "go.mau.fi/whatsmeow/proto/waE2E"
 	waHistorySync "go.mau.fi/whatsmeow/proto/waHistorySync"
 	waWeb "go.mau.fi/whatsmeow/proto/waWeb"
+	waStore "go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/types"
+	waLog "go.mau.fi/whatsmeow/util/log"
 	"google.golang.org/protobuf/proto"
 
 	"whatevrd/internal/app"
@@ -142,6 +145,66 @@ func TestHistorySyncIsCompleteRespectsTerminalTypes(t *testing.T) {
 	}
 	if !historySyncIsComplete(app.HistorySyncTypeRecent, 100) {
 		t.Error("RECENT at 100% should be complete")
+	}
+}
+
+func TestEffectiveHistorySyncUnreadMirrorsMarkedUnreadDot(t *testing.T) {
+	markedUnread := true
+	if got := effectiveHistorySyncUnread(&waHistorySync.Conversation{MarkedAsUnread: &markedUnread}); got != 1 {
+		t.Fatalf("effective unread for marked-unread chat = %d, want 1", got)
+	}
+
+	unread := uint32(4)
+	if got := effectiveHistorySyncUnread(&waHistorySync.Conversation{UnreadCount: &unread, MarkedAsUnread: &markedUnread}); got != 4 {
+		t.Fatalf("effective unread with real count = %d, want 4", got)
+	}
+}
+
+func TestHistorySyncMarkedUnreadPublishesChatUpdated(t *testing.T) {
+	ctx := context.Background()
+	db, err := appstore.Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	daemon := app.NewDaemon(app.Paths{})
+	events, unsubscribe := daemon.SubscribeDaemonEvents()
+	t.Cleanup(unsubscribe)
+
+	client := &Client{
+		store:  db,
+		daemon: daemon,
+		log:    waLog.Noop,
+		client: &whatsmeow.Client{Store: &waStore.Device{}},
+	}
+	markedUnread := true
+	syncType := waHistorySync.HistorySync_RECENT
+	chatID := types.NewJID("12345", types.DefaultUserServer).String()
+	client.processHistorySyncData(ctx, &waHistorySync.HistorySync{
+		SyncType: &syncType,
+		Conversations: []*waHistorySync.Conversation{{
+			ID:             proto.String(chatID),
+			MarkedAsUnread: &markedUnread,
+		}},
+	})
+
+	chat, err := db.GetChat(ctx, chatID)
+	if err != nil {
+		t.Fatalf("get chat: %v", err)
+	}
+	if chat.UnreadCount != 1 {
+		t.Fatalf("stored unread = %d, want 1", chat.UnreadCount)
+	}
+
+	for deadline := time.After(time.Second); ; {
+		select {
+		case evt := <-events:
+			if evt.Kind == app.DaemonEventChatUpdated && evt.Chat.ID == chatID && evt.Chat.UnreadCount == 1 {
+				return
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for marked-unread ChatUpdated")
+		}
 	}
 }
 

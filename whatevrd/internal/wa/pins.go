@@ -40,14 +40,17 @@ func (c *Client) reconcileAfterHistorySync(ctx context.Context) {
 // pendingAppStateEntry parks pin/archive/mute state for a chat whose JID
 // could not be attached to a canonical chat yet.
 type pendingAppStateEntry struct {
-	hasPin     bool
-	pinned     bool
-	pinOrder   uint32
-	hasArchive bool
-	archived   bool
-	hasMute    bool
-	muted      bool
-	muteEnd    int64
+	hasPin       bool
+	pinned       bool
+	pinOrder     uint32
+	hasArchive   bool
+	archived     bool
+	hasMute      bool
+	muted        bool
+	muteEnd      int64
+	hasMarkRead  bool
+	markRead     bool
+	markReadUpTo int64
 }
 
 // resolveAppStateChatJID normalizes an app-state chat JID and reports whether
@@ -115,6 +118,9 @@ func (c *Client) reconcilePendingAppState(ctx context.Context, final bool) {
 				if !e.hasMute && parked.hasMute {
 					e.hasMute, e.muted, e.muteEnd = true, parked.muted, parked.muteEnd
 				}
+				if !e.hasMarkRead && parked.hasMarkRead {
+					e.hasMarkRead, e.markRead, e.markReadUpTo = true, parked.markRead, parked.markReadUpTo
+				}
 			})
 			continue
 		}
@@ -155,6 +161,9 @@ func (c *Client) applyPendingAppState(ctx context.Context, chatJID types.JID, en
 		} else if changed {
 			c.daemon.PublishChatUpdated(toDaemonChat(chat))
 		}
+	}
+	if entry.hasMarkRead {
+		c.applyMarkChatAsRead(ctx, chatID, entry.markRead, entry.markReadUpTo)
 	}
 }
 
@@ -201,6 +210,7 @@ func (c *Client) reconcileRegularAppState(ctx context.Context) error {
 	if err := c.reconcileArchivedChatsFromEvents(ctx, eventsToDispatch); err != nil {
 		c.log.Warnf("Failed to reconcile archived chats from app state: %v", err)
 	}
+	c.reconcileMarkReadFromEvents(ctx, eventsToDispatch)
 	if err := c.reconcilePinnedChatsFromEvents(ctx, eventsToDispatch); err != nil {
 		return err
 	}
@@ -229,7 +239,27 @@ func (c *Client) recoverPinnedChatsFromAppState(ctx context.Context) error {
 	if err := c.reconcileArchivedChatsFromEvents(ctx, eventsToDispatch); err != nil {
 		c.log.Warnf("Failed to reconcile archived chats from app state: %v", err)
 	}
+	c.reconcileMarkReadFromEvents(ctx, eventsToDispatch)
 	return c.reconcilePinnedChatsFromEvents(ctx, eventsToDispatch)
+}
+
+func (c *Client) reconcileMarkReadFromEvents(ctx context.Context, eventsToDispatch []any) {
+	for _, raw := range eventsToDispatch {
+		evt, ok := raw.(*events.MarkChatAsRead)
+		if !ok || evt.JID.IsEmpty() || evt.Action == nil {
+			continue
+		}
+		chatJID, resolved := c.resolveAppStateChatJID(ctx, evt.JID)
+		read := evt.Action.GetRead()
+		uptoUnix := markChatAsReadHorizon(evt)
+		if !resolved {
+			c.parkPendingAppState(chatJID, func(e *pendingAppStateEntry) {
+				e.hasMarkRead, e.markRead, e.markReadUpTo = true, read, uptoUnix
+			})
+			continue
+		}
+		c.applyMarkChatAsRead(ctx, chatJID.String(), read, uptoUnix)
+	}
 }
 
 func (c *Client) reconcileArchivedChatsFromEvents(ctx context.Context, eventsToDispatch []any) error {

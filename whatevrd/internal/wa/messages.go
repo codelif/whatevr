@@ -154,7 +154,7 @@ func (c *Client) processHistorySyncData(ctx context.Context, data *waHistorySync
 			c.log.Warnf("Failed to ensure history-sync chat %s: %v", chatID, err)
 			continue
 		}
-		convUnread := conv.GetUnreadCount()
+		convUnread := effectiveHistorySyncUnread(conv)
 		convMarkedUnread := conv.GetMarkedAsUnread()
 		convPinnedOrder := conv.GetPinned()
 		convPinned := convPinnedOrder > 0
@@ -268,7 +268,7 @@ func (c *Client) processHistorySyncData(ctx context.Context, data *waHistorySync
 		if ctx.Err() != nil {
 			return
 		}
-		updatedChat, _, err := c.store.OverwriteChatUnreadCount(ctx, chatID, convUnread)
+		updatedChat, unreadChanged, err := c.store.OverwriteChatUnreadCount(ctx, chatID, convUnread)
 		if err != nil {
 			c.log.Warnf("Failed to overwrite unread count for %s: %v", chatID, err)
 		} else if updatedChat.ID != "" {
@@ -281,7 +281,7 @@ func (c *Client) processHistorySyncData(ctx context.Context, data *waHistorySync
 			lastSavedChat = updatedChat
 		}
 
-		if messagesAdded > 0 || pinChanged {
+		if messagesAdded > 0 || pinChanged || unreadChanged {
 			if lastSavedChat.ID != "" {
 				c.daemon.PublishChatUpdated(toDaemonChat(lastSavedChat))
 			}
@@ -326,6 +326,19 @@ func (c *Client) processHistorySyncData(ctx context.Context, data *waHistorySync
 	}
 }
 
+func effectiveHistorySyncUnread(conv *waHistorySync.Conversation) uint32 {
+	if conv == nil {
+		return 0
+	}
+	unread := conv.GetUnreadCount()
+	if unread == 0 && conv.GetMarkedAsUnread() {
+		// WhatsApp's manual "mark unread" is a dot, not a numeric count.
+		// Mirror it with a one-count badge so linked-device state is visible.
+		return 1
+	}
+	return unread
+}
+
 func (c *Client) handleMessage(ctx context.Context, evt *events.Message, offlineSync bool) {
 	if c.handleManualHistorySyncNotification(ctx, evt) {
 		return
@@ -351,6 +364,17 @@ func (c *Client) handleMessage(ctx context.Context, evt *events.Message, offline
 		opts.timestampOverride = timestamp
 	}
 	saved, inserted := c.ingestMessage(ctx, evt, opts)
+	// Sending from another device implies everything before it was read there;
+	// clear the badge up to that message's timestamp.
+	if inserted && evt.Info.IsFromMe && saved.Chat.UnreadCount > 0 {
+		if chat, changed, err := c.store.MarkChatReadUpTo(ctx, saved.Chat.ID, evt.Info.Timestamp.Unix()); err != nil {
+			if !errors.Is(err, sql.ErrNoRows) {
+				c.log.Warnf("Failed to clear unread after own message in %s: %v", saved.Chat.ID, err)
+			}
+		} else if changed {
+			c.daemon.PublishChatUpdated(toDaemonChat(chat))
+		}
+	}
 	if offlineSync {
 		c.recordOfflineSyncMessage(saved.Chat.ID, inserted)
 		return
