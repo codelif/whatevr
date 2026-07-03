@@ -37,6 +37,17 @@ Frame {
     property string suggestionMode: "emoji"
     readonly property bool suggestionsActive: suggestionBar.visible && root.suggestionResults.length > 0
 
+    // Hover may not steal the selection until the pointer really moves: the
+    // HoverHandlers re-fire under a stationary cursor both when the bar appears
+    // and on every results refresh (each keystroke resets suggestionIndex to 0),
+    // which would silently override the keyboard selection.
+    property bool suggestionHoverArmed: false
+    property var suggestionHoverBasePos: undefined
+    onSuggestionResultsChanged: {
+        suggestionHoverArmed = false
+        suggestionHoverBasePos = undefined
+    }
+
     // @-mention authoring. Members are cached per chat and filtered in-memory;
     // pendingMentions records the {jid, displayName} pairs inserted so submit can
     // rewrite each "@DisplayName" run to the on-wire "@<userpart>" + JID list.
@@ -524,6 +535,26 @@ Frame {
                 border.width: 1
                 border.color: Qt.alpha(Kirigami.Theme.textColor, 0.09)
 
+                HoverHandler {
+                    // Arms hover selection only once the pointer moves away from
+                    // where it sat when the bar (re)appeared: one pointChanged is
+                    // delivered on appearance without any actual mouse motion.
+                    onPointChanged: {
+                        if (root.suggestionHoverArmed) {
+                            return
+                        }
+                        const p = point.scenePosition
+                        if (root.suggestionHoverBasePos === undefined) {
+                            root.suggestionHoverBasePos = Qt.point(p.x, p.y)
+                            return
+                        }
+                        if (Math.abs(p.x - root.suggestionHoverBasePos.x) > 2
+                                || Math.abs(p.y - root.suggestionHoverBasePos.y) > 2) {
+                            root.suggestionHoverArmed = true
+                        }
+                    }
+                }
+
                 RowLayout {
                     anchors.fill: parent
                     anchors.margins: Kirigami.Units.smallSpacing / 2
@@ -606,7 +637,15 @@ Frame {
                             }
 
                             HoverHandler {
-                                onHoveredChanged: if (hovered) root.suggestionIndex = suggestionCell.index
+                                onHoveredChanged: if (hovered && root.suggestionHoverArmed) root.suggestionIndex = suggestionCell.index
+                                // Arming happens mid-hover (hovered won't re-fire),
+                                // but the same motion delivers pointChanged here.
+                                onPointChanged: {
+                                    if (hovered && root.suggestionHoverArmed
+                                            && root.suggestionIndex !== suggestionCell.index) {
+                                        root.suggestionIndex = suggestionCell.index
+                                    }
+                                }
                             }
                         }
                     }
