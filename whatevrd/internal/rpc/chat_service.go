@@ -45,6 +45,7 @@ type ChatActionController interface {
 	SubscribeChatPresence(context.Context, string) error
 	DownloadMessageMedia(context.Context, string) (appstore.Message, error)
 	ResolveCachedStickerMedia(context.Context, []appstore.Message) []appstore.Message
+	FillReactionSenderNames(context.Context, []appstore.Message) []appstore.Message
 	GetMessageInfo(context.Context, string) (app.MessageInfo, error)
 	DeleteMessageForMe(context.Context, string) error
 	CheckPhoneOnWhatsApp(context.Context, string) (app.PhoneCheck, error)
@@ -116,6 +117,12 @@ func (s *ChatService) GetMessages(ctx context.Context, req *pb.GetMessagesReques
 		}
 		return nil, err
 	}
+	// Reactions synced from history may predate sender-name resolution; heal
+	// them before serialization so the UI never shows a placeholder reactor.
+	if s.actions != nil {
+		messages = s.actions.FillReactionSenderNames(ctx, messages)
+	}
+
 	resp := &pb.GetMessagesResponse{Messages: make([]*pb.Message, 0, len(messages))}
 	for _, message := range messages {
 		resp.Messages = append(resp.Messages, toProtoMessage(toAppMessage(message)))

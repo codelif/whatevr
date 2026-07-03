@@ -115,6 +115,10 @@ func reactionNotification(target appstore.Message, reactorID, reactorName, emoji
 // message. History ingestion is silent, so these surface on the next chat open
 // via the reaction-aware read queries rather than a live MessageUpdated.
 func (c *Client) saveHistoryReactions(ctx context.Context, internalID, chatID string, isGroup bool, reactions []*waWeb.Reaction) {
+	// History reactions carry no push name (unlike live events), so resolve the
+	// reactor's display name from the contact store; cached because a synced
+	// conversation often repeats the same few reactors.
+	nameByReactor := make(map[string]string)
 	for _, reaction := range reactions {
 		emoji := strings.TrimSpace(reaction.GetText())
 		if emoji == "" {
@@ -129,8 +133,53 @@ func (c *Client) saveHistoryReactions(ctx context.Context, internalID, chatID st
 			timestamp = time.UnixMilli(ms)
 		}
 		reactorID, fromMe := reactorIdentityFromKey(key, chatID, isGroup)
-		c.applyReaction(ctx, internalID, reactorID, "", emoji, timestamp, fromMe, true)
+		reactorName := ""
+		if !fromMe {
+			cached, ok := nameByReactor[reactorID]
+			if !ok {
+				if jid, err := types.ParseJID(reactorID); err == nil {
+					cached = c.senderName(ctx, jid)
+				}
+				nameByReactor[reactorID] = cached
+			}
+			reactorName = cached
+		}
+		c.applyReaction(ctx, internalID, reactorID, reactorName, emoji, timestamp, fromMe, true)
 	}
+}
+
+// FillReactionSenderNames resolves display names for reactions stored without
+// one (history syncs before name resolution existed) and persists what it finds,
+// so rows heal permanently the first time they are served.
+func (c *Client) FillReactionSenderNames(ctx context.Context, messages []appstore.Message) []appstore.Message {
+	var nameByReactor map[string]string
+	for mi := range messages {
+		for ri := range messages[mi].Reactions {
+			reaction := &messages[mi].Reactions[ri]
+			if reaction.SenderName != "" || reaction.FromMe ||
+				reaction.SenderID == "" || reaction.SenderID == "me" {
+				continue
+			}
+			if nameByReactor == nil {
+				nameByReactor = make(map[string]string)
+			}
+			name, ok := nameByReactor[reaction.SenderID]
+			if !ok {
+				if jid, err := types.ParseJID(reaction.SenderID); err == nil {
+					name = c.senderName(ctx, jid)
+				}
+				nameByReactor[reaction.SenderID] = name
+			}
+			if name == "" {
+				continue
+			}
+			reaction.SenderName = name
+			if err := c.store.UpdateReactionSenderName(ctx, messages[mi].ID, reaction.SenderID, name); err != nil {
+				c.log.Warnf("Failed to backfill reaction sender name on %s: %v", messages[mi].ID, err)
+			}
+		}
+	}
+	return messages
 }
 
 // reactorIdentityFromKey derives the reactor's internal id and from-me flag from

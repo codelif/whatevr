@@ -76,6 +76,19 @@ func attachReactionsOne(ctx context.Context, q reactionQueryer, message *Message
 	return nil
 }
 
+// UpdateReactionSenderName backfills a reaction's display name, but never
+// overwrites a name that is already set (live events remain authoritative).
+func (db *DB) UpdateReactionSenderName(ctx context.Context, messageID, senderID, name string) error {
+	if name == "" {
+		return nil
+	}
+	_, err := db.conn.ExecContext(ctx, `
+		UPDATE message_reactions SET sender_name = ?
+		WHERE message_id = ? AND sender_id = ? AND sender_name = ''
+	`, name, messageID, senderID)
+	return err
+}
+
 // SaveReaction records (or, when emoji is empty, removes) one reactor's
 // reaction on a message, then returns the reloaded target message with its full
 // reaction set, the refreshed chat, and whether anything actually changed. The
