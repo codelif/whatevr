@@ -24,6 +24,13 @@ namespace {
 constexpr qint64 kSenderGroupGapSeconds = 5LL * 60;
 constexpr int kCollapsedTextMaxGraphemes = 900;
 constexpr int kCollapsedTextMaxLines = 12;
+// Rows parsed eagerly on a chat switch, before the view lays out: comfortably
+// more than one viewport at compact density, small enough to stay well inside
+// a frame budget.
+constexpr int kEagerParseRows = 25;
+// Staged chat-switch fill: rows landed per stagedRevealTick() batch. Inserted
+// above the bottom-anchored viewport, so batches never move what is visible.
+constexpr int kRevealBatchRows = 24;
 
 using whatevr::util::plainTextFromQtRichText;
 using whatevr::util::parseWhatsAppMessageMarkup;
@@ -104,6 +111,11 @@ MessageListModel::MessageListModel(QObject *parent)
     // work between slices.
     m_warmupTimer.setInterval(0);
     connect(&m_warmupTimer, &QTimer::timeout, this, &MessageListModel::parseWarmupTick);
+
+    // ~One batch per frame: staged rows land quickly but never gang up on a
+    // single frame's budget.
+    m_revealTimer.setInterval(16);
+    connect(&m_revealTimer, &QTimer::timeout, this, &MessageListModel::stagedRevealTick);
 }
 
 void MessageListModel::setBodyMetricsFont(const QFont &font)
@@ -139,6 +151,23 @@ void MessageListModel::scheduleParseWarmup(int fromRow)
     m_warmupCursor = std::clamp(std::min(m_warmupCursor, fromRow), 0, static_cast<int>(m_messages.size()));
     if (!m_warmupTimer.isActive() && m_warmupCursor < m_messages.size()) {
         m_warmupTimer.start();
+    }
+}
+
+void MessageListModel::warmFirstRows(int count)
+{
+    const int limit = std::min(count, static_cast<int>(m_messages.size()));
+    for (int row = 0; row < limit; ++row) {
+        ensurePreviewParsed(m_messages.at(row));
+    }
+    // Resume the budgeted warmup right after the eagerly parsed window; no
+    // settle delay — the rows behind it should be ready before the user can
+    // scroll to them.
+    m_warmupCursor = limit;
+    if (m_warmupCursor < m_messages.size()) {
+        m_warmupTimer.start();
+    } else {
+        m_warmupTimer.stop();
     }
 }
 
@@ -375,21 +404,38 @@ QHash<int, QByteArray> MessageListModel::roleNames() const
     };
 }
 
-void MessageListModel::replaceMessages(const QList<whatevr::v1::Message> &messages)
+void MessageListModel::replaceMessages(const QList<whatevr::v1::Message> &messages, int initialRevealCount)
 {
+    QElapsedTimer perfTimer;
+    const bool perf = qEnvironmentVariableIsSet("WHATKEVR_PERF");
+    if (perf) {
+        perfTimer.start();
+    }
+
+    // A chat switch (or filling an empty model) always ends in a structural
+    // reset, so the per-item transplant lookups and the same*/merge comparison
+    // passes below — several O(n) sweeps over ~20 fields per row — are pure
+    // overhead on the open path. All rows of a chat share chatId, so the first
+    // rows decide.
+    const bool chatSwitch = m_messages.isEmpty()
+        ? !messages.isEmpty()
+        : (!messages.isEmpty() && m_messages.first().chatId != messages.first().chatId());
+
     QList<MessageItem> next;
     next.reserve(messages.size());
     for (const auto &message : messages) {
         MessageItem item = fromProto(message);
-        const int existingIndex = indexOf(item.id);
-        if (existingIndex >= 0) {
-            const auto &existing = m_messages.at(existingIndex);
-            item.mediaDownloading = existing.mediaDownloading;
-            item.mediaDownloadError = existing.mediaDownloadError;
-            item.mediaDownloadReceivedBytes = existing.mediaDownloadReceivedBytes;
-            item.mediaDownloadTotalBytes = existing.mediaDownloadTotalBytes;
-            if (item.text == existing.text) {
-                transplantParsedState(item, existing);
+        if (!chatSwitch) {
+            const int existingIndex = indexOf(item.id);
+            if (existingIndex >= 0) {
+                const auto &existing = m_messages.at(existingIndex);
+                item.mediaDownloading = existing.mediaDownloading;
+                item.mediaDownloadError = existing.mediaDownloadError;
+                item.mediaDownloadReceivedBytes = existing.mediaDownloadReceivedBytes;
+                item.mediaDownloadTotalBytes = existing.mediaDownloadTotalBytes;
+                if (item.text == existing.text) {
+                    transplantParsedState(item, existing);
+                }
             }
         }
         next.append(std::move(item));
@@ -408,6 +454,104 @@ void MessageListModel::replaceMessages(const QList<whatevr::v1::Message> &messag
         }
         return left.id > right.id;
     });
+
+    const auto currentIsPrefixOf = [this](const QList<MessageItem> &items) {
+        if (m_messages.size() > items.size()) {
+            return false;
+        }
+        for (int row = 0; row < m_messages.size(); ++row) {
+            if (m_messages.at(row).id != items.at(row).id) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    if (!chatSwitch && !m_pendingRevealRows.isEmpty()) {
+        if (currentIsPrefixOf(next)) {
+            // The incoming page supersedes the queued staged rows. Keep the
+            // visible prefix and restage from the fresh page below.
+            cancelStagedReveal();
+        } else {
+            // A non-prefix update needs the complete current page for the
+            // merge/removal logic to make correct decisions.
+            flushStagedReveal();
+        }
+    }
+
+    if (chatSwitch) {
+        cancelStagedReveal();
+        const bool staged = initialRevealCount > 0 && next.size() > initialRevealCount;
+        beginResetModel();
+        if (staged) {
+            // Fast first paint: reset with just the newest rows (one viewport
+            // at the bottom); the remainder streams in above the viewport via
+            // stagedRevealTick so no single frame pays for the whole page.
+            m_pendingRevealRows = next.mid(initialRevealCount);
+            next.resize(initialRevealCount);
+        }
+        m_messages = std::move(next);
+        rebuildIndex();
+        // Warm one viewport of the parse cache before the view sees the rows:
+        // delegates then bind final widths/heights on their first layout, so
+        // the open never reflows or drifts off the bottom afterwards.
+        warmFirstRows(kEagerParseRows);
+        endResetModel();
+        if (staged) {
+            m_revealTimer.start();
+        }
+        if (perf) {
+            qInfo("[perf] replaceMessages(reset, %lld+%lld rows): %lld ms",
+                  static_cast<long long>(m_messages.size()),
+                  static_cast<long long>(m_pendingRevealRows.size()),
+                  perfTimer.elapsed());
+        }
+        Q_EMIT modelReplaced();
+        return;
+    }
+
+    if (initialRevealCount > 0 && next.size() > m_messages.size() && currentIsPrefixOf(next)) {
+        int firstChanged = -1;
+        int lastChanged = -1;
+        int runStart = -1;
+        for (int row = 0; row < m_messages.size(); ++row) {
+            if (sameMessageData(m_messages.at(row), next.at(row))) {
+                if (runStart >= 0) {
+                    Q_EMIT dataChanged(index(runStart, 0), index(row - 1, 0));
+                    runStart = -1;
+                }
+                continue;
+            }
+            m_messages[row] = next.at(row);
+            if (runStart < 0) {
+                runStart = row;
+            }
+            if (firstChanged < 0) {
+                firstChanged = row;
+            }
+            lastChanged = row;
+        }
+        if (runStart >= 0) {
+            Q_EMIT dataChanged(index(runStart, 0), index(static_cast<int>(m_messages.size()) - 1, 0));
+        }
+        if (firstChanged >= 0) {
+            emitGroupingRolesChanged(firstChanged, lastChanged);
+        }
+
+        m_pendingRevealRows = next.mid(static_cast<int>(m_messages.size()));
+        if (!m_pendingRevealRows.isEmpty()) {
+            m_revealTimer.start();
+        }
+        QTimer::singleShot(50, this, [this] { scheduleParseWarmup(0); });
+        if (perf) {
+            qInfo("[perf] replaceMessages(stage-append, %lld+%lld rows): %lld ms",
+                  static_cast<long long>(m_messages.size()),
+                  static_cast<long long>(m_pendingRevealRows.size()),
+                  perfTimer.elapsed());
+        }
+        Q_EMIT modelReplaced();
+        return;
+    }
 
     if (sameMessages(m_messages, next)) {
         Q_EMIT modelReplaced();
@@ -475,6 +619,7 @@ void MessageListModel::replaceMessages(const QList<whatevr::v1::Message> &messag
     }
 
     if (survivorsInCurrent != survivorsInNext) {
+        cancelStagedReveal();
         beginResetModel();
         m_messages = std::move(next);
         rebuildIndex();
@@ -545,11 +690,16 @@ void MessageListModel::replaceMessages(const QList<whatevr::v1::Message> &messag
         emitGroupingRolesChanged(minTouched, maxTouched);
     }
     QTimer::singleShot(50, this, [this] { scheduleParseWarmup(0); });
+    if (perf) {
+        qInfo("[perf] replaceMessages(merge, %lld rows): %lld ms", static_cast<long long>(m_messages.size()), perfTimer.elapsed());
+    }
     Q_EMIT modelReplaced();
 }
 
 void MessageListModel::appendOlderMessages(const QList<whatevr::v1::Message> &messages)
 {
+    flushStagedReveal();
+
     QList<MessageItem> older;
     older.reserve(messages.size());
     QSet<QString> seenIncoming;
@@ -615,6 +765,7 @@ void MessageListModel::appendOlderMessages(const QList<whatevr::v1::Message> &me
 
 void MessageListModel::clear()
 {
+    cancelStagedReveal();
     if (m_messages.isEmpty()) {
         return;
     }
@@ -625,6 +776,58 @@ void MessageListModel::clear()
     endResetModel();
     m_warmupTimer.stop();
     m_warmupCursor = 0;
+}
+
+void MessageListModel::cancelStagedReveal()
+{
+    m_revealTimer.stop();
+    m_pendingRevealRows.clear();
+}
+
+void MessageListModel::flushStagedReveal()
+{
+    if (m_pendingRevealRows.isEmpty()) {
+        m_revealTimer.stop();
+        return;
+    }
+
+    const int firstNew = static_cast<int>(m_messages.size());
+    const int count = static_cast<int>(m_pendingRevealRows.size());
+    beginInsertRows(QModelIndex(), firstNew, firstNew + count - 1);
+    m_messages.reserve(m_messages.size() + m_pendingRevealRows.size());
+    for (const auto &message : m_pendingRevealRows) {
+        m_messages.append(message);
+    }
+    m_pendingRevealRows.clear();
+    rebuildIndex();
+    endInsertRows();
+    m_revealTimer.stop();
+    emitGroupingRolesChanged(std::max(0, firstNew - 1), firstNew + count - 1);
+    scheduleParseWarmup(firstNew);
+}
+
+void MessageListModel::stagedRevealTick()
+{
+    if (m_pendingRevealRows.isEmpty()) {
+        m_revealTimer.stop();
+        return;
+    }
+
+    const int count = std::min(kRevealBatchRows, static_cast<int>(m_pendingRevealRows.size()));
+    const int firstNew = static_cast<int>(m_messages.size());
+    beginInsertRows(QModelIndex(), firstNew, firstNew + count - 1);
+    m_messages.reserve(m_messages.size() + count);
+    for (int i = 0; i < count; ++i) {
+        m_messages.append(m_pendingRevealRows.at(i));
+    }
+    m_pendingRevealRows.remove(0, count);
+    rebuildIndex();
+    endInsertRows();
+    emitGroupingRolesChanged(std::max(0, firstNew - 1), firstNew + count - 1);
+    scheduleParseWarmup(firstNew);
+    if (m_pendingRevealRows.isEmpty()) {
+        m_revealTimer.stop();
+    }
 }
 
 void MessageListModel::upsertMessage(const whatevr::v1::Message &message)
