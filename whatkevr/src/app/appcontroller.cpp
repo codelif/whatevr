@@ -146,6 +146,10 @@ constexpr int kServerMessageLimit = 200;
 // Extra already-read messages requested above an unread region so the unread
 // divider opens with a little context above it.
 constexpr int kUnreadContextMessages = 12;
+// Upper bound on how many messages are auto-paged in while hunting for the
+// unread divider anchor of a heavily-unread chat. Past this the divider is
+// placed at the oldest loaded message instead of loading thousands of rows.
+constexpr int kMaxUnreadAnchorAutoloadMessages = 600;
 constexpr int kCachedChatLimit = 32;
 constexpr int kCachedMessagesPerChatLimit = kMessageLimit * 4;
 
@@ -917,6 +921,11 @@ QString AppController::unreadAnchorMessageId() const
 int AppController::unreadAnchorCount() const
 {
     return m_unreadAnchorCount;
+}
+
+bool AppController::unreadAnchorResolving() const
+{
+    return m_selectedChatUnreadSnapshot > 0 && !m_unreadAnchorResolved;
 }
 
 QString AppController::currentUserName() const
@@ -3006,6 +3015,11 @@ void AppController::requestOlderMessages()
         if (!status.isOk()) {
             m_olderMessagesReply.reset();
             m_canLoadOlderMessages = false;
+            // A pending unread-anchor hunt ends here; settle for the divider
+            // at the oldest loaded message rather than leaving it missing.
+            if (m_selectedChatId == chatId && !m_unreadAnchorResolved) {
+                resolveUnreadAnchor(true);
+            }
             Q_EMIT messagesChanged();
             return;
         }
@@ -3014,6 +3028,9 @@ void AppController::requestOlderMessages()
         m_olderMessagesReply.reset();
         if (!response) {
             m_canLoadOlderMessages = false;
+            if (m_selectedChatId == chatId && !m_unreadAnchorResolved) {
+                resolveUnreadAnchor(true);
+            }
             Q_EMIT messagesChanged();
             return;
         }
@@ -3028,6 +3045,11 @@ void AppController::requestOlderMessages()
                           response->messages().size() >= kMessageLimit);
             m_messageListModel->appendOlderMessages(response->messages());
             m_canLoadOlderMessages = response->messages().size() >= kMessageLimit;
+            // Continue (or finish) a pending unread-anchor hunt with the newly
+            // widened window.
+            if (!m_unreadAnchorResolved) {
+                resolveUnreadAnchor(true);
+            }
         }
         Q_EMIT messagesChanged();
     });
@@ -3113,8 +3135,12 @@ void AppController::resolveUnreadAnchor(bool authoritative)
     if (m_unreadAnchorResolved || m_selectedChatId.isEmpty() || m_displayedMessagesChatId != m_selectedChatId) {
         return;
     }
+    const bool wasResolving = unreadAnchorResolving();
     if (m_selectedChatUnreadSnapshot <= 0) {
         m_unreadAnchorResolved = true;
+        if (wasResolving != unreadAnchorResolving()) {
+            Q_EMIT unreadAnchorChanged();
+        }
         return;
     }
 
@@ -3124,12 +3150,27 @@ void AppController::resolveUnreadAnchor(bool authoritative)
         // Badge is up but no incoming message is loaded (e.g. all unread were
         // since deleted). The fresh response is the final word: stop looking.
         m_unreadAnchorResolved = authoritative;
+        if (wasResolving != unreadAnchorResolving()) {
+            Q_EMIT unreadAnchorChanged();
+        }
         return;
     }
-    if (!complete && !authoritative) {
-        // The cached window may be missing part of the unread region; wait for
-        // the (possibly enlarged) network page before placing the divider.
-        return;
+    if (!complete) {
+        if (!authoritative) {
+            // The cached window may be missing part of the unread region; wait
+            // for the (possibly enlarged) network page before placing the divider.
+            return;
+        }
+        if (m_canLoadOlderMessages && !m_olderMessagesLoading
+            && m_messageListModel->rowCount() < kMaxUnreadAnchorAutoloadMessages) {
+            // The anchor is older than even the enlarged first page (unread
+            // count above the daemon's page cap): pull older pages until it is
+            // in the window; the load handler retries this resolution.
+            requestOlderMessages();
+            return;
+        }
+        // Bound reached or history exhausted: place the divider at the oldest
+        // loaded incoming message so the unread marker still shows.
     }
 
     m_unreadAnchorMessageId = anchor;
@@ -3140,12 +3181,13 @@ void AppController::resolveUnreadAnchor(bool authoritative)
 
 void AppController::dismissUnreadAnchor()
 {
+    const bool wasResolving = unreadAnchorResolving();
     const bool changed = !m_unreadAnchorMessageId.isEmpty() || m_unreadAnchorCount != 0;
     m_selectedChatUnreadSnapshot = 0;
     m_unreadAnchorMessageId.clear();
     m_unreadAnchorCount = 0;
     m_unreadAnchorResolved = true;
-    if (changed) {
+    if (changed || wasResolving != unreadAnchorResolving()) {
         Q_EMIT unreadAnchorChanged();
     }
 }
