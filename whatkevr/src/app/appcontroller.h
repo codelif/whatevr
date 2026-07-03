@@ -143,6 +143,7 @@ class AppController final : public QObject
     Q_PROPERTY(int selectedChatUnreadCount READ selectedChatUnreadCount NOTIFY selectionChanged FINAL)
     Q_PROPERTY(QString unreadAnchorMessageId READ unreadAnchorMessageId NOTIFY unreadAnchorChanged FINAL)
     Q_PROPERTY(int unreadAnchorCount READ unreadAnchorCount NOTIFY unreadAnchorChanged FINAL)
+    Q_PROPERTY(bool unreadAnchorResolving READ unreadAnchorResolving NOTIFY unreadAnchorChanged FINAL)
     Q_PROPERTY(bool historySyncVisible READ historySyncVisible NOTIFY historySyncChanged FINAL)
     Q_PROPERTY(int historySyncPercent READ historySyncPercent NOTIFY historySyncChanged FINAL)
     Q_PROPERTY(QString historySyncTitle READ historySyncTitle NOTIFY historySyncChanged FINAL)
@@ -228,6 +229,7 @@ public:
     [[nodiscard]] int selectedChatUnreadCount() const;
     [[nodiscard]] QString unreadAnchorMessageId() const;
     [[nodiscard]] int unreadAnchorCount() const;
+    [[nodiscard]] bool unreadAnchorResolving() const;
     [[nodiscard]] QString currentUserName() const;
     [[nodiscard]] QString currentUserAvatarPath() const;
     [[nodiscard]] QString currentUserStatusText() const;

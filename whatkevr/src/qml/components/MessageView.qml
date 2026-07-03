@@ -91,6 +91,7 @@ Item {
     // per chat open; it stays put until the chat is switched).
     readonly property string unreadAnchorMessageId: Whatevr.AppController.unreadAnchorMessageId
     readonly property int unreadAnchorCount: Whatevr.AppController.unreadAnchorCount
+    readonly property bool unreadAnchorResolving: Whatevr.AppController.unreadAnchorResolving
     // Set on the first genuine user scroll after a chat opens; a late-arriving
     // unread anchor must not yank the viewport away from where the user went.
     property bool userScrolledSinceOpen: false
@@ -542,6 +543,7 @@ Item {
         list.positionViewAtIndex(index, ListView.End)
         list.forceLayout()
         unreadAnchorPositioned = true
+        openingChat = false
         pendingNewestMessageCount = 0
         Qt.callLater(() => {
             root.programmaticScroll = false
@@ -803,6 +805,12 @@ Item {
             // A chat with unread messages opens at the unread divider instead
             // of the newest message; updateScrollState then recomputes
             // followNewest/atNewest from the real viewport.
+            if (!userScrolledSinceOpen && unreadAnchorResolving) {
+                floatingDateActive = false
+                floatingDateIdleTimer.stop()
+                Qt.callLater(updateScrollState)
+                return
+            }
             if (userScrolledSinceOpen || !positionAtUnreadAnchor()) {
                 scrollToNewest()
             }
@@ -1209,15 +1217,20 @@ Item {
             // message cache (the divider position needed the fresh page). Move
             // there as long as the user hasn't taken over scrolling.
             if (root.chatId.length === 0
-                    || Whatevr.AppController.unreadAnchorMessageId.length === 0
                     || root.unreadAnchorPositioned
                     || root.userScrolledSinceOpen
                     || root.pendingJumpMessageId.length > 0) {
                 return
             }
             Qt.callLater(() => {
-                if (!root.userScrolledSinceOpen && root.pendingJumpMessageId.length === 0) {
+                if (root.userScrolledSinceOpen || root.pendingJumpMessageId.length > 0) {
+                    return
+                }
+                if (Whatevr.AppController.unreadAnchorMessageId.length > 0) {
                     root.positionAtUnreadAnchor()
+                } else if (root.openingChat && !Whatevr.AppController.unreadAnchorResolving) {
+                    root.scrollToNewest()
+                    root.openingChat = false
                 }
             })
         }
