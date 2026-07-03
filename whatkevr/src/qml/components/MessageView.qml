@@ -35,6 +35,7 @@ Item {
     property bool followNewest: true
     property bool atNewest: true
     property int pendingNewestMessageCount: 0
+    property bool olderLoadRequestQueued: false
 
     // How close (in rows) to the newest message we must be to keep following it.
     property int followRowThreshold: 2
@@ -778,16 +779,33 @@ Item {
             pendingNewestMessageCount = 0
         }
 
-        if (!openingChat
-                && pendingJumpMessageId.length === 0
-                && hi >= 0
-                && canLoadOlderMessages
-                && !loadingOlderMessages
-                && hi >= list.count - 1 - prefetchRowThreshold) {
-            loadOlderMessagesRequested()
+        if (shouldPrefetchOlder(hi)) {
+            queueOlderLoadRequest()
         }
 
         maybeMarkViewedRead()
+    }
+
+    function shouldPrefetchOlder(topIndex) {
+        return !openingChat
+                && pendingJumpMessageId.length === 0
+                && topIndex >= 0
+                && canLoadOlderMessages
+                && !loadingOlderMessages
+                && topIndex >= list.count - 1 - prefetchRowThreshold
+    }
+
+    function queueOlderLoadRequest() {
+        if (olderLoadRequestQueued) {
+            return
+        }
+        olderLoadRequestQueued = true
+        Qt.callLater(() => {
+            olderLoadRequestQueued = false
+            if (shouldPrefetchOlder(topVisibleIndex)) {
+                loadOlderMessagesRequested()
+            }
+        })
     }
 
     // Reveal the floating date pill on genuine user scrolling (the kinetic
