@@ -52,6 +52,11 @@ type Client struct {
 	presenceMu       sync.Mutex
 	frontendSessions map[string]frontendSession
 	lastPresence     types.Presence
+	// presenceOfflineTimer delays the available->unavailable transition so a
+	// brief focus loss doesn't flip the account to "last seen". The generation
+	// counter invalidates a fired callback that lost a cancel race for the lock.
+	presenceOfflineTimer *time.Timer
+	presenceTimerGen     uint64
 
 	// Two-priority avatar fetch queue (see avatars.go): visible subjects
 	// drain first, background ones pass through a token bucket.
@@ -378,6 +383,11 @@ func (c *Client) ShouldNotifyChat(chatID string) bool {
 	return true
 }
 
+// presenceOfflineDelay is how long the account stays "available" after the last
+// focused session goes away, so brief focus losses don't surface as "last seen".
+// Variable so tests can shorten it.
+var presenceOfflineDelay = 30 * time.Second
+
 func (c *Client) syncPresence(ctx context.Context, force bool) {
 	client := c.currentClient()
 	if client == nil || !client.IsLoggedIn() {
@@ -390,6 +400,20 @@ func (c *Client) syncPresence(ctx context.Context, force bool) {
 		c.presenceMu.Unlock()
 		return
 	}
+	if !force && desired == types.PresenceUnavailable && c.lastPresence != types.PresenceUnavailable {
+		// Debounce available -> unavailable; forced syncs (session end,
+		// reconnect) stay immediate.
+		if c.presenceOfflineTimer == nil {
+			c.presenceTimerGen++
+			gen := c.presenceTimerGen
+			c.presenceOfflineTimer = time.AfterFunc(presenceOfflineDelay, func() {
+				c.presenceOfflineTimerFired(gen)
+			})
+		}
+		c.presenceMu.Unlock()
+		return
+	}
+	c.cancelPresenceOfflineTimerLocked()
 	if !force && c.lastPresence == desired {
 		c.presenceMu.Unlock()
 		return
@@ -399,6 +423,41 @@ func (c *Client) syncPresence(ctx context.Context, force bool) {
 
 	if err := client.SendPresence(ctx, desired); err != nil {
 		c.log.Warnf("Failed to update presence to %s: %v", desired, err)
+	}
+}
+
+// cancelPresenceOfflineTimerLocked stops any pending delayed offline transition.
+// Caller must hold presenceMu.
+func (c *Client) cancelPresenceOfflineTimerLocked() {
+	c.presenceTimerGen++
+	if c.presenceOfflineTimer != nil {
+		c.presenceOfflineTimer.Stop()
+		c.presenceOfflineTimer = nil
+	}
+}
+
+func (c *Client) presenceOfflineTimerFired(gen uint64) {
+	client := c.currentClient()
+	c.presenceMu.Lock()
+	if gen != c.presenceTimerGen {
+		c.presenceMu.Unlock()
+		return
+	}
+	c.presenceOfflineTimer = nil
+	desired := desiredPresenceForSessions(c.frontendSessions)
+	if desired != types.PresenceUnavailable || c.lastPresence == types.PresenceUnavailable {
+		c.presenceMu.Unlock()
+		return
+	}
+	if client == nil || !client.IsLoggedIn() {
+		c.presenceMu.Unlock()
+		return
+	}
+	c.lastPresence = types.PresenceUnavailable
+	c.presenceMu.Unlock()
+
+	if err := client.SendPresence(context.Background(), types.PresenceUnavailable); err != nil {
+		c.log.Warnf("Failed to update presence to %s: %v", types.PresenceUnavailable, err)
 	}
 }
 
