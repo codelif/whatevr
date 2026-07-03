@@ -208,6 +208,62 @@ func TestHistorySyncMarkedUnreadPublishesChatUpdated(t *testing.T) {
 	}
 }
 
+func TestHistorySyncPreservesPinWhenPinnedFieldAbsent(t *testing.T) {
+	ctx := context.Background()
+	db, err := appstore.Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	chatID := types.NewJID("12345", types.DefaultUserServer).String()
+	if _, err := db.EnsureChat(ctx, chatID, chatID, false); err != nil {
+		t.Fatalf("ensure chat: %v", err)
+	}
+	if _, _, err := db.UpdateChatPinState(ctx, chatID, true, 123); err != nil {
+		t.Fatalf("pin chat: %v", err)
+	}
+
+	client := &Client{
+		store:  db,
+		daemon: app.NewDaemon(app.Paths{}),
+		log:    waLog.Noop,
+		client: &whatsmeow.Client{Store: &waStore.Device{}},
+	}
+	syncType := waHistorySync.HistorySync_RECENT
+	client.processHistorySyncData(ctx, &waHistorySync.HistorySync{
+		SyncType: &syncType,
+		Conversations: []*waHistorySync.Conversation{{
+			ID: proto.String(chatID),
+		}},
+	})
+
+	chat, err := db.GetChat(ctx, chatID)
+	if err != nil {
+		t.Fatalf("get chat after absent pin: %v", err)
+	}
+	if !chat.IsPinned || chat.PinnedOrder != 123 {
+		t.Fatalf("pin changed after absent field: pinned=%v order=%d, want true/123", chat.IsPinned, chat.PinnedOrder)
+	}
+
+	explicitUnpin := uint32(0)
+	client.processHistorySyncData(ctx, &waHistorySync.HistorySync{
+		SyncType: &syncType,
+		Conversations: []*waHistorySync.Conversation{{
+			ID:     proto.String(chatID),
+			Pinned: &explicitUnpin,
+		}},
+	})
+
+	chat, err = db.GetChat(ctx, chatID)
+	if err != nil {
+		t.Fatalf("get chat after explicit unpin: %v", err)
+	}
+	if chat.IsPinned || chat.PinnedOrder != 0 {
+		t.Fatalf("explicit unpin not applied: pinned=%v order=%d, want false/0", chat.IsPinned, chat.PinnedOrder)
+	}
+}
+
 func TestNotificationTimestampFreshAllowsRecentAndUnknownTimestamps(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 

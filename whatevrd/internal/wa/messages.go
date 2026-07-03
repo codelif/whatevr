@@ -156,8 +156,7 @@ func (c *Client) processHistorySyncData(ctx context.Context, data *waHistorySync
 		}
 		convUnread := effectiveHistorySyncUnread(conv)
 		convMarkedUnread := conv.GetMarkedAsUnread()
-		convPinnedOrder := conv.GetPinned()
-		convPinned := convPinnedOrder > 0
+		convHasPinned, convPinned, convPinnedOrder := historySyncConversationPinState(conv)
 		forceRead := convUnread == 0 && !convMarkedUnread
 
 		// Phase 1: parse every message and build its storage input. No app-DB
@@ -274,11 +273,14 @@ func (c *Client) processHistorySyncData(ctx context.Context, data *waHistorySync
 		} else if updatedChat.ID != "" {
 			lastSavedChat = updatedChat
 		}
-		updatedChat, pinChanged, err := c.store.UpdateChatPinState(ctx, chatID, convPinned, convPinnedOrder)
-		if err != nil {
-			c.log.Warnf("Failed to update pinned state for %s: %v", chatID, err)
-		} else if updatedChat.ID != "" {
-			lastSavedChat = updatedChat
+		pinChanged := false
+		if convHasPinned {
+			updatedChat, pinChanged, err = c.store.UpdateChatPinState(ctx, chatID, convPinned, convPinnedOrder)
+			if err != nil {
+				c.log.Warnf("Failed to update pinned state for %s: %v", chatID, err)
+			} else if updatedChat.ID != "" {
+				lastSavedChat = updatedChat
+			}
 		}
 
 		if messagesAdded > 0 || pinChanged || unreadChanged {
@@ -337,6 +339,14 @@ func effectiveHistorySyncUnread(conv *waHistorySync.Conversation) uint32 {
 		return 1
 	}
 	return unread
+}
+
+func historySyncConversationPinState(conv *waHistorySync.Conversation) (present bool, pinned bool, order uint32) {
+	if conv == nil || conv.Pinned == nil {
+		return false, false, 0
+	}
+	order = conv.GetPinned()
+	return true, order > 0, order
 }
 
 func (c *Client) handleMessage(ctx context.Context, evt *events.Message, offlineSync bool) {
