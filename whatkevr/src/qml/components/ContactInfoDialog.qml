@@ -84,6 +84,14 @@ CenteredDialog {
     }
     readonly property bool canMessage: !isGroup && targetJid.length > 0
                                        && targetJid !== Whatevr.AppController.selectedChatId
+    // Block state comes from the last-fetched blocklist snapshot; openFor()
+    // refreshes it and onBlockedContactsChanged keeps it live.
+    property bool contactBlocked: false
+    readonly property bool canBlock: !isGroup && targetJid.length > 0
+
+    function updateBlockedState() {
+        root.contactBlocked = Whatevr.AppController.isContactBlocked(root.targetJid)
+    }
 
     title: isGroup
            ? Whatevr.I18n.i18nc("@title group info dialog", "Group info")
@@ -101,6 +109,7 @@ CenteredDialog {
     function openFor(params) {
         root.history = []
         loadSubject(params)
+        Whatevr.AppController.refreshBlocklist()
         open()
     }
 
@@ -131,6 +140,7 @@ CenteredDialog {
         } else {
             Whatevr.AppController.openContactInfo(root.targetJid)
         }
+        updateBlockedState()
     }
 
     function snapshot() {
@@ -254,6 +264,7 @@ CenteredDialog {
             root.isBusiness = info.isBusiness
             root.statusText = info.statusText
             root.loading = false
+            root.updateBlockedState()
         }
 
         function onContactInfoFailed(jid, errorText) {
@@ -334,10 +345,49 @@ CenteredDialog {
                 pictureViewer.showImage(localPath)
             }
         }
+
+        function onBlockedContactsChanged() {
+            root.updateBlockedState()
+        }
+
+        // Block/unblock failures land here; only surface them while this card
+        // is the visible settings-action initiator.
+        function onSettingsActionFailed(message) {
+            if (root.visible) {
+                root.errorText = message.length > 0
+                    ? message
+                    : Whatevr.I18n.i18nc("@info", "Updating the blocklist failed")
+            }
+        }
     }
 
     ProfilePictureViewer {
         id: pictureViewer
+    }
+
+    Kirigami.PromptDialog {
+        id: blockConfirmDialog
+
+        // Centre on the stable implicitHeight (see the mute dialog note in
+        // ChatListPane).
+        y: parent ? Math.round((parent.height - implicitHeight) / 2) : 0
+        title: Whatevr.I18n.i18nc("@title:dialog", "Block contact")
+        subtitle: Whatevr.I18n.i18nc("@info block confirmation",
+                                     "Block %1? Blocked contacts can no longer send you messages or call you.",
+                                     root.primaryName)
+        standardButtons: Kirigami.Dialog.Cancel
+        showCloseButton: false
+
+        customFooterActions: [
+            Kirigami.Action {
+                text: Whatevr.I18n.i18nc("@action:button confirm blocking", "Block")
+                icon.name: "im-ban-kick-user-symbolic"
+                onTriggered: {
+                    Whatevr.AppController.setContactBlocked(root.targetJid, true)
+                    blockConfirmDialog.close()
+                }
+            }
+        ]
     }
 
     ColumnLayout {
@@ -460,16 +510,38 @@ CenteredDialog {
             }
         }
 
-        // ---- Message action (1:1 only) ----
-        QQC2.Button {
+        // ---- Message / block actions (1:1 only) ----
+        RowLayout {
             Layout.alignment: Qt.AlignHCenter
-            visible: root.canMessage
-            icon.name: "mail-message-new-symbolic"
-            text: Whatevr.I18n.i18nc("@action:button start a chat with this contact", "Message")
-            onClicked: {
-                Whatevr.AppController.startDirectChat(root.targetJid)
-                root.close()
-                applicationWindow().showConversation()
+            spacing: Kirigami.Units.largeSpacing
+            visible: root.canMessage || root.canBlock
+
+            QQC2.Button {
+                visible: root.canMessage
+                icon.name: "mail-message-new-symbolic"
+                text: Whatevr.I18n.i18nc("@action:button start a chat with this contact", "Message")
+                onClicked: {
+                    Whatevr.AppController.startDirectChat(root.targetJid)
+                    root.close()
+                    applicationWindow().showConversation()
+                }
+            }
+
+            QQC2.Button {
+                visible: root.canBlock
+                icon.name: "im-ban-kick-user-symbolic"
+                text: root.contactBlocked
+                      ? Whatevr.I18n.i18nc("@action:button unblock this contact", "Unblock")
+                      : Whatevr.I18n.i18nc("@action:button block this contact", "Block")
+                onClicked: {
+                    if (root.contactBlocked) {
+                        // Unblocking is low-stakes; act directly, like the
+                        // blocked-contacts settings page does.
+                        Whatevr.AppController.setContactBlocked(root.targetJid, false)
+                    } else {
+                        blockConfirmDialog.open()
+                    }
+                }
             }
         }
 
