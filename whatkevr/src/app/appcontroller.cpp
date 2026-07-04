@@ -191,8 +191,7 @@ bool isSupportedOutboundImageFile(const QString &filePath)
     return suffix == QStringLiteral("png")
         || suffix == QStringLiteral("jpg")
         || suffix == QStringLiteral("jpeg")
-        || suffix == QStringLiteral("webp")
-        || suffix == QStringLiteral("gif");
+        || suffix == QStringLiteral("webp");
 }
 
 using whatevr::util::plainTextFromQtRichText;
@@ -1587,6 +1586,11 @@ bool AppController::sendClipboardImage(const QString &caption, const QString &re
             const QString filePath = url.toLocalFile();
             if (isSupportedOutboundImageFile(filePath)) {
                 sendImage(filePath, caption, replyToMessageId);
+                return true;
+            }
+            if (QFileInfo(filePath).suffix().toLower() == QStringLiteral("gif")) {
+                m_composerErrorText = i18nc("@info", "GIFs can't be sent yet — WhatsApp treats them as short videos");
+                Q_EMIT composerChanged();
                 return true;
             }
         }
@@ -3771,6 +3775,12 @@ void AppController::ensureDaemonStream()
         case whatevr::v1::DaemonEvent::PayloadFields::MessageDeleted:
             applyMessageDeleted(event->messageDeleted().chatId(), event->messageDeleted().messageId());
             break;
+        case whatevr::v1::DaemonEvent::PayloadFields::ChatDeleted:
+            applyChatDeleted(event->chatDeleted().chatId());
+            break;
+        case whatevr::v1::DaemonEvent::PayloadFields::ChatCleared:
+            applyChatCleared(event->chatCleared().chat());
+            break;
         case whatevr::v1::DaemonEvent::PayloadFields::HistorySyncProgress:
             applyHistorySyncProgress(event->historySyncProgress());
             break;
@@ -4356,6 +4366,53 @@ void AppController::applyMessageDeleted(const QString &chatId, const QString &me
     if (m_messageListModel->removeMessage(messageId) && !wasEmpty && m_messageListModel->isEmpty()) {
         Q_EMIT messagesChanged();
     }
+}
+
+// Phone-side "delete chat": drop the row and everything cached for it. If the
+// conversation is open, deselect it first so pending replies and search state
+// reset through the same path as a manual close.
+void AppController::applyChatDeleted(const QString &chatId)
+{
+    if (chatId.isEmpty()) {
+        return;
+    }
+    m_messageCache.remove(chatId);
+    m_messageCacheOrder.removeAll(chatId);
+    if (m_selectedChatId == chatId) {
+        selectChat(QString());
+    }
+    if (m_displayedMessagesChatId == chatId) {
+        m_messageListModel->clear();
+        m_pinnedMessagesModel->clear();
+        m_displayedMessagesChatId.clear();
+        m_canLoadOlderMessages = false;
+        Q_EMIT messagesChanged();
+    }
+    if (m_chatListModel->removeChat(chatId)) {
+        Q_EMIT chatsChanged();
+    }
+}
+
+// Phone-side "clear chat": the chat row survives (the event carries its
+// recomputed summary); the transcript and pins are wiped.
+void AppController::applyChatCleared(const whatevr::v1::Chat &chat)
+{
+    const QString chatId = chat.id_proto();
+    if (chatId.isEmpty()) {
+        return;
+    }
+    m_messageCache.remove(chatId);
+    m_messageCacheOrder.removeAll(chatId);
+    m_chatListModel->upsertChat(chat);
+    if (m_displayedMessagesChatId == chatId) {
+        dismissUnreadAnchor();
+        m_messageListModel->clear();
+        m_pinnedMessagesModel->clear();
+        m_canLoadOlderMessages = false;
+        Q_EMIT messagesChanged();
+    }
+    updateSelectedChatData();
+    Q_EMIT chatsChanged();
 }
 
 void AppController::cacheMessages(const QString &chatId, const QList<whatevr::v1::Message> &messages, bool canLoadOlderMessages)
@@ -4986,6 +5043,21 @@ void AppController::setContactBlocked(const QString &jid, bool blocked)
         m_blockedContacts = blocklistToList(response->contacts());
         Q_EMIT blockedContactsChanged();
     });
+}
+
+// Answers from the blocklist snapshot last fetched via refreshBlocklist();
+// callers showing block state should refresh first (the contact card does).
+bool AppController::isContactBlocked(const QString &jid) const
+{
+    if (jid.isEmpty()) {
+        return false;
+    }
+    for (const QVariant &entry : m_blockedContacts) {
+        if (entry.toMap().value(QStringLiteral("jid")).toString() == jid) {
+            return true;
+        }
+    }
+    return false;
 }
 
 void AppController::setProfileStatus(const QString &statusText)

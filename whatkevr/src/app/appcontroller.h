@@ -358,6 +358,7 @@ public:
     Q_INVOKABLE void setReadReceipts(bool enabled);
     Q_INVOKABLE void refreshBlocklist();
     Q_INVOKABLE void setContactBlocked(const QString &jid, bool blocked);
+    [[nodiscard]] Q_INVOKABLE bool isContactBlocked(const QString &jid) const;
     Q_INVOKABLE void setProfileStatus(const QString &statusText);
     // Fetch the logged-in user's own profile (name/avatar/status), refreshing
     // the currentUser* properties. Also called internally on connect.
@@ -475,6 +476,8 @@ private:
     void applyMediaDownloadChanged(const whatevr::v1::MediaDownloadChanged &download);
     void applyMessageEvent(const whatevr::v1::Message &message);
     void applyMessageDeleted(const QString &chatId, const QString &messageId);
+    void applyChatDeleted(const QString &chatId);
+    void applyChatCleared(const whatevr::v1::Chat &chat);
     void applyHistorySyncProgress(const whatevr::v1::HistorySyncProgress &progress);
     void applyHistoryBackfilled(const whatevr::v1::HistoryBackfilled &backfilled);
     [[nodiscard]] bool shouldDisplayHistorySyncProgress(const whatevr::v1::HistorySyncProgress &progress) const;
