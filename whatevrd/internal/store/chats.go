@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -262,6 +263,82 @@ func (db *DB) EnsureChatWithNameSource(ctx context.Context, chatID, name, nameSo
 	}
 
 	return db.GetChat(ctx, chatID)
+}
+
+// DeleteChat removes a chat and everything hanging off it (messages via
+// explicit delete so the FTS triggers fire, reactions/receipts via FK
+// cascade, plus the trigger-less side tables). Returns whether a chat row
+// existed.
+func (db *DB) DeleteChat(ctx context.Context, chatID string) (bool, error) {
+	if chatID == "" {
+		return false, nil
+	}
+	tx, err := db.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM messages WHERE chat_id = ?`, chatID); err != nil {
+		return false, err
+	}
+	for _, statement := range []string{
+		`DELETE FROM undecryptable_messages WHERE chat_id = ?`,
+		`DELETE FROM group_participants WHERE chat_id = ?`,
+	} {
+		if _, err := tx.ExecContext(ctx, statement, chatID); err != nil {
+			return false, err
+		}
+	}
+	result, err := tx.ExecContext(ctx, `DELETE FROM chats WHERE id = ?`, chatID)
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return affected > 0, nil
+}
+
+// ClearChatMessages wipes a chat's transcript but keeps the chat row.
+// Returns the refreshed chat and whether it existed.
+func (db *DB) ClearChatMessages(ctx context.Context, chatID string) (Chat, bool, error) {
+	if chatID == "" {
+		return Chat{}, false, nil
+	}
+	tx, err := db.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return Chat{}, false, err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM messages WHERE chat_id = ?`, chatID); err != nil {
+		return Chat{}, false, err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM undecryptable_messages WHERE chat_id = ?`, chatID); err != nil {
+		return Chat{}, false, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE chats SET unread_count = 0 WHERE id = ?`, chatID); err != nil {
+		return Chat{}, false, err
+	}
+	if err := recomputeChatSummaryTx(ctx, tx, chatID); err != nil {
+		return Chat{}, false, err
+	}
+	chat, err := getChatTx(ctx, tx, chatID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Chat{}, false, nil
+	}
+	if err != nil {
+		return Chat{}, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Chat{}, false, err
+	}
+	return chat, true, nil
 }
 
 func (db *DB) UpdateChatPinState(ctx context.Context, chatID string, pinned bool, order uint32) (Chat, bool, error) {

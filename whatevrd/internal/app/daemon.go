@@ -170,6 +170,8 @@ const (
 	DaemonEventPrivacySettingsChanged
 	DaemonEventSelfProfileChanged
 	DaemonEventBlocklistChanged
+	DaemonEventChatDeleted
+	DaemonEventChatCleared
 )
 
 type StickerSource int32
@@ -580,6 +582,14 @@ type FrontendSessionController interface {
 
 func (d *Daemon) PublishChatUpdated(chat Chat) {
 	d.broadcastDaemonEvent(DaemonEvent{Kind: DaemonEventChatUpdated, Chat: chat})
+}
+
+func (d *Daemon) PublishChatDeleted(chatID string) {
+	d.broadcastDaemonEvent(DaemonEvent{Kind: DaemonEventChatDeleted, DeletedChatID: chatID})
+}
+
+func (d *Daemon) PublishChatCleared(chat Chat) {
+	d.broadcastDaemonEvent(DaemonEvent{Kind: DaemonEventChatCleared, Chat: chat})
 }
 
 func (d *Daemon) PublishChatMigrated(previousChatID string, chat Chat) {

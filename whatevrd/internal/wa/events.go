@@ -120,6 +120,12 @@ func (c *Client) handleEvent(eventGen uint64, raw any) {
 		c.handleStarEvent(c.backgroundContext(), evt)
 	case *events.MarkChatAsRead:
 		c.handleMarkChatAsReadEvent(c.backgroundContext(), evt)
+	case *events.DeleteForMe:
+		c.handleDeleteForMeEvent(c.backgroundContext(), evt)
+	case *events.DeleteChat:
+		c.handleDeleteChatEvent(c.backgroundContext(), evt)
+	case *events.ClearChat:
+		c.handleClearChatEvent(c.backgroundContext(), evt)
 	case *events.JoinedGroup:
 		c.handleJoinedGroup(c.backgroundContext(), evt)
 	case *events.GroupInfo:
