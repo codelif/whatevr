@@ -54,6 +54,26 @@ SettingsPage {
         title: Whatevr.I18n.i18nc("@title:group", "Profile")
     }
 
+    Kirigami.InlineMessage {
+        Layout.fillWidth: true
+        Layout.leftMargin: Kirigami.Units.largeSpacing
+        Layout.rightMargin: Kirigami.Units.largeSpacing
+        id: profileErrorMessage
+        type: Kirigami.MessageType.Error
+        visible: false
+        showCloseButton: true
+
+        Connections {
+            target: Whatevr.AppController
+            function onSettingsActionFailed(message) {
+                profileErrorMessage.text = message.length > 0
+                    ? message
+                    : Whatevr.I18n.i18nc("@info", "Changing the profile failed");
+                profileErrorMessage.visible = true;
+            }
+        }
+    }
+
     FormCard.FormCard {
         FormCard.FormTextDelegate {
             objectName: "profile.name"
@@ -61,8 +81,8 @@ SettingsPage {
             description: Whatevr.AppController.currentUserName.length > 0
                 ? Whatevr.AppController.currentUserName
                 : Whatevr.I18n.i18nc("@info", "Not set")
-            // WhatsApp does not allow changing the display name from a linked
-            // device, so this is informational only.
+            // Push-name editing is not wired up yet (needs a SetPushName RPC;
+            // see feature-gap.md §10), so this is informational for now.
             trailing: Kirigami.Icon {
                 source: "documentinfo-symbolic"
                 implicitWidth: Kirigami.Units.iconSizes.small
@@ -73,12 +93,31 @@ SettingsPage {
 
         FormCard.FormDelegateSeparator {}
 
-        FormCard.FormTextDelegate {
+        FormCard.FormTextFieldDelegate {
+            id: aboutField
             objectName: "profile.about"
-            text: Whatevr.I18n.i18nc("@label", "About")
-            description: Whatevr.AppController.currentUserStatusText.length > 0
-                ? Whatevr.AppController.currentUserStatusText
-                : Whatevr.I18n.i18nc("@info", "No About set")
+            label: Whatevr.I18n.i18nc("@label", "About")
+            placeholderText: Whatevr.I18n.i18nc("@info", "No About set")
+            text: Whatevr.AppController.currentUserStatusText
+            maximumLength: 139
+            enabled: page.connected
+            onEditingFinished: {
+                const edited = text.trim();
+                if (edited.length > 0 && edited !== Whatevr.AppController.currentUserStatusText) {
+                    Whatevr.AppController.setProfileStatus(edited);
+                }
+            }
+
+            // Re-sync after phone-side edits: user typing breaks the property
+            // binding, so follow the controller signal explicitly.
+            Connections {
+                target: Whatevr.AppController
+                function onCurrentUserChanged() {
+                    if (!aboutField.activeFocus) {
+                        aboutField.text = Whatevr.AppController.currentUserStatusText;
+                    }
+                }
+            }
         }
 
         FormCard.FormDelegateSeparator {}
