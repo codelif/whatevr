@@ -16,6 +16,10 @@ const (
 
 	MediaKindImage   = "image"
 	MediaKindSticker = "sticker"
+	// MediaKindUnsupported marks a real message whose payload whatevr cannot
+	// render yet (document, voice note, video, poll, ...). The text column
+	// carries a human-readable label; there is no downloadable media.
+	MediaKindUnsupported = "unsupported"
 
 	StatusPending   = "pending"
 	StatusDelivered = "delivered"
