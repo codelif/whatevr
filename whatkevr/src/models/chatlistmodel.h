@@ -52,6 +52,7 @@ public:
 
     void replaceChats(const QList<whatevr::v1::Chat> &chats);
     void upsertChat(const whatevr::v1::Chat &chat, const QString &previousChatId = QString());
+    bool removeChat(const QString &chatId);
     bool updateAvatar(const QString &chatId, const QString &avatarLocalPath);
     bool setChatTyping(const QString &chatId, bool typing);
     // Optimistic local mutators (mirror message star/pin): apply the new state
