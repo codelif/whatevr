@@ -255,6 +255,22 @@ func toProtoDaemonEvent(event app.DaemonEvent) *pb.DaemonEvent {
 				BlocklistChanged: &pb.BlocklistChanged{},
 			},
 		}
+	case app.DaemonEventChatDeleted:
+		return &pb.DaemonEvent{
+			Payload: &pb.DaemonEvent_ChatDeleted{
+				ChatDeleted: &pb.ChatDeleted{
+					ChatId: event.DeletedChatID,
+				},
+			},
+		}
+	case app.DaemonEventChatCleared:
+		return &pb.DaemonEvent{
+			Payload: &pb.DaemonEvent_ChatCleared{
+				ChatCleared: &pb.ChatCleared{
+					Chat: toProtoChat(event.Chat),
+				},
+			},
+		}
 	default:
 		return nil
 	}
