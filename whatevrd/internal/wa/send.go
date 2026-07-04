@@ -285,6 +285,12 @@ func readOutboundMedia(filePath string) ([]byte, string, string, error) {
 		return nil, "", "", grpcstatus.Errorf(codes.InvalidArgument, "media file must be <= %d MiB", maxOutboundMediaBytes/(1024*1024))
 	}
 	mimeType := http.DetectContentType(data)
+	// WhatsApp GIFs are short MP4 videos with a gif-playback flag; sending the
+	// raw .gif bytes through the image path delivers a static picture. Refuse
+	// until a GIF→video transcode path exists.
+	if mimeType == "image/gif" {
+		return nil, "", "", grpcstatus.Error(codes.InvalidArgument, "GIF files can't be sent yet: WhatsApp treats GIFs as short videos, which whatevr does not support sending")
+	}
 	extension, ok := outboundImageExtension(mimeType)
 	if !ok {
 		return nil, "", "", grpcstatus.Error(codes.InvalidArgument, "media file must be a supported image")
@@ -298,8 +304,6 @@ func outboundImageExtension(mimeType string) (string, bool) {
 		return ".jpg", true
 	case "image/png":
 		return ".png", true
-	case "image/gif":
-		return ".gif", true
 	case "image/webp":
 		return ".webp", true
 	default:
