@@ -113,6 +113,8 @@ Item {
     signal reactionDetailsRequested()
     signal replyPreviewActivated(string messageId)
     signal readMoreRequested(string messageId)
+    // A downloaded message photo was clicked: open it full screen.
+    signal imageActivated(string localPath)
     // An @-mention link was clicked: open contact info for the JID, or the
     // group info dialog for an @all / @everyone mention.
     signal mentionClicked(string jid)
@@ -185,6 +187,10 @@ Item {
                                           && (mediaLocalPath.endsWith(".webp")
                                               || mediaThumbnailLocalPath.endsWith(".thumb.png")))
     readonly property bool isImage: mediaMimeType.startsWith("image/")
+    // Real message whose payload the app can't render yet (document, voice
+    // note, poll, ...). The daemon puts a short label in the body text; the
+    // row renders like a revoked tombstone and never offers a download.
+    readonly property bool isUnsupported: mediaKind === "unsupported"
     // 1-3 emoji-only messages render large and frameless, like stickers. The single
     // emoji case is biggest; size steps down as the count rises.
     readonly property bool isJumboEmoji: emojiOnlyCount > 0 && emojiOnlyCount <= 3
@@ -209,7 +215,7 @@ Item {
     // the per-kind "auto-download" preferences; with the toggle off the user
     // downloads manually via the in-bubble button.
     readonly property bool mediaIsLocal: isSticker ? hasLocalSticker : mediaLocalPath.length > 0
-    readonly property bool hasDownloadableMedia: !mediaIsLocal
+    readonly property bool hasDownloadableMedia: !mediaIsLocal && !isUnsupported
         && (mediaMimeType.length > 0 || mediaCacheKey.length > 0 || mediaKind.length > 0)
     readonly property bool autoDownloadWanted: {
         if (!hasDownloadableMedia)
@@ -969,6 +975,20 @@ Item {
                             easing.type: Easing.OutCubic
                         }
                     }
+
+                    // Click-to-open lightbox. SingleTap is made exclusive with
+                    // DoubleTap so double-tap-to-reply on the photo still wins.
+                    TapHandler {
+                        acceptedButtons: Qt.LeftButton
+                        enabled: root.hasLocalImage && !root.isSticker && !root.selectionModeActive
+                        exclusiveSignals: TapHandler.SingleTap | TapHandler.DoubleTap
+                        onSingleTapped: root.imageActivated(root.mediaLocalPath)
+                    }
+
+                    HoverHandler {
+                        enabled: root.hasLocalImage && !root.selectionModeActive
+                        cursorShape: Qt.PointingHandCursor
+                    }
                 }
 
                 // Dark scrim behind the time+ticks overlaid on image-only
@@ -1097,11 +1117,11 @@ Item {
                     text: root.body
                     textFormat: Text.PlainText
                     wrapMode: Text.Wrap
-                    color: root.isRevoked ? Kirigami.Theme.disabledTextColor : Kirigami.Theme.textColor
+                    color: root.isRevoked || root.isUnsupported ? Kirigami.Theme.disabledTextColor : Kirigami.Theme.textColor
                     font.family: Kirigami.Theme.defaultFont.family
                     font.pointSize: root.bodyPointSize
                     font.weight: Font.Normal
-                    font.italic: root.isRevoked
+                    font.italic: root.isRevoked || root.isUnsupported
 
                     onLineLaidOut: line => {
                         if (line.isLast) {
