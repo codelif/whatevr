@@ -985,7 +985,7 @@ Frame {
         id: imageDialog
 
         title: Whatevr.I18n.i18nc("@title:window", "Attach image")
-        nameFilters: [Whatevr.I18n.i18nc("@item:inlistbox", "Images (*.png *.jpg *.jpeg *.webp *.gif)")]
+        nameFilters: [Whatevr.I18n.i18nc("@item:inlistbox", "Images (*.png *.jpg *.jpeg *.webp)")]
         fileMode: Platform.FileDialog.OpenFile
         onAccepted: {
             root.setComposing(false)
