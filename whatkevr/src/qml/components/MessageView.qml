@@ -109,6 +109,7 @@ Item {
     // matching contact/group info dialog.
     signal mentionClicked(string jid)
     signal mentionAllClicked()
+    signal imageViewRequested(string localPath)
 
     onLoadingOlderMessagesChanged: {
         if (loadingOlderMessages) {
@@ -1172,6 +1173,7 @@ Item {
             onReplyRequested: (messageId, senderName, text, mediaKind, mediaMimeType, outgoing) => root.replyToMessageRequested(messageId, senderName, text, mediaKind, mediaMimeType, outgoing)
             onReplyPreviewActivated: messageId => root.jumpToReplyTarget(messageId)
             onReadMoreRequested: messageId => root.openMessageContent(messageId)
+            onImageActivated: localPath => root.imageViewRequested(localPath)
             onMentionClicked: jid => root.mentionClicked(jid)
             onMentionAllClicked: root.mentionAllClicked()
             onContextMenuRequested: (posX, posY) => root.openContextMenu(messageDelegate, posX, posY)
