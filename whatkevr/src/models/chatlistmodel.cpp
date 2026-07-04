@@ -248,6 +248,24 @@ void ChatListModel::upsertChat(const whatevr::v1::Chat &chat, const QString &pre
     }
 }
 
+bool ChatListModel::removeChat(const QString &chatId)
+{
+    const int chatIndex = indexOf(chatId);
+    if (chatIndex < 0) {
+        return false;
+    }
+    const int previousArchived = archivedCount();
+    beginRemoveRows(QModelIndex(), chatIndex, chatIndex);
+    m_chats.removeAt(chatIndex);
+    endRemoveRows();
+    m_chatIndexById.remove(chatId);
+    reindexRange(chatIndex, static_cast<int>(m_chats.size()) - 1);
+    if (previousArchived != archivedCount()) {
+        Q_EMIT archivedCountChanged();
+    }
+    return true;
+}
+
 bool ChatListModel::updateAvatar(const QString &chatId, const QString &avatarLocalPath)
 {
     const int chatIndex = indexOf(chatId);
