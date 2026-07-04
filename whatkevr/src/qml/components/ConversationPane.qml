@@ -736,6 +736,13 @@ Kirigami.Page {
                 onEditMessageRequested: (messageId, text) => root.setEditTarget(messageId, text)
                 onMentionClicked: jid => contactInfoDialog.openFor({ isGroup: false, targetJid: jid })
                 onMentionAllClicked: root.openChatInfo()
+                onImageViewRequested: localPath => messageImageViewer.showImage(localPath)
+            }
+
+            // Full-screen viewer for message photos; ProfilePictureViewer is
+            // already a generic local-path lightbox.
+            ProfilePictureViewer {
+                id: messageImageViewer
             }
 
             BusyIndicator {
