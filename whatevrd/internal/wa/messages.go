@@ -657,11 +657,19 @@ func (c *Client) mediaMessageInput(ctx context.Context, evt *events.Message, opt
 	if input, ok := c.imageMessageInput(ctx, evt, opts); ok {
 		return input, true
 	}
-	return c.stickerMessageInput(ctx, evt, opts)
+	if input, ok := c.stickerMessageInput(ctx, evt, opts); ok {
+		return input, true
+	}
+	return c.unsupportedMessageInput(ctx, evt, opts)
 }
 
 func (c *Client) imageMessageInput(ctx context.Context, evt *events.Message, opts ingestOptions) (appstore.MediaMessageInput, bool) {
 	if evt == nil || evt.Message == nil {
+		return appstore.MediaMessageInput{}, false
+	}
+	// View-once photos are meant to be opened on the phone only; they fall
+	// through to the unsupported-message tombstone instead of an image bubble.
+	if evt.IsViewOnce {
 		return appstore.MediaMessageInput{}, false
 	}
 
@@ -769,6 +777,138 @@ func (c *Client) stickerMessageInput(ctx context.Context, evt *events.Message, o
 		MediaPayload:            payload,
 		MediaCacheKey:           stickerMediaCacheKey(stickerMsg),
 	}, true
+}
+
+// unsupportedMessageInput stores an honest tombstone for real messages whose
+// payload whatevr cannot render yet (documents, voice notes, video, polls,
+// view-once media, ...). The human-readable label rides in the text column so
+// bubbles, chat previews and notifications all pick it up for free. Protocol
+// noise (poll votes, app-state keys, ...) is not on the label whitelist and
+// stays invisible, exactly as before.
+func (c *Client) unsupportedMessageInput(ctx context.Context, evt *events.Message, opts ingestOptions) (appstore.MediaMessageInput, bool) {
+	if evt == nil || evt.Message == nil {
+		return appstore.MediaMessageInput{}, false
+	}
+	label, ok := unsupportedMessageLabel(evt)
+	if !ok {
+		return appstore.MediaMessageInput{}, false
+	}
+
+	info := evt.Info
+	chatJID := c.normalizeJIDForChat(ctx, info.Chat)
+	chatID := chatJID.String()
+	if chatID == "" || info.ID == "" {
+		return appstore.MediaMessageInput{}, false
+	}
+
+	direction, status := messageDirectionAndStatus(info, opts)
+	return appstore.MediaMessageInput{
+		TextMessageInput: appstore.TextMessageInput{
+			ID:             internalMessageIDForChat(chatID, info.ID),
+			ChatID:         chatID,
+			ChatName:       c.chatName(ctx, chatJID, info.IsGroup, opts.chatNameOverride, opts.chatNameSource),
+			ChatNameSource: c.chatNameSource(ctx, chatJID, info.IsGroup, opts.chatNameOverride, opts.chatNameSource),
+			SenderID:       senderID(info),
+			SenderName:     c.senderName(ctx, senderJID(info)),
+			Text:           label,
+			Timestamp:      messageTimestamp(info, opts, evt.SourceWebMsg),
+			Direction:      direction,
+			Status:         status,
+			IsGroup:        info.IsGroup,
+			CountUnread:    shouldCountUnread(evt, opts),
+			ReplyTo:        c.replyFromContextInfo(ctx, chatID, unsupportedContextInfo(evt.Message)),
+		},
+		MediaKind: appstore.MediaKindUnsupported,
+	}, true
+}
+
+// unsupportedMessageLabel maps not-yet-rendered payload types to a short
+// description. ok=false means the message carries nothing user-visible and
+// must stay invisible (protocol messages, poll votes, reactions, ...).
+func unsupportedMessageLabel(evt *events.Message) (string, bool) {
+	msg := evt.Message
+	if evt.IsViewOnce {
+		switch {
+		case msg.GetImageMessage() != nil:
+			return "View once photo", true
+		case msg.GetVideoMessage() != nil:
+			return "View once video", true
+		case msg.GetAudioMessage() != nil:
+			return "View once voice message", true
+		}
+	}
+	labelWithDetail := func(label, detail string) string {
+		if detail = strings.TrimSpace(detail); detail != "" {
+			return label + ": " + detail
+		}
+		return label
+	}
+	switch {
+	case msg.GetDocumentMessage() != nil:
+		doc := msg.GetDocumentMessage()
+		label := labelWithDetail("Document", doc.GetFileName())
+		if caption := strings.TrimSpace(doc.GetCaption()); caption != "" {
+			label += " — " + caption
+		}
+		return label, true
+	case msg.GetPtvMessage() != nil:
+		return "Video message", true
+	case msg.GetVideoMessage() != nil:
+		video := msg.GetVideoMessage()
+		label := "Video"
+		if video.GetGifPlayback() {
+			label = "GIF"
+		}
+		return labelWithDetail(label, video.GetCaption()), true
+	case msg.GetAudioMessage() != nil:
+		if msg.GetAudioMessage().GetPTT() {
+			return "Voice message", true
+		}
+		return "Audio", true
+	case msg.GetLocationMessage() != nil:
+		return labelWithDetail("Location", msg.GetLocationMessage().GetName()), true
+	case msg.GetLiveLocationMessage() != nil:
+		return "Live location", true
+	case msg.GetContactMessage() != nil:
+		return labelWithDetail("Contact", msg.GetContactMessage().GetDisplayName()), true
+	case msg.GetContactsArrayMessage() != nil:
+		return "Contacts", true
+	case msg.GetPollCreationMessage() != nil:
+		return labelWithDetail("Poll", msg.GetPollCreationMessage().GetName()), true
+	case msg.GetPollCreationMessageV2() != nil:
+		return labelWithDetail("Poll", msg.GetPollCreationMessageV2().GetName()), true
+	case msg.GetPollCreationMessageV3() != nil:
+		return labelWithDetail("Poll", msg.GetPollCreationMessageV3().GetName()), true
+	case msg.GetEventMessage() != nil:
+		return labelWithDetail("Event", msg.GetEventMessage().GetName()), true
+	case msg.GetGroupInviteMessage() != nil:
+		return labelWithDetail("Group invite", msg.GetGroupInviteMessage().GetGroupName()), true
+	case msg.GetListMessage() != nil, msg.GetButtonsMessage() != nil,
+		msg.GetTemplateMessage() != nil, msg.GetInteractiveMessage() != nil:
+		return "Message", true
+	}
+	return "", false
+}
+
+// unsupportedContextInfo pulls reply context out of the payload types the
+// tombstone path covers, so quoted replies still show their preview.
+func unsupportedContextInfo(msg *waE2E.Message) *waE2E.ContextInfo {
+	switch {
+	case msg.GetDocumentMessage() != nil:
+		return msg.GetDocumentMessage().GetContextInfo()
+	case msg.GetPtvMessage() != nil:
+		return msg.GetPtvMessage().GetContextInfo()
+	case msg.GetVideoMessage() != nil:
+		return msg.GetVideoMessage().GetContextInfo()
+	case msg.GetAudioMessage() != nil:
+		return msg.GetAudioMessage().GetContextInfo()
+	case msg.GetLocationMessage() != nil:
+		return msg.GetLocationMessage().GetContextInfo()
+	case msg.GetContactMessage() != nil:
+		return msg.GetContactMessage().GetContextInfo()
+	default:
+		return contextInfoFromMessage(msg)
+	}
 }
 
 func stickerMediaCacheKey(sticker *waE2E.StickerMessage) string {

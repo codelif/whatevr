@@ -16,6 +16,7 @@ import (
 	waWeb "go.mau.fi/whatsmeow/proto/waWeb"
 	waStore "go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/types"
+	"go.mau.fi/whatsmeow/types/events"
 	waLog "go.mau.fi/whatsmeow/util/log"
 	"google.golang.org/protobuf/proto"
 
@@ -569,5 +570,110 @@ func TestWhatsAppDisplayNamePrefixesName(t *testing.T) {
 func TestWhatsAppDisplayNameDoesNotDoublePrefix(t *testing.T) {
 	if got := whatsAppDisplayName("~Alice"); got != "~Alice" {
 		t.Fatalf("whatsAppDisplayName() = %q, want ~Alice", got)
+	}
+}
+
+func TestUnsupportedMessageLabel(t *testing.T) {
+	cases := []struct {
+		name   string
+		evt    *events.Message
+		want   string
+		wantOK bool
+	}{
+		{
+			name: "document with filename",
+			evt: &events.Message{Message: &waE2E.Message{
+				DocumentMessage: &waE2E.DocumentMessage{FileName: proto.String("report.pdf")},
+			}},
+			want:   "Document: report.pdf",
+			wantOK: true,
+		},
+		{
+			name: "captioned document",
+			evt: &events.Message{Message: &waE2E.Message{
+				DocumentMessage: &waE2E.DocumentMessage{FileName: proto.String("a.pdf"), Caption: proto.String("see this")},
+			}},
+			want:   "Document: a.pdf — see this",
+			wantOK: true,
+		},
+		{
+			name: "voice note",
+			evt: &events.Message{Message: &waE2E.Message{
+				AudioMessage: &waE2E.AudioMessage{PTT: proto.Bool(true)},
+			}},
+			want:   "Voice message",
+			wantOK: true,
+		},
+		{
+			name: "audio file",
+			evt: &events.Message{Message: &waE2E.Message{
+				AudioMessage: &waE2E.AudioMessage{PTT: proto.Bool(false)},
+			}},
+			want:   "Audio",
+			wantOK: true,
+		},
+		{
+			name: "gif playback video",
+			evt: &events.Message{Message: &waE2E.Message{
+				VideoMessage: &waE2E.VideoMessage{GifPlayback: proto.Bool(true)},
+			}},
+			want:   "GIF",
+			wantOK: true,
+		},
+		{
+			name: "poll v3",
+			evt: &events.Message{Message: &waE2E.Message{
+				PollCreationMessageV3: &waE2E.PollCreationMessage{Name: proto.String("Lunch?")},
+			}},
+			want:   "Poll: Lunch?",
+			wantOK: true,
+		},
+		{
+			name: "view once photo",
+			evt: &events.Message{
+				IsViewOnce: true,
+				Message: &waE2E.Message{
+					ImageMessage: &waE2E.ImageMessage{},
+				},
+			},
+			want:   "View once photo",
+			wantOK: true,
+		},
+		{
+			name: "location with name",
+			evt: &events.Message{Message: &waE2E.Message{
+				LocationMessage: &waE2E.LocationMessage{Name: proto.String("Cafe")},
+			}},
+			want:   "Location: Cafe",
+			wantOK: true,
+		},
+		{
+			name: "poll update stays invisible",
+			evt: &events.Message{Message: &waE2E.Message{
+				PollUpdateMessage: &waE2E.PollUpdateMessage{},
+			}},
+			wantOK: false,
+		},
+		{
+			name: "protocol message stays invisible",
+			evt: &events.Message{Message: &waE2E.Message{
+				ProtocolMessage: &waE2E.ProtocolMessage{},
+			}},
+			wantOK: false,
+		},
+		{
+			name:   "empty message stays invisible",
+			evt:    &events.Message{Message: &waE2E.Message{}},
+			wantOK: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := unsupportedMessageLabel(tc.evt)
+			if ok != tc.wantOK || got != tc.want {
+				t.Fatalf("unsupportedMessageLabel() = %q, %v; want %q, %v", got, ok, tc.want, tc.wantOK)
+			}
+		})
 	}
 }
