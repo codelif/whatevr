@@ -1853,7 +1853,8 @@ type SettingsServiceClient interface {
 	GetBlocklist(ctx context.Context, in *GetBlocklistRequest, opts ...grpc.CallOption) (*GetBlocklistResponse, error)
 	UpdateBlocklist(ctx context.Context, in *UpdateBlocklistRequest, opts ...grpc.CallOption) (*UpdateBlocklistResponse, error)
 	// Set the logged-in user's "About"/status text. The display (push) name is
-	// not settable via whatsmeow, so it is read-only and reused from GetSelfProfile.
+	// also settable via whatsmeow (appstate.BuildSettingPushName), but no RPC
+	// exposes it yet — see feature-gap.md §10.
 	SetProfileStatus(ctx context.Context, in *SetProfileStatusRequest, opts ...grpc.CallOption) (*SetProfileStatusResponse, error)
 	GetAppPreferences(ctx context.Context, in *GetAppPreferencesRequest, opts ...grpc.CallOption) (*GetAppPreferencesResponse, error)
 	SetAppPreferences(ctx context.Context, in *SetAppPreferencesRequest, opts ...grpc.CallOption) (*SetAppPreferencesResponse, error)
@@ -1952,7 +1953,8 @@ type SettingsServiceServer interface {
 	GetBlocklist(context.Context, *GetBlocklistRequest) (*GetBlocklistResponse, error)
 	UpdateBlocklist(context.Context, *UpdateBlocklistRequest) (*UpdateBlocklistResponse, error)
 	// Set the logged-in user's "About"/status text. The display (push) name is
-	// not settable via whatsmeow, so it is read-only and reused from GetSelfProfile.
+	// also settable via whatsmeow (appstate.BuildSettingPushName), but no RPC
+	// exposes it yet — see feature-gap.md §10.
 	SetProfileStatus(context.Context, *SetProfileStatusRequest) (*SetProfileStatusResponse, error)
 	GetAppPreferences(context.Context, *GetAppPreferencesRequest) (*GetAppPreferencesResponse, error)
 	SetAppPreferences(context.Context, *SetAppPreferencesRequest) (*SetAppPreferencesResponse, error)

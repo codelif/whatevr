@@ -157,7 +157,8 @@ service SettingsService {
   rpc GetBlocklist(GetBlocklistRequest) returns (GetBlocklistResponse);
   rpc UpdateBlocklist(UpdateBlocklistRequest) returns (UpdateBlocklistResponse);
   // Set the logged-in user's "About"/status text. The display (push) name is
-  // not settable via whatsmeow, so it is read-only and reused from GetSelfProfile.
+  // also settable via whatsmeow (appstate.BuildSettingPushName), but no RPC
+  // exposes it yet — see feature-gap.md §10.
   rpc SetProfileStatus(SetProfileStatusRequest) returns (SetProfileStatusResponse);
   rpc GetAppPreferences(GetAppPreferencesRequest) returns (GetAppPreferencesResponse);
   rpc SetAppPreferences(SetAppPreferencesRequest) returns (SetAppPreferencesResponse);
@@ -211,7 +212,22 @@ message DaemonEvent {
     PrivacySettingsChanged privacy_settings_changed = 16;
     SelfProfileChanged self_profile_changed = 17;
     BlocklistChanged blocklist_changed = 18;
+    ChatDeleted chat_deleted = 19;
+    ChatCleared chat_cleared = 20;
   }
+}
+
+// Published when a chat was deleted (e.g. from the phone); the frontend drops
+// the row and closes the conversation if it was open.
+message ChatDeleted {
+  string chat_id = 1;
+}
+
+// Published when a chat's messages were wiped but the chat itself remains
+// (e.g. "clear chat" on the phone). Carries the recomputed chat row so the
+// list preview and unread badge update in one event.
+message ChatCleared {
+  Chat chat = 1;
 }
 
 // Published when the account's privacy settings change (including edits made on
