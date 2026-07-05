@@ -79,7 +79,7 @@ _build-daemon profile dir=build_dir:
         /*) out_dir="$build_root/$profile" ;; \
         *) out_dir="$(pwd)/$build_root/$profile" ;; \
     esac; \
-    ldflags="-X whatevrd/internal/rpc.Version={{version}}"; \
+    ldflags="-X whatevrd/internal/rpc.Version={{version}} -X whatevrd/internal/protocol.Version={{version}}"; \
     go_flags=(-buildvcs=false -tags sqlite_fts5); \
     if [ "$profile" = release ]; then \
         go_flags=(-trimpath "${go_flags[@]}"); \

@@ -7,10 +7,14 @@ import (
 )
 
 type Paths struct {
-	RuntimeDir    string
-	SocketDir     string
-	SocketPath    string
-	LockPath      string
+	RuntimeDir string
+	SocketDir  string
+	SocketPath string
+	// ProtocolSocketDir/Path serve the whatevr protocol (PROTOCOL.md); they
+	// live beside the legacy gRPC socket until the migration removes it.
+	ProtocolSocketDir  string
+	ProtocolSocketPath string
+	LockPath           string
 	DataDir       string
 	CacheDir      string
 	DatabasePath  string
@@ -41,14 +45,17 @@ func ResolvePaths() (Paths, error) {
 	}
 
 	socketDir := filepath.Join(runtimeBase, "whatevrd")
+	protocolSocketDir := filepath.Join(runtimeBase, "whatevr")
 	dataDir := filepath.Join(dataBase, "whatevrd")
 	cacheDir := filepath.Join(cacheBase, "whatevrd")
 
 	return Paths{
-		RuntimeDir:    runtimeBase,
-		SocketDir:     socketDir,
-		SocketPath:    filepath.Join(socketDir, "whatevrd.sock"),
-		LockPath:      filepath.Join(socketDir, "whatevrd.lock"),
+		RuntimeDir:         runtimeBase,
+		SocketDir:          socketDir,
+		SocketPath:         filepath.Join(socketDir, "whatevrd.sock"),
+		ProtocolSocketDir:  protocolSocketDir,
+		ProtocolSocketPath: filepath.Join(protocolSocketDir, "whatevrd.sock"),
+		LockPath:           filepath.Join(socketDir, "whatevrd.lock"),
 		DataDir:       dataDir,
 		CacheDir:      cacheDir,
 		DatabasePath:  filepath.Join(dataDir, "whatevrd.db"),
@@ -59,7 +66,7 @@ func ResolvePaths() (Paths, error) {
 }
 
 func (p Paths) Ensure() error {
-	for _, dir := range []string{p.SocketDir, p.DataDir, p.SessionDir, p.CacheDir, p.MediaCacheDir} {
+	for _, dir := range []string{p.SocketDir, p.ProtocolSocketDir, p.DataDir, p.SessionDir, p.CacheDir, p.MediaCacheDir} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return err
 		}
