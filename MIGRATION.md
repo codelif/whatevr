@@ -65,7 +65,7 @@ Status: `todo` | `doing` | `done` | `blocked` | `needs-decision`
 | --- | --- | --- | --- |
 | A1 | Wire core: NDJSON framing, per-connection read/dispatch/write loops, `hello` (protocol negotiation), error envelope + core codes, socket setup alongside gRPC (own path per PROTOCOL.md), unit tests over a raw socket | done | `whatevrd/internal/protocol/` (protocol.go, conn.go, server.go) + raw-socket tests; socket at `$XDG_RUNTIME_DIR/whatevr/whatevrd.sock` next to gRPC. Protocol mismatch rejects with core `invalid_params` then closes (spec names no dedicated code). systemd activation for the new socket lands with the packaging flip at teardown |
 | A2 | View engine: subscription registry, generic view interface (initial fill → ready, live upsert/remove, opaque sort keys, windows + extend), unsubscribe/connection-drop cleanup, per-connection outbound queue with upsert coalescing + `reset` fallback; tested against a dummy in-memory view | done | `queue.go` (coalescing outbound queue, per-sub overflow→purge+`reset`), `sub.go` (window diff engine, refill+`ready` after reset), `view.go` (View/ViewSession interface, `Server.RegisterView`, subscribe/extend/unsubscribe). Views expose ordered `Items(max)` + invalidate; engine owns diffing/windows, so B-phase views stay dumb. Item `id`-inside-`item` is a View-contract obligation the engine doesn't enforce — A3 conformance should assert it. Readies coalesce across rapid extends (spec: ready covers the *latest* subscribe/extend) |
-| A3 | Conformance harness + example frontend: `scripts/conformance` asserting grammar invariants against a live daemon (response→upserts→`ready` ordering, `sort` on every upsert, single response per id, hello negotiation, unknown-method error); `examples/` shell frontend (socat+jq) started | todo | |
+| A3 | Conformance harness + example frontend: `scripts/conformance` asserting grammar invariants against a live daemon (response→upserts→`ready` ordering, `sort` on every upsert, single response per id, hello negotiation, unknown-method error); `examples/` shell frontend (socat+jq) started | done | `scripts/conformance` starts `whatevrd/cmd/protocol-fixture` and asserts hello/errors/response ordering/`sort`/`item.id`/extend; `examples/shell-frontend.sh` starts the socat+jq chat-list frontend. |
 
 ### Phase B — views (read path over the existing store/wa layers)
 
@@ -119,3 +119,5 @@ _None._
   `group`/`group_members` and `chats`/`typing` splits. Decided by Harsh.
 - 2026-07-06 — `notifications` view deferred; explicitly **not** part of
   this migration's end goal (PROTOCOL.md open question).
+- 2026-07-06 — A3 conformance uses an internal fixture server until real
+  protocol views exist; no conformance-only view is registered in production.

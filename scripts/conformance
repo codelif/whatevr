@@ -1,0 +1,271 @@
+#!/usr/bin/env python3
+"""Conformance checks for the whatevr protocol grammar."""
+
+from __future__ import annotations
+
+import json
+import os
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+FIXTURE_SOCKET_ENV = "WHATEVR_CONFORMANCE_SOCKET"
+
+
+class Failure(Exception):
+    pass
+
+
+def require(condition: bool, message: str) -> None:
+    if not condition:
+        raise Failure(message)
+
+
+class Client:
+    def __init__(self, socket_path: Path) -> None:
+        self.socket_path = socket_path
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.settimeout(5)
+        self.sock.connect(str(socket_path))
+        self.buf = b""
+        self.seen_response_ids: set[object] = set()
+
+    def close(self) -> None:
+        self.sock.close()
+
+    def __enter__(self) -> "Client":
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
+
+    def send(self, obj: dict[str, object]) -> None:
+        line = json.dumps(obj, separators=(",", ":")).encode("utf-8")
+        self.sock.sendall(line + b"\n")
+
+    def recv(self, timeout: float = 5) -> dict[str, object]:
+        self.sock.settimeout(timeout)
+        while b"\n" not in self.buf:
+            try:
+                chunk = self.sock.recv(4096)
+            except TimeoutError as exc:
+                raise Failure(f"timed out reading from {self.socket_path}") from exc
+            if not chunk:
+                raise Failure(f"connection closed by {self.socket_path}")
+            self.buf += chunk
+
+        line, self.buf = self.buf.split(b"\n", 1)
+        try:
+            msg = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise Failure(f"wire line is not JSON: {line!r}") from exc
+        require(isinstance(msg, dict), f"wire line is not a JSON object: {msg!r}")
+        return msg
+
+    def expect_response(self, req_id: object, error_code: str | None = None) -> dict[str, object]:
+        msg = self.recv()
+        require("id" in msg, f"expected response for {req_id!r}, got event {msg!r}")
+        require(msg["id"] == req_id, f"response id = {msg['id']!r}, want {req_id!r}: {msg!r}")
+        require(req_id not in self.seen_response_ids, f"duplicate response for id {req_id!r}")
+        self.seen_response_ids.add(req_id)
+
+        has_result = "result" in msg
+        has_error = "error" in msg
+        require(has_result != has_error, f"response must carry exactly one of result/error: {msg!r}")
+        if error_code is None:
+            require(has_result, f"expected success response, got {msg!r}")
+        else:
+            require(has_error, f"expected error response, got {msg!r}")
+            err = msg["error"]
+            require(isinstance(err, dict), f"error is not an object: {msg!r}")
+            require(err.get("code") == error_code, f"error code = {err.get('code')!r}, want {error_code!r}")
+            require(isinstance(err.get("message"), str) and err["message"], f"error has no message: {msg!r}")
+        return msg
+
+    def expect_event(self, event: str, sub: int) -> dict[str, object]:
+        msg = self.recv()
+        require("id" not in msg, f"expected {event} event, got response {msg!r}")
+        require(msg.get("event") == event, f"event = {msg.get('event')!r}, want {event!r}: {msg!r}")
+        require(msg.get("sub") == sub, f"event sub = {msg.get('sub')!r}, want {sub!r}: {msg!r}")
+        return msg
+
+    def expect_idle(self, timeout: float = 0.2) -> None:
+        require(not self.buf.strip(), f"unexpected buffered traffic: {self.buf!r}")
+        self.sock.settimeout(timeout)
+        try:
+            chunk = self.sock.recv(4096)
+        except TimeoutError:
+            return
+        require(not chunk, f"unexpected extra traffic: {chunk!r}")
+
+    def expect_closed(self) -> None:
+        require(not self.buf.strip(), f"unexpected buffered traffic before close: {self.buf!r}")
+        self.sock.settimeout(5)
+        try:
+            chunk = self.sock.recv(4096)
+        except TimeoutError as exc:
+            raise Failure("connection did not close after rejected hello") from exc
+        require(not chunk, f"expected connection close, got {chunk!r}")
+
+
+def start_fixture() -> tuple[tempfile.TemporaryDirectory[str] | None, subprocess.Popen[str] | None, Path]:
+    external = os.environ.get(FIXTURE_SOCKET_ENV)
+    if external:
+        return None, None, Path(external)
+
+    tmp = tempfile.TemporaryDirectory(prefix="whatevr-conformance-")
+    socket_dir = Path(tmp.name) / "whatevr"
+    socket_dir.mkdir(mode=0o700)
+    socket_path = socket_dir / "whatevrd.sock"
+    ready_file = Path(tmp.name) / "ready"
+    fixture_bin = Path(tmp.name) / "protocol-fixture"
+    build = subprocess.run(
+        ["go", "build", "-o", str(fixture_bin), "./cmd/protocol-fixture"],
+        cwd=ROOT / "whatevrd",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    if build.returncode != 0:
+        raise Failure(f"fixture build failed\nstdout:\n{build.stdout}\nstderr:\n{build.stderr}")
+
+    cmd = [
+        str(fixture_bin),
+        "--socket",
+        str(socket_path),
+        "--ready-file",
+        str(ready_file),
+    ]
+    proc = subprocess.Popen(
+        cmd,
+        cwd=ROOT / "whatevrd",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        if ready_file.exists() and socket_path.exists():
+            return tmp, proc, socket_path
+        if proc.poll() is not None:
+            stdout, stderr = proc.communicate(timeout=1)
+            raise Failure(f"fixture exited early\nstdout:\n{stdout}\nstderr:\n{stderr}")
+        time.sleep(0.025)
+    stop_fixture(tmp, proc)
+    raise Failure("timed out waiting for protocol fixture")
+
+
+def stop_fixture(tmp: tempfile.TemporaryDirectory[str] | None, proc: subprocess.Popen[str] | None) -> None:
+    if proc is not None and proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+    if tmp is not None:
+        tmp.cleanup()
+
+
+def say(message: str) -> None:
+    print(f"ok - {message}")
+
+
+def hello(c: Client, req_id: object = "hello") -> dict[str, object]:
+    c.send({"id": req_id, "method": "hello", "params": {"client": "conformance", "protocol": 1}})
+    return c.expect_response(req_id)
+
+
+def check_hello(socket_path: Path) -> None:
+    with Client(socket_path) as c:
+        resp = hello(c)
+        result = resp["result"]
+        require(isinstance(result, dict), f"hello result is not an object: {resp!r}")
+        require(result.get("daemon") == "whatevrd", f"hello daemon mismatch: {resp!r}")
+        require(result.get("protocol") == 1, f"hello protocol mismatch: {resp!r}")
+        require(result.get("state") == "online", f"hello state mismatch: {resp!r}")
+        require(isinstance(result.get("data_dir"), str), f"hello missing data_dir: {resp!r}")
+        require(isinstance(result.get("cache_dir"), str), f"hello missing cache_dir: {resp!r}")
+    say("hello negotiation")
+
+
+def check_hello_rejects_unsupported_protocol(socket_path: Path) -> None:
+    with Client(socket_path) as c:
+        c.send({"id": "bad-protocol", "method": "hello", "params": {"client": "conformance", "protocol": 2}})
+        c.expect_response("bad-protocol", error_code="invalid_params")
+        c.expect_closed()
+    say("unsupported protocol rejects connection")
+
+
+def check_unknown_method(socket_path: Path) -> None:
+    with Client(socket_path) as c:
+        hello(c)
+        c.send({"id": "unknown", "method": "no.such.method"})
+        c.expect_response("unknown", error_code="unknown_method")
+        c.expect_idle()
+    say("unknown-method error and single response")
+
+
+def check_subscribe_ordering(socket_path: Path) -> None:
+    with Client(socket_path) as c:
+        hello(c)
+        c.send({"id": "sub", "method": "subscribe", "params": {"view": "conformance", "limit": 2}})
+        resp = c.expect_response("sub")
+        result = resp["result"]
+        require(isinstance(result, dict), f"subscribe result is not an object: {resp!r}")
+        sub = result.get("sub")
+        require(isinstance(sub, int), f"subscribe result has no integer sub: {resp!r}")
+
+        previous_sort = ""
+        for item_id in ("alpha", "bravo"):
+            msg = c.expect_event("upsert", sub)
+            sort_key = msg.get("sort")
+            require(isinstance(sort_key, str) and sort_key, f"upsert has no sort: {msg!r}")
+            require(sort_key > previous_sort, f"upserts not in ascending sort order: {msg!r}")
+            previous_sort = sort_key
+            item = msg.get("item")
+            require(isinstance(item, dict), f"upsert item is not an object: {msg!r}")
+            require(item.get("id") == item_id, f"upsert item id = {item.get('id')!r}, want {item_id!r}")
+        ready = c.expect_event("ready", sub)
+        require(ready.get("exhausted", False) is False, f"initial window should not be exhausted: {ready!r}")
+
+        c.send({"id": "extend", "method": "extend", "params": {"sub": sub, "count": 2}})
+        c.expect_response("extend")
+        msg = c.expect_event("upsert", sub)
+        item = msg.get("item")
+        require(isinstance(msg.get("sort"), str) and msg["sort"], f"extended upsert has no sort: {msg!r}")
+        require(isinstance(item, dict) and item.get("id") == "charlie", f"extended item mismatch: {msg!r}")
+        ready = c.expect_event("ready", sub)
+        require(ready.get("exhausted") is True, f"extended window should be exhausted: {ready!r}")
+        c.expect_idle()
+    say("subscribe/extend response, upsert, ready ordering")
+
+
+def main() -> int:
+    tmp = None
+    proc = None
+    try:
+        tmp, proc, socket_path = start_fixture()
+        print(f"conformance socket: {socket_path}")
+        check_hello(socket_path)
+        check_hello_rejects_unsupported_protocol(socket_path)
+        check_unknown_method(socket_path)
+        check_subscribe_ordering(socket_path)
+        print("conformance: pass")
+        return 0
+    except Failure as exc:
+        print(f"conformance: FAIL: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        stop_fixture(tmp, proc)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
