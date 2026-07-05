@@ -71,7 +71,7 @@ Status: `todo` | `doing` | `done` | `blocked` | `needs-decision`
 
 | id | step | status | notes |
 | --- | --- | --- | --- |
-| B1 | `connection`, `sync`, `login` views (login subscribe attaches/starts QR flow) | todo | |
+| B1 | `connection`, `sync`, `login` views (login subscribe attaches/starts QR flow) | done | `protocol.RegisterDaemonViews` serves daemon-backed object views with raw-socket tests; `connection` includes store-backed pending outgoing count, `login` attaches to QR events/expiry, `sync` maps history progress. |
 | B2 | `chats` view: filters, archived, windowing with remove-on-fall-out, pinned+recency sort keys | todo | |
 | B3 | `messages` view: anchors (`latest`/`unread`/message id), extend older, live edge, revoke-as-upsert, delete-as-remove; `kind` + `fallback` on every stored message | todo | |
 | B4 | `typing`, `presence` (subscription-driven upstream WA presence subscribe), `receipts` | todo | |
