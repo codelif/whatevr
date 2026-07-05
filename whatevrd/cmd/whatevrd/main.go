@@ -8,6 +8,7 @@ import (
 
 	"whatevrd/internal/app"
 	"whatevrd/internal/notify"
+	"whatevrd/internal/protocol"
 	daemonrpc "whatevrd/internal/rpc"
 	"whatevrd/internal/store"
 	"whatevrd/internal/wa"
@@ -69,9 +70,16 @@ func main() {
 	if err != nil {
 		log.Fatalf("start rpc server: %v", err)
 	}
+
+	// The whatevr protocol server (PROTOCOL.md) runs alongside gRPC for the
+	// duration of the migration; frontends move over view by view.
+	protocolServer, err := protocol.Start(ctx, paths.ProtocolSocketPath, daemon)
+	if err != nil {
+		log.Fatalf("start protocol server: %v", err)
+	}
 	waClient.Start(ctx)
 
-	log.Printf("whatevrd listening on %s", paths.SocketPath)
+	log.Printf("whatevrd listening on %s (grpc) and %s (protocol)", paths.SocketPath, paths.ProtocolSocketPath)
 
 	select {
 	case <-ctx.Done():
@@ -79,9 +87,16 @@ func main() {
 		if err := <-server.Err(); err != nil {
 			log.Fatalf("rpc server failed during shutdown: %v", err)
 		}
+		if err := <-protocolServer.Err(); err != nil {
+			log.Fatalf("protocol server failed during shutdown: %v", err)
+		}
 	case err := <-server.Err():
 		if err != nil {
 			log.Fatalf("rpc server failed: %v", err)
+		}
+	case err := <-protocolServer.Err():
+		if err != nil {
+			log.Fatalf("protocol server failed: %v", err)
 		}
 	}
 }
