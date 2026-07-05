@@ -1016,6 +1016,17 @@ func (db *DB) ListPendingOutgoingMessages(ctx context.Context, limit int, now ti
 	return messages, nil
 }
 
+func (db *DB) CountPendingOutgoingMessages(ctx context.Context) (int, error) {
+	defer db.timeOp("CountPendingOutgoingMessages", time.Now())
+	var count int
+	err := db.reader().QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM messages
+		WHERE direction = ? AND status = ?
+	`, DirectionOutgoing, StatusPending).Scan(&count)
+	return count, err
+}
+
 // UpdateMessageSendAttempt records a transient send failure so the queue
 // can skip the message until next_send_attempt.
 func (db *DB) UpdateMessageSendAttempt(ctx context.Context, id string, attempts int32, sendErr string, nextAttempt time.Time) error {

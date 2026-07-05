@@ -61,6 +61,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("start protocol fixture: %v", err)
 	}
+	protocol.RegisterDaemonViews(server, daemon, nil)
 	server.RegisterView("conformance", conformanceView{})
 
 	if readyFile != "" {
