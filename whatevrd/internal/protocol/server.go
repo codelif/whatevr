@@ -2,7 +2,6 @@ package protocol
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -14,10 +13,13 @@ import (
 	"whatevrd/internal/app"
 )
 
-// handlerFunc serves one method: params in, result (or protocol error) out.
-// A nil result marshals as {}. Handlers run on the connection's dispatch
-// goroutine; responses and any events they cause go through the write loop.
-type handlerFunc func(c *conn, params json.RawMessage) (any, *Error)
+// handlerFunc serves one method: request in, result (or protocol error)
+// out. A nil result marshals as {}; returning responded{} means the handler
+// already enqueued its own response (subscribe/extend do, to order the
+// response ahead of the events it unleashes). Handlers run on the
+// connection's dispatch goroutine; responses and any events they cause go
+// through the write loop.
+type handlerFunc func(c *conn, req request) (any, *Error)
 
 // Server owns the protocol socket and its connections. hello negotiation is
 // built in; views and commands register into handlers as migration steps
@@ -28,6 +30,9 @@ type Server struct {
 	socketPath string
 	errCh      chan error
 	handlers   map[string]handlerFunc
+
+	viewMu sync.RWMutex
+	views  map[string]View
 
 	mu    sync.Mutex
 	conns map[*conn]struct{}
@@ -60,8 +65,13 @@ func Start(ctx context.Context, socketPath string, daemon *app.Daemon) (*Server,
 		listener:   listener,
 		socketPath: socketPath,
 		errCh:      make(chan error, 1),
-		handlers:   map[string]handlerFunc{},
+		views:      map[string]View{},
 		conns:      map[*conn]struct{}{},
+	}
+	server.handlers = map[string]handlerFunc{
+		"subscribe":   server.handleSubscribe,
+		"extend":      server.handleExtend,
+		"unsubscribe": server.handleUnsubscribe,
 	}
 
 	go server.serve(ctx)

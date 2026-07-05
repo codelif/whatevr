@@ -70,6 +70,10 @@ type response struct {
 // nullID is echoed when a request's own id is missing or unusable.
 var nullID = json.RawMessage("null")
 
+// responded is returned as a handler's result when the handler has already
+// enqueued its own response; the dispatcher then must not respond again.
+type responded struct{}
+
 // validRequestID reports whether raw is a client-chosen number or string,
 // the only id types PROTOCOL.md allows.
 func validRequestID(raw json.RawMessage) bool {

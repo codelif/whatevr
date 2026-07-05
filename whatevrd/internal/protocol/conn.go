@@ -15,42 +15,37 @@ const (
 	maxLineBytes = 16 * 1024 * 1024
 
 	// writeTimeout bounds a single line write so one wedged frontend cannot
-	// hold a connection goroutine forever. A2's outbound queue layers
-	// coalescing and reset recovery on top of this.
+	// hold a connection goroutine forever; the outbound queue's coalescing
+	// and reset fallback handle merely slow consumers before this bites.
 	writeTimeout = 30 * time.Second
-
-	// outboundBuffer is the per-connection queue of marshaled lines between
-	// dispatch and the write loop.
-	outboundBuffer = 256
 )
-
-// outFrame is one marshaled line queued for the write loop. closeAfter
-// tears the connection down once the line is flushed (used when hello
-// negotiation rejects the connection).
-type outFrame struct {
-	line       []byte
-	closeAfter bool
-}
 
 type conn struct {
 	srv *Server
 	nc  net.Conn
 
-	out       chan outFrame
+	q         *outQueue
 	done      chan struct{}
 	closeOnce sync.Once
 
 	// helloDone flips after successful negotiation; every other method is
 	// rejected until then.
 	helloDone bool
+
+	// subMu guards the subscription registry; nextSub only moves on the
+	// dispatch goroutine.
+	subMu   sync.Mutex
+	subs    map[int64]*subscription
+	nextSub int64
 }
 
 func newConn(srv *Server, nc net.Conn) *conn {
 	return &conn{
 		srv:  srv,
 		nc:   nc,
-		out:  make(chan outFrame, outboundBuffer),
+		q:    newOutQueue(),
 		done: make(chan struct{}),
+		subs: map[int64]*subscription{},
 	}
 }
 
@@ -76,30 +71,82 @@ func (c *conn) run() {
 
 func (c *conn) writeLoop() {
 	for {
-		select {
-		case frame := <-c.out:
-			_ = c.nc.SetWriteDeadline(time.Now().Add(writeTimeout))
-			if _, err := c.nc.Write(frame.line); err != nil {
-				c.close()
+		frame, ok := c.q.pop()
+		if !ok {
+			select {
+			case <-c.q.signal:
+				continue
+			case <-c.done:
 				return
 			}
-			if frame.closeAfter {
-				c.close()
-				return
-			}
-		case <-c.done:
+		}
+		_ = c.nc.SetWriteDeadline(time.Now().Add(writeTimeout))
+		if _, err := c.nc.Write(append(frame.line, '\n')); err != nil {
+			c.close()
+			return
+		}
+		if frame.closeAfter {
+			c.close()
 			return
 		}
 	}
 }
 
 // close is idempotent and unblocks both loops: closing the socket ends the
-// scanner, closing done ends the writer.
+// scanner, closing done ends the writer. It also releases every view
+// session, which is the connection-drop half of subscription cleanup.
 func (c *conn) close() {
 	c.closeOnce.Do(func() {
 		close(c.done)
 		_ = c.nc.Close()
+
+		c.subMu.Lock()
+		subs := make([]*subscription, 0, len(c.subs))
+		for _, sub := range c.subs {
+			subs = append(subs, sub)
+		}
+		c.subs = map[int64]*subscription{}
+		c.subMu.Unlock()
+		for _, sub := range subs {
+			sub.close()
+		}
 	})
+}
+
+// sendEvent implements frameSink over the outbound queue.
+func (c *conn) sendEvent(sub int64, itemKey string, line []byte) (reset bool) {
+	return c.q.pushEvent(sub, itemKey, line)
+}
+
+func (c *conn) nextSubID() int64 {
+	c.subMu.Lock()
+	defer c.subMu.Unlock()
+	c.nextSub++
+	return c.nextSub
+}
+
+func (c *conn) registerSub(sub *subscription) {
+	c.subMu.Lock()
+	c.subs[sub.id] = sub
+	c.subMu.Unlock()
+	c.q.addSub(sub.id)
+}
+
+func (c *conn) subscription(id int64) (*subscription, bool) {
+	c.subMu.Lock()
+	defer c.subMu.Unlock()
+	sub, ok := c.subs[id]
+	return sub, ok
+}
+
+func (c *conn) takeSubscription(id int64) (*subscription, bool) {
+	c.subMu.Lock()
+	defer c.subMu.Unlock()
+	sub, ok := c.subs[id]
+	if ok {
+		delete(c.subs, id)
+	}
+	return sub, ok
 }
 
 func (c *conn) handleLine(line []byte) {
@@ -131,9 +178,12 @@ func (c *conn) handleLine(line []byte) {
 		c.respondError(req.ID, errorf(CodeUnknownMethod, "unknown method %q", req.Method), false)
 		return
 	}
-	result, herr := handler(c, req.Params)
+	result, herr := handler(c, req)
 	if herr != nil {
 		c.respondError(req.ID, herr, false)
+		return
+	}
+	if _, ok := result.(responded); ok {
 		return
 	}
 	if result == nil {
@@ -199,9 +249,5 @@ func (c *conn) send(resp response, closeAfter bool) {
 		log.Printf("protocol: marshal response: %v", err)
 		line, _ = json.Marshal(response{ID: resp.ID, Error: errorf(CodeInternal, "failed to encode response")})
 	}
-	frame := outFrame{line: append(line, '\n'), closeAfter: closeAfter}
-	select {
-	case c.out <- frame:
-	case <-c.done:
-	}
+	c.q.push(line, closeAfter)
 }

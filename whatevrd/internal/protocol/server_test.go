@@ -15,7 +15,7 @@ import (
 
 // startTestServer brings up a protocol server on a private socket and tears
 // it down (waiting for full shutdown) when the test ends.
-func startTestServer(t *testing.T) (string, *app.Daemon) {
+func startTestServer(t *testing.T) (string, *Server) {
 	t.Helper()
 
 	dir := t.TempDir()
@@ -39,7 +39,7 @@ func startTestServer(t *testing.T) (string, *app.Daemon) {
 		}
 	})
 
-	return socketPath, daemon
+	return socketPath, server
 }
 
 type testClient struct {
@@ -158,8 +158,8 @@ func TestHelloEchoesStringID(t *testing.T) {
 }
 
 func TestHelloReflectsDaemonState(t *testing.T) {
-	socketPath, daemon := startTestServer(t)
-	daemon.SetState(app.StateNeedLogin)
+	socketPath, server := startTestServer(t)
+	server.daemon.SetState(app.StateNeedLogin)
 	c := dialTest(t, socketPath)
 
 	c.sendLine(`{"id":1,"method":"hello","params":{"protocol":1}}`)
