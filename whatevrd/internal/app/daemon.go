@@ -747,6 +747,27 @@ func (d *Daemon) PublishCachedChatPresence(chatID string) bool {
 	return true
 }
 
+// ComposingChat is one chat with an active (non-expired) composing sender.
+type ComposingChat struct {
+	ChatID   string
+	SenderID string
+}
+
+// ComposingChats snapshots the chats a sender is currently composing in, for
+// the `typing` view's initial fill. Entries past the composing TTL are treated
+// as stopped and omitted (the expiry timer may not have fired yet).
+func (d *Daemon) ComposingChats() []ComposingChat {
+	d.subMu.Lock()
+	defer d.subMu.Unlock()
+	var out []ComposingChat
+	for chatID, state := range d.presenceByChatID {
+		if state.IsComposing && time.Since(state.ComposingUpdatedTime) <= composingPresenceTTL {
+			out = append(out, ComposingChat{ChatID: chatID, SenderID: state.SenderID})
+		}
+	}
+	return out
+}
+
 func (d *Daemon) PublishMediaDownloadChanged(messageID, chatID string, downloading bool, errorText string, receivedBytes, totalBytes uint64) {
 	evt := MediaDownloadEvent{MessageID: messageID, ChatID: chatID, Downloading: downloading, ErrorText: errorText, ReceivedBytes: receivedBytes, TotalBytes: totalBytes}
 	d.subMu.Lock()

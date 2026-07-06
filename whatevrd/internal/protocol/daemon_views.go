@@ -24,6 +24,7 @@ type DaemonStore interface {
 	PendingOutgoingCounter
 	ChatLister
 	MessageLister
+	SenderDisplayer
 }
 
 // RegisterDaemonViews registers the daemon-owned views from PROTOCOL.md.
@@ -33,6 +34,7 @@ func RegisterDaemonViews(s *Server, daemon *app.Daemon, store DaemonStore) {
 	s.RegisterView("login", loginView{daemon: daemon})
 	s.RegisterView("chats", chatsView{daemon: daemon, lister: store})
 	s.RegisterView("messages", messagesView{daemon: daemon, lister: store})
+	s.RegisterView("typing", typingView{daemon: daemon, resolver: store})
 }
 
 type connectionView struct {
