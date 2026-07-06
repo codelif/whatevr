@@ -155,6 +155,70 @@ func (db *DB) ListChats(ctx context.Context, limit, offset int, afterChatID stri
 	return chats, nil
 }
 
+// Chat list filters for ListChatsForView. The empty string means both direct
+// and group chats.
+const (
+	ChatFilterAll    = ""
+	ChatFilterDirect = "direct"
+	ChatFilterGroups = "groups"
+)
+
+// ChatListFilter selects which chats ListChatsForView returns.
+type ChatListFilter struct {
+	Kind     string // ChatFilterAll | ChatFilterDirect | ChatFilterGroups
+	Archived bool   // archived tab (true) vs the main list (false)
+	Limit    int    // <= 0 means no limit (whole filtered list)
+}
+
+// ListChatsForView returns chats matching filter in list order (pinned first,
+// then most recent). Unlike ListChats it segregates archived from unarchived
+// and can restrict to direct or group chats, which is what the protocol
+// `chats` view subscribes to. The protocol view engine re-reads the whole
+// window on every change, so this is a plain LIMIT rather than keyset paging.
+func (db *DB) ListChatsForView(ctx context.Context, filter ChatListFilter) ([]Chat, error) {
+	defer db.timeOp("ListChatsForView", time.Now())
+
+	query := `
+		SELECT c.id, c.name, c.name_source, c.last_message, c.last_message_time, c.last_message_direction, c.last_message_status, c.unread_count, c.is_group, c.is_pinned, c.pinned_order, c.updated_at, c.is_archived, c.is_muted, c.mute_end_timestamp, c.history_exhausted,
+		       COALESCE(NULLIF(a.local_path, ''), c.avatar_local_path), COALESCE(NULLIF(a.picture_id, ''), c.avatar_picture_id), COALESCE(NULLIF(a.status, ''), c.avatar_status), COALESCE(NULLIF(a.checked_at, 0), c.avatar_checked_at)
+		FROM chats c
+		LEFT JOIN avatars a ON a.subject_kind = 'chat' AND a.subject_id = c.id
+		WHERE c.is_archived = ?
+	`
+	args := []any{boolToInt(filter.Archived)}
+
+	switch filter.Kind {
+	case ChatFilterDirect:
+		query += ` AND c.is_group = 0`
+	case ChatFilterGroups:
+		query += ` AND c.is_group = 1`
+	}
+
+	query += `
+		ORDER BY CASE WHEN c.is_pinned != 0 THEN 0 ELSE 1 END, c.pinned_order DESC, c.last_message_time DESC, c.id ASC
+	`
+	if filter.Limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, filter.Limit)
+	}
+
+	rows, err := db.reader().QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	chats := make([]Chat, 0)
+	for rows.Next() {
+		chat, err := scanChat(rows)
+		if err != nil {
+			return nil, err
+		}
+		chats = append(chats, normalizeListedChatName(chat))
+	}
+	return chats, rows.Err()
+}
+
 // SearchChats returns chats whose display name matches query (case-insensitive
 // substring), in the same list order as ListChats. The chat table is small, so
 // a LIKE scan is fine; message text search uses the FTS index instead. A blank

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"whatevrd/internal/app"
+	"whatevrd/internal/store"
 )
 
 type fakePendingCounter struct {
@@ -18,6 +19,12 @@ func (f *fakePendingCounter) CountPendingOutgoingMessages(context.Context) (int,
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.count, nil
+}
+
+// fakePendingCounter satisfies DaemonStore so it can register the daemon
+// views; the chats view is unused in these object-view tests.
+func (f *fakePendingCounter) ListChatsForView(context.Context, store.ChatListFilter) ([]store.Chat, error) {
+	return nil, nil
 }
 
 func (f *fakePendingCounter) set(count int) {

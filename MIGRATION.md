@@ -72,7 +72,7 @@ Status: `todo` | `doing` | `done` | `blocked` | `needs-decision`
 | id | step | status | notes |
 | --- | --- | --- | --- |
 | B1 | `connection`, `sync`, `login` views (login subscribe attaches/starts QR flow) | done | `protocol.RegisterDaemonViews` serves daemon-backed object views with raw-socket tests; `connection` includes store-backed pending outgoing count, `login` attaches to QR events/expiry, `sync` maps history progress. |
-| B2 | `chats` view: filters, archived, windowing with remove-on-fall-out, pinned+recency sort keys | todo | |
+| B2 | `chats` view: filters, archived, windowing with remove-on-fall-out, pinned+recency sort keys | done | `chats_view.go` (chatsView over `store.ListChatsForView`, `chatSort` = pinned/recency sections, invalidates on chat-affecting daemon events); `RegisterDaemonViews` now takes a `DaemonStore` (pending + chat lister). Sort inverts the timestamp so recency renders newest-first under ascending bytewise order (PROTOCOL example digits are illustrative — see Decision log). Item field names are idiomatic (`preview`/`unread`/`pinned`/`avatar_path`), `kind_hint` from the example omitted (no last-message-kind stored). Store + raw-socket tests. |
 | B3 | `messages` view: anchors (`latest`/`unread`/message id), extend older, live edge, revoke-as-upsert, delete-as-remove; `kind` + `fallback` on every stored message | todo | |
 | B4 | `typing`, `presence` (subscription-driven upstream WA presence subscribe), `receipts` | todo | |
 | B5 | `self`, `contact`, `group`, `group_members` — two-phase local→network upserts | todo | |
@@ -121,3 +121,10 @@ _None._
   this migration's end goal (PROTOCOL.md open question).
 - 2026-07-06 — A3 conformance uses an internal fixture server until real
   protocol views exist; no conformance-only view is registered in production.
+- 2026-07-06 — B2 `chats` sort direction: PROTOCOL.md's *prose* ("ascending
+  bytewise", "pinned section then recency") is authoritative and was
+  implemented as most-recent-first via timestamp inversion. The example
+  session's sort digits read as plain non-inverted timestamps (Aditi's key
+  *grows* after a send), which is illustrative only. PROTOCOL.md left
+  unchanged; flag if the example digits should be corrected to match a real
+  most-recent-first key. No decision blocking B2.

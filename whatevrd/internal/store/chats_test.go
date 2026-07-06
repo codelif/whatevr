@@ -115,6 +115,115 @@ func TestReconcileChatPinsUpdatesStaleAndChangedPins(t *testing.T) {
 	}
 }
 
+func TestListChatsForView(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	base := time.Unix(1_700_000_000, 0)
+	// Two direct chats and one group; distinct timestamps set recency.
+	seed := []struct {
+		id      string
+		isGroup bool
+		offset  time.Duration
+	}{
+		{"direct-old@s.whatsapp.net", false, 0},
+		{"direct-new@s.whatsapp.net", false, 2 * time.Minute},
+		{"group-1@g.us", true, time.Minute},
+	}
+	for _, s := range seed {
+		if _, err := db.SaveTextMessage(ctx, TextMessageInput{
+			ID:        "m-" + s.id,
+			ChatID:    s.id,
+			Text:      "hi",
+			Timestamp: base.Add(s.offset),
+			IsGroup:   s.isGroup,
+		}); err != nil {
+			t.Fatalf("seed %s: %v", s.id, err)
+		}
+	}
+
+	ids := func(chats []Chat) []string {
+		out := make([]string, len(chats))
+		for i, c := range chats {
+			out[i] = c.ID
+		}
+		return out
+	}
+
+	// all filter: most recent first.
+	all, err := db.ListChatsForView(ctx, ChatListFilter{Kind: ChatFilterAll})
+	if err != nil {
+		t.Fatalf("list all: %v", err)
+	}
+	if got := ids(all); len(got) != 3 || got[0] != "direct-new@s.whatsapp.net" || got[1] != "group-1@g.us" || got[2] != "direct-old@s.whatsapp.net" {
+		t.Fatalf("all order = %v", got)
+	}
+
+	// direct filter excludes the group.
+	direct, err := db.ListChatsForView(ctx, ChatListFilter{Kind: ChatFilterDirect})
+	if err != nil {
+		t.Fatalf("list direct: %v", err)
+	}
+	if got := ids(direct); len(got) != 2 || got[0] != "direct-new@s.whatsapp.net" || got[1] != "direct-old@s.whatsapp.net" {
+		t.Fatalf("direct order = %v", got)
+	}
+
+	// groups filter keeps only the group.
+	groups, err := db.ListChatsForView(ctx, ChatListFilter{Kind: ChatFilterGroups})
+	if err != nil {
+		t.Fatalf("list groups: %v", err)
+	}
+	if got := ids(groups); len(got) != 1 || got[0] != "group-1@g.us" {
+		t.Fatalf("groups = %v", got)
+	}
+
+	// Pinning lifts a chat above more-recent unpinned ones.
+	if _, _, err := db.UpdateChatPinState(ctx, "direct-old@s.whatsapp.net", true, 1); err != nil {
+		t.Fatalf("pin: %v", err)
+	}
+	pinned, err := db.ListChatsForView(ctx, ChatListFilter{Kind: ChatFilterAll})
+	if err != nil {
+		t.Fatalf("list pinned: %v", err)
+	}
+	if got := ids(pinned); got[0] != "direct-old@s.whatsapp.net" {
+		t.Fatalf("pinned chat not first: %v", got)
+	}
+
+	// Archiving segregates: the archived tab shows it, the main list does not.
+	if _, _, err := db.UpdateChatArchiveState(ctx, "group-1@g.us", true); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+	main, err := db.ListChatsForView(ctx, ChatListFilter{Kind: ChatFilterAll})
+	if err != nil {
+		t.Fatalf("list main: %v", err)
+	}
+	for _, c := range main {
+		if c.ID == "group-1@g.us" {
+			t.Fatalf("archived chat leaked into main list: %v", ids(main))
+		}
+	}
+	archived, err := db.ListChatsForView(ctx, ChatListFilter{Kind: ChatFilterAll, Archived: true})
+	if err != nil {
+		t.Fatalf("list archived: %v", err)
+	}
+	if got := ids(archived); len(got) != 1 || got[0] != "group-1@g.us" {
+		t.Fatalf("archived tab = %v", got)
+	}
+
+	// Limit bounds the window.
+	limited, err := db.ListChatsForView(ctx, ChatListFilter{Kind: ChatFilterAll, Limit: 1})
+	if err != nil {
+		t.Fatalf("list limited: %v", err)
+	}
+	if len(limited) != 1 {
+		t.Fatalf("limit not applied: %v", ids(limited))
+	}
+}
+
 func TestUpdateChatArchiveState(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
