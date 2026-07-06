@@ -235,20 +235,147 @@ func TestMessagesViewImageItemShape(t *testing.T) {
 }
 
 func TestMessagesViewParamErrors(t *testing.T) {
-	socketPath, _, _ := startChatsTestServer(t)
+	socketPath, _, db := startChatsTestServer(t)
+	chat := "c@s.whatsapp.net"
+	seedTextMessage(t, db, chat, "hi", time.Unix(1_700_000_000, 0))
 	c := dialTest(t, socketPath)
 	c.hello()
 
-	for _, params := range []string{
-		`{"view":"messages"}`,                                  // no chat_id
-		`{"view":"messages","chat_id":"c@s.whatsapp.net","anchor":"unread"}`,
-		`{"view":"messages","chat_id":"c@s.whatsapp.net","anchor":"3EB0abc"}`,
-	} {
-		c.sendLine(`{"id":9,"method":"subscribe","params":` + params + `}`)
-		if code := errorCode(t, c.recv()); code != CodeInvalidParams {
-			t.Errorf("subscribe %s: code = %q, want %q", params, code, CodeInvalidParams)
+	cases := []struct {
+		params string
+		want   string
+	}{
+		{`{"view":"messages"}`, CodeInvalidParams}, // no chat_id
+		// A message-id anchor naming a message that is not in this chat is a
+		// not_found, not a params error.
+		{fmt.Sprintf(`{"view":"messages","chat_id":%q,"anchor":"3EB0missing"}`, chat), CodeNotFound},
+	}
+	for _, tc := range cases {
+		c.sendLine(`{"id":9,"method":"subscribe","params":` + tc.params + `}`)
+		if code := errorCode(t, c.recv()); code != tc.want {
+			t.Errorf("subscribe %s: code = %q, want %q", tc.params, code, tc.want)
 		}
 	}
+}
+
+// subscribeResult issues a subscribe and returns the full result object (so a
+// caller can read subscribe meta such as anchor_id), plus the sub id.
+func (c *testClient) subscribeResult(reqID int, params string) (float64, map[string]any) {
+	c.t.Helper()
+	c.sendLine(fmt.Sprintf(`{"id":%d,"method":"subscribe","params":%s}`, reqID, params))
+	result, ok := c.recv()["result"].(map[string]any)
+	if !ok {
+		c.t.Fatalf("subscribe %s failed", params)
+	}
+	sub, ok := result["sub"].(float64)
+	if !ok {
+		c.t.Fatalf("subscribe result has no sub: %v", result)
+	}
+	return sub, result
+}
+
+// collectUpserts reads exactly n upserts and returns id→sort so a test can
+// assert set membership and render (sort-key) order without depending on the
+// engine's proximity emit order.
+func (c *testClient) collectUpserts(sub float64, n int) map[string]string {
+	c.t.Helper()
+	got := map[string]string{}
+	for i := 0; i < n; i++ {
+		msg := c.recvEvent()
+		if msg["event"] != "upsert" || msg["sub"] != sub {
+			c.t.Fatalf("expected upsert %d/%d, got %v", i+1, n, msg)
+		}
+		got[msg["item"].(map[string]any)["id"].(string)] = msg["sort"].(string)
+	}
+	return got
+}
+
+func TestMessagesViewUnreadAnchor(t *testing.T) {
+	socketPath, _, db := startChatsTestServer(t)
+	base := time.Unix(1_700_000_000, 0)
+	chat := "c@s.whatsapp.net"
+	ids := make([]string, 6) // m0 (oldest) .. m5 (newest), all incoming
+	for i := range ids {
+		ids[i] = seedTextMessage(t, db, chat, fmt.Sprintf("m%d", i), base.Add(time.Duration(i)*time.Minute))
+	}
+	// Two unread: the anchor is the oldest unread incoming message, i.e. m4.
+	if _, _, err := db.OverwriteChatUnreadCount(context.Background(), chat, 2); err != nil {
+		t.Fatalf("set unread: %v", err)
+	}
+
+	c := dialTest(t, socketPath)
+	c.hello()
+	sub, result := c.subscribeResult(2, fmt.Sprintf(`{"view":"messages","chat_id":%q,"anchor":"unread","limit":3}`, chat))
+	if result["anchor_id"] != ids[4] {
+		t.Fatalf("anchor_id = %v, want %v", result["anchor_id"], ids[4])
+	}
+
+	// A size-3 window balances around m4: one older (m3), the anchor, one newer (m5).
+	win := c.collectUpserts(sub, 3)
+	for _, want := range []string{ids[3], ids[4], ids[5]} {
+		if _, ok := win[want]; !ok {
+			t.Fatalf("window missing %s: %v", want, win)
+		}
+	}
+	if !(win[ids[3]] < win[ids[4]] && win[ids[4]] < win[ids[5]]) {
+		t.Fatalf("sort keys not oldest→newest: %v", win)
+	}
+	c.expectReady(sub, false) // m0..m2 remain older
+}
+
+func TestMessagesViewMessageIDAnchorExtendsBothWays(t *testing.T) {
+	socketPath, _, db := startChatsTestServer(t)
+	base := time.Unix(1_700_000_000, 0)
+	chat := "c@s.whatsapp.net"
+	ids := make([]string, 5) // m0..m4
+	for i := range ids {
+		ids[i] = seedTextMessage(t, db, chat, fmt.Sprintf("m%d", i), base.Add(time.Duration(i)*time.Minute))
+	}
+
+	c := dialTest(t, socketPath)
+	c.hello()
+	// Anchor on the middle message m2 with a size-3 window: m1, m2, m3.
+	sub, result := c.subscribeResult(2, fmt.Sprintf(`{"view":"messages","chat_id":%q,"anchor":%q,"limit":3}`, chat, ids[2]))
+	if result["anchor_id"] != ids[2] {
+		t.Fatalf("anchor_id = %v, want %v", result["anchor_id"], ids[2])
+	}
+	win := c.collectUpserts(sub, 3)
+	for _, want := range []string{ids[1], ids[2], ids[3]} {
+		if _, ok := win[want]; !ok {
+			t.Fatalf("window missing %s: %v", want, win)
+		}
+	}
+	c.expectReady(sub, false) // m0 and m4 remain, one on each side
+
+	// Extending an anchored window reaches outward in BOTH directions: the
+	// older m0 and the newer m4 both arrive, and the whole chat is now local.
+	c.extend(3, sub, 2)
+	grew := c.collectUpserts(sub, 2)
+	if _, ok := grew[ids[0]]; !ok {
+		t.Fatalf("extend did not reach older m0: %v", grew)
+	}
+	if _, ok := grew[ids[4]]; !ok {
+		t.Fatalf("extend did not reach newer m4: %v", grew)
+	}
+	c.expectReady(sub, true)
+}
+
+func TestMessagesViewUnreadAnchorNoneDegradesToLiveEdge(t *testing.T) {
+	socketPath, _, db := startChatsTestServer(t)
+	base := time.Unix(1_700_000_000, 0)
+	chat := "c@s.whatsapp.net"
+	newest := seedTextMessage(t, db, chat, "hello", base)
+
+	c := dialTest(t, socketPath)
+	c.hello()
+	// unread_count is 0, so the unread anchor degrades to the live edge: no
+	// anchor_id in the meta, and the newest message fills the window.
+	sub, result := c.subscribeResult(2, fmt.Sprintf(`{"view":"messages","chat_id":%q,"anchor":"unread"}`, chat))
+	if _, has := result["anchor_id"]; has {
+		t.Fatalf("expected no anchor_id when nothing is unread: %v", result)
+	}
+	c.expectUpsert(sub, newest)
+	c.expectReady(sub, true)
 }
 
 // seedID recomputes the id seedTextMessage assigns for a chat+timestamp.

@@ -31,6 +31,18 @@ func (f *fakePendingCounter) ListMessages(context.Context, string, int, string) 
 	return nil, nil
 }
 
+func (f *fakePendingCounter) ListMessagesAround(context.Context, string, int, string) ([]store.Message, error) {
+	return nil, nil
+}
+
+func (f *fakePendingCounter) ListMessagesAroundUnread(context.Context, string, int, int) ([]store.Message, string, error) {
+	return nil, "", nil
+}
+
+func (f *fakePendingCounter) GetChat(context.Context, string) (store.Chat, error) {
+	return store.Chat{}, nil
+}
+
 func (f *fakePendingCounter) set(count int) {
 	f.mu.Lock()
 	f.count = count
