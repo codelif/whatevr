@@ -73,7 +73,8 @@ Status: `todo` | `doing` | `done` | `blocked` | `needs-decision`
 | --- | --- | --- | --- |
 | B1 | `connection`, `sync`, `login` views (login subscribe attaches/starts QR flow) | done | `protocol.RegisterDaemonViews` serves daemon-backed object views with raw-socket tests; `connection` includes store-backed pending outgoing count, `login` attaches to QR events/expiry, `sync` maps history progress. |
 | B2 | `chats` view: filters, archived, windowing with remove-on-fall-out, pinned+recency sort keys | done | `chats_view.go` (chatsView over `store.ListChatsForView`, `chatSort` = pinned/recency sections, invalidates on chat-affecting daemon events); `RegisterDaemonViews` now takes a `DaemonStore` (pending + chat lister). Sort inverts the timestamp so recency renders newest-first under ascending bytewise order (PROTOCOL example digits are illustrative — see Decision log). Item field names are idiomatic (`preview`/`unread`/`pinned`/`avatar_path`), `kind_hint` from the example omitted (no last-message-kind stored). Store + raw-socket tests. |
-| B3 | `messages` view: anchors (`latest`/`unread`/message id), extend older, live edge, revoke-as-upsert, delete-as-remove; `kind` + `fallback` on every stored message | todo | |
+| B3a | `messages` view — `latest` anchor: live-edge windowing, extend-older, revoke-as-upsert, delete-as-remove; `kind` + `fallback` + full item shape on every stored message | done | `messages_view.go` (messagesView over `store.ListMessages`; `DaemonStore` gains `MessageLister`). Live-edge fit onto A2's prefix engine: `Items` returns the newest N **slice-ordered newest-first** (engine keeps the prefix = newest) while each item carries an **ascending** `%020d-%020d` timestamp/seq sort key (client renders oldest→newest) — slice order picks the window, sort key picks render order. Invalidates on new/updated/deleted/backfilled/cleared events filtered by `chat_id` (+ any avatar update). Revoke rides in as an ordinary upsert (`revoked:true`, content dropped); delete-for-me drops the row so the engine emits `remove`. `unread`/message-id anchors reject with `invalid_params` until B3b. Store + raw-socket tests; hand-verified over socat (fill newest-first, live-edge fall-out remove, extend-older, ready exhausted flip). |
+| B3b | `messages` view — `unread` + `{message_id}` anchors: `anchor_id` subscribe meta, around-anchor (mid-sequence) windows (needs A2 engine support beyond the prefix window) | todo | split out of B3: around-anchor windows are a different window shape than A2's prefix window |
 | B4 | `typing`, `presence` (subscription-driven upstream WA presence subscribe), `receipts` | todo | |
 | B5 | `self`, `contact`, `group`, `group_members` — two-phase local→network upserts | todo | |
 | B6 | `privacy`, `preferences`, `blocklist`, `starred`, `pinned` | todo | |
@@ -128,3 +129,12 @@ _None._
   *grows* after a send), which is illustrative only. PROTOCOL.md left
   unchanged; flag if the example digits should be corrected to match a real
   most-recent-first key. No decision blocking B2.
+- 2026-07-06 — B3 split into B3a (`latest` anchor, done) and B3b (`unread` +
+  message-id anchors). Reason: `unread`/message-id anchors need a window
+  positioned *around* an anchor (mid-sequence, growing both directions),
+  which the A2 engine's single-integer **prefix** window cannot express;
+  `latest` is a pure live-edge prefix window and fits as-is. B3b will extend
+  the engine (or add view-specific anchored windowing) + return `anchor_id`
+  subscribe meta. PROTOCOL.md unchanged; the temporary `invalid_params` on
+  non-`latest` anchors is a migration state, not a spec change. Flag if B3b
+  reveals the engine needs an anchored-window primitive worth its own step.

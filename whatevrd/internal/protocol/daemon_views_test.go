@@ -22,8 +22,12 @@ func (f *fakePendingCounter) CountPendingOutgoingMessages(context.Context) (int,
 }
 
 // fakePendingCounter satisfies DaemonStore so it can register the daemon
-// views; the chats view is unused in these object-view tests.
+// views; the chats and messages views are unused in these object-view tests.
 func (f *fakePendingCounter) ListChatsForView(context.Context, store.ChatListFilter) ([]store.Chat, error) {
+	return nil, nil
+}
+
+func (f *fakePendingCounter) ListMessages(context.Context, string, int, string) ([]store.Message, error) {
 	return nil, nil
 }
 
