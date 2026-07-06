@@ -51,6 +51,10 @@ func (f *fakePendingCounter) GetChat(context.Context, string) (store.Chat, error
 	return store.Chat{}, nil
 }
 
+func (f *fakePendingCounter) SenderDisplay(context.Context, string) (string, string, error) {
+	return "", "", nil
+}
+
 func (f *fakePendingCounter) set(count int) {
 	f.mu.Lock()
 	f.count = count
