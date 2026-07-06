@@ -74,7 +74,8 @@ Status: `todo` | `doing` | `done` | `blocked` | `needs-decision`
 | B1 | `connection`, `sync`, `login` views (login subscribe attaches/starts QR flow) | done | `protocol.RegisterDaemonViews` serves daemon-backed object views with raw-socket tests; `connection` includes store-backed pending outgoing count, `login` attaches to QR events/expiry, `sync` maps history progress. |
 | B2 | `chats` view: filters, archived, windowing with remove-on-fall-out, pinned+recency sort keys | done | `chats_view.go` (chatsView over `store.ListChatsForView`, `chatSort` = pinned/recency sections, invalidates on chat-affecting daemon events); `RegisterDaemonViews` now takes a `DaemonStore` (pending + chat lister). Sort inverts the timestamp so recency renders newest-first under ascending bytewise order (PROTOCOL example digits are illustrative — see Decision log). Item field names are idiomatic (`preview`/`unread`/`pinned`/`avatar_path`), `kind_hint` from the example omitted (no last-message-kind stored). Store + raw-socket tests. |
 | B3a | `messages` view — `latest` anchor: live-edge windowing, extend-older, revoke-as-upsert, delete-as-remove; `kind` + `fallback` + full item shape on every stored message | done | `messages_view.go` (messagesView over `store.ListMessages`; `DaemonStore` gains `MessageLister`). Live-edge fit onto A2's prefix engine: `Items` returns the newest N **slice-ordered newest-first** (engine keeps the prefix = newest) while each item carries an **ascending** `%020d-%020d` timestamp/seq sort key (client renders oldest→newest) — slice order picks the window, sort key picks render order. Invalidates on new/updated/deleted/backfilled/cleared events filtered by `chat_id` (+ any avatar update). Revoke rides in as an ordinary upsert (`revoked:true`, content dropped); delete-for-me drops the row so the engine emits `remove`. `unread`/message-id anchors reject with `invalid_params` until B3b. Store + raw-socket tests; hand-verified over socat (fill newest-first, live-edge fall-out remove, extend-older, ready exhausted flip). |
-| B3b | `messages` view — `unread` + `{message_id}` anchors: `anchor_id` subscribe meta, around-anchor (mid-sequence) windows (needs A2 engine support beyond the prefix window) | done | `messages_view.go`: anchored windows reuse A2's prefix engine **unchanged** — the session returns items ordered by *proximity to the anchor* (engine keeps the closest `window` as its prefix), each carrying the ascending timestamp sort key, so `extend` widens the contiguous neighborhood both directions. Reuses store `ListMessagesAround` (balanced split) + `ListMessagesAroundUnread` (resolves oldest-unread anchor from the chat's unread count via `GetChat`); anchor pinned once at `Open` so `anchor_id` never drifts. Message-id anchor not in chat → `not_found`; `unread` with nothing unread degrades to the live edge with no `anchor_id`. `MessageLister` widened (+`ListMessagesAround`/`ListMessagesAroundUnread`/`GetChat`). Store + raw-socket tests; hand-verified over socket (anchor_id meta, balanced window, ascending render keys, bidirectional extend, not_found). |
+| B3b | `messages` view — `unread` + `{message_id}` anchors: `anchor_id` subscribe meta, around-anchor (mid-sequence) windows (needs A2 engine support beyond the prefix window) | done | `messages_view.go`: anchored windows reuse A2's prefix engine **unchanged** — the session returns items ordered by *proximity to the anchor* (engine keeps the closest `window` as its prefix), each carrying the ascending timestamp sort key, so `extend` widens the contiguous neighborhood both directions. Reuses store `ListMessagesAround` (balanced split) + `ListMessagesAroundUnread` (resolves oldest-unread anchor from the chat's unread count via `GetChat`); anchor pinned once at `Open` so `anchor_id` never drifts. Message-id anchor not in chat → `not_found`; `unread` with nothing unread degrades to the live edge with no `anchor_id`. `MessageLister` widened (+`ListMessagesAround`/`ListMessagesAroundUnread`/`GetChat`). Store + raw-socket tests; hand-verified over socket (anchor_id meta, balanced window, ascending render keys, bidirectional extend, not_found). Anchored `extend` is **symmetric** here; **B3c** makes it directional (Decision log 2026-07-07). |
+| B3c | `messages` directional `extend`: a **required** `direction` (`older`\|`newer`) on `extend`; anchored windows grow one frontier at a time (supersedes B3b's symmetric growth); `direction:"newer"` on a `latest`-anchored window errors | todo | Planned in the B3b discussion (Harsh); required direction, newer-on-`latest` is an error. Engine-adjacent: the session must track older-reach + newer-reach independently — today `Items(max)` receives a single count, so `handleExtend`/the A2 engine must route direction (or hand window ownership to the session). `direction:"newer"` on `latest` → `invalid_params` (the newer edge *is* the live edge; new messages arrive unsolicited). Amends PROTOCOL.md `extend` verb row (`sub, count` → `sub, count, direction`; direction required) — sign-off at implementation. **Open sub-question to settle here:** what a required `direction` means for prefix/collection views (`chats`, `starred`, blocklist…) that have no older/newer axis. Independent of B4–B7; sequence anytime. |
 | B4 | `typing`, `presence` (subscription-driven upstream WA presence subscribe), `receipts` | todo | |
 | B5 | `self`, `contact`, `group`, `group_members` — two-phase local→network upserts | todo | |
 | B6 | `privacy`, `preferences`, `blocklist`, `starred`, `pinned` | todo | |
@@ -87,7 +88,7 @@ Status: `todo` | `doing` | `done` | `blocked` | `needs-decision`
 | C1 | Session/chat commands: `session.update`, `daemon.reconnect`, `account.logout`, `chat.*` (mark_read, pin, archive, mute, typing, request_older, ensure_direct) | todo | `chat.mark_read` carries an `up_to_message_id` watermark (Decision log 2026-07-07); dumb frontends pass the newest held message id. Applying it amends PROTOCOL.md's `chat.mark_read` row (currently `chat_id` → `{}`) at C1. |
 | C2 | `send.*`, `message.*` (react, edit, revoke, delete, star, pin, forward), `media.download` (+`transfers` wiring), `media.fetch_profile_picture` | todo | |
 | C3 | `privacy.set`, `preferences.set`, `self.set_about`, `contact.block`, sticker commands, queries (`search.chats`, `search.messages`, `contacts.check_phone`), `open_chat` connection-directed routing | todo | |
-| C4 | **Daemon audit milestone:** finish `examples/` shell frontend as a real usable client; run full conformance; line-by-line diff of PROTOCOL.md vs daemon; fix drift or log `needs-decision` items | todo | |
+| C4 | **Daemon audit milestone:** finish `examples/` shell frontend as a real usable client; run full conformance; line-by-line diff of PROTOCOL.md vs daemon; fix drift or log `needs-decision` items | todo | Apply the planned **Model A** PROTOCOL.md Windows-section amendment here (Decision log 2026-07-07), unless an earlier messages-docs step lands it first. |
 
 ### Phase D — whatkevr port (C++/QML, page by page; gRPC stays alive until D7)
 
@@ -170,3 +171,37 @@ _None._
   message id it holds and gets whole-chat "caught up" behavior with no
   separate code path. Not changing PROTOCOL.md now; the `chat.mark_read` row
   is amended when C1 lands (see C1 note).
+- 2026-07-07 — **Problem 1 (mid-history anchor vs. new messages) resolved as
+  Model A, "transient peek"** (decided by Harsh; ratifies the tentative item
+  (1) in the 2026-07-06 B3b entry). An `unread`/`{message_id}` anchored
+  `messages` window is bounded on **both** sides; a message outside it is
+  never pushed in (that would render as a gap between the loaded block and a
+  lone row). Awareness of out-of-window activity comes from **other views** —
+  the `chats` row (preview/unread/recency) and frontend-computed jump-to-bottom
+  pill counts — never the messages view. To follow the live edge a frontend
+  subscribes `latest` ("swap to latest on reaching bottom"). Jump-to-bottom is
+  a re-anchor in *either* model and costs one indexed tail fetch
+  (`idx_messages_chat_timestamp`, ≈ single-digit ms over the local socket), so
+  no tail preloading is required for a seamless UX. Reference frontend flow:
+  the page is in *live* mode (sub = `latest`) at/near the bottom and *history*
+  mode (anchored) when navigated away; it swaps the subscription only when the
+  user crosses that boundary — a small scroll-up never leaves live mode, so
+  new messages keep streaming into the local item map and jump-to-bottom is a
+  pure scroll. **Planned PROTOCOL.md amendment (apply at C4, sign-off
+  required):** narrow the Windows section's unconditional "new messages always
+  arrive regardless of window size" to the `latest` anchor, and add that
+  anchored windows are bounded both sides with out-of-window awareness coming
+  from `chats`; "to follow the live edge, subscribe `latest`." Not changing
+  PROTOCOL.md now.
+- 2026-07-07 — **Problem 2 (`extend` direction) resolved** (decided by Harsh);
+  **supersedes** the symmetric-growth reading in the 2026-07-06 B3b entry
+  (item 2). `extend` gains a **required** `direction` field (`older`|`newer`).
+  `latest`-mode extend is always `older` — the newer edge is the live edge and
+  new messages arrive unsolicited — so `direction:"newer"` on a
+  `latest`-anchored window is an **error** (`invalid_params`). Anchored windows
+  grow only the chosen frontier, removing the ~2× over-fetch and the muddy
+  count semantics of symmetric growth. Implemented as new step **B3c**
+  (engine-adjacent: the session tracks two frontiers). Open sub-question
+  deferred to B3c: what a required `direction` means for prefix/collection
+  views with no older/newer axis. Amends PROTOCOL.md's `extend` verb row at
+  B3c (sign-off required). Not changing PROTOCOL.md or code now.
