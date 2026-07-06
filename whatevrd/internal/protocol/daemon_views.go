@@ -17,11 +17,20 @@ type PendingOutgoingCounter interface {
 	CountPendingOutgoingMessages(context.Context) (int, error)
 }
 
-// RegisterDaemonViews registers the daemon-owned object views from PROTOCOL.md.
-func RegisterDaemonViews(s *Server, daemon *app.Daemon, pending PendingOutgoingCounter) {
-	s.RegisterView("connection", connectionView{daemon: daemon, pending: pending})
+// DaemonStore is the daemon-owned state the built-in views read. *store.DB
+// implements it; tests can pass nil when a view they exercise does not touch
+// it.
+type DaemonStore interface {
+	PendingOutgoingCounter
+	ChatLister
+}
+
+// RegisterDaemonViews registers the daemon-owned views from PROTOCOL.md.
+func RegisterDaemonViews(s *Server, daemon *app.Daemon, store DaemonStore) {
+	s.RegisterView("connection", connectionView{daemon: daemon, pending: store})
 	s.RegisterView("sync", syncView{daemon: daemon})
 	s.RegisterView("login", loginView{daemon: daemon})
+	s.RegisterView("chats", chatsView{daemon: daemon, lister: store})
 }
 
 type connectionView struct {
