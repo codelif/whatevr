@@ -23,6 +23,7 @@ type PendingOutgoingCounter interface {
 type DaemonStore interface {
 	PendingOutgoingCounter
 	ChatLister
+	MessageLister
 }
 
 // RegisterDaemonViews registers the daemon-owned views from PROTOCOL.md.
@@ -31,6 +32,7 @@ func RegisterDaemonViews(s *Server, daemon *app.Daemon, store DaemonStore) {
 	s.RegisterView("sync", syncView{daemon: daemon})
 	s.RegisterView("login", loginView{daemon: daemon})
 	s.RegisterView("chats", chatsView{daemon: daemon, lister: store})
+	s.RegisterView("messages", messagesView{daemon: daemon, lister: store})
 }
 
 type connectionView struct {
