@@ -15,14 +15,18 @@ import (
 )
 
 // MessageLister supplies the `messages` view its rows. *store.DB implements it.
-// ListMessages backs the live-edge (`latest`) window; ListMessagesAround backs
-// anchored (`unread` / message-id) windows as a balanced neighborhood around a
-// target; ListMessagesAroundUnread resolves the oldest-unread anchor id from a
-// chat's unread count; GetChat supplies that unread count.
+// ListMessages backs the live-edge (`latest`) window and an anchored window's
+// older frontier (newest messages before the anchor); ListMessagesAfter backs
+// the newer frontier (oldest messages after the anchor); GetMessage fetches the
+// anchor row itself. ListMessagesAround resolves/validates a message-id anchor;
+// ListMessagesAroundUnread resolves the oldest-unread anchor id from the chat's
+// unread count, which GetChat supplies.
 type MessageLister interface {
 	ListMessages(ctx context.Context, chatID string, limit int, beforeMessageID string) ([]store.Message, error)
+	ListMessagesAfter(ctx context.Context, chatID string, limit int, afterMessageID string) ([]store.Message, error)
 	ListMessagesAround(ctx context.Context, chatID string, limit int, targetMessageID string) ([]store.Message, error)
 	ListMessagesAroundUnread(ctx context.Context, chatID string, limit int, unreadCount int) ([]store.Message, string, error)
+	GetMessage(ctx context.Context, id string) (store.Message, error)
 	GetChat(ctx context.Context, chatID string) (store.Chat, error)
 }
 
@@ -33,19 +37,15 @@ type MessageLister interface {
 const messagesUnboundedLimit = 1 << 20
 
 // messagesView is the per-chat conversation view. With the default `latest`
-// anchor it is anchored at the live edge: the window holds the newest N
-// messages, new messages always arrive, and `extend` reaches older into the
-// local store. The `unread` and message-id anchors instead position the
-// window around a mid-history anchor (the oldest unread message, or a named
-// message a frontend is jumping to); the window is a balanced neighborhood
-// that `extend` widens both directions. Fetching older history *from the
+// anchor it is a live-edge prefix window: the newest N messages, new messages
+// arrive unsolicited, and `extend` (always `older`) reaches back into the local
+// store. The `unread` and message-id anchors instead pin a mid-history anchor
+// (the oldest unread message, or a named message a frontend is jumping to) and
+// present a bounded window around it; that window is a DirectionalSession —
+// `extend` grows a chosen frontier (`older` up-history, `newer` toward present)
+// one side at a time, and out-of-window messages never intrude (Model A: to
+// follow the live edge, subscribe `latest`). Fetching older history *from the
 // phone* is the separate `chat.request_older` command.
-//
-// The anchored window reuses A2's prefix-window engine unchanged: the session
-// returns items ordered by proximity to the anchor (the "importance" order the
-// engine keeps as its prefix), while each item's ascending timestamp sort key
-// drives render order — the same slice-order/sort-key split the `latest`
-// window uses, just keyed on distance-from-anchor instead of recency.
 type messagesView struct {
 	daemon *app.Daemon
 	lister MessageLister
@@ -54,6 +54,7 @@ type messagesView struct {
 type messagesParams struct {
 	ChatID string `json:"chat_id"`
 	Anchor string `json:"anchor"`
+	Limit  *int   `json:"limit"`
 }
 
 func (v messagesView) Open(params json.RawMessage, invalidate func()) (ViewSession, map[string]any, *Error) {
@@ -73,15 +74,41 @@ func (v messagesView) Open(params json.RawMessage, invalidate func()) (ViewSessi
 	}
 
 	events, cancel := v.daemon.SubscribeDaemonEvents()
-	s := &messagesSession{
-		lister:       v.lister,
-		chatID:       p.ChatID,
-		anchorID:     anchorID,
-		eventsCancel: cancel,
-		done:         make(chan struct{}),
+	newFeed := func() messagesChatFeed {
+		return messagesChatFeed{
+			lister:       v.lister,
+			chatID:       p.ChatID,
+			eventsCancel: cancel,
+			done:         make(chan struct{}),
+		}
+	}
+	if anchorID == "" {
+		s := &latestMessagesSession{messagesChatFeed: newFeed()}
+		go s.run(events, invalidate)
+		return s, meta, nil
+	}
+	older, newer := initialAnchorReach(p.Limit)
+	s := &anchoredMessagesSession{
+		messagesChatFeed: newFeed(),
+		anchorID:         anchorID,
+		olderReach:       older,
+		newerReach:       newer,
 	}
 	go s.run(events, invalidate)
 	return s, meta, nil
+}
+
+// initialAnchorReach splits the subscribe limit into a balanced older/newer
+// reach around the anchor (older-biased on odd remainders, matching the store's
+// around-anchor split). No limit falls back to the unbounded cap; the real
+// fetch is still bounded by how many messages exist.
+func initialAnchorReach(limit *int) (older, newer int) {
+	total := messagesUnboundedLimit
+	if limit != nil && *limit > 0 {
+		total = *limit
+	}
+	half := (total - 1) / 2
+	return half, (total - 1) - half
 }
 
 // resolveAnchor turns the `anchor` param into a fixed anchor message id (empty
@@ -126,41 +153,41 @@ func (v messagesView) resolveAnchor(p messagesParams) (string, map[string]any, *
 	}
 }
 
-type messagesSession struct {
+// messagesChatFeed is the plumbing both session shapes share: it watches
+// daemon events and invalidates the window whenever a message in this chat may
+// have changed. Items always re-reads the store, so a spurious invalidate just
+// recomputes to no diff.
+type messagesChatFeed struct {
 	lister       MessageLister
 	chatID       string
-	anchorID     string // empty = live-edge window; else balanced around this id
 	eventsCancel func()
 	done         chan struct{}
 	closeOnce    sync.Once
 }
 
-// run invalidates the window whenever a daemon event may have changed a
-// message in this chat. Items always re-reads the store, so a spurious
-// invalidate just recomputes to no diff.
-func (s *messagesSession) run(events <-chan app.DaemonEvent, invalidate func()) {
+func (f *messagesChatFeed) run(events <-chan app.DaemonEvent, invalidate func()) {
 	for {
 		select {
-		case <-s.done:
+		case <-f.done:
 			return
 		case evt := <-events:
-			if s.eventAffectsChat(evt) {
+			if f.eventAffectsChat(evt) {
 				invalidate()
 			}
 		}
 	}
 }
 
-func (s *messagesSession) eventAffectsChat(evt app.DaemonEvent) bool {
+func (f *messagesChatFeed) eventAffectsChat(evt app.DaemonEvent) bool {
 	switch evt.Kind {
 	case app.DaemonEventNewMessage, app.DaemonEventMessageUpdated:
-		return evt.Message.ChatID == s.chatID
+		return evt.Message.ChatID == f.chatID
 	case app.DaemonEventMessageDeleted, app.DaemonEventChatDeleted:
-		return evt.DeletedChatID == s.chatID
+		return evt.DeletedChatID == f.chatID
 	case app.DaemonEventChatCleared:
-		return evt.Chat.ID == s.chatID
+		return evt.Chat.ID == f.chatID
 	case app.DaemonEventHistoryBackfilled:
-		return evt.HistorySync.ChatID == s.chatID
+		return evt.HistorySync.ChatID == f.chatID
 	case app.DaemonEventAvatarUpdated:
 		// An avatar change may be a participant of this chat; re-reading is
 		// cheap and diffs to nothing when no sender row here changed.
@@ -170,14 +197,22 @@ func (s *messagesSession) eventAffectsChat(evt app.DaemonEvent) bool {
 	}
 }
 
-// Items returns the max most-relevant messages of the chat in the slice order
-// the engine keeps as its prefix window, each carrying an ascending timestamp
-// sort key so the client renders the conversation oldest→newest regardless of
-// arrival order. For the live edge (no anchor) "relevance" is recency, so the
-// slice is newest-first and the prefix is the newest N. For an anchored
-// window "relevance" is proximity to the anchor, so the prefix is a balanced
-// neighborhood the anchor sits in the middle of; `extend` widens it both ways.
-func (s *messagesSession) Items(max int) []Item {
+func (f *messagesChatFeed) Close() {
+	f.closeOnce.Do(func() {
+		close(f.done)
+		f.eventsCancel()
+	})
+}
+
+// latestMessagesSession is the live-edge prefix window: Items returns the newest
+// max messages slice-ordered newest-first (the engine keeps the prefix = the
+// newest), while each item carries an ascending timestamp sort key so the client
+// renders oldest→newest. `extend` (always `older`) grows the prefix.
+type latestMessagesSession struct {
+	messagesChatFeed
+}
+
+func (s *latestMessagesSession) Items(max int) []Item {
 	if s.lister == nil {
 		return nil
 	}
@@ -185,77 +220,125 @@ func (s *messagesSession) Items(max int) []Item {
 	if limit <= 0 {
 		limit = messagesUnboundedLimit
 	}
-	msgs, err := s.orderedMessages(limit)
+	msgs, err := s.lister.ListMessages(context.Background(), s.chatID, limit, "")
 	if err != nil {
-		log.Printf("protocol: list messages for view: %v", err)
+		log.Printf("protocol: list latest messages for view: %v", err)
 		return nil
 	}
+	reverseMessages(msgs) // newest-first for the prefix window
 	items := make([]Item, 0, len(msgs))
 	for _, m := range msgs {
-		items = append(items, Item{ID: m.ID, Sort: messageSort(m), Data: messageItemFromStore(m)})
+		items = append(items, messageWireItem(m))
 	}
 	return items
 }
 
-// orderedMessages fetches the window for the current anchor and returns it in
-// engine-prefix order (most relevant first). The live edge reverses the
-// store's ascending page into newest-first; an anchored window fetches the
-// balanced neighborhood around the anchor and reorders it by distance from the
-// anchor so the engine's prefix trim always keeps a contiguous run centered on
-// the anchor.
-func (s *messagesSession) orderedMessages(limit int) ([]store.Message, error) {
-	ctx := context.Background()
-	if s.anchorID == "" {
-		msgs, err := s.lister.ListMessages(ctx, s.chatID, limit, "")
-		if err != nil {
-			return nil, err
-		}
-		reverseMessages(msgs)
-		return msgs, nil
-	}
-	msgs, err := s.lister.ListMessagesAround(ctx, s.chatID, limit, s.anchorID)
-	if err != nil {
-		// The anchor was validated at subscribe time; a message deleted since
-		// then leaves the window momentarily empty rather than erroring the
-		// live view.
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	return orderByProximity(msgs, s.anchorID), nil
+// anchoredMessagesSession is a DirectionalSession: a bounded window pinned
+// around a fixed anchor whose two frontiers grow independently. It owns its
+// window — olderReach messages before the anchor, the anchor, newerReach after
+// — so `extend older`/`extend newer` bump one frontier at a time. Items returns
+// the whole current window (the engine does no prefix trim); Exhausted reports
+// the frontier last extended so `ready` answers the direction the client grew.
+type anchoredMessagesSession struct {
+	messagesChatFeed
+	anchorID string
+
+	mu             sync.Mutex
+	olderReach     int
+	newerReach     int
+	lastDir        string // "", "older", "newer"
+	olderExhausted bool
+	newerExhausted bool
 }
 
-// orderByProximity reorders a contiguous, ascending run of messages that
-// contains the anchor into "closest to the anchor first": the anchor, then its
-// nearest newer and older neighbors alternating outward. The engine keeps the
-// closest `window` of these as its prefix; because the input is contiguous and
-// we only ever drop from the far ends, that prefix is itself a contiguous run
-// the anchor sits inside — no render gaps.
-func orderByProximity(msgs []store.Message, anchorID string) []store.Message {
-	idx := -1
-	for i := range msgs {
-		if msgs[i].ID == anchorID {
-			idx = i
-			break
-		}
+func (s *anchoredMessagesSession) ExtendWindow(direction string, count int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if direction == "newer" {
+		s.newerReach += count
+		s.lastDir = "newer"
+	} else {
+		s.olderReach += count
+		s.lastDir = "older"
 	}
-	if idx < 0 {
-		// Anchor not in the returned window (shouldn't happen); fall back to
-		// the store's ascending order rather than dropping rows.
-		return msgs
+}
+
+func (s *anchoredMessagesSession) Exhausted() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	switch s.lastDir {
+	case "older":
+		return s.olderExhausted
+	case "newer":
+		return s.newerExhausted
+	default: // before any extend: exhausted only if the whole chat fits
+		return s.olderExhausted && s.newerExhausted
 	}
-	out := make([]store.Message, 0, len(msgs))
-	out = append(out, msgs[idx])
-	for lo, hi := idx-1, idx+1; lo >= 0 || hi < len(msgs); lo, hi = lo-1, hi+1 {
-		if hi < len(msgs) {
-			out = append(out, msgs[hi])
-		}
-		if lo >= 0 {
-			out = append(out, msgs[lo])
-		}
+}
+
+func (s *anchoredMessagesSession) Items(int) []Item {
+	if s.lister == nil {
+		return nil
 	}
-	return out
+	s.mu.Lock()
+	olderN, newerN := s.olderReach, s.newerReach
+	s.mu.Unlock()
+	ctx := context.Background()
+
+	anchor, err := s.lister.GetMessage(ctx, s.anchorID)
+	if err != nil {
+		// The anchor was validated at subscribe; if it is later deleted the
+		// window collapses to empty rather than erroring the live view.
+		if !errors.Is(err, sql.ErrNoRows) {
+			log.Printf("protocol: anchored messages get anchor %q: %v", s.anchorID, err)
+		}
+		return nil
+	}
+
+	// Older frontier: the olderN messages nearest the anchor on the older side
+	// (ascending). Fetch one extra to detect exhaustion, then keep the newest.
+	older, err := s.lister.ListMessages(ctx, s.chatID, olderN+1, s.anchorID)
+	if err != nil {
+		log.Printf("protocol: anchored messages older frontier: %v", err)
+		return nil
+	}
+	olderExhausted := len(older) <= olderN
+	if len(older) > olderN {
+		older = older[len(older)-olderN:]
+	}
+
+	// Newer frontier: the newerN messages nearest the anchor on the newer side
+	// (ascending). Same one-extra exhaustion probe, keep the oldest.
+	newer, err := s.lister.ListMessagesAfter(ctx, s.chatID, newerN+1, s.anchorID)
+	if err != nil {
+		log.Printf("protocol: anchored messages newer frontier: %v", err)
+		return nil
+	}
+	newerExhausted := len(newer) <= newerN
+	if len(newer) > newerN {
+		newer = newer[:newerN]
+	}
+
+	s.mu.Lock()
+	s.olderExhausted = olderExhausted
+	s.newerExhausted = newerExhausted
+	s.mu.Unlock()
+
+	items := make([]Item, 0, len(older)+1+len(newer))
+	for _, m := range older {
+		items = append(items, messageWireItem(m))
+	}
+	items = append(items, messageWireItem(anchor))
+	for _, m := range newer {
+		items = append(items, messageWireItem(m))
+	}
+	return items
+}
+
+// messageWireItem projects a stored message into a view Item: stable id, the
+// ascending timestamp sort key (render order), and the wire shape.
+func messageWireItem(m store.Message) Item {
+	return Item{ID: m.ID, Sort: messageSort(m), Data: messageItemFromStore(m)}
 }
 
 // reverseMessages flips a slice in place; the store returns ascending pages
@@ -264,13 +347,6 @@ func reverseMessages(msgs []store.Message) {
 	for i, j := 0, len(msgs)-1; i < j; i, j = i+1, j-1 {
 		msgs[i], msgs[j] = msgs[j], msgs[i]
 	}
-}
-
-func (s *messagesSession) Close() {
-	s.closeOnce.Do(func() {
-		close(s.done)
-		s.eventsCancel()
-	})
 }
 
 // messageSort is the opaque ordering key: timestamp then the arrival-order

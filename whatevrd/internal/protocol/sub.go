@@ -45,6 +45,9 @@ type subscription struct {
 	id   int64
 	sink frameSink
 	sess ViewSession
+	// dir is sess when it manages its own two-frontier window (anchored
+	// messages); nil for a plain prefix session. Set once at subscribe.
+	dir DirectionalSession
 
 	mu           sync.Mutex
 	window       int // 0 = unbounded
@@ -86,14 +89,31 @@ func (s *subscription) start() {
 	s.maybeRunLocked()
 }
 
-// extend grows the window and schedules a fill that ends in `ready`. Like
+// validateExtend rejects a direction the window's shape cannot honor. Only a
+// prefix (live-edge) session is constrained: its newer edge is the live edge,
+// so `newer` is meaningless there. A directional session accepts both
+// directions (nothing-left-to-reach is a no-op, surfaced via Exhausted).
+func (s *subscription) validateExtend(direction string) *Error {
+	if s.dir == nil && direction == "newer" {
+		return errorf(CodeInvalidParams, "cannot extend this window newer; its newer edge is the live edge, where items arrive on their own")
+	}
+	return nil
+}
+
+// applyExtend grows the window and schedules a fill that ends in `ready`. Like
 // start, the caller enqueues the extend response first. Readies coalesce
 // across rapid extends; PROTOCOL.md defines ready as covering the *latest*
-// subscribe/extend, so clients may not count them.
-func (s *subscription) extend(count int) {
+// subscribe/extend, so clients may not count them. A directional session owns
+// its window, so growth routes to ExtendWindow; a prefix session grows its
+// single-integer window here (only `older` reaches this path — `newer` was
+// rejected in validateExtend).
+func (s *subscription) applyExtend(direction string, count int) {
+	if s.dir != nil {
+		s.dir.ExtendWindow(direction, count)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.window > 0 {
+	if s.dir == nil && s.window > 0 {
 		s.window += count
 	}
 	s.pendingReady = true
@@ -159,15 +179,23 @@ func (s *subscription) run() {
 // difference against what the client holds. Fetching one item beyond the
 // window tells us whether there is anything left to extend into.
 func (s *subscription) recompute(window int) (exhausted, reset bool) {
-	fetch := 0
-	if window > 0 {
-		fetch = window + 1
-	}
-	items := s.sess.Items(fetch)
-	exhausted = true
-	if window > 0 && len(items) > window {
-		items = items[:window]
-		exhausted = false
+	var items []Item
+	if s.dir != nil {
+		// The session owns its window: Items(0) is the whole current window and
+		// exhaustion is per the frontier last extended. No prefix trim.
+		items = s.sess.Items(0)
+		exhausted = s.dir.Exhausted()
+	} else {
+		fetch := 0
+		if window > 0 {
+			fetch = window + 1
+		}
+		items = s.sess.Items(fetch)
+		exhausted = true
+		if window > 0 && len(items) > window {
+			items = items[:window]
+			exhausted = false
+		}
 	}
 
 	next := make(map[string]sentItem, len(items))

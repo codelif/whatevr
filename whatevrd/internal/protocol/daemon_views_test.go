@@ -31,8 +31,16 @@ func (f *fakePendingCounter) ListMessages(context.Context, string, int, string) 
 	return nil, nil
 }
 
+func (f *fakePendingCounter) ListMessagesAfter(context.Context, string, int, string) ([]store.Message, error) {
+	return nil, nil
+}
+
 func (f *fakePendingCounter) ListMessagesAround(context.Context, string, int, string) ([]store.Message, error) {
 	return nil, nil
+}
+
+func (f *fakePendingCounter) GetMessage(context.Context, string) (store.Message, error) {
+	return store.Message{}, nil
 }
 
 func (f *fakePendingCounter) ListMessagesAroundUnread(context.Context, string, int, int) ([]store.Message, string, error) {

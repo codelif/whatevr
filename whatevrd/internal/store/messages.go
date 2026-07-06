@@ -808,6 +808,26 @@ func (db *DB) OldestStoredMessage(ctx context.Context, chatID string) (Message, 
 	return msg, true, nil
 }
 
+// ListMessagesAfter returns up to limit messages strictly newer than
+// afterMessageID within the same chat, oldest-first (closest to the cursor
+// first). It is the newer-side mirror of ListMessages ("before"), and backs
+// the messages view's directional (`newer`) extend. An empty afterMessageID
+// yields nothing.
+func (db *DB) ListMessagesAfter(ctx context.Context, chatID string, limit int, afterMessageID string) ([]Message, error) {
+	defer db.timeOp("ListMessagesAfter", time.Now())
+	if limit <= 0 {
+		limit = 50
+	}
+	if afterMessageID == "" {
+		return nil, nil
+	}
+	afterTimestamp, afterSeq, err := db.messageCursor(ctx, afterMessageID)
+	if err != nil {
+		return nil, err
+	}
+	return db.listMessagesAroundSide(ctx, chatID, afterTimestamp, afterSeq, limit, true)
+}
+
 func (db *DB) ListMessagesAround(ctx context.Context, chatID string, limit int, targetMessageID string) ([]Message, error) {
 	if limit <= 0 {
 		limit = 50

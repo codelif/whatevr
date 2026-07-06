@@ -26,10 +26,11 @@ func seedTextMessage(t *testing.T, db *store.DB, chatID, text string, ts time.Ti
 	return id
 }
 
-// extend grows a subscription's window and reads the empty result.
-func (c *testClient) extend(reqID int, sub float64, count int) {
+// extend grows a subscription's window toward direction and reads the empty
+// result.
+func (c *testClient) extend(reqID int, sub float64, count int, direction string) {
 	c.t.Helper()
-	c.sendLine(fmt.Sprintf(`{"id":%d,"method":"extend","params":{"sub":%d,"count":%d}}`, reqID, int64(sub), count))
+	c.sendLine(fmt.Sprintf(`{"id":%d,"method":"extend","params":{"sub":%d,"count":%d,"direction":%q}}`, reqID, int64(sub), count, direction))
 	if _, ok := c.recv()["result"]; !ok {
 		c.t.Fatalf("extend %d failed", reqID)
 	}
@@ -166,7 +167,7 @@ func TestMessagesViewExtendReachesOlder(t *testing.T) {
 	c.expectUpsert(sub, ids[2]) // newest only
 	c.expectReady(sub, false)   // older remain
 
-	c.extend(3, sub, 2)
+	c.extend(3, sub, 2, "older")
 	// Extending the window reaches the two older messages; the newest is
 	// already held, so only the older two upsert, then ready reports the whole
 	// chat is now local.
@@ -323,7 +324,7 @@ func TestMessagesViewUnreadAnchor(t *testing.T) {
 	c.expectReady(sub, false) // m0..m2 remain older
 }
 
-func TestMessagesViewMessageIDAnchorExtendsBothWays(t *testing.T) {
+func TestMessagesViewMessageIDAnchorDirectionalExtend(t *testing.T) {
 	socketPath, _, db := startChatsTestServer(t)
 	base := time.Unix(1_700_000_000, 0)
 	chat := "c@s.whatsapp.net"
@@ -347,16 +348,48 @@ func TestMessagesViewMessageIDAnchorExtendsBothWays(t *testing.T) {
 	}
 	c.expectReady(sub, false) // m0 and m4 remain, one on each side
 
-	// Extending an anchored window reaches outward in BOTH directions: the
-	// older m0 and the newer m4 both arrive, and the whole chat is now local.
-	c.extend(3, sub, 2)
-	grew := c.collectUpserts(sub, 2)
-	if _, ok := grew[ids[0]]; !ok {
-		t.Fatalf("extend did not reach older m0: %v", grew)
+	// Extend OLDER only: the older m0 arrives (the newer m4 does not), and the
+	// older frontier is now exhausted.
+	c.extend(3, sub, 1, "older")
+	older := c.collectUpserts(sub, 1)
+	if _, ok := older[ids[0]]; !ok {
+		t.Fatalf("extend older did not reach m0: %v", older)
 	}
-	if _, ok := grew[ids[4]]; !ok {
-		t.Fatalf("extend did not reach newer m4: %v", grew)
+	c.expectReady(sub, true) // older frontier exhausted
+
+	// Extend NEWER only: now the newer m4 arrives and the newer frontier is
+	// exhausted too.
+	c.extend(4, sub, 1, "newer")
+	newer := c.collectUpserts(sub, 1)
+	if _, ok := newer[ids[4]]; !ok {
+		t.Fatalf("extend newer did not reach m4: %v", newer)
 	}
+	c.expectReady(sub, true) // newer frontier exhausted
+}
+
+func TestMessagesViewExtendNewerOnLatestErrors(t *testing.T) {
+	socketPath, _, db := startChatsTestServer(t)
+	base := time.Unix(1_700_000_000, 0)
+	chat := "c@s.whatsapp.net"
+	older := seedTextMessage(t, db, chat, "older", base)
+	seedTextMessage(t, db, chat, "newer", base.Add(time.Minute))
+
+	c := dialTest(t, socketPath)
+	c.hello()
+	sub := c.subscribe(2, fmt.Sprintf(`{"view":"messages","chat_id":%q,"limit":1}`, chat))
+	c.expectUpsert(sub, seedID(chat, base.Add(time.Minute))) // newest
+	c.expectReady(sub, false)                                // older remains
+
+	// `newer` is meaningless on a live-edge window: the newer edge is the live
+	// edge, where messages arrive unsolicited.
+	c.sendLine(fmt.Sprintf(`{"id":3,"method":"extend","params":{"sub":%d,"count":1,"direction":"newer"}}`, int64(sub)))
+	if code := errorCode(t, c.recv()); code != CodeInvalidParams {
+		t.Fatalf("extend newer on latest: code = %q, want %q", code, CodeInvalidParams)
+	}
+
+	// `older` still reaches back into history.
+	c.extend(4, sub, 1, "older")
+	c.expectUpsert(sub, older)
 	c.expectReady(sub, true)
 }
 
