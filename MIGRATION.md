@@ -84,7 +84,7 @@ Status: `todo` | `doing` | `done` | `blocked` | `needs-decision`
 
 | id | step | status | notes |
 | --- | --- | --- | --- |
-| C1 | Session/chat commands: `session.update`, `daemon.reconnect`, `account.logout`, `chat.*` (mark_read, pin, archive, mute, typing, request_older, ensure_direct) | todo | |
+| C1 | Session/chat commands: `session.update`, `daemon.reconnect`, `account.logout`, `chat.*` (mark_read, pin, archive, mute, typing, request_older, ensure_direct) | todo | `chat.mark_read` carries an `up_to_message_id` watermark (Decision log 2026-07-07); dumb frontends pass the newest held message id. Applying it amends PROTOCOL.md's `chat.mark_read` row (currently `chat_id` → `{}`) at C1. |
 | C2 | `send.*`, `message.*` (react, edit, revoke, delete, star, pin, forward), `media.download` (+`transfers` wiring), `media.fetch_profile_picture` | todo | |
 | C3 | `privacy.set`, `preferences.set`, `self.set_about`, `contact.block`, sticker commands, queries (`search.chats`, `search.messages`, `contacts.check_phone`), `open_chat` connection-directed routing | todo | |
 | C4 | **Daemon audit milestone:** finish `examples/` shell frontend as a real usable client; run full conformance; line-by-line diff of PROTOCOL.md vs daemon; fix drift or log `needs-decision` items | todo | |
@@ -159,3 +159,14 @@ _None._
   into whichever side still has local history); the `extend` verb carries no
   direction. (3) `unread` with a zero/unresolvable unread count degrades to
   the live-edge window with no `anchor_id`, indistinguishable from `latest`.
+- 2026-07-07 — `chat.mark_read` gains an `up_to_message_id` watermark
+  (C1 concern, decided by Harsh). "Read" is a function of scroll position,
+  which rule 1 keeps frontend-side, so the frontend must emit the one fact it
+  alone holds — how far the user has actually seen — and the daemon owns
+  everything downstream (recompute `unread`, send per-message read receipts
+  upstream, cross-device read sync, notification clearing). One command
+  serves both smart and dumb frontends: a smart frontend passes a true
+  watermark from its scroll position; a dumb frontend passes the newest
+  message id it holds and gets whole-chat "caught up" behavior with no
+  separate code path. Not changing PROTOCOL.md now; the `chat.mark_read` row
+  is amended when C1 lands (see C1 note).
