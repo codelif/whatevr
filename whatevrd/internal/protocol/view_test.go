@@ -365,7 +365,7 @@ func TestExtendGrowsWindow(t *testing.T) {
 	c.expectUpsert(sub, "b")
 	c.expectReady(sub, false)
 
-	c.sendLine(fmt.Sprintf(`{"id":3,"method":"extend","params":{"sub":%d,"count":2}}`, int(sub)))
+	c.sendLine(fmt.Sprintf(`{"id":3,"method":"extend","params":{"sub":%d,"count":2,"direction":"older"}}`, int(sub)))
 	if msg := c.recv(); msg["error"] != nil || msg["id"] != float64(3) {
 		t.Fatalf("extend failed: %v", msg)
 	}
@@ -373,7 +373,7 @@ func TestExtendGrowsWindow(t *testing.T) {
 	c.expectUpsert(sub, "d")
 	c.expectReady(sub, false)
 
-	c.sendLine(fmt.Sprintf(`{"id":4,"method":"extend","params":{"sub":%d,"count":10}}`, int(sub)))
+	c.sendLine(fmt.Sprintf(`{"id":4,"method":"extend","params":{"sub":%d,"count":10,"direction":"older"}}`, int(sub)))
 	if msg := c.recv(); msg["error"] != nil {
 		t.Fatalf("extend failed: %v", msg)
 	}
@@ -392,10 +392,13 @@ func TestExtendErrors(t *testing.T) {
 	c.expectReady(sub, true)
 
 	for _, tc := range []struct{ params, code string }{
-		{`{"sub":99,"count":5}`, CodeNotFound},
-		{`{"count":5}`, CodeInvalidParams},
-		{fmt.Sprintf(`{"sub":%d}`, int(sub)), CodeInvalidParams},
-		{fmt.Sprintf(`{"sub":%d,"count":0}`, int(sub)), CodeInvalidParams},
+		{`{"sub":99,"count":5,"direction":"older"}`, CodeNotFound},
+		{`{"count":5,"direction":"older"}`, CodeInvalidParams},                            // no sub
+		{fmt.Sprintf(`{"sub":%d,"direction":"older"}`, int(sub)), CodeInvalidParams},      // no count
+		{fmt.Sprintf(`{"sub":%d,"count":0,"direction":"older"}`, int(sub)), CodeInvalidParams}, // count 0
+		{fmt.Sprintf(`{"sub":%d,"count":5}`, int(sub)), CodeInvalidParams},                // no direction
+		{fmt.Sprintf(`{"sub":%d,"count":5,"direction":"sideways"}`, int(sub)), CodeInvalidParams}, // bad direction
+		{fmt.Sprintf(`{"sub":%d,"count":5,"direction":"newer"}`, int(sub)), CodeInvalidParams},    // newer on a prefix window
 	} {
 		c.sendLine(`{"id":9,"method":"extend","params":` + tc.params + `}`)
 		if code := errorCode(t, c.recv()); code != tc.code {

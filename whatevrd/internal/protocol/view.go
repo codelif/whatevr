@@ -35,6 +35,30 @@ type ViewSession interface {
 	Close()
 }
 
+// DirectionalSession is an optional ViewSession capability for a windowed view
+// whose window is not a live-edge prefix but a range that grows independently
+// toward older and newer items — the anchored `messages` window. When Open
+// returns a session that implements it, the engine hands window ownership to
+// the session: `extend` routes (direction, count) to ExtendWindow instead of
+// bumping the generic prefix window, Items(0) reports the session's whole
+// current window (the engine does no prefix trim), and Exhausted drives the
+// ready event. A plain prefix session (chat lists, object views, the `latest`
+// messages window) does not implement this, so the engine rejects a `newer`
+// extend against it — its newer edge is the live edge, where items arrive
+// unsolicited.
+type DirectionalSession interface {
+	ViewSession
+	// ExtendWindow grows the window toward direction ("older"|"newer") by count.
+	// The engine has already validated direction is one of the two legal
+	// values; a direction with nothing left to reach is a no-op surfaced
+	// through Exhausted, never an error.
+	ExtendWindow(direction string, count int)
+	// Exhausted reports whether the frontier last extended (or, before any
+	// extend, both frontiers) has nothing further locally — the value the
+	// ready event carries.
+	Exhausted() bool
+}
+
 // RegisterView makes a view subscribable under its protocol name
 // (e.g. "chats"). Safe to call while the server is accepting connections.
 func (s *Server) RegisterView(name string, v View) {
@@ -83,6 +107,9 @@ func (s *Server) handleSubscribe(c *conn, req request) (any, *Error) {
 		return nil, verr
 	}
 	sub.sess = sess
+	if d, ok := sess.(DirectionalSession); ok {
+		sub.dir = d
+	}
 	c.registerSub(sub)
 
 	result := map[string]any{"sub": sub.id}
@@ -99,8 +126,9 @@ func (s *Server) handleSubscribe(c *conn, req request) (any, *Error) {
 }
 
 type extendParams struct {
-	Sub   *int64 `json:"sub"`
-	Count *int   `json:"count"`
+	Sub       *int64 `json:"sub"`
+	Count     *int   `json:"count"`
+	Direction string `json:"direction"`
 }
 
 func (s *Server) handleExtend(c *conn, req request) (any, *Error) {
@@ -116,14 +144,23 @@ func (s *Server) handleExtend(c *conn, req request) (any, *Error) {
 	if p.Count == nil || *p.Count <= 0 {
 		return nil, errorf(CodeInvalidParams, "count must be a positive integer")
 	}
+	if p.Direction != "older" && p.Direction != "newer" {
+		return nil, errorf(CodeInvalidParams, "extend params must carry a direction of \"older\" or \"newer\"")
+	}
 	sub, ok := c.subscription(*p.Sub)
 	if !ok {
 		return nil, errorf(CodeNotFound, "no subscription %d", *p.Sub)
 	}
+	// Validate the direction against the window's shape before responding, so
+	// an invalid `newer` on a live-edge window becomes the request's error
+	// response rather than a result.
+	if verr := sub.validateExtend(p.Direction); verr != nil {
+		return nil, verr
+	}
 	// Respond before growing the window so `ready` cannot precede the
 	// response (completion is signaled by ready, per PROTOCOL.md).
 	c.respondResult(req.ID, map[string]any{})
-	sub.extend(*p.Count)
+	sub.applyExtend(p.Direction, *p.Count)
 	return responded{}, nil
 }
 

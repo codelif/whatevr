@@ -983,6 +983,53 @@ func TestListMessagesAroundMissingOrWrongChatReturnsNoRows(t *testing.T) {
 	}
 }
 
+func TestListMessagesAfterReturnsNewerAscending(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	for i := 1; i <= 7; i++ {
+		id := fmt.Sprintf("chat-1:%d", i)
+		if _, err := db.SaveTextMessage(ctx, TextMessageInput{
+			ID:        id,
+			ChatID:    "chat-1",
+			ChatName:  "Test Chat",
+			SenderID:  "sender-1",
+			Text:      id,
+			Timestamp: time.Unix(int64(i*100), 0),
+			Direction: DirectionIncoming,
+			Status:    StatusDelivered,
+		}); err != nil {
+			t.Fatalf("save %s: %v", id, err)
+		}
+	}
+
+	// The three messages nearest the anchor on the newer side, oldest-first.
+	messages, err := db.ListMessagesAfter(ctx, "chat-1", 3, "chat-1:4")
+	if err != nil {
+		t.Fatalf("list after: %v", err)
+	}
+	got := make([]string, 0, len(messages))
+	for _, message := range messages {
+		got = append(got, message.ID)
+	}
+	if want := []string{"chat-1:5", "chat-1:6", "chat-1:7"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("after ids = %+v, want %+v", got, want)
+	}
+
+	// Nothing newer than the newest message.
+	if tail, err := db.ListMessagesAfter(ctx, "chat-1", 3, "chat-1:7"); err != nil || len(tail) != 0 {
+		t.Fatalf("after newest = %+v (err %v), want empty", tail, err)
+	}
+	// Empty cursor yields nothing.
+	if none, err := db.ListMessagesAfter(ctx, "chat-1", 3, ""); err != nil || len(none) != 0 {
+		t.Fatalf("after empty cursor = %+v (err %v), want empty", none, err)
+	}
+}
+
 func TestMarkChatReadClearsUnreadCount(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))

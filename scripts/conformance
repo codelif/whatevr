@@ -236,7 +236,11 @@ def check_subscribe_ordering(socket_path: Path) -> None:
         ready = c.expect_event("ready", sub)
         require(ready.get("exhausted", False) is False, f"initial window should not be exhausted: {ready!r}")
 
-        c.send({"id": "extend", "method": "extend", "params": {"sub": sub, "count": 2}})
+        # extend requires a direction; omitting it is invalid_params.
+        c.send({"id": "extend-nodir", "method": "extend", "params": {"sub": sub, "count": 2}})
+        c.expect_response("extend-nodir", "invalid_params")
+
+        c.send({"id": "extend", "method": "extend", "params": {"sub": sub, "count": 2, "direction": "older"}})
         c.expect_response("extend")
         msg = c.expect_event("upsert", sub)
         item = msg.get("item")
