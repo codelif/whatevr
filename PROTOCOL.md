@@ -102,7 +102,7 @@ The entire live surface uses three methods and four events.
 | method | params | result |
 | --- | --- | --- |
 | `subscribe` | `view`, view-specific params, optional `limit` | `{sub, ...view-specific meta}` |
-| `extend` | `sub`, `count` | `{}` (completion signaled by `ready`) |
+| `extend` | `sub`, `count`, `direction` (`older`\|`newer`) | `{}` (completion signaled by `ready`) |
 | `unsubscribe` | `sub` | `{}` |
 
 **Events** (all carry `sub`)
@@ -111,7 +111,7 @@ The entire live surface uses three methods and four events.
 | --- | --- | --- |
 | `upsert` | `sort`, `item` | insert or replace the item with this `item.id`, positioned by `sort` |
 | `remove` | `id` | delete the item with this id |
-| `ready` | optional `exhausted` | the window is fully populated for the latest subscribe/extend; `exhausted: true` means there is nothing further to extend into locally |
+| `ready` | optional `exhausted` | the window is fully populated for the latest subscribe/extend; `exhausted: true` means there is nothing further to extend into locally (for the frontier just extended — see *Windows*) |
 | `reset` | — | discard the local copy; fresh upserts follow, then `ready` |
 
 Order after `subscribe`: response first (delivering `sub`), then upserts, then
@@ -143,9 +143,25 @@ examples.
 Collection views accept `limit`: the window is the first `limit` items in
 view order, and the daemon keeps the client copy exactly equal to that
 window (items pushed out of the window are `remove`d). `extend` grows the
-window. Message views are anchored at the live edge: new messages always
-arrive regardless of window size; `extend` reaches older into the local
-store. Fetching history *from the phone* is a separate explicit command
+window, and every `extend` carries a `direction`.
+
+Every collection view — and a `messages` view with the `latest` anchor — is a
+**live-edge** window: it sits at the newest / highest-priority end, new items
+arrive there unsolicited regardless of window size, and `extend` with
+`direction: "older"` reaches back away from that edge into the local store.
+`direction: "newer"` is meaningless for a live-edge window — its newer edge
+*is* the live edge — so the daemon rejects it (`invalid_params`).
+
+The `unread` and `{message_id}` message anchors instead pin a **bounded window
+around a mid-history anchor**, and its two frontiers grow independently:
+`extend` with `direction: "older"` reaches up-history, `"newer"` toward the
+present. Messages outside the window do not intrude — a new message far past
+the anchor is *not* delivered into this window (it would leave a render gap);
+the frontend learns of it through the `chats` view (its row's updated
+preview/unread) and *follows* the live edge by subscribing `latest`. `ready`'s
+`exhausted` reports the frontier just extended.
+
+Fetching history *from the phone* is a separate explicit command
 (`chat.request_older`), because it has network cost and its results land like
 any other message upserts.
 
