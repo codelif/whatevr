@@ -291,18 +291,34 @@ func (c *Client) refreshGroupInfoLive(ctx context.Context, chatJID types.JID, av
 		return
 	}
 
+	// Resolve my own role in the same pass, keying off the canonical form the
+	// member list uses so the "me" row and my_role agree. ownParticipantJIDs
+	// covers both the PN and LID forms the account can appear as; if I am not
+	// found (rare — e.g. viewing a group I just left), "member" is the safe
+	// default (it never grants the composer more than it should).
+	own := c.ownParticipantJIDs()
+	myRole := ""
 	sources := make([]groupMemberSource, 0, len(live.Participants))
 	for _, p := range live.Participants {
 		source := p.PhoneNumber
 		if source.IsEmpty() {
 			source = p.JID
 		}
+		canonical := c.canonicalParticipantJID(ctx, source)
 		sources = append(sources, groupMemberSource{
-			canonical: c.canonicalParticipantJID(ctx, source),
+			canonical: canonical,
 			isAdmin:   p.IsAdmin,
 			isSuper:   p.IsSuperAdmin,
 			pn:        p.PhoneNumber,
 		})
+		if own[canonical] {
+			myRole = app.GroupRoleString(p.IsAdmin, p.IsSuperAdmin)
+		}
+	}
+
+	owner := c.canonicalParticipantJID(ctx, live.OwnerJID)
+	if owner == "" {
+		owner = c.canonicalParticipantJID(ctx, live.OwnerPN)
 	}
 
 	c.daemon.PublishGroupInfoUpdated(chatJID.String(), app.GroupInfo{
@@ -310,6 +326,10 @@ func (c *Client) refreshGroupInfoLive(ctx context.Context, chatJID types.JID, av
 		Description:     strings.TrimSpace(live.Topic),
 		AvatarLocalPath: avatarLocalPath,
 		CreatedUnix:     live.GroupCreated.Unix(),
+		OwnerJID:        owner,
+		MyRole:          myRole,
+		IsAnnounce:      live.IsAnnounce,
+		IsLocked:        live.IsLocked,
 		Members:         c.resolveGroupMembers(ctx, sources),
 	})
 }

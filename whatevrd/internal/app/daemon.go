@@ -404,13 +404,36 @@ type GroupMember struct {
 	IsSuperAdmin    bool
 }
 
-// GroupInfo is the full card for a group chat.
+// GroupRoleString maps a participant's admin flags to the wire role vocabulary
+// shared by GroupInfo.MyRole and the group_members view: "superadmin", "admin",
+// or "member".
+func GroupRoleString(isAdmin, isSuperAdmin bool) string {
+	switch {
+	case isSuperAdmin:
+		return "superadmin"
+	case isAdmin:
+		return "admin"
+	default:
+		return "member"
+	}
+}
+
+// GroupInfo is the full card for a group chat. Owner/MyRole/IsAnnounce/IsLocked
+// come only from the live GetGroupInfo fetch (the stored-participant fallback
+// leaves them zero), so they populate in the second phase — see GetGroupInfo.
 type GroupInfo struct {
 	Subject         string
 	Description     string
 	AvatarLocalPath string
 	CreatedUnix     int64
-	Members         []GroupMember
+	OwnerJID        string
+	// MyRole is the local account's role in the group: "member", "admin", or
+	// "superadmin" (empty until the live fetch resolves it). Feeds composer
+	// lockout together with IsAnnounce.
+	MyRole     string
+	IsAnnounce bool
+	IsLocked   bool
+	Members    []GroupMember
 }
 
 // PrivacySettings mirrors the user's WhatsApp privacy categories. Each audience
