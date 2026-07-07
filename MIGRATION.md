@@ -94,7 +94,7 @@ Status: `todo` | `doing` | `done` | `blocked` | `needs-decision`
 | C1 | Session/chat commands: `session.update`, `daemon.reconnect`, `account.logout`, `chat.*` (mark_read, pin, archive, mute, typing, request_older, ensure_direct) | done | `commands.go` registers C1 acks/results over the protocol; `session.update` maps each socket to a frontend session, chat commands call the WA action seam, and `chat.mark_read` now requires/applies `up_to_message_id` via `wa.MarkChatReadUpTo`. PROTOCOL.md amended accordingly; fixture + raw-socket tests cover the surface. |
 | C2 | `send.*`, `message.*` (react, edit, revoke, delete, star, pin, forward), `media.download` (+`transfers` wiring), `media.fetch_profile_picture` | done | `commands.go` now registers the C2 command surface with ids/acks only; `wa.SendMediaWithMentions` plumbs protocol media mentions while legacy gRPC keeps its old signature; fixture + raw-socket command tests cover send/message/media commands. |
 | C3 | `privacy.set`, `preferences.set`, `self.set_about`, `contact.block`, sticker commands, queries (`search.chats`, `search.messages`, `contacts.check_phone`), `open_chat` connection-directed routing | done | `settings_commands.go`, `sticker_commands.go`, and `query_commands.go` register the new commands/queries (acks only; rows reuse daemon shapes); `open_chat.go` routes connection-directed events to protocol sessions and `main.go` fans notification clicks to both gRPC + protocol during migration. |
-| C4 | **Daemon audit milestone:** finish `examples/` shell frontend as a real usable client; run full conformance; line-by-line diff of PROTOCOL.md vs daemon; fix drift or log `needs-decision` items | todo | Model A Windows-section + directional-`extend` PROTOCOL.md amendments already landed with B3c (2026-07-07); the audit re-checks PROTOCOL.md vs daemon end to end. |
+| C4 | **Daemon audit milestone:** finish `examples/` shell frontend as a real usable client; run full conformance; line-by-line diff of PROTOCOL.md vs daemon; fix drift or log `needs-decision` items | done | Delivered as the whole-migration audit remediation (2026-07-07): a single branch off `main` folding ~30 findings across phases A/B/C into focused commits (startup race, daemon-event resync, command correctness, error segregation + `commands.go` split, view-invalidation completeness, wire/connection hardening, message-anchor & view polish). `examples/shell-frontend.sh` is now a real send + read + chat-list client; `scripts/conformance` passes; PROTOCOL.md reconciled with the daemon (WS8 amendments below); regression tests added (empty-`sort` fallback, conn-frame cap, async `media.download`, all-or-nothing `forward`, sticker favorite/contents invalidation, presence renewal-on-reconnect, backgrounded privacy/blocklist load). `internal/protocol` no longer imports `google.golang.org/grpc`. |
 
 ### Phase D — whatkevr port (C++/QML, page by page; gRPC stays alive until D7)
 
@@ -430,3 +430,31 @@ _None._
   open request to both the legacy gRPC session bus and the protocol server; this
   may be idempotently duplicated for a transitional frontend that is connected to
   both, but it preserves daily-use gRPC behavior until D7.
+- 2026-07-07 — **C4 whole-migration audit remediation** (landed as the C4 step;
+  single branch, focused commits). A read-only audit across phases A/B/C
+  surfaced ~30 findings, folded here. Notable decisions and drift resolutions:
+  - **WS2 daemon-event overflow → resync sentinel.** A full per-subscriber
+    daemon-event buffer previously dropped events with only a global counter,
+    permanently desyncing fold/edge-triggered views (`typing`, `presence`).
+    Now the daemon drains that subscriber's channel and enqueues a single
+    `DaemonEventResync` sentinel; each view session force-reconciles on it
+    (store/network views re-read source, fold views rebuild from their snapshot
+    accessors). This extends PROTOCOL.md's existing conn→client slow-consumer
+    clause one layer up (daemon→session); no wire change.
+  - **F7 correction to the C3 reading above.** `preferences.set`'s read-modify-
+    write was moved *into the daemon* (a single atomic merge) so concurrent
+    callers can no longer lose fields; the handler only forwards present fields
+    (rule 1: the daemon owns state).
+  - **F11 error segregation.** `internal/protocol` no longer imports
+    `google.golang.org/grpc`; the daemon core (app/wa) raises transport-neutral
+    `app.CommandError` values, and each boundary maps them — the protocol layer
+    to its error codes, the frozen gRPC server via a single unary interceptor.
+    F10: not-logged-in is now its own code and group JIDs are rejected on
+    contact-only commands instead of leaking through as `internal`.
+  - **WS8 PROTOCOL.md amendments (document current behavior, signed off).**
+    Query result envelopes (`{chats:…}`, `{messages:…, has_more}`); `open_chat`
+    unfocused fallback; an anchored `messages` window that has reached the live
+    edge keeps absorbing contiguous new messages (no gap); `transfers.direction`
+    values (`download`; uploads an unmodelled known gap); `is_business` is
+    phase-one (not network-fetched) contact data; `starred` is ordered by
+    message timestamp, not star time (the store records no star time).
