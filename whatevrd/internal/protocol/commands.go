@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log"
 	"math"
 	"strconv"
 	"strings"
@@ -22,6 +23,10 @@ const (
 	maxCommandTextRunes      = 65536
 	maxCommandCaptionRunes   = 1024
 	maxCommandForwardTargets = 5
+	// maxCommandDurationSecs bounds any seconds→time.Duration conversion so the
+	// nanosecond multiply cannot overflow int64 (and rejects absurd values well
+	// before that): ~100 years is far beyond any real mute/pin horizon.
+	maxCommandDurationSecs = 100 * 365 * 24 * 60 * 60
 )
 
 // CommandActions is the daemon/WA seam used by protocol commands. *wa.Client
@@ -56,8 +61,7 @@ type CommandActions interface {
 	FetchProfilePicture(context.Context, string) (string, error)
 
 	SetPrivacySetting(context.Context, string, string, bool) (app.PrivacySettings, error)
-	GetAppPreferences(context.Context) (app.AppPreferences, error)
-	SetAppPreferences(context.Context, app.AppPreferences) (app.AppPreferences, error)
+	UpdateAppPreferences(context.Context, func(*app.AppPreferences)) (app.AppPreferences, error)
 	SetProfileStatus(context.Context, string) error
 	UpdateBlocklist(context.Context, string, bool) ([]app.BlockedContact, error)
 	SetStickerFavorite(context.Context, string, string, bool) (appstore.Sticker, error)
@@ -303,6 +307,9 @@ func (h commandHandlers) chatMute(_ *conn, req request) (any, *Error) {
 	if p.DurationSecs < 0 {
 		return nil, errorf(CodeInvalidParams, "duration_secs must be non-negative")
 	}
+	if p.DurationSecs > maxCommandDurationSecs {
+		return nil, errorf(CodeInvalidParams, "duration_secs is too large")
+	}
 	_, err := h.actions.SetChatMuted(context.Background(), strings.TrimSpace(p.ChatID), *p.Muted, time.Duration(p.DurationSecs)*time.Second)
 	return nil, mapCommandError(err)
 }
@@ -387,14 +394,16 @@ func (h commandHandlers) sendText(_ *conn, req request) (any, *Error) {
 	if strings.TrimSpace(p.ChatID) == "" {
 		return nil, errorf(CodeInvalidParams, "chat_id is required")
 	}
-	text := strings.TrimSpace(p.Text)
-	if text == "" {
+	// Validate against the trimmed text (reject whitespace-only) but send the
+	// original: leading/trailing whitespace is user-authored content, not ours to
+	// strip.
+	if strings.TrimSpace(p.Text) == "" {
 		return nil, errorf(CodeInvalidParams, "text is required")
 	}
-	if utf8.RuneCountInString(text) > maxCommandTextRunes {
+	if utf8.RuneCountInString(p.Text) > maxCommandTextRunes {
 		return nil, errorf(CodeInvalidParams, "text must be <= %d characters", maxCommandTextRunes)
 	}
-	saved, err := h.actions.SendText(context.Background(), strings.TrimSpace(p.ChatID), text, strings.TrimSpace(p.ReplyTo), trimStringSlice(p.Mentions))
+	saved, err := h.actions.SendText(context.Background(), strings.TrimSpace(p.ChatID), p.Text, strings.TrimSpace(p.ReplyTo), trimStringSlice(p.Mentions))
 	if perr := mapCommandError(err); perr != nil {
 		return nil, perr
 	}
@@ -424,11 +433,12 @@ func (h commandHandlers) sendMedia(_ *conn, req request) (any, *Error) {
 	if path == "" {
 		return nil, errorf(CodeInvalidParams, "path is required")
 	}
-	caption := strings.TrimSpace(p.Caption)
-	if utf8.RuneCountInString(caption) > maxCommandCaptionRunes {
+	// Caption is optional and user-authored; validate length but send it verbatim
+	// (an intentional leading space or trailing newline is not ours to strip).
+	if utf8.RuneCountInString(p.Caption) > maxCommandCaptionRunes {
 		return nil, errorf(CodeInvalidParams, "caption must be <= %d characters", maxCommandCaptionRunes)
 	}
-	saved, err := h.actions.SendMediaWithMentions(context.Background(), strings.TrimSpace(p.ChatID), path, caption, strings.TrimSpace(p.ReplyTo), trimStringSlice(p.Mentions))
+	saved, err := h.actions.SendMediaWithMentions(context.Background(), strings.TrimSpace(p.ChatID), path, p.Caption, strings.TrimSpace(p.ReplyTo), trimStringSlice(p.Mentions))
 	if perr := mapCommandError(err); perr != nil {
 		return nil, perr
 	}
@@ -509,14 +519,14 @@ func (h commandHandlers) messageEdit(_ *conn, req request) (any, *Error) {
 	if strings.TrimSpace(p.MessageID) == "" {
 		return nil, errorf(CodeInvalidParams, "message_id is required")
 	}
-	text := strings.TrimSpace(p.Text)
-	if text == "" {
+	// As with send.text: validate trimmed, edit with the original text.
+	if strings.TrimSpace(p.Text) == "" {
 		return nil, errorf(CodeInvalidParams, "text is required")
 	}
-	if utf8.RuneCountInString(text) > maxCommandTextRunes {
+	if utf8.RuneCountInString(p.Text) > maxCommandTextRunes {
 		return nil, errorf(CodeInvalidParams, "text must be <= %d characters", maxCommandTextRunes)
 	}
-	_, err := h.actions.EditMessage(context.Background(), strings.TrimSpace(p.MessageID), text)
+	_, err := h.actions.EditMessage(context.Background(), strings.TrimSpace(p.MessageID), p.Text)
 	return nil, mapCommandError(err)
 }
 
@@ -644,8 +654,20 @@ func (h commandHandlers) mediaDownload(_ *conn, req request) (any, *Error) {
 	if err := p.valid(); err != nil {
 		return nil, err
 	}
-	_, err := h.actions.DownloadMessageMedia(context.Background(), strings.TrimSpace(p.MessageID))
-	return nil, mapCommandError(err)
+	// media.download is ack-then-lifecycle (PROTOCOL.md): the response is {} and
+	// all progress/outcome is observable through the `transfers` view and the
+	// message row (media.path on success, media.download_error on failure), which
+	// DownloadMessageMedia already publishes. Run it in the background so the
+	// command does not block on the full download; a detached context outlives the
+	// request. The wa layer coalesces duplicate in-flight downloads of the same
+	// message, so a repeat call is harmless.
+	messageID := strings.TrimSpace(p.MessageID)
+	go func() {
+		if _, err := h.actions.DownloadMessageMedia(context.Background(), messageID); err != nil {
+			log.Printf("protocol: media.download %s: %v", messageID, err)
+		}
+	}()
+	return nil, nil
 }
 
 type fetchProfilePictureParams struct {

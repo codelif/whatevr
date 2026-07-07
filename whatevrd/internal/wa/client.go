@@ -124,8 +124,11 @@ type Client struct {
 
 	// appPrefs caches the daemon_config user preferences so the hot notify and
 	// media-ingestion gates never hit sqlite per message. Loaded at New() and
-	// replaced on SetAppPreferences.
-	appPrefs atomic.Pointer[app.AppPreferences]
+	// replaced on SetAppPreferences. appPrefsMu serializes read-modify-write
+	// mutations (UpdateAppPreferences) so a partial patch cannot lose a
+	// concurrent update.
+	appPrefsMu sync.Mutex
+	appPrefs   atomic.Pointer[app.AppPreferences]
 }
 
 type frontendSession struct {

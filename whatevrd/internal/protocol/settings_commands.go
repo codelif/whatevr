@@ -91,12 +91,12 @@ func (h commandHandlers) preferencesSet(_ *conn, req request) (any, *Error) {
 	if err := decodeParams(req.Params, &p); err != nil {
 		return nil, err
 	}
-	prefs, err := h.actions.GetAppPreferences(context.Background())
-	if perr := mapCommandError(err); perr != nil {
-		return nil, perr
-	}
-	applyPreferencesPatch(&prefs, p)
-	_, err = h.actions.SetAppPreferences(context.Background(), prefs)
+	// Apply the partial patch atomically on the daemon side: the read-modify-write
+	// happens under the daemon's lock so two concurrent preferences.set calls
+	// cannot lose each other's fields.
+	_, err := h.actions.UpdateAppPreferences(context.Background(), func(prefs *app.AppPreferences) {
+		applyPreferencesPatch(prefs, p)
+	})
 	return nil, mapCommandError(err)
 }
 
@@ -128,7 +128,9 @@ func applyPreferencesPatch(prefs *app.AppPreferences, p preferencesSetParams) {
 }
 
 type selfSetAboutParams struct {
-	Text string `json:"text"`
+	// Text is a pointer so a missing field (invalid) is distinguishable from an
+	// intentionally empty string (a legitimate request to clear the about).
+	Text *string `json:"text"`
 }
 
 func (h commandHandlers) selfSetAbout(_ *conn, req request) (any, *Error) {
@@ -139,7 +141,10 @@ func (h commandHandlers) selfSetAbout(_ *conn, req request) (any, *Error) {
 	if err := decodeParams(req.Params, &p); err != nil {
 		return nil, err
 	}
-	return nil, mapCommandError(h.actions.SetProfileStatus(context.Background(), p.Text))
+	if p.Text == nil {
+		return nil, errorf(CodeInvalidParams, "text is required")
+	}
+	return nil, mapCommandError(h.actions.SetProfileStatus(context.Background(), *p.Text))
 }
 
 type contactBlockParams struct {

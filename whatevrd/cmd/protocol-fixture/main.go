@@ -91,10 +91,9 @@ func (fixtureCommands) FetchProfilePicture(_ context.Context, jid string) (strin
 func (fixtureCommands) SetPrivacySetting(context.Context, string, string, bool) (app.PrivacySettings, error) {
 	return app.PrivacySettings{}, nil
 }
-func (fixtureCommands) GetAppPreferences(context.Context) (app.AppPreferences, error) {
-	return app.DefaultAppPreferences(), nil
-}
-func (fixtureCommands) SetAppPreferences(_ context.Context, prefs app.AppPreferences) (app.AppPreferences, error) {
+func (fixtureCommands) UpdateAppPreferences(_ context.Context, apply func(*app.AppPreferences)) (app.AppPreferences, error) {
+	prefs := app.DefaultAppPreferences()
+	apply(&prefs)
 	return prefs, nil
 }
 func (fixtureCommands) SetProfileStatus(context.Context, string) error { return nil }
