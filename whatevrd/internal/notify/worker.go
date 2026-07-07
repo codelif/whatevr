@@ -23,8 +23,8 @@ const (
 
 // ChatOpener delivers an "open this chat" request to a running frontend. It
 // reports whether at least one frontend received it, so the worker knows
-// whether it still needs to cold-start one. The daemon's SessionBus implements
-// this over the live HoldSession streams.
+// whether it still needs to cold-start one. During the protocol migration both
+// the legacy gRPC SessionBus and the protocol Server implement this.
 type ChatOpener interface {
 	OpenChat(chatID string) bool
 }

@@ -10,6 +10,7 @@ import (
 	"google.golang.org/grpc/codes"
 	grpcstatus "google.golang.org/grpc/status"
 
+	"whatevrd/internal/app"
 	appstore "whatevrd/internal/store"
 )
 
@@ -61,6 +62,28 @@ type fakeCommandActions struct {
 	forwardChats      []string
 	downloadMessage   string
 	fetchJID          string
+
+	privacyCategory  string
+	privacyAudience  string
+	privacyRead      bool
+	prefs            app.AppPreferences
+	setPrefs         app.AppPreferences
+	profileStatus    string
+	blockJID         string
+	blocked          bool
+	favoriteKey      string
+	favoriteMessage  string
+	favorite         bool
+	downloadSticker  string
+	installPackID    string
+	installed        bool
+	searchChatsQuery string
+	searchChatsLimit int
+	searchMsgQuery   string
+	searchMsgChat    string
+	searchMsgLimit   int
+	searchMsgBefore  string
+	checkPhone       string
 
 	err error
 }
@@ -205,6 +228,78 @@ func (f *fakeCommandActions) FetchProfilePicture(_ context.Context, jid string) 
 	defer f.mu.Unlock()
 	f.fetchJID = jid
 	return "/cache/avatar.jpg", f.err
+}
+func (f *fakeCommandActions) SetPrivacySetting(_ context.Context, category, audience string, readReceipts bool) (app.PrivacySettings, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.privacyCategory, f.privacyAudience, f.privacyRead = category, audience, readReceipts
+	return app.PrivacySettings{LastSeen: audience, ReadReceipts: readReceipts}, f.err
+}
+func (f *fakeCommandActions) GetAppPreferences(context.Context) (app.AppPreferences, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.prefs == (app.AppPreferences{}) {
+		f.prefs = app.DefaultAppPreferences()
+	}
+	return f.prefs, f.err
+}
+func (f *fakeCommandActions) SetAppPreferences(_ context.Context, prefs app.AppPreferences) (app.AppPreferences, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.setPrefs = prefs
+	f.prefs = prefs
+	return prefs, f.err
+}
+func (f *fakeCommandActions) SetProfileStatus(_ context.Context, statusText string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.profileStatus = statusText
+	return f.err
+}
+func (f *fakeCommandActions) UpdateBlocklist(_ context.Context, jid string, block bool) ([]app.BlockedContact, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.blockJID, f.blocked = jid, block
+	return []app.BlockedContact{{JID: jid}}, f.err
+}
+func (f *fakeCommandActions) SetStickerFavorite(_ context.Context, cacheKey, messageID string, favorite bool) (appstore.Sticker, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.favoriteKey, f.favoriteMessage, f.favorite = cacheKey, messageID, favorite
+	return appstore.Sticker{CacheKey: cacheKey, IsFavorite: favorite}, f.err
+}
+func (f *fakeCommandActions) DownloadSticker(_ context.Context, cacheKey string) (appstore.Sticker, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.downloadSticker = cacheKey
+	return appstore.Sticker{CacheKey: cacheKey, LocalPath: "/cache/" + cacheKey + ".webp"}, f.err
+}
+func (f *fakeCommandActions) SetStickerPackInstalled(_ context.Context, packID string, installed bool) (appstore.StickerPack, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.installPackID, f.installed = packID, installed
+	return appstore.StickerPack{ID: packID, Installed: installed}, f.err
+}
+func (f *fakeCommandActions) SearchChats(_ context.Context, query string, limit int) ([]appstore.Chat, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.searchChatsQuery, f.searchChatsLimit = query, limit
+	return []appstore.Chat{{ID: "chat@s.whatsapp.net", Name: "Alice", LastMessage: "hi", LastMessageTime: 10}}, f.err
+}
+func (f *fakeCommandActions) SearchMessages(_ context.Context, query, chatID string, limit int, beforeMessageID string) ([]appstore.MessageSearchResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.searchMsgQuery, f.searchMsgChat, f.searchMsgLimit, f.searchMsgBefore = query, chatID, limit, beforeMessageID
+	return []appstore.MessageSearchResult{
+		{Message: appstore.Message{ID: "m2", ChatID: "chat@s.whatsapp.net", Text: "hello again", TimestampUnix: 20, SortSeq: 2, Direction: appstore.DirectionIncoming, Status: appstore.StatusDelivered}, ChatName: "Alice"},
+		{Message: appstore.Message{ID: "m1", ChatID: "chat@s.whatsapp.net", Text: "hello", TimestampUnix: 10, SortSeq: 1, Direction: appstore.DirectionIncoming, Status: appstore.StatusDelivered}, ChatName: "Alice"},
+	}, f.err
+}
+func (f *fakeCommandActions) CheckPhoneOnWhatsApp(_ context.Context, phone string) (app.PhoneCheck, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.checkPhone = phone
+	return app.PhoneCheck{Registered: true, JID: "123@s.whatsapp.net", DisplayName: "Alice", Phone: "+123"}, f.err
 }
 
 func startCommandTestServer(t *testing.T, actions *fakeCommandActions) (string, *Server) {
@@ -365,6 +460,131 @@ func TestC2MessageAndMediaCommands(t *testing.T) {
 	result = c.recv()["result"].(map[string]any)
 	if result["path"] != "/cache/avatar.jpg" || actions.fetchJID != "user@s.whatsapp.net" {
 		t.Fatalf("fetch profile result/action = %v/%q", result, actions.fetchJID)
+	}
+}
+
+func TestC3SettingsContactAndStickerCommands(t *testing.T) {
+	actions := &fakeCommandActions{prefs: app.AppPreferences{NotificationsEnabled: true, NotificationPreview: true}}
+	socketPath, _ := startCommandTestServer(t, actions)
+	c := dialTest(t, socketPath)
+	c.hello()
+
+	cases := []struct {
+		line string
+		want func(t *testing.T)
+	}{
+		{`{"id":2,"method":"privacy.set","params":{"category":"last_seen","value":"contacts"}}`, func(t *testing.T) {
+			if actions.privacyCategory != "last_seen" || actions.privacyAudience != "contacts" {
+				t.Fatalf("privacy.set call = %q/%q", actions.privacyCategory, actions.privacyAudience)
+			}
+		}},
+		{`{"id":3,"method":"privacy.set","params":{"category":"read_receipts","value":false}}`, func(t *testing.T) {
+			if actions.privacyCategory != "read_receipts" || actions.privacyRead {
+				t.Fatalf("read_receipts call = %q/%v", actions.privacyCategory, actions.privacyRead)
+			}
+		}},
+		{`{"id":4,"method":"preferences.set","params":{"notification_preview":false,"auto_download_photos":true}}`, func(t *testing.T) {
+			if !actions.setPrefs.NotificationsEnabled || actions.setPrefs.NotificationPreview || !actions.setPrefs.AutoDownloadPhotos {
+				t.Fatalf("preferences patch = %+v", actions.setPrefs)
+			}
+		}},
+		{`{"id":5,"method":"self.set_about","params":{"text":" out "}}`, func(t *testing.T) {
+			if actions.profileStatus != " out " {
+				t.Fatalf("self.set_about text = %q", actions.profileStatus)
+			}
+		}},
+		{`{"id":6,"method":"contact.block","params":{"jid":" user@s.whatsapp.net ","blocked":true}}`, func(t *testing.T) {
+			if actions.blockJID != "user@s.whatsapp.net" || !actions.blocked {
+				t.Fatalf("contact.block call = %q/%v", actions.blockJID, actions.blocked)
+			}
+		}},
+		{`{"id":7,"method":"sticker.favorite","params":{"message_id":"m1","favorite":true}}`, func(t *testing.T) {
+			if actions.favoriteMessage != "m1" || !actions.favorite {
+				t.Fatalf("sticker.favorite call = %q/%v", actions.favoriteMessage, actions.favorite)
+			}
+		}},
+		{`{"id":8,"method":"sticker.download","params":{"cache_key":"ck"}}`, func(t *testing.T) {
+			if actions.downloadSticker != "ck" {
+				t.Fatalf("sticker.download call = %q", actions.downloadSticker)
+			}
+		}},
+		{`{"id":9,"method":"sticker_pack.install","params":{"pack_id":"p1","installed":true}}`, func(t *testing.T) {
+			if actions.installPackID != "p1" || !actions.installed {
+				t.Fatalf("sticker_pack.install call = %q/%v", actions.installPackID, actions.installed)
+			}
+		}},
+	}
+
+	for _, tc := range cases {
+		c.sendLine(tc.line)
+		if _, ok := c.recv()["result"].(map[string]any); !ok {
+			t.Fatalf("command failed: %s", tc.line)
+		}
+		tc.want(t)
+	}
+}
+
+func TestC3Queries(t *testing.T) {
+	actions := &fakeCommandActions{}
+	socketPath, _ := startCommandTestServer(t, actions)
+	c := dialTest(t, socketPath)
+	c.hello()
+
+	c.sendLine(`{"id":2,"method":"search.chats","params":{"query":" ali ","limit":2}}`)
+	result := c.recv()["result"].(map[string]any)
+	chats := result["chats"].([]any)
+	if len(chats) != 1 || chats[0].(map[string]any)["id"] != "chat@s.whatsapp.net" || actions.searchChatsQuery != "ali" || actions.searchChatsLimit != 2 {
+		t.Fatalf("search.chats result/action = %v/%q/%d", result, actions.searchChatsQuery, actions.searchChatsLimit)
+	}
+
+	c.sendLine(`{"id":3,"method":"search.messages","params":{"query":" hello ","chat_id":"chat@s.whatsapp.net","limit":1,"before_message_id":"m3"}}`)
+	result = c.recv()["result"].(map[string]any)
+	messages := result["messages"].([]any)
+	if len(messages) != 1 || result["has_more"] != true || actions.searchMsgQuery != "hello" || actions.searchMsgLimit != 2 || actions.searchMsgBefore != "m3" {
+		t.Fatalf("search.messages result/action = %v/%q/%d/%q", result, actions.searchMsgQuery, actions.searchMsgLimit, actions.searchMsgBefore)
+	}
+	msg := messages[0].(map[string]any)
+	if msg["id"] != "m2" || msg["chat_name"] != "Alice" || msg["fallback"] != "hello again" {
+		t.Fatalf("search message row = %v", msg)
+	}
+
+	c.sendLine(`{"id":4,"method":"contacts.check_phone","params":{"phone":" +1 23 "}}`)
+	result = c.recv()["result"].(map[string]any)
+	if result["registered"] != true || result["jid"] != "123@s.whatsapp.net" || actions.checkPhone != "+1 23" {
+		t.Fatalf("contacts.check_phone result/action = %v/%q", result, actions.checkPhone)
+	}
+}
+
+func TestOpenChatRoutesToFocusedProtocolSession(t *testing.T) {
+	actions := &fakeCommandActions{}
+	socketPath, server := startCommandTestServer(t, actions)
+	unfocused := dialTest(t, socketPath)
+	unfocused.hello()
+	focused := dialTest(t, socketPath)
+	focused.hello()
+
+	if server.OpenChat("chat@s.whatsapp.net") {
+		t.Fatal("open_chat delivered before any protocol frontend session existed")
+	}
+
+	unfocused.sendLine(`{"id":2,"method":"session.update","params":{"focused":false,"active_chat_id":"old@s.whatsapp.net"}}`)
+	if _, ok := unfocused.recv()["result"].(map[string]any); !ok {
+		t.Fatal("unfocused session.update failed")
+	}
+	focused.sendLine(`{"id":2,"method":"session.update","params":{"focused":true,"active_chat_id":"chat@s.whatsapp.net"}}`)
+	if _, ok := focused.recv()["result"].(map[string]any); !ok {
+		t.Fatal("focused session.update failed")
+	}
+
+	if !server.OpenChat(" chat@s.whatsapp.net ") {
+		t.Fatal("open_chat was not delivered to a protocol frontend")
+	}
+	evt := focused.recvEvent()
+	if evt["event"] != "open_chat" || evt["chat_id"] != "chat@s.whatsapp.net" {
+		t.Fatalf("open_chat event = %v", evt)
+	}
+	if _, hasSub := evt["sub"]; hasSub {
+		t.Fatalf("open_chat must be connection-directed, got sub in %v", evt)
 	}
 }
 

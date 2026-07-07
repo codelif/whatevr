@@ -88,6 +88,37 @@ func (fixtureCommands) DownloadMessageMedia(context.Context, string) (appstore.M
 func (fixtureCommands) FetchProfilePicture(_ context.Context, jid string) (string, error) {
 	return "/cache/avatars/" + jid + ".jpg", nil
 }
+func (fixtureCommands) SetPrivacySetting(context.Context, string, string, bool) (app.PrivacySettings, error) {
+	return app.PrivacySettings{}, nil
+}
+func (fixtureCommands) GetAppPreferences(context.Context) (app.AppPreferences, error) {
+	return app.DefaultAppPreferences(), nil
+}
+func (fixtureCommands) SetAppPreferences(_ context.Context, prefs app.AppPreferences) (app.AppPreferences, error) {
+	return prefs, nil
+}
+func (fixtureCommands) SetProfileStatus(context.Context, string) error { return nil }
+func (fixtureCommands) UpdateBlocklist(context.Context, string, bool) ([]app.BlockedContact, error) {
+	return nil, nil
+}
+func (fixtureCommands) SetStickerFavorite(context.Context, string, string, bool) (appstore.Sticker, error) {
+	return appstore.Sticker{}, nil
+}
+func (fixtureCommands) DownloadSticker(_ context.Context, cacheKey string) (appstore.Sticker, error) {
+	return appstore.Sticker{CacheKey: cacheKey}, nil
+}
+func (fixtureCommands) SetStickerPackInstalled(_ context.Context, packID string, installed bool) (appstore.StickerPack, error) {
+	return appstore.StickerPack{ID: packID, Installed: installed}, nil
+}
+func (fixtureCommands) SearchChats(context.Context, string, int) ([]appstore.Chat, error) {
+	return nil, nil
+}
+func (fixtureCommands) SearchMessages(context.Context, string, string, int, string) ([]appstore.MessageSearchResult, error) {
+	return nil, nil
+}
+func (fixtureCommands) CheckPhoneOnWhatsApp(_ context.Context, phone string) (app.PhoneCheck, error) {
+	return app.PhoneCheck{Phone: phone}, nil
+}
 
 func (conformanceSession) Items(max int) []protocol.Item {
 	items := []protocol.Item{

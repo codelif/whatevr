@@ -14,6 +14,18 @@ import (
 	"whatevrd/internal/wa"
 )
 
+type multiChatOpener []notify.ChatOpener
+
+func (m multiChatOpener) OpenChat(chatID string) bool {
+	delivered := false
+	for _, opener := range m {
+		if opener != nil && opener.OpenChat(chatID) {
+			delivered = true
+		}
+	}
+	return delivered
+}
+
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -47,12 +59,19 @@ func main() {
 	defer db.Close()
 
 	daemon := app.NewDaemon(paths)
+	// The whatevr protocol server (PROTOCOL.md) runs alongside gRPC for the
+	// duration of the migration; frontends move over view by view.
+	protocolServer, err := protocol.Start(ctx, paths.ProtocolSocketPath, daemon)
+	if err != nil {
+		log.Fatalf("start protocol server: %v", err)
+	}
+
 	// The session bus carries daemon→frontend pushes (e.g. open-chat on
-	// notification click). It is shared between the notification worker (which
-	// targets connected frontends) and the RPC server (whose HoldSession
-	// streams register on it).
+	// notification click) for the legacy gRPC HoldSession streams. The protocol
+	// server implements the same opener for connection-directed open_chat events;
+	// the notification worker fans to both during the migration.
 	sessionBus := daemonrpc.NewSessionBus()
-	notificationWorker, err := notify.NewWorker(sessionBus)
+	notificationWorker, err := notify.NewWorker(multiChatOpener{sessionBus, protocolServer})
 	if err != nil {
 		log.Printf("notifications disabled: %v", err)
 	}
@@ -71,12 +90,6 @@ func main() {
 		log.Fatalf("start rpc server: %v", err)
 	}
 
-	// The whatevr protocol server (PROTOCOL.md) runs alongside gRPC for the
-	// duration of the migration; frontends move over view by view.
-	protocolServer, err := protocol.Start(ctx, paths.ProtocolSocketPath, daemon)
-	if err != nil {
-		log.Fatalf("start protocol server: %v", err)
-	}
 	protocol.RegisterDaemonViews(protocolServer, daemon, db, waClient)
 	protocol.RegisterDaemonCommands(protocolServer, waClient)
 	waClient.Start(ctx)
