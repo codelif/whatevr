@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"log"
 	"net"
 	"sync"
@@ -18,6 +19,13 @@ const (
 	// hold a connection goroutine forever; the outbound queue's coalescing
 	// and reset fallback handle merely slow consumers before this bites.
 	writeTimeout = 30 * time.Second
+
+	// helloTimeout bounds the pre-hello handshake: an accepted peer that never
+	// completes hello must not pin a goroutine/fd indefinitely. It is cleared
+	// once hello succeeds — post-hello a frontend legitimately idles for as long
+	// as it likes listening for pushed events (the protocol has no client
+	// keepalive), so there is deliberately no steady-state read timeout.
+	helloTimeout = 10 * time.Second
 )
 
 type conn struct {
@@ -72,12 +80,39 @@ func (c *conn) run() {
 
 	scanner := bufio.NewScanner(c.nc)
 	scanner.Buffer(make([]byte, 64*1024), maxLineBytes)
+	// Arm the handshake deadline; handleHello clears it on success.
+	_ = c.nc.SetReadDeadline(time.Now().Add(helloTimeout))
 	for scanner.Scan() {
 		line := bytes.TrimSpace(scanner.Bytes())
 		if len(line) == 0 {
 			continue
 		}
 		c.handleLine(line)
+	}
+	if err := scanner.Err(); err != nil {
+		c.reportReadError(err)
+	}
+}
+
+// reportReadError surfaces why the read loop ended instead of dropping the
+// framing failure silently. An oversized frame or malformed stream gets a
+// best-effort error response (the peer may already be gone); a handshake
+// timeout and any other I/O error are logged. A clean EOF leaves scanner.Err()
+// nil and never reaches here.
+func (c *conn) reportReadError(err error) {
+	var ne net.Error
+	switch {
+	case errors.Is(err, bufio.ErrTooLong):
+		log.Printf("protocol: oversized frame (> %d bytes) closed the connection", maxLineBytes)
+		c.respondError(nullID, errorf(CodeInvalidRequest, "frame exceeds the %d byte maximum", maxLineBytes), true)
+	case errors.As(err, &ne) && ne.Timeout():
+		if !c.helloDone {
+			log.Printf("protocol: closing connection: no hello within %s", helloTimeout)
+		} else {
+			log.Printf("protocol: connection read timed out: %v", err)
+		}
+	default:
+		log.Printf("protocol: connection read error: %v", err)
 	}
 }
 
@@ -241,6 +276,9 @@ func (c *conn) handleHello(req request) {
 	}
 
 	c.helloDone = true
+	// Handshake complete: drop the read deadline. A subscribed frontend may now
+	// sit silent indefinitely waiting for pushed events.
+	_ = c.nc.SetReadDeadline(time.Time{})
 	status := c.srv.daemon.Status()
 	c.respondResult(req.ID, map[string]any{
 		"daemon":    "whatevrd",

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"path/filepath"
@@ -12,6 +13,12 @@ import (
 
 	"whatevrd/internal/app"
 )
+
+// maxConnections caps concurrent accepted connections. The socket is same-UID
+// only, so this is a safety valve against a runaway local frontend spawning
+// unbounded connections, not an adversarial-load control. Generous enough that
+// every real frontend a user runs fits well under it.
+const maxConnections = 256
 
 // handlerFunc serves one method: request in, result (or protocol error)
 // out. A nil result marshals as {}; returning responded{} means the handler
@@ -168,8 +175,16 @@ func (s *Server) acceptLoop(acceptErr chan<- error) {
 
 		c := newConn(s, nc)
 		s.mu.Lock()
-		s.conns[c] = struct{}{}
+		atCap := len(s.conns) >= maxConnections
+		if !atCap {
+			s.conns[c] = struct{}{}
+		}
 		s.mu.Unlock()
+		if atCap {
+			log.Printf("protocol: refusing connection: at connection cap (%d)", maxConnections)
+			_ = nc.Close()
+			continue
+		}
 		s.wg.Add(1)
 		go c.run()
 	}

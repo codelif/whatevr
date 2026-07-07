@@ -13,6 +13,13 @@ import (
 // with `reset`. A var, not a const, so tests can lower it.
 var maxQueuedEventsPerSub = 8192
 
+// maxQueuedConnFrames bounds connection-level frames (responses and open_chat)
+// queued for one connection. Unlike per-sub events these cannot coalesce or be
+// reset — a response answers a specific request — so the only backpressure is
+// to tear the connection down: a peer this far behind on its own responses is
+// not reading. A var, not a const, so tests can lower it.
+var maxQueuedConnFrames = 4096
+
 // frameKey identifies the queued event frame a newer event for the same
 // item supersedes.
 type frameKey struct {
@@ -37,11 +44,13 @@ type queuedFrame struct {
 // matters — and falls back to purge + `reset` for a subscription whose
 // queue overflows.
 type outQueue struct {
-	mu     sync.Mutex
-	frames list.List
-	byKey  map[frameKey]*list.Element
-	counts map[int64]int
-	live   map[int64]bool
+	mu         sync.Mutex
+	frames     list.List
+	byKey      map[frameKey]*list.Element
+	counts     map[int64]int
+	live       map[int64]bool
+	connFrames int  // count of queued connection-level (sub==0) frames
+	overflowed bool // set once the conn-level cap tripped and teardown is queued
 
 	// signal wakes the write loop; buffered so enqueuing never blocks.
 	signal chan struct{}
@@ -56,10 +65,22 @@ func newOutQueue() *outQueue {
 	}
 }
 
-// push enqueues a connection-level frame (response or hello rejection).
+// push enqueues a connection-level frame (response, open_chat, or hello
+// rejection). Once the connection-level cap trips, a terminal error+close is
+// queued and further connection-level frames are dropped — the connection is
+// already on its way down.
 func (q *outQueue) push(line []byte, closeAfter bool) {
 	q.mu.Lock()
+	if q.overflowed {
+		q.mu.Unlock()
+		return
+	}
 	q.frames.PushBack(queuedFrame{line: line, closeAfter: closeAfter})
+	q.connFrames++
+	if !closeAfter && q.connFrames > maxQueuedConnFrames {
+		q.overflowed = true
+		q.frames.PushBack(queuedFrame{line: overloadedLine(), closeAfter: true})
+	}
 	q.mu.Unlock()
 	q.wake()
 }
@@ -137,6 +158,8 @@ func (q *outQueue) removeLocked(el *list.Element) queuedFrame {
 		if q.counts[frame.sub]--; q.counts[frame.sub] <= 0 {
 			delete(q.counts, frame.sub)
 		}
+	} else if q.connFrames--; q.connFrames < 0 {
+		q.connFrames = 0
 	}
 	return frame
 }
