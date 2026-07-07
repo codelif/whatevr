@@ -180,6 +180,9 @@ func (f *messagesChatFeed) run(events <-chan app.DaemonEvent, invalidate func())
 
 func (f *messagesChatFeed) eventAffectsChat(evt app.DaemonEvent) bool {
 	switch evt.Kind {
+	case app.DaemonEventResync:
+		// Dropped-event gap: re-read the store (Items is authoritative).
+		return true
 	case app.DaemonEventNewMessage, app.DaemonEventMessageUpdated:
 		return evt.Message.ChatID == f.chatID
 	case app.DaemonEventMessageDeleted, app.DaemonEventChatDeleted:

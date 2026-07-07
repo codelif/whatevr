@@ -88,6 +88,8 @@ func (s *starredSession) run(events <-chan app.DaemonEvent, invalidate func()) {
 // so a spurious hit just diffs to nothing.
 func (s *starredSession) eventAffects(evt app.DaemonEvent) bool {
 	switch evt.Kind {
+	case app.DaemonEventResync:
+		return true
 	case app.DaemonEventMessageUpdated:
 		return s.chatID == "" || evt.Message.ChatID == s.chatID
 	case app.DaemonEventMessageDeleted, app.DaemonEventChatDeleted:
@@ -215,6 +217,8 @@ func (s *pinnedSession) run(events <-chan app.DaemonEvent, invalidate func()) {
 
 func (s *pinnedSession) eventAffects(evt app.DaemonEvent) bool {
 	switch evt.Kind {
+	case app.DaemonEventResync:
+		return true
 	case app.DaemonEventMessageUpdated:
 		return evt.Message.ChatID == s.chatID
 	case app.DaemonEventMessageDeleted, app.DaemonEventChatDeleted:

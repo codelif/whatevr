@@ -115,6 +115,8 @@ func (s *privacySession) run(events <-chan app.DaemonEvent, invalidate func()) {
 
 func (s *privacySession) apply(evt app.DaemonEvent) bool {
 	switch evt.Kind {
+	case app.DaemonEventResync:
+		return s.refetch()
 	case app.DaemonEventPrivacySettingsChanged:
 		return s.set(evt.PrivacySettings)
 	case app.DaemonEventConnectionChanged:
@@ -247,7 +249,7 @@ func (s *preferencesSession) run(events <-chan app.DaemonEvent, invalidate func(
 }
 
 func (s *preferencesSession) apply(evt app.DaemonEvent) bool {
-	if evt.Kind != app.DaemonEventPreferencesChanged {
+	if evt.Kind != app.DaemonEventPreferencesChanged && evt.Kind != app.DaemonEventResync {
 		return false
 	}
 	return s.refetch()
@@ -393,7 +395,7 @@ func (s *blocklistSession) run(events <-chan app.DaemonEvent, invalidate func())
 
 func (s *blocklistSession) apply(evt app.DaemonEvent) bool {
 	switch evt.Kind {
-	case app.DaemonEventBlocklistChanged:
+	case app.DaemonEventResync, app.DaemonEventBlocklistChanged:
 		return s.refetch()
 	case app.DaemonEventConnectionChanged:
 		s.mu.Lock()

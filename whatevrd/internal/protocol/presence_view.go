@@ -52,6 +52,7 @@ func (v presenceView) Open(params json.RawMessage, invalidate func()) (ViewSessi
 
 	events, cancel := v.daemon.SubscribeDaemonEvents()
 	s := &presenceSession{
+		daemon:       v.daemon,
 		chatID:       p.ChatID,
 		eventsCancel: cancel,
 		done:         make(chan struct{}),
@@ -60,11 +61,7 @@ func (v presenceView) Open(params json.RawMessage, invalidate func()) (ViewSessi
 	// this chat (from an earlier subscription in this daemon session), then drain
 	// events buffered since SubscribeDaemonEvents. The two may overlap, but the
 	// state write is idempotent so a doubly-applied event is harmless.
-	if avail, lastSeen, ok := v.daemon.ChatAvailability(p.ChatID); ok {
-		s.hasData = true
-		s.availability = avail
-		s.lastSeen = lastSeen
-	}
+	s.reloadAvailability()
 	s.drainInitial(events)
 	// Subscribing is the trigger: ask WhatsApp to start delivering availability
 	// for this chat. Results arrive later as ordinary DaemonEventChatPresence
@@ -80,6 +77,7 @@ func (v presenceView) Open(params json.RawMessage, invalidate func()) (ViewSessi
 
 // presenceSession tracks the availability of the chat's single participant.
 type presenceSession struct {
+	daemon       *app.Daemon
 	chatID       string
 	eventsCancel func()
 	done         chan struct{}
@@ -89,6 +87,22 @@ type presenceSession struct {
 	hasData      bool
 	availability app.ContactAvailability
 	lastSeen     int64
+}
+
+// reloadAvailability seeds/refreshes the held availability from the daemon's
+// cached snapshot. It is the initial fill and the resync recovery after a
+// dropped-event gap; if the daemon has no cached availability yet it leaves the
+// current state untouched (nothing authoritative to replace it with).
+func (s *presenceSession) reloadAvailability() {
+	avail, lastSeen, ok := s.daemon.ChatAvailability(s.chatID)
+	if !ok {
+		return
+	}
+	s.mu.Lock()
+	s.hasData = true
+	s.availability = avail
+	s.lastSeen = lastSeen
+	s.mu.Unlock()
 }
 
 type presenceItem struct {
@@ -126,6 +140,10 @@ func (s *presenceSession) run(events <-chan app.DaemonEvent, invalidate func()) 
 // chat-presence event; a set SenderID means composing, which belongs to the
 // `typing` view and is ignored here.
 func (s *presenceSession) apply(evt app.DaemonEvent) bool {
+	if evt.Kind == app.DaemonEventResync {
+		s.reloadAvailability()
+		return true
+	}
 	if evt.Kind != app.DaemonEventChatPresence || evt.SenderID != "" {
 		return false
 	}

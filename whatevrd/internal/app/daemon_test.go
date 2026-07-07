@@ -159,3 +159,46 @@ func assertChatPresenceEvent(t *testing.T, event DaemonEvent, chatID, senderID s
 		t.Fatalf("is composing = %t, want %t", event.IsComposing, isComposing)
 	}
 }
+
+// TestBroadcastOverflowCoalescesToResync asserts that a subscriber which stops
+// draining does not silently lose events: once its buffer overflows the
+// broadcaster coalesces the backlog into a single DaemonEventResync sentinel, so
+// the consumer re-reads source instead of folding over a gap.
+func TestBroadcastOverflowCoalescesToResync(t *testing.T) {
+	d := NewDaemon(Paths{})
+	events, cancel := d.SubscribeDaemonEvents()
+	defer cancel()
+	drainInitialDaemonEvent(t, events)
+
+	// Overrun the buffer without receiving: far more than daemonSubscriberBuffer
+	// events forces the overflow path, which drains the backlog and posts a
+	// single resync sentinel (later successful sends append after it).
+	const published = daemonSubscriberBuffer * 2
+	for range published {
+		d.PublishPreferencesChanged()
+	}
+
+	// Drain what is buffered. A resync must be present (the consumer is told it
+	// missed events) and the buffered count must be bounded by the buffer size —
+	// proving the backlog coalesced rather than all `published` events queuing.
+	var drained int
+	sawResync := false
+	for {
+		select {
+		case evt := <-events:
+			drained++
+			if evt.Kind == DaemonEventResync {
+				sawResync = true
+			}
+			continue
+		default:
+		}
+		break
+	}
+	if !sawResync {
+		t.Fatal("no resync sentinel delivered after buffer overflow")
+	}
+	if drained > daemonSubscriberBuffer {
+		t.Fatalf("buffered %d events, want <= %d (backlog did not coalesce)", drained, daemonSubscriberBuffer)
+	}
+}

@@ -183,6 +183,14 @@ const (
 	// preferences change (via SetAppPreferences). It carries no payload; the
 	// `preferences` view re-reads GetAppPreferences off it.
 	DaemonEventPreferencesChanged
+	// DaemonEventResync is a synthetic sentinel the broadcaster posts to a
+	// subscriber whose buffer overflowed: rather than silently dropping events
+	// (which permanently desyncs a view that folds events into local state), the
+	// broadcaster coalesces the whole backlog into this one event. A consumer
+	// treats it as "you missed events, reload from source" — re-read the store /
+	// re-fetch the snapshot and re-emit. It mirrors the wire-level purge+reset
+	// for slow consumers (queue.go), one layer up (daemon→session).
+	DaemonEventResync
 )
 
 type StickerSource int32
@@ -576,18 +584,38 @@ func (d *Daemon) SubscribeLoginEvents() (<-chan LoginEvent, func()) {
 }
 
 func (d *Daemon) broadcastDaemonEvent(event DaemonEvent) {
+	// Hold subMu across delivery so the overflow path (drain + post a resync
+	// sentinel) is the only producer touching a given channel: with no
+	// concurrent producer, once the drain sees the channel empty it can post the
+	// resync without racing another broadcast for the slot. Sends never block
+	// (non-blocking select, and the overflow path makes room by draining), so a
+	// slow consumer cannot stall the broadcaster or an unsubscribe.
 	d.subMu.Lock()
-	subs := make([]chan DaemonEvent, 0, len(d.daemonSubs))
+	defer d.subMu.Unlock()
 	for _, ch := range d.daemonSubs {
-		subs = append(subs, ch)
-	}
-	d.subMu.Unlock()
-
-	for _, ch := range subs {
 		select {
 		case ch <- event:
 		default:
+			// Slow consumer: coalesce its backlog into a single resync sentinel
+			// so it reloads from source instead of folding over a dropped-event
+			// gap. Mirrors the wire-level purge+reset (queue.go) one layer up.
 			d.droppedDaemonEvents.Add(1)
+			drainAndPostResync(ch)
+		}
+	}
+}
+
+// drainAndPostResync empties ch and leaves a single DaemonEventResync in it. The
+// caller must hold subMu so no other producer refills ch between the drain and
+// the post; the consumer only receives, so once the channel reads empty it stays
+// empty until the resync is posted (which then always fits).
+func drainAndPostResync(ch chan DaemonEvent) {
+	for {
+		select {
+		case <-ch:
+		default:
+			ch <- DaemonEvent{Kind: DaemonEventResync}
+			return
 		}
 	}
 }
@@ -827,6 +855,39 @@ func (d *Daemon) ChatAvailability(chatID string) (ContactAvailability, int64, bo
 		return ContactAvailabilityUnspecified, 0, false
 	}
 	return state.Availability, state.LastSeenUnix, true
+}
+
+// ActiveMediaDownloads snapshots the in-flight downloads, for the `transfers`
+// view to rebuild its fold state on a resync (the same set the subscribe replay
+// seeds it with initially).
+func (d *Daemon) ActiveMediaDownloads() []MediaDownloadEvent {
+	d.subMu.Lock()
+	defer d.subMu.Unlock()
+	out := make([]MediaDownloadEvent, 0, len(d.mediaDownloads))
+	for _, download := range d.mediaDownloads {
+		out = append(out, download)
+	}
+	return out
+}
+
+// ConnectionSnapshot returns the current connection state the subscribe replay's
+// ConnectionChanged carries, for the `connection` view to reload on a resync.
+func (d *Daemon) ConnectionSnapshot() (state State, detail string, attempt int32, nextRetryUnix int64, canReconnect bool) {
+	d.subMu.Lock()
+	detail = d.lastDetail
+	d.subMu.Unlock()
+	return State(d.state.Load()), detail, d.retryAttempt.Load(), d.nextRetryUnix.Load(), d.canReconnect.Load()
+}
+
+// LatestHistorySync returns the last history-sync progress event (ok=false if
+// none), for the `sync` view to reload on a resync.
+func (d *Daemon) LatestHistorySync() (HistorySyncEvent, bool) {
+	d.subMu.Lock()
+	defer d.subMu.Unlock()
+	if d.latestHistorySync == nil {
+		return HistorySyncEvent{}, false
+	}
+	return *d.latestHistorySync, true
 }
 
 func (d *Daemon) PublishMediaDownloadChanged(messageID, chatID string, downloading bool, errorText string, receivedBytes, totalBytes uint64) {

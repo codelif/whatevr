@@ -133,7 +133,7 @@ func (s *selfSession) run(events <-chan app.DaemonEvent, invalidate func()) {
 
 func (s *selfSession) apply(evt app.DaemonEvent) bool {
 	switch evt.Kind {
-	case app.DaemonEventSelfProfileChanged:
+	case app.DaemonEventResync, app.DaemonEventSelfProfileChanged:
 		return s.refetch()
 	case app.DaemonEventConnectionChanged:
 		// Recover the card once the connection comes up after a logged-out
@@ -241,19 +241,39 @@ func (v contactView) Open(params json.RawMessage, invalidate func()) (ViewSessio
 	}
 
 	events, cancel := v.daemon.SubscribeDaemonEvents()
-	s := &contactSession{info: info, eventsCancel: cancel, done: make(chan struct{})}
+	s := &contactSession{actions: v.actions, jid: p.JID, info: info, eventsCancel: cancel, done: make(chan struct{})}
 	s.drainInitial(events)
 	go s.run(events, invalidate)
 	return s, nil, nil
 }
 
 type contactSession struct {
+	actions      ContactActions
+	jid          string
 	eventsCancel func()
 	done         chan struct{}
 	closeOnce    sync.Once
 
 	mu   sync.Mutex
 	info app.ContactInfo
+}
+
+// refetch reloads the card from the actions seam, recovering the held state
+// after a dropped-event gap (resync). The network "about"/avatar enrichment then
+// re-streams through the usual overlay events; a transient failure keeps the
+// current card.
+func (s *contactSession) refetch() bool {
+	info, err := s.actions.GetContactInfo(context.Background(), s.jid)
+	if err != nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.info == info {
+		return false
+	}
+	s.info = info
+	return true
 }
 
 func (s *contactSession) drainInitial(events <-chan app.DaemonEvent) {
@@ -281,6 +301,9 @@ func (s *contactSession) run(events <-chan app.DaemonEvent, invalidate func()) {
 }
 
 func (s *contactSession) apply(evt app.DaemonEvent) bool {
+	if evt.Kind == app.DaemonEventResync {
+		return s.refetch()
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	switch evt.Kind {

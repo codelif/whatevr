@@ -18,6 +18,7 @@ type transfersView struct {
 func (v transfersView) Open(_ json.RawMessage, invalidate func()) (ViewSession, map[string]any, *Error) {
 	events, cancel := v.daemon.SubscribeDaemonEvents()
 	s := &transfersSession{
+		daemon:       v.daemon,
 		eventsCancel: cancel,
 		done:         make(chan struct{}),
 		transfers:    make(map[string]app.MediaDownloadEvent),
@@ -28,12 +29,28 @@ func (v transfersView) Open(_ json.RawMessage, invalidate func()) (ViewSession, 
 }
 
 type transfersSession struct {
+	daemon       *app.Daemon
 	eventsCancel func()
 	done         chan struct{}
 	closeOnce    sync.Once
 
 	mu        sync.Mutex
 	transfers map[string]app.MediaDownloadEvent // message_id -> active transfer
+}
+
+// reloadTransfers rebuilds the active-transfer set from the daemon snapshot,
+// recovering from a dropped-event gap (a missed terminal event would otherwise
+// strand a transfer row forever).
+func (s *transfersSession) reloadTransfers() {
+	fresh := make(map[string]app.MediaDownloadEvent)
+	for _, download := range s.daemon.ActiveMediaDownloads() {
+		if download.MessageID != "" {
+			fresh[download.MessageID] = download
+		}
+	}
+	s.mu.Lock()
+	s.transfers = fresh
+	s.mu.Unlock()
 }
 
 type transferItem struct {
@@ -71,6 +88,10 @@ func (s *transfersSession) run(events <-chan app.DaemonEvent, invalidate func())
 }
 
 func (s *transfersSession) apply(evt app.DaemonEvent) bool {
+	if evt.Kind == app.DaemonEventResync {
+		s.reloadTransfers()
+		return true
+	}
 	if evt.Kind != app.DaemonEventMediaDownloadChanged || evt.MediaDownload.MessageID == "" {
 		return false
 	}

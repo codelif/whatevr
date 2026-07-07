@@ -62,13 +62,14 @@ func (v groupView) Open(params json.RawMessage, invalidate func()) (ViewSession,
 	}
 
 	events, cancel := v.daemon.SubscribeDaemonEvents()
-	s := &groupSession{chatID: chatID, info: info, eventsCancel: cancel, done: make(chan struct{})}
+	s := &groupSession{actions: v.actions, chatID: chatID, info: info, eventsCancel: cancel, done: make(chan struct{})}
 	s.drainInitial(events)
 	go s.run(events, invalidate)
 	return s, nil, nil
 }
 
 type groupSession struct {
+	actions      GroupActions
 	chatID       string
 	eventsCancel func()
 	done         chan struct{}
@@ -76,6 +77,25 @@ type groupSession struct {
 
 	mu   sync.Mutex
 	info app.GroupInfo
+}
+
+// refetch reloads the group card after a dropped-event gap (resync). It returns
+// the phase-one card and spawns the live enrichment, which re-streams through
+// DaemonEventGroupInfoUpdated — the same two-phase shape as Open.
+func (s *groupSession) refetch() bool {
+	info, err := s.actions.GetGroupInfo(context.Background(), s.chatID)
+	if err != nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Preserve a resolved avatar the reload doesn't carry (cold-cache GetGroupInfo
+	// returns an empty avatar); the same protection the live-update path uses.
+	if info.AvatarLocalPath == "" {
+		info.AvatarLocalPath = s.info.AvatarLocalPath
+	}
+	s.info = info
+	return true
 }
 
 func (s *groupSession) drainInitial(events <-chan app.DaemonEvent) {
@@ -103,6 +123,9 @@ func (s *groupSession) run(events <-chan app.DaemonEvent, invalidate func()) {
 }
 
 func (s *groupSession) apply(evt app.DaemonEvent) bool {
+	if evt.Kind == app.DaemonEventResync {
+		return s.refetch()
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	switch evt.Kind {
@@ -192,13 +215,14 @@ func (v groupMembersView) Open(params json.RawMessage, invalidate func()) (ViewS
 	}
 
 	events, cancel := v.daemon.SubscribeDaemonEvents()
-	s := &groupMembersSession{chatID: chatID, members: info.Members, eventsCancel: cancel, done: make(chan struct{})}
+	s := &groupMembersSession{actions: v.actions, chatID: chatID, members: info.Members, eventsCancel: cancel, done: make(chan struct{})}
 	s.drainInitial(events)
 	go s.run(events, invalidate)
 	return s, nil, nil
 }
 
 type groupMembersSession struct {
+	actions      GroupActions
 	chatID       string
 	eventsCancel func()
 	done         chan struct{}
@@ -206,6 +230,19 @@ type groupMembersSession struct {
 
 	mu      sync.Mutex
 	members []app.GroupMember
+}
+
+// refetch reloads the roster after a dropped-event gap (resync); the live
+// enrichment re-streams through DaemonEventGroupInfoUpdated as after Open.
+func (s *groupMembersSession) refetch() bool {
+	info, err := s.actions.GetGroupInfo(context.Background(), s.chatID)
+	if err != nil {
+		return false
+	}
+	s.mu.Lock()
+	s.members = info.Members
+	s.mu.Unlock()
+	return true
 }
 
 func (s *groupMembersSession) drainInitial(events <-chan app.DaemonEvent) {
@@ -233,6 +270,9 @@ func (s *groupMembersSession) run(events <-chan app.DaemonEvent, invalidate func
 }
 
 func (s *groupMembersSession) apply(evt app.DaemonEvent) bool {
+	if evt.Kind == app.DaemonEventResync {
+		return s.refetch()
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	switch evt.Kind {
