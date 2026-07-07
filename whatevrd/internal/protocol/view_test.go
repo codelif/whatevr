@@ -152,6 +152,33 @@ func (c *testClient) expectRemove(sub float64, id string) {
 	}
 }
 
+// awaitInitialFill drains the initial fill of a view whose first load is
+// backgrounded (privacy/blocklist reach the network, so Open does not block on
+// them). The empty initial `ready` and the fill's upserts can arrive in either
+// order, but the upserts themselves land as one contiguous, sort-ordered batch.
+// It returns those upserts in arrival order once both the ready and n upserts
+// have been seen; any other event fails the test.
+func (c *testClient) awaitInitialFill(sub float64, n int) []map[string]any {
+	c.t.Helper()
+	var upserts []map[string]any
+	ready := false
+	for !ready || len(upserts) < n {
+		msg := c.recvEvent()
+		if msg["sub"] != sub {
+			c.t.Fatalf("initial fill: event for wrong sub: %v", msg)
+		}
+		switch msg["event"] {
+		case "ready":
+			ready = true
+		case "upsert":
+			upserts = append(upserts, msg)
+		default:
+			c.t.Fatalf("unexpected event during initial fill: %v", msg)
+		}
+	}
+	return upserts
+}
+
 func (c *testClient) expectReady(sub float64, exhausted bool) {
 	c.t.Helper()
 	msg := c.recvEvent()
@@ -393,10 +420,10 @@ func TestExtendErrors(t *testing.T) {
 
 	for _, tc := range []struct{ params, code string }{
 		{`{"sub":99,"count":5,"direction":"older"}`, CodeNotFound},
-		{`{"count":5,"direction":"older"}`, CodeInvalidParams},                            // no sub
-		{fmt.Sprintf(`{"sub":%d,"direction":"older"}`, int(sub)), CodeInvalidParams},      // no count
-		{fmt.Sprintf(`{"sub":%d,"count":0,"direction":"older"}`, int(sub)), CodeInvalidParams}, // count 0
-		{fmt.Sprintf(`{"sub":%d,"count":5}`, int(sub)), CodeInvalidParams},                // no direction
+		{`{"count":5,"direction":"older"}`, CodeInvalidParams},                                    // no sub
+		{fmt.Sprintf(`{"sub":%d,"direction":"older"}`, int(sub)), CodeInvalidParams},              // no count
+		{fmt.Sprintf(`{"sub":%d,"count":0,"direction":"older"}`, int(sub)), CodeInvalidParams},    // count 0
+		{fmt.Sprintf(`{"sub":%d,"count":5}`, int(sub)), CodeInvalidParams},                        // no direction
 		{fmt.Sprintf(`{"sub":%d,"count":5,"direction":"sideways"}`, int(sub)), CodeInvalidParams}, // bad direction
 		{fmt.Sprintf(`{"sub":%d,"count":5,"direction":"newer"}`, int(sub)), CodeInvalidParams},    // newer on a prefix window
 	} {

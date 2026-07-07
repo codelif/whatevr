@@ -11,7 +11,7 @@ import (
 // fakePresenceActions records the chats a presence view asked to subscribe to
 // upstream, standing in for *wa.Client.
 type fakePresenceActions struct {
-	mu        sync.Mutex
+	mu         sync.Mutex
 	subscribed []string
 }
 

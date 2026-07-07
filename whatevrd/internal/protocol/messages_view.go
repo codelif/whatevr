@@ -68,8 +68,10 @@ func (v messagesView) Open(params json.RawMessage, invalidate func()) (ViewSessi
 		return nil, nil, errorf(CodeInvalidParams, "messages params must carry a chat_id")
 	}
 
-	anchorID, meta, verr := v.resolveAnchor(p)
+	ctx, cancelCtx := context.WithCancel(context.Background())
+	anchorID, meta, verr := v.resolveAnchor(ctx, p)
 	if verr != nil {
+		cancelCtx()
 		return nil, nil, verr
 	}
 
@@ -79,6 +81,8 @@ func (v messagesView) Open(params json.RawMessage, invalidate func()) (ViewSessi
 			lister:       v.lister,
 			chatID:       p.ChatID,
 			eventsCancel: cancel,
+			ctx:          ctx,
+			cancelCtx:    cancelCtx,
 			done:         make(chan struct{}),
 		}
 	}
@@ -117,12 +121,11 @@ func initialAnchorReach(limit *int) (older, newer int) {
 // never drifts. `unread` with nothing unread (or an unresolvable count)
 // degrades to the live edge with no `anchor_id`, exactly as if `latest` were
 // requested.
-func (v messagesView) resolveAnchor(p messagesParams) (string, map[string]any, *Error) {
+func (v messagesView) resolveAnchor(ctx context.Context, p messagesParams) (string, map[string]any, *Error) {
 	switch p.Anchor {
 	case "", "latest":
 		return "", nil, nil
 	case "unread":
-		ctx := context.Background()
 		chat, err := v.lister.GetChat(ctx, p.ChatID)
 		if err != nil {
 			log.Printf("protocol: messages unread anchor: get chat %q: %v", p.ChatID, err)
@@ -142,7 +145,7 @@ func (v messagesView) resolveAnchor(p messagesParams) (string, map[string]any, *
 	default:
 		// Any other value is a message-id anchor. Validate it belongs to this
 		// chat by fetching the smallest possible window around it.
-		if _, err := v.lister.ListMessagesAround(context.Background(), p.ChatID, 1, p.Anchor); err != nil {
+		if _, err := v.lister.ListMessagesAround(ctx, p.ChatID, 1, p.Anchor); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return "", nil, errorf(CodeNotFound, "no message %q in chat %q", p.Anchor, p.ChatID)
 			}
@@ -161,6 +164,8 @@ type messagesChatFeed struct {
 	lister       MessageLister
 	chatID       string
 	eventsCancel func()
+	ctx          context.Context
+	cancelCtx    context.CancelFunc
 	done         chan struct{}
 	closeOnce    sync.Once
 }
@@ -202,6 +207,7 @@ func (f *messagesChatFeed) eventAffectsChat(evt app.DaemonEvent) bool {
 
 func (f *messagesChatFeed) Close() {
 	f.closeOnce.Do(func() {
+		f.cancelCtx()
 		close(f.done)
 		f.eventsCancel()
 	})
@@ -223,7 +229,7 @@ func (s *latestMessagesSession) Items(max int) []Item {
 	if limit <= 0 {
 		limit = messagesUnboundedLimit
 	}
-	msgs, err := s.lister.ListMessages(context.Background(), s.chatID, limit, "")
+	msgs, err := s.lister.ListMessages(s.ctx, s.chatID, limit, "")
 	if err != nil {
 		log.Printf("protocol: list latest messages for view: %v", err)
 		return nil
@@ -286,7 +292,7 @@ func (s *anchoredMessagesSession) Items(int) []Item {
 	s.mu.Lock()
 	olderN, newerN := s.olderReach, s.newerReach
 	s.mu.Unlock()
-	ctx := context.Background()
+	ctx := s.ctx
 
 	anchor, err := s.lister.GetMessage(ctx, s.anchorID)
 	if err != nil {

@@ -80,7 +80,8 @@ type connectionView struct {
 
 func (v connectionView) Open(_ json.RawMessage, invalidate func()) (ViewSession, map[string]any, *Error) {
 	events, cancel := v.daemon.SubscribeDaemonEvents()
-	s := &connectionSession{daemon: v.daemon, eventsCancel: cancel, pending: v.pending, done: make(chan struct{})}
+	ctx, cancelCtx := context.WithCancel(context.Background())
+	s := &connectionSession{daemon: v.daemon, eventsCancel: cancel, cancelCtx: cancelCtx, ctx: ctx, pending: v.pending, done: make(chan struct{})}
 	s.refreshPendingCount()
 	s.drainInitial(events)
 	go s.run(events, invalidate)
@@ -100,6 +101,8 @@ type connectionSession struct {
 
 	pending      PendingOutgoingCounter
 	eventsCancel func()
+	ctx          context.Context
+	cancelCtx    context.CancelFunc
 	done         chan struct{}
 	closeOnce    sync.Once
 }
@@ -188,7 +191,7 @@ func (s *connectionSession) refreshPendingCountLocked() bool {
 	if s.pending == nil {
 		return false
 	}
-	count, err := s.pending.CountPendingOutgoingMessages(context.Background())
+	count, err := s.pending.CountPendingOutgoingMessages(s.ctx)
 	if err != nil {
 		log.Printf("protocol: count pending outgoing messages: %v", err)
 		return false
@@ -227,6 +230,7 @@ func (s *connectionSession) itemLocked() connectionItem {
 
 func (s *connectionSession) Close() {
 	s.closeOnce.Do(func() {
+		s.cancelCtx()
 		close(s.done)
 		s.eventsCancel()
 	})

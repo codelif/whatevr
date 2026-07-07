@@ -50,10 +50,13 @@ func (v chatsView) Open(params json.RawMessage, invalidate func()) (ViewSession,
 	}
 
 	events, cancel := v.daemon.SubscribeDaemonEvents()
+	ctx, cancelCtx := context.WithCancel(context.Background())
 	s := &chatsSession{
 		lister:       v.lister,
 		filter:       store.ChatListFilter{Kind: kind, Archived: p.Archived},
 		eventsCancel: cancel,
+		ctx:          ctx,
+		cancelCtx:    cancelCtx,
 		done:         make(chan struct{}),
 	}
 	go s.run(events, invalidate)
@@ -77,6 +80,8 @@ type chatsSession struct {
 	lister       ChatLister
 	filter       store.ChatListFilter
 	eventsCancel func()
+	ctx          context.Context
+	cancelCtx    context.CancelFunc
 	done         chan struct{}
 	closeOnce    sync.Once
 }
@@ -142,7 +147,7 @@ func (s *chatsSession) Items(max int) []Item {
 	if max > 0 {
 		filter.Limit = max
 	}
-	chats, err := s.lister.ListChatsForView(context.Background(), filter)
+	chats, err := s.lister.ListChatsForView(s.ctx, filter)
 	if err != nil {
 		log.Printf("protocol: list chats for view: %v", err)
 		return nil
@@ -156,6 +161,7 @@ func (s *chatsSession) Items(max int) []Item {
 
 func (s *chatsSession) Close() {
 	s.closeOnce.Do(func() {
+		s.cancelCtx()
 		close(s.done)
 		s.eventsCancel()
 	})

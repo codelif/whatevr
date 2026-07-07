@@ -72,9 +72,11 @@ func (v selfView) Open(_ json.RawMessage, invalidate func()) (ViewSession, map[s
 		return nil, nil, errorf(CodeInternal, "self view unavailable")
 	}
 	events, cancel := v.daemon.SubscribeDaemonEvents()
-	s := &selfSession{actions: v.actions, eventsCancel: cancel, done: make(chan struct{})}
+	ctx, cancelCtx := context.WithCancel(context.Background())
+	s := &selfSession{actions: v.actions, eventsCancel: cancel, ctx: ctx, cancelCtx: cancelCtx, done: make(chan struct{})}
 	// Best-effort first load: SelfProfile errors while logged out, leaving the
-	// view empty until login completes and a refetch fires.
+	// view empty until login completes and a refetch fires. Later refetches run
+	// on the session context, so a disconnect cancels them in flight (F18).
 	s.refetch()
 	s.drainInitial(events)
 	go s.run(events, invalidate)
@@ -84,6 +86,8 @@ func (v selfView) Open(_ json.RawMessage, invalidate func()) (ViewSession, map[s
 type selfSession struct {
 	actions      ContactActions
 	eventsCancel func()
+	ctx          context.Context
+	cancelCtx    context.CancelFunc
 	done         chan struct{}
 	closeOnce    sync.Once
 
@@ -93,7 +97,7 @@ type selfSession struct {
 }
 
 func (s *selfSession) refetch() bool {
-	info, err := s.actions.SelfProfile(context.Background())
+	info, err := s.actions.SelfProfile(s.ctx)
 	if err != nil {
 		return false
 	}
@@ -188,6 +192,7 @@ func (s *selfSession) Items(max int) []Item {
 
 func (s *selfSession) Close() {
 	s.closeOnce.Do(func() {
+		s.cancelCtx()
 		close(s.done)
 		s.eventsCancel()
 	})
@@ -233,15 +238,17 @@ func (v contactView) Open(params json.RawMessage, invalidate func()) (ViewSessio
 	if v.actions == nil {
 		return nil, nil, errorf(CodeInternal, "contact view unavailable")
 	}
+	ctx, cancelCtx := context.WithCancel(context.Background())
 	// A bad jid (malformed, or a group jid) is the only failure GetContactInfo
 	// reports; a not-in-contacts user still returns a card from jid + phone.
-	info, err := v.actions.GetContactInfo(context.Background(), p.JID)
+	info, err := v.actions.GetContactInfo(ctx, p.JID)
 	if err != nil {
+		cancelCtx()
 		return nil, nil, errorf(CodeInvalidParams, "invalid contact jid: %v", err)
 	}
 
 	events, cancel := v.daemon.SubscribeDaemonEvents()
-	s := &contactSession{actions: v.actions, jid: p.JID, info: info, eventsCancel: cancel, done: make(chan struct{})}
+	s := &contactSession{actions: v.actions, jid: p.JID, info: info, eventsCancel: cancel, ctx: ctx, cancelCtx: cancelCtx, done: make(chan struct{})}
 	s.drainInitial(events)
 	go s.run(events, invalidate)
 	return s, nil, nil
@@ -251,6 +258,8 @@ type contactSession struct {
 	actions      ContactActions
 	jid          string
 	eventsCancel func()
+	ctx          context.Context
+	cancelCtx    context.CancelFunc
 	done         chan struct{}
 	closeOnce    sync.Once
 
@@ -263,7 +272,7 @@ type contactSession struct {
 // re-streams through the usual overlay events; a transient failure keeps the
 // current card.
 func (s *contactSession) refetch() bool {
-	info, err := s.actions.GetContactInfo(context.Background(), s.jid)
+	info, err := s.actions.GetContactInfo(s.ctx, s.jid)
 	if err != nil {
 		return false
 	}
@@ -359,6 +368,7 @@ func (s *contactSession) Items(max int) []Item {
 
 func (s *contactSession) Close() {
 	s.closeOnce.Do(func() {
+		s.cancelCtx()
 		close(s.done)
 		s.eventsCancel()
 	})

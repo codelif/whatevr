@@ -75,7 +75,8 @@ func (v stickersView) Open(params json.RawMessage, invalidate func()) (ViewSessi
 		return nil, nil, err
 	}
 	events, cancel := v.daemon.SubscribeDaemonEvents()
-	s := &stickersSession{store: v.store, source: source, eventsCancel: cancel, done: make(chan struct{})}
+	ctx, cancelCtx := context.WithCancel(context.Background())
+	s := &stickersSession{store: v.store, source: source, eventsCancel: cancel, ctx: ctx, cancelCtx: cancelCtx, done: make(chan struct{})}
 	go s.run(events, invalidate)
 	return s, nil, nil
 }
@@ -84,6 +85,8 @@ type stickersSession struct {
 	store        StickerStore
 	source       app.StickerSource
 	eventsCancel func()
+	ctx          context.Context
+	cancelCtx    context.CancelFunc
 	done         chan struct{}
 	closeOnce    sync.Once
 }
@@ -125,11 +128,11 @@ func (s *stickersSession) Items(max int) []Item {
 	)
 	switch s.source {
 	case app.StickerSourceRecent:
-		stickers, err = s.store.ListRecentStickers(context.Background(), limit)
+		stickers, err = s.store.ListRecentStickers(s.ctx, limit)
 	case app.StickerSourceFavorite:
-		stickers, err = s.store.ListFavoriteStickers(context.Background(), limit)
+		stickers, err = s.store.ListFavoriteStickers(s.ctx, limit)
 	case app.StickerSourceAll:
-		stickers, err = s.store.ListAllStickers(context.Background(), limit)
+		stickers, err = s.store.ListAllStickers(s.ctx, limit)
 	}
 	if err != nil {
 		log.Printf("protocol: list stickers for view: %v", err)
@@ -148,6 +151,7 @@ func (s *stickersSession) Items(max int) []Item {
 
 func (s *stickersSession) Close() {
 	s.closeOnce.Do(func() {
+		s.cancelCtx()
 		close(s.done)
 		s.eventsCancel()
 	})
@@ -206,7 +210,8 @@ func (v stickerPacksView) Open(_ json.RawMessage, invalidate func()) (ViewSessio
 		return nil, nil, errorf(CodeInternal, "sticker_packs view unavailable")
 	}
 	events, cancel := v.daemon.SubscribeDaemonEvents()
-	s := &stickerPacksSession{store: v.store, actions: v.actions, eventsCancel: cancel, done: make(chan struct{})}
+	ctx, cancelCtx := context.WithCancel(context.Background())
+	s := &stickerPacksSession{store: v.store, actions: v.actions, eventsCancel: cancel, ctx: ctx, cancelCtx: cancelCtx, done: make(chan struct{})}
 	go s.refreshIndex(invalidate)
 	go s.run(events, invalidate)
 	return s, nil, nil
@@ -216,6 +221,8 @@ type stickerPacksSession struct {
 	store        StickerStore
 	actions      StickerActions
 	eventsCancel func()
+	ctx          context.Context
+	cancelCtx    context.CancelFunc
 	done         chan struct{}
 	closeOnce    sync.Once
 }
@@ -224,7 +231,7 @@ func (s *stickerPacksSession) refreshIndex(invalidate func()) {
 	if s.actions == nil {
 		return
 	}
-	if _, err := s.actions.ListStickerPacks(context.Background(), false); err != nil {
+	if _, err := s.actions.ListStickerPacks(s.ctx, false); err != nil {
 		log.Printf("protocol: refresh sticker packs for view: %v", err)
 	}
 	invalidate()
@@ -244,7 +251,7 @@ func (s *stickerPacksSession) run(events <-chan app.DaemonEvent, invalidate func
 }
 
 func (s *stickerPacksSession) Items(int) []Item {
-	packs, err := s.store.ListStickerPacks(context.Background())
+	packs, err := s.store.ListStickerPacks(s.ctx)
 	if err != nil {
 		log.Printf("protocol: list sticker packs for view: %v", err)
 		return nil
@@ -262,6 +269,7 @@ func (s *stickerPacksSession) Items(int) []Item {
 
 func (s *stickerPacksSession) Close() {
 	s.closeOnce.Do(func() {
+		s.cancelCtx()
 		close(s.done)
 		s.eventsCancel()
 	})
@@ -293,16 +301,19 @@ func (v stickerPackView) Open(params json.RawMessage, invalidate func()) (ViewSe
 	if p.PackID == "" {
 		return nil, nil, errorf(CodeInvalidParams, "sticker_pack params must carry a pack_id")
 	}
-	pack, ok, err := v.store.GetStickerPack(context.Background(), p.PackID)
+	ctx, cancelCtx := context.WithCancel(context.Background())
+	pack, ok, err := v.store.GetStickerPack(ctx, p.PackID)
 	if err != nil {
+		cancelCtx()
 		log.Printf("protocol: get sticker pack for view: %v", err)
 		return nil, nil, errorf(CodeInternal, "sticker_pack view unavailable")
 	}
 	if !ok {
+		cancelCtx()
 		return nil, nil, errorf(CodeNotFound, "no sticker pack %s", p.PackID)
 	}
 	events, cancel := v.daemon.SubscribeDaemonEvents()
-	s := &stickerPackSession{store: v.store, actions: v.actions, packID: p.PackID, eventsCancel: cancel, done: make(chan struct{})}
+	s := &stickerPackSession{store: v.store, actions: v.actions, packID: p.PackID, eventsCancel: cancel, ctx: ctx, cancelCtx: cancelCtx, done: make(chan struct{})}
 	if pack.ContentsFetchedAt == 0 && v.actions != nil {
 		go s.fetchContents(invalidate)
 	}
@@ -315,12 +326,14 @@ type stickerPackSession struct {
 	actions      StickerActions
 	packID       string
 	eventsCancel func()
+	ctx          context.Context
+	cancelCtx    context.CancelFunc
 	done         chan struct{}
 	closeOnce    sync.Once
 }
 
 func (s *stickerPackSession) fetchContents(invalidate func()) {
-	if _, _, err := s.actions.GetStickerPack(context.Background(), s.packID); err != nil {
+	if _, _, err := s.actions.GetStickerPack(s.ctx, s.packID); err != nil {
 		log.Printf("protocol: fetch sticker pack %s for view: %v", s.packID, err)
 	}
 	invalidate()
@@ -353,7 +366,7 @@ func (s *stickerPackSession) eventAffects(evt app.DaemonEvent) bool {
 }
 
 func (s *stickerPackSession) Items(int) []Item {
-	stickers, err := s.store.ListPackStickers(context.Background(), s.packID)
+	stickers, err := s.store.ListPackStickers(s.ctx, s.packID)
 	if err != nil {
 		log.Printf("protocol: list sticker pack %s for view: %v", s.packID, err)
 		return nil
@@ -371,6 +384,7 @@ func (s *stickerPackSession) Items(int) []Item {
 
 func (s *stickerPackSession) Close() {
 	s.closeOnce.Do(func() {
+		s.cancelCtx()
 		close(s.done)
 		s.eventsCancel()
 	})
