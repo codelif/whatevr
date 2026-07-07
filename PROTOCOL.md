@@ -212,7 +212,7 @@ noted; this inventory fixes the shape of the protocol, not every field name.
 | `stickers` | `source` (`recent`\|`favorite`\|`all`), `limit` | stickers | |
 | `sticker_packs` | — | packs | |
 | `sticker_pack` | `pack_id` | stickers | contents fetch is async; items land as they resolve |
-| `transfers` | — | active media transfers | `message_id`, direction, `received_bytes`, `total_bytes`, `error`; `remove` on completion — completion itself is visible as the message row upserting with its new `media_path` |
+| `transfers` | — | active media transfers | `message_id`, direction, `received_bytes`, `total_bytes`, optional active `error`; `remove` on terminal success or failure — success itself is visible as the message row upserting with its new `media.path`, failure as the message row upserting with `media.download_error` |
 | `notifications` | — | notification records | what the daemon would notify about, for applets, relays, and headless setups; daemon's own D-Bus notifier is unaffected |
 
 Avatar paths are embedded in chat/message/contact/member rows and refresh via
@@ -299,8 +299,11 @@ and always:
   quote, `reactions`, `mentions`, `edited`, `revoked`, `starred`, `pinned_until`.
 
 Media-bearing kinds carry `media` (`mime`, dimensions, `thumbnail_path`,
-`path` — empty until downloaded, byte size) and the download lifecycle is:
-`media.download` → progress in `transfers` → message upserts with `path` set.
+`path` — empty until downloaded, byte size, optional `download_error`) and the
+download lifecycle is: `media.download` → active progress in `transfers` →
+`transfers` remove when the attempt ends → message upsert with `path` set on
+success or `download_error` set on failure. A retry clears `download_error` via
+another message upsert.
 
 ## Connection-directed events
 

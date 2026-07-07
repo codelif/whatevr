@@ -70,6 +70,7 @@ func RegisterDaemonViews(s *Server, daemon *app.Daemon, store DaemonStore, actio
 	s.RegisterView("stickers", stickersView{daemon: daemon, store: stickerStore})
 	s.RegisterView("sticker_packs", stickerPacksView{daemon: daemon, store: stickerStore, actions: actions})
 	s.RegisterView("sticker_pack", stickerPackView{daemon: daemon, store: stickerStore, actions: actions})
+	s.RegisterView("transfers", transfersView{daemon: daemon})
 }
 
 type connectionView struct {

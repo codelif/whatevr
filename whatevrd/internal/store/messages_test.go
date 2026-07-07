@@ -258,6 +258,53 @@ func TestUpdateMessageMediaLocalPathWithDimensionsPersistsDimensions(t *testing.
 	}
 }
 
+func TestMessageMediaDownloadErrorPersistsAndClearsOnSuccess(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	if _, err := db.SaveMediaMessage(ctx, MediaMessageInput{
+		TextMessageInput: TextMessageInput{
+			ID:        "chat-1:image-1",
+			ChatID:    "chat-1",
+			ChatName:  "Test Chat",
+			SenderID:  "sender-1",
+			Timestamp: time.Unix(100, 0),
+		},
+		MediaKind:     MediaKindImage,
+		MediaMimeType: "image/jpeg",
+	}); err != nil {
+		t.Fatalf("save image message: %v", err)
+	}
+
+	updated, err := db.SetMessageMediaDownloadError(ctx, "chat-1:image-1", "network down")
+	if err != nil {
+		t.Fatalf("SetMessageMediaDownloadError() error = %v", err)
+	}
+	if updated.MediaDownloadError != "network down" {
+		t.Fatalf("updated download error = %q", updated.MediaDownloadError)
+	}
+
+	loaded, err := db.GetMessage(ctx, "chat-1:image-1")
+	if err != nil {
+		t.Fatalf("GetMessage() error = %v", err)
+	}
+	if loaded.MediaDownloadError != "network down" {
+		t.Fatalf("stored download error = %q", loaded.MediaDownloadError)
+	}
+
+	updated, err = db.UpdateMessageMediaLocalPathWithDimensions(ctx, "chat-1:image-1", "/tmp/image.jpg", 1200, 240)
+	if err != nil {
+		t.Fatalf("UpdateMessageMediaLocalPathWithDimensions() error = %v", err)
+	}
+	if updated.MediaDownloadError != "" || updated.MediaLocalPath != "/tmp/image.jpg" {
+		t.Fatalf("success update = path %q error %q", updated.MediaLocalPath, updated.MediaDownloadError)
+	}
+}
+
 func TestUpdateMessageMediaLocalPathWithDimensionsKeepsReactions(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))

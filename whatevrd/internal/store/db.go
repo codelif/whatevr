@@ -941,6 +941,7 @@ func (db *DB) ensureMediaColumns(ctx context.Context) error {
 		{"media_width", `ALTER TABLE messages ADD COLUMN media_width INTEGER NOT NULL DEFAULT 0`},
 		{"media_height", `ALTER TABLE messages ADD COLUMN media_height INTEGER NOT NULL DEFAULT 0`},
 		{"media_animated", `ALTER TABLE messages ADD COLUMN media_animated INTEGER NOT NULL DEFAULT 0`},
+		{"media_download_error", `ALTER TABLE messages ADD COLUMN media_download_error TEXT NOT NULL DEFAULT ''`},
 		{"media_payload", `ALTER TABLE messages ADD COLUMN media_payload BLOB NOT NULL DEFAULT x''`},
 		{"media_cache_key", `ALTER TABLE messages ADD COLUMN media_cache_key TEXT NOT NULL DEFAULT ''`},
 	}

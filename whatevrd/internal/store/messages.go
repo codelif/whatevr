@@ -108,6 +108,7 @@ type Message struct {
 	MediaWidth              int32
 	MediaHeight             int32
 	MediaAnimated           bool
+	MediaDownloadError      string
 	MediaPayload            []byte
 	MediaCacheKey           string
 	IsRevoked               bool
@@ -716,7 +717,7 @@ const messageSelectPrefix = `
 	SELECT m.id, m.chat_id, m.sender_id,
 	       COALESCE(NULLIF(s.name, ''), NULLIF(c.name, ''), ''),
 	       COALESCE(NULLIF(sa.local_path, ''), NULLIF(ca.local_path, ''), NULLIF(s.avatar_local_path, ''), NULLIF(c.avatar_local_path, ''), ''),
-	       m.text, m.timestamp, m.rowid, m.direction, m.is_read, m.status, m.media_kind, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_animated,
+	       m.text, m.timestamp, m.rowid, m.direction, m.is_read, m.status, m.media_kind, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_animated, m.media_download_error,
 	       m.reply_to_message_id, m.reply_to_sender_id, m.reply_to_sender_name, m.reply_to_text, m.reply_to_media_kind, m.reply_to_media_mime_type, m.reply_to_direction,
 	       m.send_attempts, m.last_send_error, m.next_send_attempt, m.is_revoked, m.is_edited, m.is_starred, m.pinned_at, m.pinned_until, m.mentioned_jids
 	FROM messages m
@@ -736,7 +737,7 @@ func (db *DB) ListMessages(ctx context.Context, chatID string, limit int, before
 		SELECT m.id, m.chat_id, m.sender_id,
 		       COALESCE(NULLIF(s.name, ''), NULLIF(c.name, ''), ''),
 		       COALESCE(NULLIF(sa.local_path, ''), NULLIF(ca.local_path, ''), NULLIF(s.avatar_local_path, ''), NULLIF(c.avatar_local_path, ''), ''),
-		       m.text, m.timestamp, m.rowid, m.direction, m.is_read, m.status, m.media_kind, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_animated,
+		       m.text, m.timestamp, m.rowid, m.direction, m.is_read, m.status, m.media_kind, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_animated, m.media_download_error,
 		       m.reply_to_message_id, m.reply_to_sender_id, m.reply_to_sender_name, m.reply_to_text, m.reply_to_media_kind, m.reply_to_media_mime_type, m.reply_to_direction,
 		       m.send_attempts, m.last_send_error, m.next_send_attempt, m.is_revoked, m.is_edited, m.is_starred, m.pinned_at, m.pinned_until, m.mentioned_jids
 		FROM messages m
@@ -919,7 +920,7 @@ func (db *DB) listMessagesAroundSide(ctx context.Context, chatID string, timesta
 		SELECT m.id, m.chat_id, m.sender_id,
 		       COALESCE(NULLIF(s.name, ''), NULLIF(c.name, ''), ''),
 		       COALESCE(NULLIF(sa.local_path, ''), NULLIF(ca.local_path, ''), NULLIF(s.avatar_local_path, ''), NULLIF(c.avatar_local_path, ''), ''),
-		       m.text, m.timestamp, m.rowid, m.direction, m.is_read, m.status, m.media_kind, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_animated,
+		       m.text, m.timestamp, m.rowid, m.direction, m.is_read, m.status, m.media_kind, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_animated, m.media_download_error,
 		       m.reply_to_message_id, m.reply_to_sender_id, m.reply_to_sender_name, m.reply_to_text, m.reply_to_media_kind, m.reply_to_media_mime_type, m.reply_to_direction,
 		       m.send_attempts, m.last_send_error, m.next_send_attempt, m.is_revoked, m.is_edited, m.is_starred, m.pinned_at, m.pinned_until, m.mentioned_jids
 		FROM messages m
@@ -1146,6 +1147,7 @@ func (db *DB) MarkMessageRevoked(ctx context.Context, id string) (Message, Chat,
 			media_width = 0,
 			media_height = 0,
 			media_animated = 0,
+			media_download_error = '',
 			media_payload = x'',
 			media_cache_key = '',
 			reply_to_message_id = '',
@@ -1627,7 +1629,7 @@ func (db *DB) UpdateMessageMediaLocalPathWithDimensions(ctx context.Context, id,
 	if mediaWidth > 0 && mediaHeight > 0 {
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE messages
-			SET media_local_path = ?, media_width = ?, media_height = ?
+			SET media_local_path = ?, media_width = ?, media_height = ?, media_download_error = ''
 			WHERE id = ?
 		`, localPath, mediaWidth, mediaHeight, id); err != nil {
 			return Message{}, err
@@ -1635,7 +1637,7 @@ func (db *DB) UpdateMessageMediaLocalPathWithDimensions(ctx context.Context, id,
 	} else {
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE messages
-			SET media_local_path = ?
+			SET media_local_path = ?, media_download_error = ''
 			WHERE id = ?
 		`, localPath, id); err != nil {
 			return Message{}, err
@@ -1654,6 +1656,35 @@ func (db *DB) UpdateMessageMediaLocalPathWithDimensions(ctx context.Context, id,
 		return Message{}, err
 	}
 
+	return message, nil
+}
+
+func (db *DB) SetMessageMediaDownloadError(ctx context.Context, id, errorText string) (Message, error) {
+	tx, err := db.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return Message{}, err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE messages
+		SET media_download_error = ?
+		WHERE id = ?
+	`, errorText, id); err != nil {
+		return Message{}, err
+	}
+
+	message, err := getMessageTx(ctx, tx, id)
+	if err != nil {
+		return Message{}, err
+	}
+	if err := attachReactionsOne(ctx, tx, &message); err != nil {
+		return Message{}, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return Message{}, err
+	}
 	return message, nil
 }
 
@@ -1951,7 +1982,7 @@ func getMessageRow(ctx context.Context, queryer interface {
 		SELECT m.id, m.chat_id, m.sender_id,
 		       COALESCE(NULLIF(s.name, ''), NULLIF(c.name, ''), ''),
 		       COALESCE(NULLIF(sa.local_path, ''), NULLIF(ca.local_path, ''), NULLIF(s.avatar_local_path, ''), NULLIF(c.avatar_local_path, ''), ''),
-		       m.text, m.timestamp, m.rowid, m.direction, m.is_read, m.status, m.media_kind, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_animated, m.media_payload, m.media_cache_key,
+		       m.text, m.timestamp, m.rowid, m.direction, m.is_read, m.status, m.media_kind, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_animated, m.media_download_error, m.media_payload, m.media_cache_key,
 		       m.reply_to_message_id, m.reply_to_sender_id, m.reply_to_sender_name, m.reply_to_text, m.reply_to_media_kind, m.reply_to_media_mime_type, m.reply_to_direction,
 		       m.send_attempts, m.last_send_error, m.next_send_attempt, m.is_revoked, m.is_edited, m.is_starred, m.pinned_at, m.pinned_until, m.mentioned_jids
 		FROM messages m
@@ -1979,6 +2010,7 @@ func getMessageRow(ctx context.Context, queryer interface {
 		&message.MediaWidth,
 		&message.MediaHeight,
 		&message.MediaAnimated,
+		&message.MediaDownloadError,
 		&message.MediaPayload,
 		&message.MediaCacheKey,
 		&message.ReplyTo.MessageID,
@@ -2094,6 +2126,7 @@ func scanMessageRows(rows *sql.Rows, capacity int) ([]Message, error) {
 			&message.MediaWidth,
 			&message.MediaHeight,
 			&message.MediaAnimated,
+			&message.MediaDownloadError,
 			&message.ReplyTo.MessageID,
 			&message.ReplyTo.SenderID,
 			&message.ReplyTo.SenderName,
