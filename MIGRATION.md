@@ -85,7 +85,7 @@ Status: `todo` | `doing` | `done` | `blocked` | `needs-decision`
 | B6a | `privacy`, `preferences`, `blocklist` — settings views | done | `settings_view.go` (privacyView/preferencesView/blocklistView over new `SettingsActions` seam = `GetPrivacySettings`/`GetAppPreferences`/`GetBlocklist`; `DaemonActions` widened to embed it, main passes `waClient`, fixture/tests nil). `privacy`/`preferences` are object views (id `"self"`); `blocklist` is an unwindowed collection keyed by jid, sorted name-then-jid (`blocklistSortKey`, `\x1f`-delimited). `privacy` fills from the live connection (empty until login, fills on `DaemonEventConnectionChanged` while unloaded) and replaces wholesale on `DaemonEventPrivacySettingsChanged`'s carried snapshot. `blocklist` re-reads on `DaemonEventBlocklistChanged`, fills-after-login on `ConnectionChanged`, and overlays a held row's avatar on `DaemonEventAvatarUpdated` (Sender-kind, matching jid — same LID caveat as the contact card). **Required a new daemon event** `DaemonEventPreferencesChanged` (fired from `SetAppPreferences`): app preferences had no live-update path, and this makes the `preferences` view correct when they change via any caller (Decision log 2026-07-07). Daemon-event-surface addition, not a wire/PROTOCOL.md change; frozen gRPC ignores the kind. Store-free raw-socket tests; hand-verified over a raw socket (three initial fills+ready, live privacy snapshot, live prefs toggle, blocklist roster diff upsert+remove with name sort, avatar overlay, logged-out→login fill, nil-actions → internal). |
 | B6b | `starred`, `pinned` — windowed message-row views | done | `starred_pinned_view.go` serves `starred` (live-edge prefix window over `store.ListStarredMessages`, newest-first sort, optional `chat_id`, `chat_name`, live star/unstar via `MessageUpdated`) and `pinned` (per-chat unwindowed `store.ListPinnedMessages`, oldest-pin-first sort, live pin/unpin plus expiry timer). Both reuse the B3 message item shape; `DaemonStore` widened with `StarredPinnedLister`; store-backed raw-socket tests cover fill, scoped/windowed extend, live add/remove, expiry, and missing `chat_id`. No PROTOCOL.md change. |
 | B7a | `stickers`, `sticker_packs`, `sticker_pack` views | done | `sticker_view.go` serves source-filtered sticker library rows, pack rows, and async pack contents over the store/actions seam; registered in `RegisterDaemonViews`. Store-backed raw-socket tests cover source windows/extend, favorite live updates, pack rows, async contents, download-path upserts, and param errors. No PROTOCOL.md change. |
-| B7b | `transfers` view | todo | Split from B7; implement after sticker views. |
+| B7b | `transfers` view | done | `transfers_view.go` serves active media transfers from daemon download events (initial replay + live progress, remove on terminal success/failure); message media rows now carry durable `media.download_error` via store `media_download_error` and `wa.DownloadMessageMedia` clears/sets it around retries/failures. PROTOCOL.md amended: `transfers` is active-only; terminal failure is rendered through message upserts. Store + raw-socket tests; hand-verified over a raw socket (subscribe, ready, progress upsert, remove). |
 
 ### Phase C — commands & queries
 
@@ -389,3 +389,14 @@ _None._
   (5) Sort keys are daemon-assigned from the store/action result order (and pack
   order for `sticker_pack` contents), so frontends still only apply keyed upserts
   ordered by opaque `sort`.
+- 2026-07-07 — B7b implementation decision (PROTOCOL.md amended, approved by
+  Harsh): `transfers` is **active work only**. A media download start/progress
+  appears as a `transfers` upsert keyed by `message_id` with `direction:"download"`,
+  bytes, and daemon sort; terminal success or failure removes that row. Durable
+  renderable failure state belongs to the message row as `media.download_error`,
+  stored in `messages.media_download_error` and delivered by ordinary `messages` /
+  `starred` / `pinned` upserts. Retry clears `download_error` via a message upsert;
+  success clears it while setting `media.path`. This keeps views as current daemon
+  state: frontends never have to catch or cache a terminal failure event, and slow
+  clients cannot miss the error. The old `transfers.error` wording is narrowed to
+  optional active-transfer error detail, not terminal failure history.

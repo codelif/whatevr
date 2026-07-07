@@ -423,6 +423,7 @@ type messageMedia struct {
 	Animated      bool   `json:"animated,omitempty"`
 	ThumbnailPath string `json:"thumbnail_path,omitempty"`
 	Path          string `json:"path,omitempty"`
+	DownloadError string `json:"download_error,omitempty"`
 }
 
 func messageItemFromStore(m store.Message) messageItem {
@@ -521,6 +522,7 @@ func messageMediaFromStore(m store.Message) *messageMedia {
 		Animated:      m.MediaAnimated,
 		ThumbnailPath: m.MediaThumbnailLocalPath,
 		Path:          m.MediaLocalPath,
+		DownloadError: m.MediaDownloadError,
 	}
 }
 

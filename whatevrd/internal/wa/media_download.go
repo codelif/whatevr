@@ -114,6 +114,16 @@ func (c *Client) DownloadMessageMedia(ctx context.Context, messageID string) (ap
 		return appstore.Message{}, state.err
 	}
 
+	if message.MediaDownloadError != "" {
+		updated, err := c.store.SetMessageMediaDownloadError(ctx, message.ID, "")
+		if err != nil {
+			state.err = err
+			return appstore.Message{}, err
+		}
+		message = updated
+		c.daemon.PublishMessageUpdated(toDaemonMessage(updated))
+	}
+
 	c.daemon.PublishMediaDownloadChanged(message.ID, message.ChatID, true, "", 0, totalBytes)
 	defer func() {
 		errorText := ""
@@ -121,6 +131,14 @@ func (c *Client) DownloadMessageMedia(ctx context.Context, messageID string) (ap
 			errorText = state.err.Error()
 		}
 		c.daemon.PublishMediaDownloadChanged(message.ID, message.ChatID, false, errorText, 0, totalBytes)
+		if errorText != "" {
+			updated, err := c.store.SetMessageMediaDownloadError(context.Background(), message.ID, errorText)
+			if err != nil {
+				c.log.Errorf("Persist media download error for %s: %v", message.ID, err)
+				return
+			}
+			c.daemon.PublishMessageUpdated(toDaemonMessage(updated))
+		}
 	}()
 
 	client := c.currentClient()
