@@ -210,8 +210,9 @@ type preferencesSession struct {
 	done         chan struct{}
 	closeOnce    sync.Once
 
-	mu    sync.Mutex
-	prefs app.AppPreferences
+	mu     sync.Mutex
+	loaded bool
+	prefs  app.AppPreferences
 }
 
 func (s *preferencesSession) refetch() bool {
@@ -221,9 +222,10 @@ func (s *preferencesSession) refetch() bool {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.prefs == prefs {
+	if s.loaded && s.prefs == prefs {
 		return false
 	}
+	s.loaded = true
 	s.prefs = prefs
 	return true
 }
@@ -253,10 +255,22 @@ func (s *preferencesSession) run(events <-chan app.DaemonEvent, invalidate func(
 }
 
 func (s *preferencesSession) apply(evt app.DaemonEvent) bool {
-	if evt.Kind != app.DaemonEventPreferencesChanged && evt.Kind != app.DaemonEventResync {
+	switch evt.Kind {
+	case app.DaemonEventPreferencesChanged, app.DaemonEventResync:
+		return s.refetch()
+	case app.DaemonEventConnectionChanged:
+		// If the first load failed, retry once the connection is up rather than
+		// leaving the view empty (F28). A successful load already sets loaded.
+		s.mu.Lock()
+		loaded := s.loaded
+		s.mu.Unlock()
+		if !loaded {
+			return s.refetch()
+		}
+		return false
+	default:
 		return false
 	}
-	return s.refetch()
 }
 
 func (s *preferencesSession) Items(max int) []Item {
@@ -267,8 +281,14 @@ func (s *preferencesSession) Items(max int) []Item {
 		return nil
 	}
 	s.mu.Lock()
+	loaded := s.loaded
 	p := s.prefs
 	s.mu.Unlock()
+	// Until a real load succeeds, emit nothing rather than presenting the
+	// zero-value (all-false) preferences as if the user had chosen them (F28).
+	if !loaded {
+		return nil
+	}
 	item := preferencesItem{
 		ID:                    "self",
 		NotificationsEnabled:  p.NotificationsEnabled,

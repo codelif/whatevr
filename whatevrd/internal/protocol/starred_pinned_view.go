@@ -138,8 +138,15 @@ func (s *starredSession) Items(max int) []Item {
 
 const starredSortTimeMax = int64(1) << 62
 
-// starredSort matches store.ListStarredMessages: newest timestamp first, then
-// newest rowid first for same-second arrivals.
+// starredSort matches store.ListStarredMessages: newest message timestamp
+// first, then newest rowid first for same-second arrivals.
+//
+// F27: the store records only is_starred, not a star time, so `starred` is
+// ordered by the message's own timestamp, not when it was starred. A
+// consequence is that starring an old message places it deep in the list rather
+// than at the top, so it can fall outside a small window until the window is
+// extended. Recording a star time would need a schema migration; ordering by
+// message timestamp is the documented behavior (see PROTOCOL.md `starred`).
 func starredSort(m store.Message) string {
 	return fmt.Sprintf("%020d-%020d-%s", invStarredSort(m.TimestampUnix), invStarredSort(m.SortSeq), m.ID)
 }
@@ -207,6 +214,7 @@ type pinnedSession struct {
 
 	mu          sync.Mutex
 	expiryTimer *time.Timer
+	closed      bool
 }
 
 func (s *pinnedSession) run(events <-chan app.DaemonEvent, invalidate func()) {
@@ -299,7 +307,10 @@ func (s *pinnedSession) armExpiry(rows []store.Message) {
 		s.expiryTimer.Stop()
 		s.expiryTimer = nil
 	}
-	if soonest == 0 {
+	// Items (which calls armExpiry) can race Close; without this a timer armed
+	// after Close would never be stopped (a bounded leak) and could fire post-
+	// close. Once closed, stay disarmed. F26.
+	if s.closed || soonest == 0 {
 		return
 	}
 	// Fire a touch after expiry so the store's `pinned_until > now` filter has
@@ -317,6 +328,7 @@ func (s *pinnedSession) Close() {
 		close(s.done)
 		s.eventsCancel()
 		s.mu.Lock()
+		s.closed = true
 		if s.expiryTimer != nil {
 			s.expiryTimer.Stop()
 			s.expiryTimer = nil
