@@ -137,6 +137,34 @@ func TestQueueOverflowLeavesOtherSubsAlone(t *testing.T) {
 	}
 }
 
+func TestQueueConnFrameCapClosesConnection(t *testing.T) {
+	old := maxQueuedConnFrames
+	maxQueuedConnFrames = 3
+	defer func() { maxQueuedConnFrames = old }()
+
+	q := newOutQueue()
+	// Connection-level frames (responses/open_chat) cannot coalesce or reset, so
+	// once the cap trips the queue appends a terminal close and drops the rest.
+	for i := 0; i < 6; i++ {
+		q.push([]byte(`response`), false)
+	}
+	frames := popAll(q)
+	last := frames[len(frames)-1]
+	if !last.closeAfter {
+		t.Fatalf("last frame after conn-cap overflow is not a close frame: %+v", last)
+	}
+	if !bytes.Contains(last.line, []byte("overflowed")) {
+		t.Fatalf("terminal frame = %q, want an overflow error", last.line)
+	}
+
+	// Further connection-level frames after overflow are dropped: the connection
+	// is already on its way down.
+	q.push([]byte(`late`), false)
+	if extra := popAll(q); len(extra) != 0 {
+		t.Fatalf("push after conn-cap overflow enqueued %d frames, want 0", len(extra))
+	}
+}
+
 func TestQueueCloseSubPurgesAndBlocks(t *testing.T) {
 	q := newOutQueue()
 	q.addSub(1)

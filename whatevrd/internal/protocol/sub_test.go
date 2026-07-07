@@ -117,6 +117,23 @@ func TestSubscriptionResetOnLiveUpdateRefillsWithReady(t *testing.T) {
 	}
 }
 
+// F15: a view that returns an Item with an empty Sort must still yield a
+// well-formed upsert — the engine falls back to the item id rather than emitting
+// a sort-less, grammar-violating frame.
+func TestSubscriptionEmptySortFallsBackToID(t *testing.T) {
+	view := newMemView()
+	sink := &fakeSink{}
+	view.put("a", "", map[string]any{"v": 1}) // empty sort key
+	startFakeSub(t, view, sink, 0)
+	waitFor(t, "upsert then ready", func() bool {
+		return kinds(sink.snapshot()) == "upsert,ready"
+	})
+	upsert := sink.snapshot()[0]
+	if !strings.Contains(upsert, `"sort":"a"`) {
+		t.Fatalf("empty-sort upsert should carry id as sort, got %s", upsert)
+	}
+}
+
 func TestSubscriptionCoalescesKicksIntoOneRecompute(t *testing.T) {
 	view := newMemView()
 	sink := &fakeSink{}
