@@ -179,6 +179,10 @@ const (
 	// it to re-derive the per-member breakdown, and views that only track message
 	// status ignore it.
 	DaemonEventMessageReceipt
+	// DaemonEventPreferencesChanged fires when the daemon-persisted app
+	// preferences change (via SetAppPreferences). It carries no payload; the
+	// `preferences` view re-reads GetAppPreferences off it.
+	DaemonEventPreferencesChanged
 )
 
 type StickerSource int32
@@ -864,6 +868,12 @@ func (d *Daemon) PublishSelfProfileChanged() {
 // re-fetches it.
 func (d *Daemon) PublishBlocklistChanged() {
 	d.broadcastDaemonEvent(DaemonEvent{Kind: DaemonEventBlocklistChanged})
+}
+
+// PublishPreferencesChanged signals that the daemon-persisted app preferences
+// changed, so an open `preferences` view re-reads them.
+func (d *Daemon) PublishPreferencesChanged() {
+	d.broadcastDaemonEvent(DaemonEvent{Kind: DaemonEventPreferencesChanged})
 }
 
 // PublishGroupInfoUpdated delivers the live-fetched group fields (subject,

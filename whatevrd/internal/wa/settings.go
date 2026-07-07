@@ -57,6 +57,7 @@ func (c *Client) SetAppPreferences(ctx context.Context, prefs app.AppPreferences
 		return app.AppPreferences{}, err
 	}
 	c.appPrefs.Store(&prefs)
+	c.daemon.PublishPreferencesChanged()
 	return prefs, nil
 }
 
