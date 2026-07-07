@@ -103,9 +103,10 @@ func (v messagesView) Open(params json.RawMessage, invalidate func()) (ViewSessi
 }
 
 // initialAnchorReach splits the subscribe limit into a balanced older/newer
-// reach around the anchor (older-biased on odd remainders, matching the store's
-// around-anchor split). No limit falls back to the unbounded cap; the real
-// fetch is still bounded by how many messages exist.
+// reach around the anchor. The anchor itself takes one slot; the remainder is
+// halved with any odd extra going to the newer side (newer-biased). No limit
+// falls back to the unbounded cap; the real fetch is still bounded by how many
+// messages exist.
 func initialAnchorReach(limit *int) (older, newer int) {
 	total := messagesUnboundedLimit
 	if limit != nil && *limit > 0 {
@@ -122,9 +123,16 @@ func initialAnchorReach(limit *int) (older, newer int) {
 // degrades to the live edge with no `anchor_id`, exactly as if `latest` were
 // requested.
 func (v messagesView) resolveAnchor(ctx context.Context, p messagesParams) (string, map[string]any, *Error) {
-	switch p.Anchor {
-	case "", "latest":
+	if p.Anchor == "" || p.Anchor == "latest" {
 		return "", nil, nil
+	}
+	// Every other anchor resolves against the store; a nil lister (a fixture or
+	// misconfiguration) would otherwise nil-deref here. Fail cleanly instead —
+	// the live-edge cases above never touch the lister and stay usable. F25.
+	if v.lister == nil {
+		return "", nil, errorf(CodeInternal, "messages view has no lister")
+	}
+	switch p.Anchor {
 	case "unread":
 		chat, err := v.lister.GetChat(ctx, p.ChatID)
 		if err != nil {
