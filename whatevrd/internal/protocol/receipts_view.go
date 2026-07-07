@@ -121,6 +121,11 @@ func (s *receiptsSession) relevant(evt app.DaemonEvent) bool {
 		return evt.Message.ID == s.messageID
 	case app.DaemonEventMessageDeleted:
 		return evt.DeletedMessageID == s.messageID
+	case app.DaemonEventAvatarUpdated, app.DaemonEventContactInfoUpdated:
+		// A member's avatar/name can refresh while the receipts dialog is open;
+		// Items re-derives GetMessageInfo (name+avatar per member), so re-derive and
+		// let the engine diff away rows that did not actually change.
+		return true
 	default:
 		return false
 	}

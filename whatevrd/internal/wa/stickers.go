@@ -390,7 +390,14 @@ func (c *Client) fetchStickerPackContents(ctx context.Context, packID string) er
 		}
 		count++
 	}
-	return c.store.MarkStickerPackContentsFetched(ctx, packID, count, time.Now())
+	if err := c.store.MarkStickerPackContentsFetched(ctx, packID, count, time.Now()); err != nil {
+		return err
+	}
+	// Announce the fetched contents so an open `sticker_packs` list (now
+	// contents_fetched/sticker_count) and any `sticker_pack` subscription that did
+	// not itself trigger the fetch refresh; source Unspecified matches every view.
+	c.publishStickerLibraryChangedDebounced(app.StickerSourceUnspecified)
+	return nil
 }
 
 // ensureStickerFile guarantees a sticker's display file exists on disk

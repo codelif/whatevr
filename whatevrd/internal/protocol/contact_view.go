@@ -269,6 +269,16 @@ func (s *contactSession) refetch() bool {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Preserve the phase-two enrichment (about text, avatar) the reload does not
+	// carry — GetContactInfo returns the phase-one card and re-schedules the async
+	// status fetch, which re-streams the about via ContactInfoUpdated. Without this
+	// a reconnect would blank the about until that fetch lands.
+	if info.StatusText == "" {
+		info.StatusText = s.info.StatusText
+	}
+	if info.AvatarLocalPath == "" {
+		info.AvatarLocalPath = s.info.AvatarLocalPath
+	}
 	if s.info == info {
 		return false
 	}
@@ -303,6 +313,15 @@ func (s *contactSession) run(events <-chan app.DaemonEvent, invalidate func()) {
 func (s *contactSession) apply(evt app.DaemonEvent) bool {
 	if evt.Kind == app.DaemonEventResync {
 		return s.refetch()
+	}
+	if evt.Kind == app.DaemonEventConnectionChanged {
+		// A contact card opened while logged out never got its network about/avatar
+		// (GetContactInfo only schedules the status fetch when connected). Re-fetch
+		// once the connection comes up so it fills, mirroring self's fill-after-login.
+		if evt.State == app.StateOnline {
+			return s.refetch()
+		}
+		return false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -170,6 +170,13 @@ func stickerLibraryEventMatches(viewSource, eventSource app.StickerSource) bool 
 	if eventSource == app.StickerSourceUnspecified || viewSource == app.StickerSourceAll {
 		return true
 	}
+	// A favorite toggle flips the is_favorite flag on the sticker's row in *every*
+	// source view (recent and all render it too, not just the favorite list), so a
+	// favorite-source event is cross-cutting. Items re-reads and the engine diffs
+	// away any view where nothing visible actually changed.
+	if eventSource == app.StickerSourceFavorite {
+		return true
+	}
 	return viewSource == eventSource
 }
 

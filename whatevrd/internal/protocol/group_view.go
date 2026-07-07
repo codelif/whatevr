@@ -133,8 +133,17 @@ func (s *groupSession) apply(evt app.DaemonEvent) bool {
 		if evt.GroupChatID != s.chatID {
 			return false
 		}
-		// The live fetch delivers the whole enriched card; replace wholesale.
-		s.info = evt.GroupInfo
+		// The live fetch delivers the whole enriched card; replace wholesale, but
+		// preserve an avatar already resolved onto the card when the incoming card
+		// carries none. refreshGroupInfoLive captures the avatar at phase one, so a
+		// card enriched after a cold-cache open would otherwise wipe the avatar the
+		// separate AvatarUpdated overlay just delivered — leaving the header with no
+		// avatar for the rest of the session (no further GroupInfoUpdated arrives).
+		info := evt.GroupInfo
+		if info.AvatarLocalPath == "" {
+			info.AvatarLocalPath = s.info.AvatarLocalPath
+		}
+		s.info = info
 		return true
 	case app.DaemonEventAvatarUpdated:
 		if evt.Avatar.Kind != app.AvatarSubjectKindChat || evt.Avatar.ID != s.chatID {

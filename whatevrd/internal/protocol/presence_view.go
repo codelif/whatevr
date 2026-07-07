@@ -53,9 +53,11 @@ func (v presenceView) Open(params json.RawMessage, invalidate func()) (ViewSessi
 	events, cancel := v.daemon.SubscribeDaemonEvents()
 	s := &presenceSession{
 		daemon:       v.daemon,
+		actions:      v.actions,
 		chatID:       p.ChatID,
 		eventsCancel: cancel,
 		done:         make(chan struct{}),
+		wasOnline:    true,
 	}
 	// Seed the initial fill from any availability the daemon already cached for
 	// this chat (from an earlier subscription in this daemon session), then drain
@@ -78,10 +80,18 @@ func (v presenceView) Open(params json.RawMessage, invalidate func()) (ViewSessi
 // presenceSession tracks the availability of the chat's single participant.
 type presenceSession struct {
 	daemon       *app.Daemon
+	actions      PresenceActions
 	chatID       string
 	eventsCancel func()
 	done         chan struct{}
 	closeOnce    sync.Once
+
+	// wasOnline tracks the last connection state seen on this session so a renewal
+	// fires only on a real offline→online transition, not on the ConnectionChanged
+	// state SubscribeDaemonEvents replays at open (Open already subscribes once).
+	// Initialised true because that open-time subscribe stands in for the first
+	// online edge; only a subsequent reconnect needs to re-issue it.
+	wasOnline bool
 
 	mu           sync.Mutex
 	hasData      bool
@@ -143,6 +153,26 @@ func (s *presenceSession) apply(evt app.DaemonEvent) bool {
 	if evt.Kind == app.DaemonEventResync {
 		s.reloadAvailability()
 		return true
+	}
+	if evt.Kind == app.DaemonEventConnectionChanged {
+		// Re-issue the upstream presence subscription on a real offline→online
+		// transition: a WhatsApp presence subscription does not survive a reconnect
+		// (and a subscribe attempted while offline at Open failed), so without this
+		// the view would stop updating after any disconnect. Fire only on the edge —
+		// SubscribeDaemonEvents replays the current state as a ConnectionChanged at
+		// open, and Open already subscribed once, so re-subscribing on that replay
+		// would be a redundant duplicate. WhatsApp has no presence *unsubscribe*
+		// primitive, so teardown on the last local unsubscribe is a no-op — the
+		// demand-driven half that matters is (re)subscribing on demand.
+		online := evt.State == app.StateOnline
+		reconnected := online && !s.wasOnline
+		s.wasOnline = online
+		if reconnected && s.actions != nil {
+			if err := s.actions.SubscribeChatPresence(context.Background(), s.chatID); err != nil {
+				log.Printf("protocol: renew chat presence %s: %v", s.chatID, err)
+			}
+		}
+		return false
 	}
 	if evt.Kind != app.DaemonEventChatPresence || evt.SenderID != "" {
 		return false
