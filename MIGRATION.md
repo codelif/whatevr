@@ -80,7 +80,8 @@ Status: `todo` | `doing` | `done` | `blocked` | `needs-decision`
 | B4a | `typing` view: global unwindowed collection, one item per composing chat, live upsert/remove | done | `typing_view.go` (typingView/typingSession over `DaemonEventChatPresence`; item id = chat_id, `senders` [jid+name]). Daemon gained `ComposingChats()` snapshot for the initial fill (TTL-filtered). Discriminator: composing events carry a `SenderID`, availability events never do — a missing SenderID is how the view ignores availability churn (the same overloaded event feeds B4b's `presence`). Mirrors the daemon's single-slot presence model (≤1 sender per chat today; `senders` is a list for forward-compat). Sender names via new `SenderDisplayer` (added to `DaemonStore`; *store.DB.SenderDisplay). Store + raw-socket tests; hand-verified over socat (initial fill+ready, live upsert, availability event ignored, stop→remove). |
 | B4b | `presence` view: per-chat, one item per participant, subscription-driven upstream WA presence subscribe, availability/last_seen | done | `presence_view.go` (presenceView/presenceSession over the SenderID-empty half of `DaemonEventChatPresence` — the counterpart to B4a's discriminator; item id = participant jid, == chat_id for a direct chat, `availability`/`last_seen_unix`). New `PresenceActions` interface (first view that *drives* upstream, not just reads store/events): subscribing calls `Client.SubscribeChatPresence` — `RegisterDaemonViews` gained an `actions` param (main passes `waClient`, fixture/tests pass nil). Initial fill from a new **synchronous** daemon snapshot `ChatAvailability` (mirrors B4a's `ComposingChats`) instead of the async `PublishCachedChatPresence` replay the plan named — cleaner, ready reflects cached state, no re-broadcast to unrelated subs (Decision log 2026-07-07). last_seen carried only while offline. Store-free raw-socket tests; hand-verified over socat (empty→ready + upstream subscribe, live online/offline upserts, cached initial fill before ready, composing-event ignored, other-chat filtered, missing chat_id → invalid_params). |
 | B4c | `receipts` view: per-message, one item per participant, live re-derive on status updates | done | `receipts_view.go` (receiptsView/receiptsSession; unwindowed, re-derives `GetMessageInfo` on every relevant event, no cached state — store is authoritative). Group → one item per member (incl. not-yet-delivered) keyed by member jid with name/avatar; direct → single aggregate item under sentinel id `"peer"` (GetMessageInfo carries no jid for the 1:1 recipient), shown once delivery begins. New `MessageInfoActions`; B4b's actions param widened to a combined `DaemonActions` (`PresenceActions`+`MessageInfoActions`), main passes `waClient`, fixture/tests nil. **Required a new daemon event** `DaemonEventMessageReceipt` (`daemon.go` + `PublishMessageReceipt`), fired per recorded receipt in `applyParticipantReceipt` (`send.go`, gated `!offlineSync`): a group member's receipt usually does *not* advance the message's aggregate status, so the plan's `DaemonEventMessageUpdated`-only trigger would miss it (Decision log 2026-07-07). View triggers on receipt+updated+deleted filtered by message id; delete/not-found → empty. Not a wire-grammar or PROTOCOL.md change; frozen gRPC ignores the new kind. Store-free raw-socket tests; hand-verified over socat (group fill+ready, non-aggregate per-member read re-derives live, direct delivered→read, delete→remove, scoped, not_found, missing message_id). |
-| B5 | `self`, `contact`, `group`, `group_members` — two-phase local→network upserts | todo | |
+| B5a | `self`, `contact` — two-phase local→network upserts (ContactInfo object views) | done | `contact_view.go` (selfView/contactView + sessions over new `ContactActions` seam = `GetContactInfo`/`SelfProfile`; `DaemonActions` widened to embed it, main passes `waClient`, fixture/tests nil). Both are object views (id `"self"` / the normalized jid) filled from local data at subscribe; the network "about"/status text arrives as `DaemonEventContactInfoUpdated` (jid+status only) and overlays onto the held `app.ContactInfo` via a shared `overlayContactStatus`; the avatar refresh overlays via `overlayContactAvatar` (matches `Kind==Sender && ID==jid`). `self` also re-fetches `SelfProfile` on `DaemonEventSelfProfileChanged` and, while still unloaded (logged out), on `DaemonEventConnectionChanged` so it fills after login. Store-free raw-socket tests; hand-verified over a raw socket (initial local fill+ready, live about overlay for self+contact preserving phase-one fields, avatar overlay, self refetch, jid scoping, missing/invalid jid → invalid_params, nil-actions → internal). |
+| B5b | `group`, `group_members` — two-phase local→network upserts (GroupInfo-based) | todo | Both derive from `wa.Client.GetGroupInfo` (local members now + `DaemonEventGroupInfoUpdated` carrying the full enriched card); `group` is the card minus the member array, `group_members` the per-member collection. Add a `GroupActions` seam to `DaemonActions`. Note: PROTOCOL.md's `group` view lists `owner`, `my_role`, announce/locked flags that `app.GroupInfo` does not yet carry — settle whether to plumb them from whatsmeow or serve the current field set (flag as needs-decision if a spec-vs-data gap). |
 | B6 | `privacy`, `preferences`, `blocklist`, `starred`, `pinned` | todo | |
 | B7 | `stickers`, `sticker_packs`, `sticker_pack`, `transfers` | todo | |
 
@@ -261,6 +262,34 @@ _None._
   keyed collection so group availability needs no wire change. (4) `last_seen` is
   emitted only while `offline` — an online contact's event carries last_seen 0
   and the frontend renders "online" regardless.
+- 2026-07-07 — B5 split into B5a (`self`+`contact`, done) and B5b
+  (`group`+`group_members`). Reason: two data-source families — the first two
+  are `app.ContactInfo` object views sharing the status/avatar two-phase
+  overlay; the second two both derive from `GetGroupInfo`. Same split-by-seam
+  pattern as B3a/b/c and B4a/b/c. No PROTOCOL.md change — all four views are
+  already specified there.
+- 2026-07-07 — B5a implementation readings (PROTOCOL.md unchanged, flag if you
+  disagree): (1) **Two-phase is done as re-upserts, not a patch grammar.** The
+  network "about" text arrives on the *existing* `DaemonEventContactInfoUpdated`
+  (which carries only `{jid, status}`) and is folded onto the held card, which
+  re-upserts whole — honoring "split the view, never patch the grammar." (2) The
+  view must **not** re-fetch `GetContactInfo`/`SelfProfile` on a
+  `ContactInfoUpdated`: that call itself spawns the async status fetch that
+  *emits* `ContactInfoUpdated`, so re-fetching on it would loop. Enrichment is
+  therefore an in-place overlay; genuine profile changes come through the
+  distinct `SelfProfileChanged` (for `self`), which is safe to re-fetch on. (3)
+  Avatar overlay matches `Kind==Sender && ID==jid`; the primary (PN-form) avatar
+  subject id equals the card's normalized jid, so the refresh the card renders is
+  caught, but a LID-form refresh for the same person carries a different id and is
+  not matched — acceptable, the primary is what shows. (4) `self` subscribed while
+  logged out opens **empty** (no item) rather than erroring, and fills on
+  `SelfProfileChanged` or the connection coming up — so a settings page can
+  subscribe before login without a resubscribe dance. (5) A `self` re-fetch on
+  `SelfProfileChanged` momentarily blanks the overlaid `about` (the fresh
+  `SelfProfile` carries no status; it re-streams via `ContactInfoUpdated`) — a
+  brief, self-correcting flicker, not a lost field. (6) `contact` with a bad/group
+  jid → `invalid_params` (the only failure `GetContactInfo` reports; an
+  unknown-but-valid user still returns a card from jid+phone).
 - 2026-07-07 — **Problem 2 (`extend` direction) resolved** (decided by Harsh);
   **supersedes** the symmetric-growth reading in the 2026-07-06 B3b entry
   (item 2). `extend` gains a **required** `direction` field (`older`|`newer`).
