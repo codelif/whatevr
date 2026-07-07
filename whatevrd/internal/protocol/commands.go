@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc/codes"
 	grpcstatus "google.golang.org/grpc/status"
 
+	"whatevrd/internal/app"
 	appstore "whatevrd/internal/store"
 )
 
@@ -53,6 +54,18 @@ type CommandActions interface {
 	ForwardMessage(context.Context, string, []string) ([]appstore.SavedTextMessage, error)
 	DownloadMessageMedia(context.Context, string) (appstore.Message, error)
 	FetchProfilePicture(context.Context, string) (string, error)
+
+	SetPrivacySetting(context.Context, string, string, bool) (app.PrivacySettings, error)
+	GetAppPreferences(context.Context) (app.AppPreferences, error)
+	SetAppPreferences(context.Context, app.AppPreferences) (app.AppPreferences, error)
+	SetProfileStatus(context.Context, string) error
+	UpdateBlocklist(context.Context, string, bool) ([]app.BlockedContact, error)
+	SetStickerFavorite(context.Context, string, string, bool) (appstore.Sticker, error)
+	DownloadSticker(context.Context, string) (appstore.Sticker, error)
+	SetStickerPackInstalled(context.Context, string, bool) (appstore.StickerPack, error)
+	SearchChats(context.Context, string, int) ([]appstore.Chat, error)
+	SearchMessages(context.Context, string, string, int, string) ([]appstore.MessageSearchResult, error)
+	CheckPhoneOnWhatsApp(context.Context, string) (app.PhoneCheck, error)
 }
 
 // RegisterDaemonCommands registers the command surface from PROTOCOL.md.
@@ -81,6 +94,17 @@ func RegisterDaemonCommands(s *Server, actions CommandActions) {
 	s.RegisterCommand("message.forward", cmd.messageForward)
 	s.RegisterCommand("media.download", cmd.mediaDownload)
 	s.RegisterCommand("media.fetch_profile_picture", cmd.mediaFetchProfilePicture)
+	// Phase C3 settings/contact/sticker commands and transient queries.
+	s.RegisterCommand("privacy.set", cmd.privacySet)
+	s.RegisterCommand("preferences.set", cmd.preferencesSet)
+	s.RegisterCommand("self.set_about", cmd.selfSetAbout)
+	s.RegisterCommand("contact.block", cmd.contactBlock)
+	s.RegisterCommand("sticker.favorite", cmd.stickerFavorite)
+	s.RegisterCommand("sticker.download", cmd.stickerDownload)
+	s.RegisterCommand("sticker_pack.install", cmd.stickerPackInstall)
+	s.RegisterCommand("search.chats", cmd.searchChats)
+	s.RegisterCommand("search.messages", cmd.searchMessages)
+	s.RegisterCommand("contacts.check_phone", cmd.contactsCheckPhone)
 }
 
 // RegisterCommand makes a command request method available. Safe during setup;
@@ -102,14 +126,19 @@ func (h commandHandlers) requireActions() *Error {
 }
 
 func (c *conn) ensureFrontendSession(actions CommandActions) {
+	c.sessionMu.Lock()
 	if c.sessionActive {
+		c.sessionMu.Unlock()
 		return
 	}
 	if c.sessionID == "" {
 		c.sessionID = "protocol-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 	}
-	actions.FrontendSessionStarted(c.sessionID)
+	id := c.sessionID
 	c.sessionActive = true
+	c.sessionUpdatedAt = time.Now()
+	c.sessionMu.Unlock()
+	actions.FrontendSessionStarted(id)
 }
 
 type sessionUpdateParams struct {
@@ -129,7 +158,14 @@ func (h commandHandlers) sessionUpdate(c *conn, req request) (any, *Error) {
 		return nil, errorf(CodeInvalidParams, "focused is required")
 	}
 	c.ensureFrontendSession(h.actions)
-	h.actions.FrontendSessionStateChanged(c.sessionID, *p.Focused, strings.TrimSpace(p.ActiveChatID))
+	activeChatID := strings.TrimSpace(p.ActiveChatID)
+	c.sessionMu.Lock()
+	id := c.sessionID
+	c.sessionFocused = *p.Focused
+	c.sessionActiveChatID = activeChatID
+	c.sessionUpdatedAt = time.Now()
+	c.sessionMu.Unlock()
+	h.actions.FrontendSessionStateChanged(id, *p.Focused, activeChatID)
 	return nil, nil
 }
 

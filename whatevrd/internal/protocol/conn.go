@@ -34,9 +34,15 @@ type conn struct {
 
 	// The protocol connection itself is the frontend session. It is lazily
 	// announced to the daemon when session.update first arrives and ended on
-	// close, replacing the legacy HoldSession stream.
-	sessionID     string
-	sessionActive bool
+	// close, replacing the legacy HoldSession stream. sessionMu also guards the
+	// routing state used by connection-directed open_chat events, which may be
+	// emitted from outside this connection's dispatch goroutine.
+	sessionMu           sync.Mutex
+	sessionID           string
+	sessionActive       bool
+	sessionFocused      bool
+	sessionActiveChatID string
+	sessionUpdatedAt    time.Time
 
 	// subMu guards the subscription registry; nextSub only moves on the
 	// dispatch goroutine.
@@ -116,8 +122,12 @@ func (c *conn) close() {
 		for _, sub := range subs {
 			sub.close()
 		}
-		if c.sessionActive && c.srv.commandActions != nil {
-			c.srv.commandActions.FrontendSessionEnded(c.sessionID)
+		c.sessionMu.Lock()
+		active, id := c.sessionActive, c.sessionID
+		c.sessionActive = false
+		c.sessionMu.Unlock()
+		if active && c.srv.commandActions != nil {
+			c.srv.commandActions.FrontendSessionEnded(id)
 		}
 	})
 }

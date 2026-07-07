@@ -135,7 +135,9 @@ func (c *Client) SetPrivacySetting(ctx context.Context, category, audience strin
 	if err != nil {
 		return app.PrivacySettings{}, err
 	}
-	return privacyToApp(settings), nil
+	appSettings := privacyToApp(settings)
+	c.daemon.PublishPrivacySettingsChanged(appSettings)
+	return appSettings, nil
 }
 
 // ---- Blocklist (live WhatsApp connection) ----
@@ -171,7 +173,9 @@ func (c *Client) UpdateBlocklist(ctx context.Context, jidStr string, block bool)
 	if err != nil {
 		return nil, err
 	}
-	return c.resolveBlockedContacts(ctx, blocklist.JIDs), nil
+	contacts := c.resolveBlockedContacts(ctx, blocklist.JIDs)
+	c.daemon.PublishBlocklistChanged()
+	return contacts, nil
 }
 
 func (c *Client) resolveBlockedContacts(ctx context.Context, jids []types.JID) []app.BlockedContact {
@@ -197,5 +201,12 @@ func (c *Client) SetProfileStatus(ctx context.Context, statusText string) error 
 	if client == nil || !client.IsLoggedIn() {
 		return errNotConnected
 	}
-	return client.SetStatusMessage(ctx, statusText)
+	if err := client.SetStatusMessage(ctx, statusText); err != nil {
+		return err
+	}
+	c.daemon.PublishSelfProfileChanged()
+	if client.Store.ID != nil {
+		c.daemon.PublishContactInfoUpdated(app.ContactInfo{JID: client.Store.ID.ToNonAD().String(), StatusText: strings.TrimSpace(statusText)})
+	}
+	return nil
 }

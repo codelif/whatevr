@@ -93,7 +93,7 @@ Status: `todo` | `doing` | `done` | `blocked` | `needs-decision`
 | --- | --- | --- | --- |
 | C1 | Session/chat commands: `session.update`, `daemon.reconnect`, `account.logout`, `chat.*` (mark_read, pin, archive, mute, typing, request_older, ensure_direct) | done | `commands.go` registers C1 acks/results over the protocol; `session.update` maps each socket to a frontend session, chat commands call the WA action seam, and `chat.mark_read` now requires/applies `up_to_message_id` via `wa.MarkChatReadUpTo`. PROTOCOL.md amended accordingly; fixture + raw-socket tests cover the surface. |
 | C2 | `send.*`, `message.*` (react, edit, revoke, delete, star, pin, forward), `media.download` (+`transfers` wiring), `media.fetch_profile_picture` | done | `commands.go` now registers the C2 command surface with ids/acks only; `wa.SendMediaWithMentions` plumbs protocol media mentions while legacy gRPC keeps its old signature; fixture + raw-socket command tests cover send/message/media commands. |
-| C3 | `privacy.set`, `preferences.set`, `self.set_about`, `contact.block`, sticker commands, queries (`search.chats`, `search.messages`, `contacts.check_phone`), `open_chat` connection-directed routing | todo | |
+| C3 | `privacy.set`, `preferences.set`, `self.set_about`, `contact.block`, sticker commands, queries (`search.chats`, `search.messages`, `contacts.check_phone`), `open_chat` connection-directed routing | done | `settings_commands.go`, `sticker_commands.go`, and `query_commands.go` register the new commands/queries (acks only; rows reuse daemon shapes); `open_chat.go` routes connection-directed events to protocol sessions and `main.go` fans notification clicks to both gRPC + protocol during migration. |
 | C4 | **Daemon audit milestone:** finish `examples/` shell frontend as a real usable client; run full conformance; line-by-line diff of PROTOCOL.md vs daemon; fix drift or log `needs-decision` items | todo | Model A Windows-section + directional-`extend` PROTOCOL.md amendments already landed with B3c (2026-07-07); the audit re-checks PROTOCOL.md vs daemon end to end. |
 
 ### Phase D — whatkevr port (C++/QML, page by page; gRPC stays alive until D7)
@@ -413,3 +413,20 @@ _None._
   generated proto remain untouched. `message.edit`/`message.revoke` map expired
   precondition text to protocol `expired`; other ineligible message operations map
   to `rejected` rather than leaking gRPC status names.
+- 2026-07-07 — C3 implementation readings (PROTOCOL.md unchanged): (1) Settings /
+  contact / sticker commands still return only `{}`; renderable state is forced
+  through existing views by publishing/reusing daemon events after local
+  mutations (`PrivacySettingsChanged`, `PreferencesChanged`, `SelfProfileChanged`
+  + `ContactInfoUpdated`, `BlocklistChanged`, sticker library/download events).
+  (2) `preferences.set` is the protocol's one partial-object command, so the
+  handler reads current daemon prefs, overlays only present bool fields, then
+  persists the full object. (3) Search queries are transient and return ordered
+  arrays under `chats` / `messages` plus `has_more`; rows reuse the daemon-owned
+  chat/message wire shapes, so frontends still do not sort or cache them. (4)
+  `open_chat` routing targets the most recently updated focused protocol session;
+  if none is focused, it falls back to the most recently updated live protocol
+  session so notification clicks raise an existing unfocused window instead of
+  spawning a duplicate. During migration the notification worker fans the same
+  open request to both the legacy gRPC session bus and the protocol server; this
+  may be idempotently duplicated for a transitional frontend that is connected to
+  both, but it preserves daily-use gRPC behavior until D7.
