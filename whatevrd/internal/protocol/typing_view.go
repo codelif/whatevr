@@ -118,6 +118,15 @@ func (s *typingSession) apply(evt app.DaemonEvent) bool {
 		s.reloadComposing()
 		return true
 	}
+	// A composing sender's name/avatar can change while the indicator is open;
+	// Items re-resolves the display name per call, so re-emit on those refreshes
+	// (the engine's content diff drops it if nothing a row shows actually changed).
+	if evt.Kind == app.DaemonEventAvatarUpdated || evt.Kind == app.DaemonEventContactInfoUpdated {
+		s.mu.Lock()
+		composing := len(s.composing) > 0
+		s.mu.Unlock()
+		return composing
+	}
 	if evt.Kind != app.DaemonEventChatPresence || evt.SenderID == "" {
 		return false
 	}
