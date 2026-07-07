@@ -39,12 +39,17 @@ type DaemonActions interface {
 	ContactActions
 	GroupActions
 	SettingsActions
+	StickerActions
 }
 
 // RegisterDaemonViews registers the daemon-owned views from PROTOCOL.md.
 // actions is the client seam some views need; tests and the fixture may pass nil
 // when the views they exercise do not touch it.
 func RegisterDaemonViews(s *Server, daemon *app.Daemon, store DaemonStore, actions DaemonActions) {
+	var stickerStore StickerStore
+	if store != nil {
+		stickerStore, _ = any(store).(StickerStore)
+	}
 	s.RegisterView("connection", connectionView{daemon: daemon, pending: store})
 	s.RegisterView("sync", syncView{daemon: daemon})
 	s.RegisterView("login", loginView{daemon: daemon})
@@ -62,6 +67,9 @@ func RegisterDaemonViews(s *Server, daemon *app.Daemon, store DaemonStore, actio
 	s.RegisterView("blocklist", blocklistView{daemon: daemon, actions: actions})
 	s.RegisterView("starred", starredView{daemon: daemon, lister: store})
 	s.RegisterView("pinned", pinnedView{daemon: daemon, lister: store})
+	s.RegisterView("stickers", stickersView{daemon: daemon, store: stickerStore})
+	s.RegisterView("sticker_packs", stickerPacksView{daemon: daemon, store: stickerStore, actions: actions})
+	s.RegisterView("sticker_pack", stickerPackView{daemon: daemon, store: stickerStore, actions: actions})
 }
 
 type connectionView struct {

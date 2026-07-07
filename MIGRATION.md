@@ -84,7 +84,8 @@ Status: `todo` | `doing` | `done` | `blocked` | `needs-decision`
 | B5b | `group`, `group_members` — two-phase local→network upserts (GroupInfo-based) | done | `group_view.go` (groupView/groupMembersView + sessions over new `GroupActions` seam = `GetGroupInfo`; `DaemonActions` widened). Both call `wa.Client.GetGroupInfo` at subscribe (stored members now) and replace their held card wholesale on `DaemonEventGroupInfoUpdated` (the live fetch's full enriched card). `group` is an object view (id = chat_id) carrying subject/description/avatar/created/owner/`member_count`(=len members)/`my_role`/announce/locked, **no** member array; chat-kind avatar refresh overlays. `group_members` is an unwindowed collection, one item per member keyed by jid, sorted superadmin<admin<member then name then jid (`memberSortKey`, `\x1f`-delimited) — joins/leaves/promotions fall out of the engine's roster diff (upsert/remove); sender-kind avatar refresh overlays the matching member. **The spec-vs-data gap was not real:** `owner`/`my_role`/announce/locked are all in whatsmeow `types.GroupInfo`, so I plumbed them — `app.GroupInfo` gained `OwnerJID`/`MyRole`/`IsAnnounce`/`IsLocked`, populated in `wa.refreshGroupInfoLive` (my_role via `ownParticipantJIDs()` matched against the same canonical form the member list uses; new shared `app.GroupRoleString`). Two-phase by nature: roles/owner/flags are live-only, so phase one shows members as plain "member" with empty my_role/owner/flags. Frozen gRPC `GetGroupInfo` mapper ignores the new fields (stays compiling). Store-free raw-socket tests; hand-verified over a raw socket (group+members phase-one fill+ready, live enrichment with roles/owner/flags, role-rank reordering, join as upsert, leave as remove, chat scoping, missing/invalid chat_id → invalid_params, nil-actions → internal). |
 | B6a | `privacy`, `preferences`, `blocklist` — settings views | done | `settings_view.go` (privacyView/preferencesView/blocklistView over new `SettingsActions` seam = `GetPrivacySettings`/`GetAppPreferences`/`GetBlocklist`; `DaemonActions` widened to embed it, main passes `waClient`, fixture/tests nil). `privacy`/`preferences` are object views (id `"self"`); `blocklist` is an unwindowed collection keyed by jid, sorted name-then-jid (`blocklistSortKey`, `\x1f`-delimited). `privacy` fills from the live connection (empty until login, fills on `DaemonEventConnectionChanged` while unloaded) and replaces wholesale on `DaemonEventPrivacySettingsChanged`'s carried snapshot. `blocklist` re-reads on `DaemonEventBlocklistChanged`, fills-after-login on `ConnectionChanged`, and overlays a held row's avatar on `DaemonEventAvatarUpdated` (Sender-kind, matching jid — same LID caveat as the contact card). **Required a new daemon event** `DaemonEventPreferencesChanged` (fired from `SetAppPreferences`): app preferences had no live-update path, and this makes the `preferences` view correct when they change via any caller (Decision log 2026-07-07). Daemon-event-surface addition, not a wire/PROTOCOL.md change; frozen gRPC ignores the kind. Store-free raw-socket tests; hand-verified over a raw socket (three initial fills+ready, live privacy snapshot, live prefs toggle, blocklist roster diff upsert+remove with name sort, avatar overlay, logged-out→login fill, nil-actions → internal). |
 | B6b | `starred`, `pinned` — windowed message-row views | done | `starred_pinned_view.go` serves `starred` (live-edge prefix window over `store.ListStarredMessages`, newest-first sort, optional `chat_id`, `chat_name`, live star/unstar via `MessageUpdated`) and `pinned` (per-chat unwindowed `store.ListPinnedMessages`, oldest-pin-first sort, live pin/unpin plus expiry timer). Both reuse the B3 message item shape; `DaemonStore` widened with `StarredPinnedLister`; store-backed raw-socket tests cover fill, scoped/windowed extend, live add/remove, expiry, and missing `chat_id`. No PROTOCOL.md change. |
-| B7 | `stickers`, `sticker_packs`, `sticker_pack`, `transfers` | todo | |
+| B7a | `stickers`, `sticker_packs`, `sticker_pack` views | done | `sticker_view.go` serves source-filtered sticker library rows, pack rows, and async pack contents over the store/actions seam; registered in `RegisterDaemonViews`. Store-backed raw-socket tests cover source windows/extend, favorite live updates, pack rows, async contents, download-path upserts, and param errors. No PROTOCOL.md change. |
+| B7b | `transfers` view | todo | Split from B7; implement after sticker views. |
 
 ### Phase C — commands & queries
 
@@ -366,3 +367,25 @@ _None._
   object views are all live-edge windows, so they take `older` (grow away from
   the edge) and reject `newer`; no per-view special-casing. PROTOCOL.md's
   `extend` verb row **amended 2026-07-07** (with B3c, signed off by Harsh).
+- 2026-07-07 — B7 split into B7a (`stickers`/`sticker_packs`/`sticker_pack`,
+  done) and B7b (`transfers`). Reason: sticker views are store/list/fetch
+  surfaces with the existing sticker library events, while `transfers` is
+  daemon active-download state (`DaemonEventMediaDownloadChanged`). No
+  PROTOCOL.md change — all four views are already specified there.
+- 2026-07-07 — B7a implementation readings (PROTOCOL.md unchanged): (1) Sticker
+  item and pack item field names carry over from the frozen sticker RPC field
+  sets (`cache_key`, `local_path`, `mime_type`, `is_animated`, `tray_local_path`,
+  `contents_fetched`, etc.), with `id == cache_key` for stickers and `id == pack
+  id` for packs. (2) `stickers` requires `source` (`recent`|`favorite`|`all`),
+  because PROTOCOL lists no default; an unwindowed subscription uses the existing
+  picker default cap of 200 rows rather than an unbounded SQL list. (3) The
+  `sticker_pack` view opens from the pack shell already in the store; if contents
+  are not fetched yet, subscribe returns and the initial window may be empty,
+  then a background `GetStickerPack` fetch fills the store and invalidates the
+  view so whole sticker rows land as normal upserts. Missing `pack_id` is
+  `invalid_params`; unknown pack shell is `not_found`. (4) `sticker_packs` reads
+  cached pack rows immediately and starts a best-effort background index refresh;
+  installed/tray/content changes invalidate through `DaemonEventStickerLibraryChanged`.
+  (5) Sort keys are daemon-assigned from the store/action result order (and pack
+  order for `sticker_pack` contents), so frontends still only apply keyed upserts
+  ordered by opaque `sort`.
