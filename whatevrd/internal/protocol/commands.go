@@ -107,11 +107,22 @@ func RegisterDaemonCommands(s *Server, actions CommandActions) {
 	s.RegisterCommand("contacts.check_phone", cmd.contactsCheckPhone)
 }
 
-// RegisterCommand makes a command request method available. Safe during setup;
-// commands are normally registered immediately after Start and before clients
-// connect.
+// RegisterCommand makes a command request method available. Registration is
+// mutex-guarded, so it is safe even if the server is already accepting
+// connections; production wiring still registers everything before Serve so no
+// client can observe a half-registered surface.
 func (s *Server) RegisterCommand(name string, h handlerFunc) {
+	s.handlerMu.Lock()
+	defer s.handlerMu.Unlock()
 	s.handlers[name] = h
+}
+
+// handler looks up a method's handler under the registry lock.
+func (s *Server) handler(name string) (handlerFunc, bool) {
+	s.handlerMu.RLock()
+	defer s.handlerMu.RUnlock()
+	h, ok := s.handlers[name]
+	return h, ok
 }
 
 type commandHandlers struct {

@@ -192,7 +192,7 @@ func (c *conn) handleLine(line []byte) {
 		return
 	}
 
-	handler, ok := c.srv.handlers[req.Method]
+	handler, ok := c.srv.handler(req.Method)
 	if !ok {
 		c.respondError(req.ID, errorf(CodeUnknownMethod, "unknown method %q", req.Method), false)
 		return

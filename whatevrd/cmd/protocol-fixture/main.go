@@ -155,13 +155,16 @@ func main() {
 	})
 	daemon.SetState(app.StateOnline)
 
-	server, err := protocol.Start(ctx, socketPath, daemon)
+	server, err := protocol.New(socketPath, daemon)
 	if err != nil {
 		log.Fatalf("start protocol fixture: %v", err)
 	}
 	protocol.RegisterDaemonViews(server, daemon, nil, nil)
 	protocol.RegisterDaemonCommands(server, fixtureCommands{})
 	server.RegisterView("conformance", conformanceView{})
+	// Accept only after registration; the ready file (which the conformance
+	// harness waits on before dialing) is written below, after Serve.
+	server.Serve(ctx)
 
 	if readyFile != "" {
 		if err := os.WriteFile(readyFile, []byte(socketPath+"\n"), 0o644); err != nil {
