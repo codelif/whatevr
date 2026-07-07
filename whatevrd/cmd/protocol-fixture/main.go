@@ -9,9 +9,11 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"whatevrd/internal/app"
 	"whatevrd/internal/protocol"
+	appstore "whatevrd/internal/store"
 )
 
 type conformanceView struct{}
@@ -21,6 +23,33 @@ func (conformanceView) Open(_ json.RawMessage, _ func()) (protocol.ViewSession, 
 }
 
 type conformanceSession struct{}
+
+type fixtureCommands struct{}
+
+func (fixtureCommands) FrontendSessionStarted(string)                    {}
+func (fixtureCommands) FrontendSessionEnded(string)                      {}
+func (fixtureCommands) FrontendSessionStateChanged(string, bool, string) {}
+func (fixtureCommands) Reconnect(context.Context) error                  { return nil }
+func (fixtureCommands) Logout(context.Context) error                     { return nil }
+func (fixtureCommands) MarkChatReadUpTo(context.Context, string, string) (appstore.Chat, error) {
+	return appstore.Chat{}, nil
+}
+func (fixtureCommands) SetChatPinned(context.Context, string, bool) (appstore.Chat, error) {
+	return appstore.Chat{}, nil
+}
+func (fixtureCommands) SetChatArchived(context.Context, string, bool) (appstore.Chat, error) {
+	return appstore.Chat{}, nil
+}
+func (fixtureCommands) SetChatMuted(context.Context, string, bool, time.Duration) (appstore.Chat, error) {
+	return appstore.Chat{}, nil
+}
+func (fixtureCommands) SetChatPresence(context.Context, string, bool) error { return nil }
+func (fixtureCommands) RequestOlderMessages(context.Context, string) (bool, error) {
+	return true, nil
+}
+func (fixtureCommands) EnsureDirectChat(_ context.Context, jid string) (appstore.Chat, error) {
+	return appstore.Chat{ID: jid}, nil
+}
 
 func (conformanceSession) Items(max int) []protocol.Item {
 	items := []protocol.Item{
@@ -62,6 +91,7 @@ func main() {
 		log.Fatalf("start protocol fixture: %v", err)
 	}
 	protocol.RegisterDaemonViews(server, daemon, nil, nil)
+	protocol.RegisterDaemonCommands(server, fixtureCommands{})
 	server.RegisterView("conformance", conformanceView{})
 
 	if readyFile != "" {

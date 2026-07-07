@@ -1164,20 +1164,7 @@ func (c *Client) MarkChatRead(ctx context.Context, chatID string) (appstore.Chat
 	if err != nil {
 		return appstore.Chat{}, err
 	}
-
-	if len(readCandidates) > 0 {
-		client := c.currentClient()
-		if client != nil && client.IsLoggedIn() {
-			for _, batch := range buildReadBatches(chat, readCandidates) {
-				if len(batch.messageIDs) == 0 {
-					continue
-				}
-				if err := client.MarkRead(ctx, batch.messageIDs, time.Now(), chat, batch.sender); err != nil {
-					c.log.Warnf("Failed to send read receipt for %s: %v", chatID, err)
-				}
-			}
-		}
-	}
+	c.sendReadReceipts(ctx, chat, chatID, readCandidates)
 
 	updatedChat, err := c.store.MarkMessagesRead(ctx, chatID)
 	if err != nil {
@@ -1186,6 +1173,64 @@ func (c *Client) MarkChatRead(ctx context.Context, chatID string) (appstore.Chat
 
 	c.daemon.PublishChatUpdated(toDaemonChat(updatedChat))
 	return updatedChat, nil
+}
+
+func (c *Client) MarkChatReadUpTo(ctx context.Context, chatID, upToMessageID string) (appstore.Chat, error) {
+	chat, err := types.ParseJID(chatID)
+	if err != nil {
+		return appstore.Chat{}, grpcstatus.Errorf(codes.InvalidArgument, "invalid chat_id: %v", err)
+	}
+	chat = c.normalizeJIDForChat(ctx, chat)
+	chatID = chat.String()
+
+	target, err := c.store.GetMessage(ctx, strings.TrimSpace(upToMessageID))
+	if err != nil {
+		return appstore.Chat{}, err
+	}
+	if target.ChatID != chatID {
+		return appstore.Chat{}, sql.ErrNoRows
+	}
+
+	readCandidates, err := c.store.ReadCandidatesForChat(ctx, chatID)
+	if err != nil {
+		return appstore.Chat{}, err
+	}
+	bounded := readCandidates[:0]
+	internalIDs := make([]string, 0, len(readCandidates))
+	for _, candidate := range readCandidates {
+		if candidate.TimestampUnix < target.TimestampUnix || (candidate.TimestampUnix == target.TimestampUnix && candidate.SortSeq <= target.SortSeq) {
+			bounded = append(bounded, candidate)
+			internalIDs = append(internalIDs, candidate.InternalID)
+		}
+	}
+	c.sendReadReceipts(ctx, chat, chatID, bounded)
+
+	updatedChat, changed, err := c.store.MarkMessagesReadByIDs(ctx, chatID, internalIDs)
+	if err != nil {
+		return appstore.Chat{}, err
+	}
+	if changed {
+		c.daemon.PublishChatUpdated(toDaemonChat(updatedChat))
+	}
+	return updatedChat, nil
+}
+
+func (c *Client) sendReadReceipts(ctx context.Context, chat types.JID, chatID string, readCandidates []appstore.ReadCandidate) {
+	if len(readCandidates) == 0 {
+		return
+	}
+	client := c.currentClient()
+	if client == nil || !client.IsLoggedIn() {
+		return
+	}
+	for _, batch := range buildReadBatches(chat, readCandidates) {
+		if len(batch.messageIDs) == 0 {
+			continue
+		}
+		if err := client.MarkRead(ctx, batch.messageIDs, time.Now(), chat, batch.sender); err != nil {
+			c.log.Warnf("Failed to send read receipt for %s: %v", chatID, err)
+		}
+	}
 }
 
 func (c *Client) SetChatPinned(ctx context.Context, chatID string, pinned bool) (appstore.Chat, error) {

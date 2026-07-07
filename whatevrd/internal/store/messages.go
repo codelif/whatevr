@@ -156,6 +156,7 @@ type ReadCandidate struct {
 	ChatID        string
 	SenderID      string
 	TimestampUnix int64
+	SortSeq       int64
 }
 
 type TextMessageInput struct {
@@ -1760,7 +1761,7 @@ func (db *DB) ListChatIDsBySenderID(ctx context.Context, senderID string) ([]str
 
 func (db *DB) ReadCandidatesForChat(ctx context.Context, chatID string) ([]ReadCandidate, error) {
 	rows, err := db.reader().QueryContext(ctx, `
-		SELECT id, chat_id, sender_id, timestamp
+		SELECT id, chat_id, sender_id, timestamp, rowid
 		FROM messages
 		WHERE chat_id = ? AND direction = ? AND is_read = 0
 		ORDER BY timestamp ASC, rowid ASC
@@ -1773,7 +1774,7 @@ func (db *DB) ReadCandidatesForChat(ctx context.Context, chatID string) ([]ReadC
 	candidates := make([]ReadCandidate, 0)
 	for rows.Next() {
 		var candidate ReadCandidate
-		if err := rows.Scan(&candidate.InternalID, &candidate.ChatID, &candidate.SenderID, &candidate.TimestampUnix); err != nil {
+		if err := rows.Scan(&candidate.InternalID, &candidate.ChatID, &candidate.SenderID, &candidate.TimestampUnix, &candidate.SortSeq); err != nil {
 			return nil, err
 		}
 		candidate.ExternalID = ExternalMessageID(chatID, candidate.InternalID)

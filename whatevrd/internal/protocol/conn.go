@@ -32,6 +32,12 @@ type conn struct {
 	// rejected until then.
 	helloDone bool
 
+	// The protocol connection itself is the frontend session. It is lazily
+	// announced to the daemon when session.update first arrives and ended on
+	// close, replacing the legacy HoldSession stream.
+	sessionID     string
+	sessionActive bool
+
 	// subMu guards the subscription registry; nextSub only moves on the
 	// dispatch goroutine.
 	subMu   sync.Mutex
@@ -109,6 +115,9 @@ func (c *conn) close() {
 		c.subMu.Unlock()
 		for _, sub := range subs {
 			sub.close()
+		}
+		if c.sessionActive && c.srv.commandActions != nil {
+			c.srv.commandActions.FrontendSessionEnded(c.sessionID)
 		}
 	})
 }
