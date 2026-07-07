@@ -17,12 +17,11 @@ import (
 	"go.mau.fi/whatsmeow/proto/waMmsRetry"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
-	"google.golang.org/grpc/codes"
-	grpcstatus "google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
 	waE2E "go.mau.fi/whatsmeow/proto/waE2E"
 
+	"whatevrd/internal/app"
 	appstore "whatevrd/internal/store"
 )
 
@@ -43,7 +42,7 @@ type downloadableMedia interface {
 func (c *Client) DownloadMessageMedia(ctx context.Context, messageID string) (appstore.Message, error) {
 	messageID = strings.TrimSpace(messageID)
 	if messageID == "" {
-		return appstore.Message{}, grpcstatus.Error(codes.InvalidArgument, "message_id is required")
+		return appstore.Message{}, app.NewCommandError(app.CommandErrorInvalidArgument, "message_id is required")
 	}
 
 	c.mediaDownloadMu.Lock()
@@ -90,7 +89,7 @@ func (c *Client) DownloadMessageMedia(ctx context.Context, messageID string) (ap
 		}
 	}
 	if len(message.MediaPayload) == 0 {
-		state.err = grpcstatus.Error(codes.FailedPrecondition, "media is not available for download")
+		state.err = app.NewCommandError(app.CommandErrorRejected, "media is not available for download")
 		return appstore.Message{}, state.err
 	}
 	if updated, ok, err := c.resolveCachedStickerMedia(ctx, message); err != nil {
@@ -110,7 +109,7 @@ func (c *Client) DownloadMessageMedia(ctx context.Context, messageID string) (ap
 
 	totalBytes := media.GetFileLength()
 	if totalBytes > maxOutboundMediaBytes {
-		state.err = grpcstatus.Errorf(codes.ResourceExhausted, "media size must be between 1 byte and %d MiB", maxOutboundMediaBytes/(1024*1024))
+		state.err = app.NewCommandError(app.CommandErrorRejected, "media size must be between 1 byte and %d MiB", maxOutboundMediaBytes/(1024*1024))
 		return appstore.Message{}, state.err
 	}
 
@@ -143,7 +142,7 @@ func (c *Client) DownloadMessageMedia(ctx context.Context, messageID string) (ap
 
 	client := c.currentClient()
 	if client == nil || !client.IsLoggedIn() || !client.IsConnected() {
-		state.err = grpcstatus.Error(codes.Unavailable, "WhatsApp is not connected")
+		state.err = app.NewCommandError(app.CommandErrorNotConnected, "WhatsApp is not connected")
 		return appstore.Message{}, state.err
 	}
 
@@ -153,7 +152,7 @@ func (c *Client) DownloadMessageMedia(ctx context.Context, messageID string) (ap
 		mediaDir = filepath.Join(c.paths.MediaCacheDir, "stickers")
 	}
 	if err := os.MkdirAll(mediaDir, 0o700); err != nil {
-		state.err = grpcstatus.Errorf(codes.Internal, "create media cache directory: %v", err)
+		state.err = app.NewCommandError(app.CommandErrorInternal, "create media cache directory: %v", err)
 		return appstore.Message{}, state.err
 	}
 
@@ -166,7 +165,7 @@ func (c *Client) DownloadMessageMedia(ctx context.Context, messageID string) (ap
 
 	partFile, err := os.OpenFile(partPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
-		state.err = grpcstatus.Errorf(codes.Internal, "create media cache file: %v", err)
+		state.err = app.NewCommandError(app.CommandErrorInternal, "create media cache file: %v", err)
 		return appstore.Message{}, state.err
 	}
 	partOpen := true
@@ -205,18 +204,18 @@ func (c *Client) DownloadMessageMedia(ctx context.Context, messageID string) (ap
 			}
 		}
 		if err != nil {
-			state.err = grpcstatus.Errorf(codes.Unavailable, "download media: %v", err)
+			state.err = app.NewCommandError(app.CommandErrorNotConnected, "download media: %v", err)
 			return appstore.Message{}, state.err
 		}
 	}
 
 	fileInfo, err := partFile.Stat()
 	if err != nil {
-		state.err = grpcstatus.Errorf(codes.Internal, "stat media cache file: %v", err)
+		state.err = app.NewCommandError(app.CommandErrorInternal, "stat media cache file: %v", err)
 		return appstore.Message{}, state.err
 	}
 	if fileInfo.Size() == 0 || fileInfo.Size() > maxOutboundMediaBytes {
-		state.err = grpcstatus.Errorf(codes.ResourceExhausted, "media size must be between 1 byte and %d MiB", maxOutboundMediaBytes/(1024*1024))
+		state.err = app.NewCommandError(app.CommandErrorRejected, "media size must be between 1 byte and %d MiB", maxOutboundMediaBytes/(1024*1024))
 		return appstore.Message{}, state.err
 	}
 	var mediaWidth, mediaHeight int32
@@ -227,12 +226,12 @@ func (c *Client) DownloadMessageMedia(ctx context.Context, messageID string) (ap
 	}
 	if err := partFile.Close(); err != nil {
 		partOpen = false
-		state.err = grpcstatus.Errorf(codes.Internal, "close media cache file: %v", err)
+		state.err = app.NewCommandError(app.CommandErrorInternal, "close media cache file: %v", err)
 		return appstore.Message{}, state.err
 	}
 	partOpen = false
 	if err := os.Rename(partPath, localPath); err != nil {
-		state.err = grpcstatus.Errorf(codes.Internal, "store media cache file: %v", err)
+		state.err = app.NewCommandError(app.CommandErrorInternal, "store media cache file: %v", err)
 		return appstore.Message{}, state.err
 	}
 	if isWhatsAppAnimatedSticker(message.MediaMimeType) {
@@ -345,7 +344,7 @@ func (c *Client) refreshMediaForDownload(ctx context.Context, client *whatsmeow.
 	}
 	mediaKey := append([]byte(nil), media.GetMediaKey()...)
 	if len(mediaKey) == 0 {
-		return appstore.Message{}, grpcstatus.Error(codes.FailedPrecondition, "media retry is missing media key")
+		return appstore.Message{}, app.NewCommandError(app.CommandErrorRejected, "media retry is missing media key")
 	}
 
 	state := &mediaRetryState{done: make(chan struct{}), mediaKey: mediaKey}
@@ -362,7 +361,7 @@ func (c *Client) refreshMediaForDownload(ctx context.Context, client *whatsmeow.
 	defer c.removeMediaRetryState(message.ID, state)
 
 	if err := client.SendMediaRetryReceipt(ctx, info, mediaKey); err != nil {
-		return appstore.Message{}, grpcstatus.Errorf(codes.Unavailable, "request media retry: %v", err)
+		return appstore.Message{}, app.NewCommandError(app.CommandErrorNotConnected, "request media retry: %v", err)
 	}
 	directPath, err := waitMediaRetry(ctx, state)
 	if err != nil {
@@ -398,13 +397,13 @@ func waitMediaRetry(ctx context.Context, state *mediaRetryState) (string, error)
 			return "", state.err
 		}
 		if state.directPath == "" {
-			return "", grpcstatus.Error(codes.FailedPrecondition, "media retry response did not include a download path")
+			return "", app.NewCommandError(app.CommandErrorRejected, "media retry response did not include a download path")
 		}
 		return state.directPath, nil
 	case <-ctx.Done():
 		return "", ctx.Err()
 	case <-timer.C:
-		return "", grpcstatus.Error(codes.Unavailable, "media retry response timed out")
+		return "", app.NewCommandError(app.CommandErrorNotConnected, "media retry response timed out")
 	}
 }
 
@@ -442,7 +441,7 @@ func (c *Client) handleMediaRetry(ctx context.Context, evt *events.MediaRetry) {
 		return
 	}
 	if notif.GetResult() != waMmsRetry.MediaRetryNotification_SUCCESS {
-		c.completeMediaRetry(messageID, "", grpcstatus.Errorf(codes.FailedPrecondition, "media retry failed with result %s", notif.GetResult().String()))
+		c.completeMediaRetry(messageID, "", app.NewCommandError(app.CommandErrorRejected, "media retry failed with result %s", notif.GetResult().String()))
 		return
 	}
 	c.completeMediaRetry(messageID, notif.GetDirectPath(), nil)
@@ -464,19 +463,19 @@ func (c *Client) completeMediaRetry(messageID, directPath string, err error) {
 
 func mediaRetryEventError(err error) error {
 	if errors.Is(err, whatsmeow.ErrMediaNotAvailableOnPhone) {
-		return grpcstatus.Error(codes.NotFound, "media is no longer available on WhatsApp")
+		return app.NewCommandError(app.CommandErrorNotFound, "media is no longer available on WhatsApp")
 	}
-	return grpcstatus.Errorf(codes.Unavailable, "media retry response: %v", err)
+	return app.NewCommandError(app.CommandErrorNotConnected, "media retry response: %v", err)
 }
 
 func mediaRetryMessageInfo(message appstore.Message) (*types.MessageInfo, error) {
 	chat, err := types.ParseJID(message.ChatID)
 	if err != nil {
-		return nil, grpcstatus.Errorf(codes.InvalidArgument, "invalid media chat ID: %v", err)
+		return nil, app.NewCommandError(app.CommandErrorInvalidArgument, "invalid media chat ID: %v", err)
 	}
 	externalID := strings.TrimSpace(appstore.ExternalMessageID(message.ChatID, message.ID))
 	if externalID == "" {
-		return nil, grpcstatus.Error(codes.InvalidArgument, "message ID is required")
+		return nil, app.NewCommandError(app.CommandErrorInvalidArgument, "message ID is required")
 	}
 
 	fromMe := message.Direction == appstore.DirectionOutgoing
@@ -485,11 +484,11 @@ func mediaRetryMessageInfo(message appstore.Message) (*types.MessageInfo, error)
 	if isGroup && !fromMe {
 		senderID := strings.TrimSpace(message.SenderID)
 		if senderID == "" {
-			return nil, grpcstatus.Error(codes.FailedPrecondition, "media retry is missing group sender")
+			return nil, app.NewCommandError(app.CommandErrorRejected, "media retry is missing group sender")
 		}
 		sender, err = types.ParseJID(senderID)
 		if err != nil {
-			return nil, grpcstatus.Errorf(codes.InvalidArgument, "invalid media sender ID: %v", err)
+			return nil, app.NewCommandError(app.CommandErrorInvalidArgument, "invalid media sender ID: %v", err)
 		}
 	}
 
@@ -507,32 +506,32 @@ func mediaRetryMessageInfo(message appstore.Message) (*types.MessageInfo, error)
 func refreshedMediaPayload(message appstore.Message, directPath string) ([]byte, error) {
 	directPath = strings.TrimSpace(directPath)
 	if directPath == "" {
-		return nil, grpcstatus.Error(codes.FailedPrecondition, "media retry response did not include a download path")
+		return nil, app.NewCommandError(app.CommandErrorRejected, "media retry response did not include a download path")
 	}
 
 	switch message.MediaKind {
 	case appstore.MediaKindSticker:
 		var sticker waE2E.StickerMessage
 		if err := proto.Unmarshal(message.MediaPayload, &sticker); err != nil {
-			return nil, grpcstatus.Errorf(codes.Internal, "decode sticker metadata: %v", err)
+			return nil, app.NewCommandError(app.CommandErrorInternal, "decode sticker metadata: %v", err)
 		}
 		sticker.DirectPath = proto.String(directPath)
 		sticker.URL = nil
 		payload, err := proto.Marshal(&sticker)
 		if err != nil {
-			return nil, grpcstatus.Errorf(codes.Internal, "encode sticker metadata: %v", err)
+			return nil, app.NewCommandError(app.CommandErrorInternal, "encode sticker metadata: %v", err)
 		}
 		return payload, nil
 	default:
 		var img waE2E.ImageMessage
 		if err := proto.Unmarshal(message.MediaPayload, &img); err != nil {
-			return nil, grpcstatus.Errorf(codes.Internal, "decode media metadata: %v", err)
+			return nil, app.NewCommandError(app.CommandErrorInternal, "decode media metadata: %v", err)
 		}
 		img.DirectPath = proto.String(directPath)
 		img.URL = nil
 		payload, err := proto.Marshal(&img)
 		if err != nil {
-			return nil, grpcstatus.Errorf(codes.Internal, "encode media metadata: %v", err)
+			return nil, app.NewCommandError(app.CommandErrorInternal, "encode media metadata: %v", err)
 		}
 		return payload, nil
 	}
@@ -614,7 +613,7 @@ func stickerCacheKey(message appstore.Message) (string, error) {
 	}
 	key, err := appstore.StickerCacheKeyFromPayload(message.MediaPayload)
 	if err != nil {
-		return "", grpcstatus.Errorf(codes.Internal, "decode sticker metadata: %v", err)
+		return "", app.NewCommandError(app.CommandErrorInternal, "decode sticker metadata: %v", err)
 	}
 	return key, nil
 }
@@ -671,7 +670,7 @@ func (c *Client) extractAndStoreLottieSticker(ctx context.Context, message appst
 func extractLottieSticker(archivePath string) (string, error) {
 	reader, err := zip.OpenReader(archivePath)
 	if err != nil {
-		return "", grpcstatus.Errorf(codes.Internal, "open animated sticker archive: %v", err)
+		return "", app.NewCommandError(app.CommandErrorInternal, "open animated sticker archive: %v", err)
 	}
 	defer reader.Close()
 
@@ -682,28 +681,28 @@ func extractLottieSticker(archivePath string) (string, error) {
 
 		opened, err := file.Open()
 		if err != nil {
-			return "", grpcstatus.Errorf(codes.Internal, "open animated sticker json: %v", err)
+			return "", app.NewCommandError(app.CommandErrorInternal, "open animated sticker json: %v", err)
 		}
 		data, err := io.ReadAll(io.LimitReader(opened, maxOutboundMediaBytes+1))
 		closeErr := opened.Close()
 		if err != nil {
-			return "", grpcstatus.Errorf(codes.Internal, "read animated sticker json: %v", err)
+			return "", app.NewCommandError(app.CommandErrorInternal, "read animated sticker json: %v", err)
 		}
 		if closeErr != nil {
-			return "", grpcstatus.Errorf(codes.Internal, "close animated sticker json: %v", closeErr)
+			return "", app.NewCommandError(app.CommandErrorInternal, "close animated sticker json: %v", closeErr)
 		}
 		if len(data) == 0 || len(data) > maxOutboundMediaBytes {
-			return "", grpcstatus.Errorf(codes.ResourceExhausted, "animated sticker json size must be between 1 byte and %d MiB", maxOutboundMediaBytes/(1024*1024))
+			return "", app.NewCommandError(app.CommandErrorRejected, "animated sticker json size must be between 1 byte and %d MiB", maxOutboundMediaBytes/(1024*1024))
 		}
 
 		jsonPath := strings.TrimSuffix(archivePath, filepath.Ext(archivePath)) + ".json"
 		if err := writeFileAtomic(jsonPath, data, 0o600); err != nil {
-			return "", grpcstatus.Errorf(codes.Internal, "write animated sticker json: %v", err)
+			return "", app.NewCommandError(app.CommandErrorInternal, "write animated sticker json: %v", err)
 		}
 		return jsonPath, nil
 	}
 
-	return "", grpcstatus.Error(codes.FailedPrecondition, "animated sticker archive does not contain animation.json")
+	return "", app.NewCommandError(app.CommandErrorRejected, "animated sticker archive does not contain animation.json")
 }
 
 func downloadableMediaMessage(message appstore.Message) (downloadableMedia, error) {
@@ -711,7 +710,7 @@ func downloadableMediaMessage(message appstore.Message) (downloadableMedia, erro
 	case appstore.MediaKindSticker:
 		var sticker waE2E.StickerMessage
 		if err := proto.Unmarshal(message.MediaPayload, &sticker); err != nil {
-			return nil, grpcstatus.Errorf(codes.Internal, "decode sticker metadata: %v", err)
+			return nil, app.NewCommandError(app.CommandErrorInternal, "decode sticker metadata: %v", err)
 		}
 		if sticker.GetDirectPath() != "" && isPlaceholderMediaURL(sticker.GetURL()) {
 			return stickerDownloadable{StickerMessage: &sticker}, nil
@@ -720,7 +719,7 @@ func downloadableMediaMessage(message appstore.Message) (downloadableMedia, erro
 	default:
 		var img waE2E.ImageMessage
 		if err := proto.Unmarshal(message.MediaPayload, &img); err != nil {
-			return nil, grpcstatus.Errorf(codes.Internal, "decode media metadata: %v", err)
+			return nil, app.NewCommandError(app.CommandErrorInternal, "decode media metadata: %v", err)
 		}
 		return &img, nil
 	}

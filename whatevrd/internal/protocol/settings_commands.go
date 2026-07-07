@@ -164,6 +164,12 @@ func (h commandHandlers) contactBlock(_ *conn, req request) (any, *Error) {
 	if jid == "" {
 		return nil, errorf(CodeInvalidParams, "jid is required")
 	}
+	// Blocking is a contact-only action: WhatsApp has no notion of blocking a
+	// group. Reject a group jid here (F10) rather than let it reach WhatsApp and
+	// surface as an opaque failure.
+	if strings.HasSuffix(jid, groupJIDSuffix) {
+		return nil, errorf(CodeInvalidParams, "jid must be a contact, not a group")
+	}
 	if p.Blocked == nil {
 		return nil, errorf(CodeInvalidParams, "blocked is required")
 	}

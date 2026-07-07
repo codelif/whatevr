@@ -7,9 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"google.golang.org/grpc/codes"
-	grpcstatus "google.golang.org/grpc/status"
-
 	"whatevrd/internal/app"
 	appstore "whatevrd/internal/store"
 )
@@ -660,7 +657,7 @@ func TestCommandValidationAndErrors(t *testing.T) {
 		t.Fatalf("sql no rows error = %s", got)
 	}
 
-	actions.err = grpcstatus.Error(codes.Unavailable, "offline")
+	actions.err = app.NewCommandError(app.CommandErrorNotConnected, "offline")
 	c.sendLine(`{"id":4,"method":"daemon.reconnect"}`)
 	if got := errorCode(t, c.recv()); got != CodeNotConnected {
 		t.Fatalf("unavailable error = %s", got)
@@ -677,13 +674,13 @@ func TestCommandValidationAndErrors(t *testing.T) {
 		t.Fatalf("missing pinned error = %s", got)
 	}
 
-	actions.err = grpcstatus.Error(codes.FailedPrecondition, "the edit window for this message has expired")
+	actions.err = app.NewCommandError(app.CommandErrorExpired, "the edit window for this message has expired")
 	c.sendLine(`{"id":7,"method":"message.edit","params":{"message_id":"m1","text":"new"}}`)
 	if got := errorCode(t, c.recv()); got != CodeExpired {
 		t.Fatalf("expired error = %s", got)
 	}
 
-	actions.err = grpcstatus.Error(codes.FailedPrecondition, "WhatsApp session is not logged in")
+	actions.err = app.NewCommandError(app.CommandErrorNotLoggedIn, "WhatsApp session is not logged in")
 	c.sendLine(`{"id":8,"method":"send.text","params":{"chat_id":"chat@s.whatsapp.net","text":"hi"}}`)
 	if got := errorCode(t, c.recv()); got != CodeNotLoggedIn {
 		t.Fatalf("not logged in error = %s", got)

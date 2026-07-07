@@ -74,6 +74,7 @@ func Start(ctx context.Context, socketPath string, activated net.Listener, daemo
 		grpc.MaxRecvMsgSize(maxRPCMessageBytes),
 		grpc.MaxSendMsgSize(maxRPCMessageBytes),
 		grpc.MaxConcurrentStreams(maxConcurrentRPCStreams),
+		grpc.UnaryInterceptor(commandErrorInterceptor),
 	)
 	pb.RegisterDaemonServiceServer(grpcServer, NewDaemonService(daemon, reconnector, shutdown))
 	pb.RegisterLoginServiceServer(grpcServer, NewLoginService(daemon, login, shutdown))

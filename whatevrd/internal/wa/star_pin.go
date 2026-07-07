@@ -12,10 +12,9 @@ import (
 	waE2E "go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
-	"google.golang.org/grpc/codes"
-	grpcstatus "google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
+	"whatevrd/internal/app"
 	appstore "whatevrd/internal/store"
 )
 
@@ -37,12 +36,12 @@ func (c *Client) SetMessageStarred(ctx context.Context, messageID string, starre
 
 	client := c.currentClient()
 	if client == nil || !client.IsLoggedIn() {
-		return appstore.Message{}, grpcstatus.Error(codes.Unavailable, "WhatsApp client is not logged in")
+		return appstore.Message{}, app.NewCommandError(app.CommandErrorNotLoggedIn, "WhatsApp client is not logged in")
 	}
 
 	chatJID, err := types.ParseJID(message.ChatID)
 	if err != nil {
-		return appstore.Message{}, grpcstatus.Errorf(codes.InvalidArgument, "invalid chat_id: %v", err)
+		return appstore.Message{}, app.NewCommandError(app.CommandErrorInvalidArgument, "invalid chat_id: %v", err)
 	}
 
 	fromMe := message.Direction == appstore.DirectionOutgoing
@@ -74,17 +73,17 @@ func (c *Client) PinMessage(ctx context.Context, messageID string, pinned bool, 
 		return appstore.Message{}, err
 	}
 	if message.IsRevoked {
-		return appstore.Message{}, grpcstatus.Error(codes.FailedPrecondition, "deleted messages cannot be pinned")
+		return appstore.Message{}, app.NewCommandError(app.CommandErrorRejected, "deleted messages cannot be pinned")
 	}
 
 	client := c.currentClient()
 	if client == nil || !client.IsLoggedIn() {
-		return appstore.Message{}, grpcstatus.Error(codes.Unavailable, "WhatsApp client is not logged in")
+		return appstore.Message{}, app.NewCommandError(app.CommandErrorNotLoggedIn, "WhatsApp client is not logged in")
 	}
 
 	chatJID, err := types.ParseJID(message.ChatID)
 	if err != nil {
-		return appstore.Message{}, grpcstatus.Errorf(codes.InvalidArgument, "invalid chat_id: %v", err)
+		return appstore.Message{}, app.NewCommandError(app.CommandErrorInvalidArgument, "invalid chat_id: %v", err)
 	}
 
 	now := time.Now()
@@ -96,7 +95,7 @@ func (c *Client) PinMessage(ctx context.Context, messageID string, pinned bool, 
 				return appstore.Message{}, err
 			}
 			if count >= maxPinnedMessages {
-				return appstore.Message{}, grpcstatus.Errorf(codes.ResourceExhausted, "You can only pin %d messages per chat", maxPinnedMessages)
+				return appstore.Message{}, app.NewCommandError(app.CommandErrorRejected, "You can only pin %d messages per chat", maxPinnedMessages)
 			}
 		}
 		if durationSecs == 0 {
@@ -131,7 +130,7 @@ func (c *Client) PinMessage(ctx context.Context, messageID string, pinned bool, 
 		}
 	}
 	if _, err := client.SendMessage(ctx, chatJID, pinMsg); err != nil {
-		return appstore.Message{}, grpcstatus.Errorf(codes.Unknown, "send pin failed: %v", err)
+		return appstore.Message{}, app.NewCommandError(app.CommandErrorRejected, "send pin failed: %v", err)
 	}
 
 	var pinnedAt, pinnedUntil int64
@@ -251,10 +250,10 @@ func (c *Client) sendRegularHighAppState(ctx context.Context, client *whatsmeow.
 		}
 		c.log.Warnf("WhatsApp app state conflict while updating stars; resyncing regular_high and retrying: %v", err)
 		if _, syncErr := fetchFullRegularHighAppState(ctx, client); syncErr != nil {
-			return grpcstatus.Errorf(codes.Aborted, "WhatsApp sync conflict. Try again in a moment.")
+			return app.NewCommandError(app.CommandErrorRejected, "WhatsApp sync conflict. Try again in a moment.")
 		}
 		if retryErr := client.SendAppState(ctx, patch); retryErr != nil {
-			return grpcstatus.Errorf(codes.Aborted, "WhatsApp sync conflict. Try again in a moment.")
+			return app.NewCommandError(app.CommandErrorRejected, "WhatsApp sync conflict. Try again in a moment.")
 		}
 	}
 	return nil

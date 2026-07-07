@@ -24,10 +24,9 @@ import (
 	waE2E "go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
-	"google.golang.org/grpc/codes"
-	grpcstatus "google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
+	"whatevrd/internal/app"
 	appstore "whatevrd/internal/store"
 )
 
@@ -45,20 +44,20 @@ func (c *Client) SendText(ctx context.Context, chatID, text, replyToMessageID st
 	rpcArrival := time.Now()
 	client := c.currentClient()
 	if client == nil {
-		return appstore.SavedTextMessage{}, grpcstatus.Error(codes.Unavailable, "WhatsApp client is not initialized")
+		return appstore.SavedTextMessage{}, app.NewCommandError(app.CommandErrorNotConnected, "WhatsApp client is not initialized")
 	}
 	if client.Store.ID == nil {
-		return appstore.SavedTextMessage{}, grpcstatus.Error(codes.FailedPrecondition, "WhatsApp session is not logged in")
+		return appstore.SavedTextMessage{}, app.NewCommandError(app.CommandErrorNotLoggedIn, "WhatsApp session is not logged in")
 	}
 
 	trimmedText := strings.TrimSpace(text)
 	if trimmedText == "" {
-		return appstore.SavedTextMessage{}, grpcstatus.Error(codes.InvalidArgument, "text is required")
+		return appstore.SavedTextMessage{}, app.NewCommandError(app.CommandErrorInvalidArgument, "text is required")
 	}
 
 	targetJID, err := types.ParseJID(chatID)
 	if err != nil {
-		return appstore.SavedTextMessage{}, grpcstatus.Errorf(codes.InvalidArgument, "invalid chat_id: %v", err)
+		return appstore.SavedTextMessage{}, app.NewCommandError(app.CommandErrorInvalidArgument, "invalid chat_id: %v", err)
 	}
 	targetJID = c.normalizeJIDForChat(ctx, targetJID)
 	chatID = targetJID.String()
@@ -104,7 +103,7 @@ func (c *Client) SetChatPresence(ctx context.Context, chatID string, composing b
 
 	jid, err := types.ParseJID(chatID)
 	if err != nil {
-		return grpcstatus.Errorf(codes.InvalidArgument, "invalid chat_id: %v", err)
+		return app.NewCommandError(app.CommandErrorInvalidArgument, "invalid chat_id: %v", err)
 	}
 
 	state := types.ChatPresencePaused
@@ -123,7 +122,7 @@ func (c *Client) SubscribeChatPresence(ctx context.Context, chatID string) error
 
 	jid, err := types.ParseJID(chatID)
 	if err != nil {
-		return grpcstatus.Errorf(codes.InvalidArgument, "invalid chat_id: %v", err)
+		return app.NewCommandError(app.CommandErrorInvalidArgument, "invalid chat_id: %v", err)
 	}
 	if jid.Server == types.GroupServer {
 		return nil
@@ -143,10 +142,10 @@ func (c *Client) SendMediaWithMentions(ctx context.Context, chatID, filePath, ca
 	rpcArrival := time.Now()
 	client := c.currentClient()
 	if client == nil {
-		return appstore.SavedTextMessage{}, grpcstatus.Error(codes.Unavailable, "WhatsApp client is not initialized")
+		return appstore.SavedTextMessage{}, app.NewCommandError(app.CommandErrorNotConnected, "WhatsApp client is not initialized")
 	}
 	if client.Store.ID == nil {
-		return appstore.SavedTextMessage{}, grpcstatus.Error(codes.FailedPrecondition, "WhatsApp session is not logged in")
+		return appstore.SavedTextMessage{}, app.NewCommandError(app.CommandErrorNotLoggedIn, "WhatsApp session is not logged in")
 	}
 
 	data, mimeType, extension, err := readOutboundMedia(filePath)
@@ -156,7 +155,7 @@ func (c *Client) SendMediaWithMentions(ctx context.Context, chatID, filePath, ca
 
 	targetJID, err := types.ParseJID(chatID)
 	if err != nil {
-		return appstore.SavedTextMessage{}, grpcstatus.Errorf(codes.InvalidArgument, "invalid chat_id: %v", err)
+		return appstore.SavedTextMessage{}, app.NewCommandError(app.CommandErrorInvalidArgument, "invalid chat_id: %v", err)
 	}
 	targetJID = c.normalizeJIDForChat(ctx, targetJID)
 	chatID = targetJID.String()
@@ -228,12 +227,12 @@ func (c *Client) replySnapshotForSend(ctx context.Context, chatID, replyToMessag
 	message, err := c.store.GetMessage(ctx, messageID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return appstore.MessageReply{}, grpcstatus.Error(codes.NotFound, "reply message not found")
+			return appstore.MessageReply{}, app.NewCommandError(app.CommandErrorNotFound, "reply message not found")
 		}
 		return appstore.MessageReply{}, err
 	}
 	if message.ChatID != chatID {
-		return appstore.MessageReply{}, grpcstatus.Error(codes.InvalidArgument, "reply message is not in this chat")
+		return appstore.MessageReply{}, app.NewCommandError(app.CommandErrorInvalidArgument, "reply message is not in this chat")
 	}
 
 	return replyFromStoredMessage(message), nil
@@ -253,52 +252,52 @@ func replyFromStoredMessage(message appstore.Message) appstore.MessageReply {
 
 func readOutboundMedia(filePath string) ([]byte, string, string, error) {
 	if !filepath.IsAbs(filePath) {
-		return nil, "", "", grpcstatus.Error(codes.InvalidArgument, "media file path must be absolute")
+		return nil, "", "", app.NewCommandError(app.CommandErrorInvalidArgument, "media file path must be absolute")
 	}
 	info, err := os.Lstat(filePath)
 	if err != nil {
-		return nil, "", "", grpcstatus.Error(codes.InvalidArgument, "media file is not accessible")
+		return nil, "", "", app.NewCommandError(app.CommandErrorInvalidArgument, "media file is not accessible")
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
-		return nil, "", "", grpcstatus.Error(codes.InvalidArgument, "media file must not be a symlink")
+		return nil, "", "", app.NewCommandError(app.CommandErrorInvalidArgument, "media file must not be a symlink")
 	}
 	if !info.Mode().IsRegular() {
-		return nil, "", "", grpcstatus.Error(codes.InvalidArgument, "media file must be a regular file")
+		return nil, "", "", app.NewCommandError(app.CommandErrorInvalidArgument, "media file must be a regular file")
 	}
 	if info.Size() <= 0 {
-		return nil, "", "", grpcstatus.Error(codes.InvalidArgument, "media file is empty")
+		return nil, "", "", app.NewCommandError(app.CommandErrorInvalidArgument, "media file is empty")
 	}
 	if info.Size() > maxOutboundMediaBytes {
-		return nil, "", "", grpcstatus.Errorf(codes.InvalidArgument, "media file must be <= %d MiB", maxOutboundMediaBytes/(1024*1024))
+		return nil, "", "", app.NewCommandError(app.CommandErrorInvalidArgument, "media file must be <= %d MiB", maxOutboundMediaBytes/(1024*1024))
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok || stat.Uid != uint32(os.Geteuid()) {
-		return nil, "", "", grpcstatus.Error(codes.PermissionDenied, "media file owner is not allowed")
+		return nil, "", "", app.NewCommandError(app.CommandErrorRejected, "media file owner is not allowed")
 	}
 
 	f, err := os.Open(filePath)
 	if err != nil {
-		return nil, "", "", grpcstatus.Error(codes.InvalidArgument, "media file is not readable")
+		return nil, "", "", app.NewCommandError(app.CommandErrorInvalidArgument, "media file is not readable")
 	}
 	defer f.Close()
 
 	data, err := io.ReadAll(io.LimitReader(f, maxOutboundMediaBytes+1))
 	if err != nil {
-		return nil, "", "", grpcstatus.Error(codes.InvalidArgument, "media file could not be read")
+		return nil, "", "", app.NewCommandError(app.CommandErrorInvalidArgument, "media file could not be read")
 	}
 	if len(data) > maxOutboundMediaBytes {
-		return nil, "", "", grpcstatus.Errorf(codes.InvalidArgument, "media file must be <= %d MiB", maxOutboundMediaBytes/(1024*1024))
+		return nil, "", "", app.NewCommandError(app.CommandErrorInvalidArgument, "media file must be <= %d MiB", maxOutboundMediaBytes/(1024*1024))
 	}
 	mimeType := http.DetectContentType(data)
 	// WhatsApp GIFs are short MP4 videos with a gif-playback flag; sending the
 	// raw .gif bytes through the image path delivers a static picture. Refuse
 	// until a GIF→video transcode path exists.
 	if mimeType == "image/gif" {
-		return nil, "", "", grpcstatus.Error(codes.InvalidArgument, "GIF files can't be sent yet: WhatsApp treats GIFs as short videos, which whatevr does not support sending")
+		return nil, "", "", app.NewCommandError(app.CommandErrorInvalidArgument, "GIF files can't be sent yet: WhatsApp treats GIFs as short videos, which whatevr does not support sending")
 	}
 	extension, ok := outboundImageExtension(mimeType)
 	if !ok {
-		return nil, "", "", grpcstatus.Error(codes.InvalidArgument, "media file must be a supported image")
+		return nil, "", "", app.NewCommandError(app.CommandErrorInvalidArgument, "media file must be a supported image")
 	}
 	return data, mimeType, extension, nil
 }
@@ -1160,7 +1159,7 @@ func (c *Client) publishMessageStatusUpdated(ctx context.Context, message appsto
 func (c *Client) MarkChatRead(ctx context.Context, chatID string) (appstore.Chat, error) {
 	chat, err := types.ParseJID(chatID)
 	if err != nil {
-		return appstore.Chat{}, grpcstatus.Errorf(codes.InvalidArgument, "invalid chat_id: %v", err)
+		return appstore.Chat{}, app.NewCommandError(app.CommandErrorInvalidArgument, "invalid chat_id: %v", err)
 	}
 	chat = c.normalizeJIDForChat(ctx, chat)
 	chatID = chat.String()
@@ -1183,7 +1182,7 @@ func (c *Client) MarkChatRead(ctx context.Context, chatID string) (appstore.Chat
 func (c *Client) MarkChatReadUpTo(ctx context.Context, chatID, upToMessageID string) (appstore.Chat, error) {
 	chat, err := types.ParseJID(chatID)
 	if err != nil {
-		return appstore.Chat{}, grpcstatus.Errorf(codes.InvalidArgument, "invalid chat_id: %v", err)
+		return appstore.Chat{}, app.NewCommandError(app.CommandErrorInvalidArgument, "invalid chat_id: %v", err)
 	}
 	chat = c.normalizeJIDForChat(ctx, chat)
 	chatID = chat.String()
@@ -1243,14 +1242,14 @@ func (c *Client) sendReadReceipts(ctx context.Context, chat types.JID, chatID st
 func (c *Client) SetChatPinned(ctx context.Context, chatID string, pinned bool) (appstore.Chat, error) {
 	chat, err := types.ParseJID(chatID)
 	if err != nil {
-		return appstore.Chat{}, grpcstatus.Errorf(codes.InvalidArgument, "invalid chat_id: %v", err)
+		return appstore.Chat{}, app.NewCommandError(app.CommandErrorInvalidArgument, "invalid chat_id: %v", err)
 	}
 	chat = c.normalizeJIDForChat(ctx, chat)
 	chatID = chat.String()
 
 	client := c.currentClient()
 	if client == nil || !client.IsLoggedIn() {
-		return appstore.Chat{}, grpcstatus.Error(codes.Unavailable, "WhatsApp client is not logged in")
+		return appstore.Chat{}, app.NewCommandError(app.CommandErrorNotLoggedIn, "WhatsApp client is not logged in")
 	}
 	if pinned {
 		pinnedCount, err := c.store.PinnedChatCountExcluding(ctx, chatID)
@@ -1258,7 +1257,7 @@ func (c *Client) SetChatPinned(ctx context.Context, chatID string, pinned bool) 
 			return appstore.Chat{}, err
 		}
 		if pinnedCount >= maxPinnedChats {
-			return appstore.Chat{}, grpcstatus.Errorf(codes.ResourceExhausted, "You can only pin %d chats", maxPinnedChats)
+			return appstore.Chat{}, app.NewCommandError(app.CommandErrorRejected, "You can only pin %d chats", maxPinnedChats)
 		}
 	}
 	if err := c.sendRegularLowAppState(ctx, client, appstate.BuildPin(chat, pinned)); err != nil {
@@ -1282,14 +1281,14 @@ func (c *Client) SetChatPinned(ctx context.Context, chatID string, pinned bool) 
 func (c *Client) SetChatArchived(ctx context.Context, chatID string, archived bool) (appstore.Chat, error) {
 	chat, err := types.ParseJID(chatID)
 	if err != nil {
-		return appstore.Chat{}, grpcstatus.Errorf(codes.InvalidArgument, "invalid chat_id: %v", err)
+		return appstore.Chat{}, app.NewCommandError(app.CommandErrorInvalidArgument, "invalid chat_id: %v", err)
 	}
 	chat = c.normalizeJIDForChat(ctx, chat)
 	chatID = chat.String()
 
 	client := c.currentClient()
 	if client == nil || !client.IsLoggedIn() {
-		return appstore.Chat{}, grpcstatus.Error(codes.Unavailable, "WhatsApp client is not logged in")
+		return appstore.Chat{}, app.NewCommandError(app.CommandErrorNotLoggedIn, "WhatsApp client is not logged in")
 	}
 
 	// Last-message timestamp/key are optional for BuildArchive; zero values are
@@ -1323,14 +1322,14 @@ func (c *Client) SetChatArchived(ctx context.Context, chatID string, archived bo
 func (c *Client) SetChatMuted(ctx context.Context, chatID string, muted bool, duration time.Duration) (appstore.Chat, error) {
 	chat, err := types.ParseJID(chatID)
 	if err != nil {
-		return appstore.Chat{}, grpcstatus.Errorf(codes.InvalidArgument, "invalid chat_id: %v", err)
+		return appstore.Chat{}, app.NewCommandError(app.CommandErrorInvalidArgument, "invalid chat_id: %v", err)
 	}
 	chat = c.normalizeJIDForChat(ctx, chat)
 	chatID = chat.String()
 
 	client := c.currentClient()
 	if client == nil || !client.IsLoggedIn() {
-		return appstore.Chat{}, grpcstatus.Error(codes.Unavailable, "WhatsApp client is not logged in")
+		return appstore.Chat{}, app.NewCommandError(app.CommandErrorNotLoggedIn, "WhatsApp client is not logged in")
 	}
 
 	if err := c.sendRegularHighAppState(ctx, client, appstate.BuildMute(chat, muted, duration)); err != nil {
@@ -1366,10 +1365,10 @@ func (c *Client) sendRegularLowAppState(ctx context.Context, client *whatsmeow.C
 		}
 		c.log.Warnf("WhatsApp app state conflict while updating pins; resyncing regular_low and retrying: %v", err)
 		if _, syncErr := fetchFullRegularLowAppState(ctx, client); syncErr != nil {
-			return grpcstatus.Errorf(codes.Aborted, "WhatsApp sync conflict. Try again in a moment.")
+			return app.NewCommandError(app.CommandErrorRejected, "WhatsApp sync conflict. Try again in a moment.")
 		}
 		if retryErr := client.SendAppState(ctx, patch); retryErr != nil {
-			return grpcstatus.Errorf(codes.Aborted, "WhatsApp sync conflict. Try again in a moment.")
+			return app.NewCommandError(app.CommandErrorRejected, "WhatsApp sync conflict. Try again in a moment.")
 		}
 	}
 	return nil
