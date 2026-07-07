@@ -82,7 +82,8 @@ Status: `todo` | `doing` | `done` | `blocked` | `needs-decision`
 | B4c | `receipts` view: per-message, one item per participant, live re-derive on status updates | done | `receipts_view.go` (receiptsView/receiptsSession; unwindowed, re-derives `GetMessageInfo` on every relevant event, no cached state — store is authoritative). Group → one item per member (incl. not-yet-delivered) keyed by member jid with name/avatar; direct → single aggregate item under sentinel id `"peer"` (GetMessageInfo carries no jid for the 1:1 recipient), shown once delivery begins. New `MessageInfoActions`; B4b's actions param widened to a combined `DaemonActions` (`PresenceActions`+`MessageInfoActions`), main passes `waClient`, fixture/tests nil. **Required a new daemon event** `DaemonEventMessageReceipt` (`daemon.go` + `PublishMessageReceipt`), fired per recorded receipt in `applyParticipantReceipt` (`send.go`, gated `!offlineSync`): a group member's receipt usually does *not* advance the message's aggregate status, so the plan's `DaemonEventMessageUpdated`-only trigger would miss it (Decision log 2026-07-07). View triggers on receipt+updated+deleted filtered by message id; delete/not-found → empty. Not a wire-grammar or PROTOCOL.md change; frozen gRPC ignores the new kind. Store-free raw-socket tests; hand-verified over socat (group fill+ready, non-aggregate per-member read re-derives live, direct delivered→read, delete→remove, scoped, not_found, missing message_id). |
 | B5a | `self`, `contact` — two-phase local→network upserts (ContactInfo object views) | done | `contact_view.go` (selfView/contactView + sessions over new `ContactActions` seam = `GetContactInfo`/`SelfProfile`; `DaemonActions` widened to embed it, main passes `waClient`, fixture/tests nil). Both are object views (id `"self"` / the normalized jid) filled from local data at subscribe; the network "about"/status text arrives as `DaemonEventContactInfoUpdated` (jid+status only) and overlays onto the held `app.ContactInfo` via a shared `overlayContactStatus`; the avatar refresh overlays via `overlayContactAvatar` (matches `Kind==Sender && ID==jid`). `self` also re-fetches `SelfProfile` on `DaemonEventSelfProfileChanged` and, while still unloaded (logged out), on `DaemonEventConnectionChanged` so it fills after login. Store-free raw-socket tests; hand-verified over a raw socket (initial local fill+ready, live about overlay for self+contact preserving phase-one fields, avatar overlay, self refetch, jid scoping, missing/invalid jid → invalid_params, nil-actions → internal). |
 | B5b | `group`, `group_members` — two-phase local→network upserts (GroupInfo-based) | done | `group_view.go` (groupView/groupMembersView + sessions over new `GroupActions` seam = `GetGroupInfo`; `DaemonActions` widened). Both call `wa.Client.GetGroupInfo` at subscribe (stored members now) and replace their held card wholesale on `DaemonEventGroupInfoUpdated` (the live fetch's full enriched card). `group` is an object view (id = chat_id) carrying subject/description/avatar/created/owner/`member_count`(=len members)/`my_role`/announce/locked, **no** member array; chat-kind avatar refresh overlays. `group_members` is an unwindowed collection, one item per member keyed by jid, sorted superadmin<admin<member then name then jid (`memberSortKey`, `\x1f`-delimited) — joins/leaves/promotions fall out of the engine's roster diff (upsert/remove); sender-kind avatar refresh overlays the matching member. **The spec-vs-data gap was not real:** `owner`/`my_role`/announce/locked are all in whatsmeow `types.GroupInfo`, so I plumbed them — `app.GroupInfo` gained `OwnerJID`/`MyRole`/`IsAnnounce`/`IsLocked`, populated in `wa.refreshGroupInfoLive` (my_role via `ownParticipantJIDs()` matched against the same canonical form the member list uses; new shared `app.GroupRoleString`). Two-phase by nature: roles/owner/flags are live-only, so phase one shows members as plain "member" with empty my_role/owner/flags. Frozen gRPC `GetGroupInfo` mapper ignores the new fields (stays compiling). Store-free raw-socket tests; hand-verified over a raw socket (group+members phase-one fill+ready, live enrichment with roles/owner/flags, role-rank reordering, join as upsert, leave as remove, chat scoping, missing/invalid chat_id → invalid_params, nil-actions → internal). |
-| B6 | `privacy`, `preferences`, `blocklist`, `starred`, `pinned` | todo | |
+| B6a | `privacy`, `preferences`, `blocklist` — settings views | done | `settings_view.go` (privacyView/preferencesView/blocklistView over new `SettingsActions` seam = `GetPrivacySettings`/`GetAppPreferences`/`GetBlocklist`; `DaemonActions` widened to embed it, main passes `waClient`, fixture/tests nil). `privacy`/`preferences` are object views (id `"self"`); `blocklist` is an unwindowed collection keyed by jid, sorted name-then-jid (`blocklistSortKey`, `\x1f`-delimited). `privacy` fills from the live connection (empty until login, fills on `DaemonEventConnectionChanged` while unloaded) and replaces wholesale on `DaemonEventPrivacySettingsChanged`'s carried snapshot. `blocklist` re-reads on `DaemonEventBlocklistChanged`, fills-after-login on `ConnectionChanged`, and overlays a held row's avatar on `DaemonEventAvatarUpdated` (Sender-kind, matching jid — same LID caveat as the contact card). **Required a new daemon event** `DaemonEventPreferencesChanged` (fired from `SetAppPreferences`): app preferences had no live-update path, and this makes the `preferences` view correct when they change via any caller (Decision log 2026-07-07). Daemon-event-surface addition, not a wire/PROTOCOL.md change; frozen gRPC ignores the kind. Store-free raw-socket tests; hand-verified over a raw socket (three initial fills+ready, live privacy snapshot, live prefs toggle, blocklist roster diff upsert+remove with name sort, avatar overlay, logged-out→login fill, nil-actions → internal). |
+| B6b | `starred`, `pinned` — windowed message-row views | todo | Second half of the B6 split: both are message-row collections over the store (`store.ListStarredMessages` / `store.ListPinnedMessages`), reusing the B3 `messages` item shape. `starred` is windowed (optional `chat_id`, `limit`) + carries `chat_name`; `pinned` (per `chat_id`) removes rows on expiry. |
 | B7 | `stickers`, `sticker_packs`, `sticker_pack`, `transfers` | todo | |
 
 ### Phase C — commands & queries
@@ -319,6 +320,38 @@ _None._
   roster diff. (6) `group`/`group_members` with a non-group or unknown chat_id →
   `invalid_params` (the only failure `GetGroupInfo` reports; an in-store group with
   no participants yet returns an empty roster, not an error).
+- 2026-07-07 — B6 split into B6a (`privacy`/`preferences`/`blocklist`, done) and
+  B6b (`starred`/`pinned`). Reason: two data-source families — the first three
+  are settings object/collection views over the `SettingsActions` seam (upstream
+  WA + daemon-persisted prefs, "fetch-at-subscribe, re-fetch-on-event", like B1's
+  object views); the last two are windowed **message-row** views over the store
+  reusing the B3 `messages` item shape. Same split-by-seam pattern as B4a/b/c and
+  B5a/b; five views was the largest per-step count in Phase B. No PROTOCOL.md
+  change — all five views are already specified there.
+- 2026-07-07 — B6a required a **new daemon event** `DaemonEventPreferencesChanged`
+  (implementation finding; PROTOCOL.md unchanged, flag if you disagree). Same shape
+  as the B4c `DaemonEventMessageReceipt` finding: app preferences are
+  daemon-persisted and had **no** live-update event, so an open `preferences` view
+  could never update when they change. `privacy` and `blocklist` already had their
+  change events (`DaemonEventPrivacySettingsChanged`/`DaemonEventBlocklistChanged`);
+  preferences did not. Added a payload-free event fired from `SetAppPreferences`
+  (the single mutation point; C3's `preferences.set` will call the same path), off
+  which the view re-reads `GetAppPreferences`. This is a daemon-event-surface
+  addition, **not** a wire-grammar or PROTOCOL.md change, and the frozen gRPC
+  daemon-event stream ignores unknown kinds — so no sign-off was needed. Other B6a
+  readings (PROTOCOL.md unchanged): (1) `privacy`/`blocklist` are network-backed and
+  open **empty** while logged out (like `self`), filling on `ConnectionChanged`
+  when still unloaded; `preferences` is always available (defaults) and never opens
+  empty. (2) `privacy` applies the `PrivacySettingsChanged` snapshot **directly**
+  (no re-fetch — the payload carries the full settings), while `blocklist`
+  re-reads `GetBlocklist` on its payload-free change event. (3) `blocklist` rows
+  sort by lowercased display name then jid (`blocklistSortKey`) — a user-facing
+  settings list wants a sensible order (unlike the transient jid-keyed
+  `receipts`/`presence` lists), and the daemon owns sort so the frontend only
+  filters; a rename moves a row as an ordinary upsert, an unblock is a `remove`
+  from the map diff. (4) A blocked contact's avatar refresh overlays in place
+  (Sender-kind, id == held jid); a LID-form refresh carries a different id and is
+  not matched — same acceptable caveat as the contact card.
 - 2026-07-07 — **Problem 2 (`extend` direction) resolved** (decided by Harsh);
   **supersedes** the symmetric-growth reading in the 2026-07-06 B3b entry
   (item 2). `extend` gains a **required** `direction` field (`older`|`newer`).
