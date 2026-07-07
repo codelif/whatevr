@@ -172,6 +172,13 @@ const (
 	DaemonEventBlocklistChanged
 	DaemonEventChatDeleted
 	DaemonEventChatCleared
+	// DaemonEventMessageReceipt fires whenever a per-participant receipt is
+	// recorded for one of our messages, even when it does not advance the
+	// message's aggregate status (a single group member's receipt usually does
+	// not). It carries only the message + chat ids; the `receipts` view keys off
+	// it to re-derive the per-member breakdown, and views that only track message
+	// status ignore it.
+	DaemonEventMessageReceipt
 )
 
 type StickerSource int32
@@ -565,6 +572,17 @@ func (d *Daemon) PublishNewMessage(message Message, chat Chat) {
 
 func (d *Daemon) PublishMessageUpdated(message Message) {
 	d.broadcastDaemonEvent(DaemonEvent{Kind: DaemonEventMessageUpdated, Message: message})
+}
+
+// PublishMessageReceipt signals that a participant receipt was recorded for a
+// message; see DaemonEventMessageReceipt. The event carries only ids so the
+// `receipts` view re-derives from the store — the definitive receipt state.
+func (d *Daemon) PublishMessageReceipt(chatID, messageID string) {
+	d.broadcastDaemonEvent(DaemonEvent{
+		Kind:    DaemonEventMessageReceipt,
+		Chat:    Chat{ID: chatID},
+		Message: Message{ID: messageID},
+	})
 }
 
 func (d *Daemon) PublishMessageDeleted(chatID, messageID string, chat Chat) {
