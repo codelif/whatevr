@@ -78,6 +78,7 @@ func main() {
 		log.Fatalf("start protocol server: %v", err)
 	}
 	protocol.RegisterDaemonViews(protocolServer, daemon, db, waClient)
+	protocol.RegisterDaemonCommands(protocolServer, waClient)
 	waClient.Start(ctx)
 
 	log.Printf("whatevrd listening on %s (grpc) and %s (protocol)", paths.SocketPath, paths.ProtocolSocketPath)

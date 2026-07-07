@@ -235,13 +235,18 @@ correlation (e.g. to scroll to your own just-sent message when it upserts).
 
 | method | params | result |
 | --- | --- | --- |
-| `chat.mark_read` | `chat_id` | `{}` |
+| `chat.mark_read` | `chat_id`, `up_to_message_id` | `{}` |
 | `chat.pin` | `chat_id`, `pinned` | `{}` |
 | `chat.archive` | `chat_id`, `archived` | `{}` |
 | `chat.mute` | `chat_id`, `muted`, `duration_secs` (0 = forever) | `{}` |
 | `chat.typing` | `chat_id`, `composing` | `{}` |
 | `chat.request_older` | `chat_id` | `{requested}` — asks the phone; results land as message upserts, exhaustion flips the chat row flag |
 | `chat.ensure_direct` | `jid` | `{chat_id}` — row appears in `chats` views |
+
+`chat.mark_read` marks messages read through the frontend's visible horizon;
+`up_to_message_id` is the newest message the user has actually seen. The daemon
+recomputes unread counts and sends WhatsApp read receipts; updates land through
+views.
 
 **Messages**
 

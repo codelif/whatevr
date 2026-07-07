@@ -25,11 +25,12 @@ type handlerFunc func(c *conn, req request) (any, *Error)
 // built in; views and commands register into handlers as migration steps
 // land them.
 type Server struct {
-	daemon     *app.Daemon
-	listener   net.Listener
-	socketPath string
-	errCh      chan error
-	handlers   map[string]handlerFunc
+	daemon         *app.Daemon
+	listener       net.Listener
+	socketPath     string
+	errCh          chan error
+	handlers       map[string]handlerFunc
+	commandActions CommandActions
 
 	viewMu sync.RWMutex
 	views  map[string]View

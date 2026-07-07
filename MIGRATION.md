@@ -91,7 +91,7 @@ Status: `todo` | `doing` | `done` | `blocked` | `needs-decision`
 
 | id | step | status | notes |
 | --- | --- | --- | --- |
-| C1 | Session/chat commands: `session.update`, `daemon.reconnect`, `account.logout`, `chat.*` (mark_read, pin, archive, mute, typing, request_older, ensure_direct) | todo | `chat.mark_read` carries an `up_to_message_id` watermark (Decision log 2026-07-07); dumb frontends pass the newest held message id. Applying it amends PROTOCOL.md's `chat.mark_read` row (currently `chat_id` → `{}`) at C1. |
+| C1 | Session/chat commands: `session.update`, `daemon.reconnect`, `account.logout`, `chat.*` (mark_read, pin, archive, mute, typing, request_older, ensure_direct) | done | `commands.go` registers C1 acks/results over the protocol; `session.update` maps each socket to a frontend session, chat commands call the WA action seam, and `chat.mark_read` now requires/applies `up_to_message_id` via `wa.MarkChatReadUpTo`. PROTOCOL.md amended accordingly; fixture + raw-socket tests cover the surface. |
 | C2 | `send.*`, `message.*` (react, edit, revoke, delete, star, pin, forward), `media.download` (+`transfers` wiring), `media.fetch_profile_picture` | todo | |
 | C3 | `privacy.set`, `preferences.set`, `self.set_about`, `contact.block`, sticker commands, queries (`search.chats`, `search.messages`, `contacts.check_phone`), `open_chat` connection-directed routing | todo | |
 | C4 | **Daemon audit milestone:** finish `examples/` shell frontend as a real usable client; run full conformance; line-by-line diff of PROTOCOL.md vs daemon; fix drift or log `needs-decision` items | todo | Model A Windows-section + directional-`extend` PROTOCOL.md amendments already landed with B3c (2026-07-07); the audit re-checks PROTOCOL.md vs daemon end to end. |
@@ -400,3 +400,8 @@ _None._
   state: frontends never have to catch or cache a terminal failure event, and slow
   clients cannot miss the error. The old `transfers.error` wording is narrowed to
   optional active-transfer error detail, not terminal failure history.
+- 2026-07-07 — C1 applied the earlier `chat.mark_read` decision: PROTOCOL.md now
+  lists `up_to_message_id` as a required param, and the daemon marks/sends read
+  receipts only through that message's timestamp+rowid frontier. Same-timestamp
+  messages beyond the visible row are not over-marked; updates remain ordinary
+  `chats`/`messages` view upserts.
