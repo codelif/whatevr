@@ -161,6 +161,13 @@ the frontend learns of it through the `chats` view (its row's updated
 preview/unread) and *follows* the live edge by subscribing `latest`. `ready`'s
 `exhausted` reports the frontier just extended.
 
+Once the newer frontier has been extended all the way to the live edge, though,
+it stays adjacent to it: subsequent messages arriving at the present *are*
+contiguous with the window, so they are delivered as ordinary upserts (there is
+no gap to leave) even though a prior `ready` reported the newer side exhausted.
+A window that has reached the live edge this way therefore keeps growing at the
+present; to freeze it instead, re-subscribe at a fixed `{message_id}` anchor.
+
 Fetching history *from the phone* is a separate explicit command
 (`chat.request_older`), because it has network cost and its results land like
 any other message upserts.
@@ -201,18 +208,18 @@ noted; this inventory fixes the shape of the protocol, not every field name.
 | `presence` | `chat_id` | one item per participant | `availability`, `last_seen`. Subscribing is what triggers the upstream WhatsApp presence subscription for that chat — availability is only delivered on request, whereas typing arrives unsolicited, which is why `typing` and `presence` are separate views |
 | `receipts` | `message_id` | one item per participant | per-member delivered/read/played times, updating live while the info dialog is open |
 | `self` | — | object | own profile: jid, phone, push name, about, avatar path |
-| `contact` | `jid` | object | contact card; local data upserted immediately, network-fetched fields (about, business) upserted when they land — the old two-phase hack is just how views work |
+| `contact` | `jid` | object | contact card; local data (including the `is_business` flag) upserted immediately, the network-fetched `about` upserted when it lands — the old two-phase hack is just how views work |
 | `group` | `chat_id` | object | subject, description, avatar, created, owner, `member_count`, `my_role`, announce/locked flags (feeds composer lockout in admins-only groups); same two-phase behavior. No member array — the chat header and card chrome need only this |
 | `group_members` | `chat_id` | one item per member | jid, display name, phone, avatar path, role; joins/leaves/promotions are single upserts/removes. The info dialog subscribes to `group` + `group_members`; member search is presentation-side filtering over rows it already has |
 | `privacy` | — | object | all privacy category values |
 | `preferences` | — | object | daemon-persisted app preferences (notification gates, auto-download) |
 | `blocklist` | — | blocked contacts | |
-| `starred` | optional `chat_id`, `limit` | message rows + `chat_name` | windowed; syncs with stars made on other devices |
+| `starred` | optional `chat_id`, `limit` | message rows + `chat_name` | windowed; syncs with stars made on other devices. Ordered by the message's own timestamp (newest first), not by when it was starred — the store records no star time — so starring an old message places it deep in the window rather than at the top |
 | `pinned` | `chat_id` | message rows | currently-pinned, unexpired; expiry produces `remove` |
 | `stickers` | `source` (`recent`\|`favorite`\|`all`), `limit` | stickers | |
 | `sticker_packs` | — | packs | |
 | `sticker_pack` | `pack_id` | stickers | contents fetch is async; items land as they resolve |
-| `transfers` | — | active media transfers | `message_id`, direction, `received_bytes`, `total_bytes`, optional active `error`; `remove` on terminal success or failure — success itself is visible as the message row upserting with its new `media.path`, failure as the message row upserting with `media.download_error` |
+| `transfers` | — | active media transfers | `message_id`, `direction`, `received_bytes`, `total_bytes`, optional active `error`; `remove` on terminal success or failure — success itself is visible as the message row upserting with its new `media.path`, failure as the message row upserting with `media.download_error`. `direction` is `"download"` today; outbound uploads are not yet modelled here (a known gap) |
 | `notifications` | — | notification records | what the daemon would notify about, for applets, relays, and headless setups; daemon's own D-Bus notifier is unaffected |
 
 Avatar paths are embedded in chat/message/contact/member rows and refresh via
@@ -283,11 +290,14 @@ One-shot request/response for data that is legitimately transient (search
 results a frontend renders and throws away — frontend-only state is allowed
 for these).
 
+Unlike view events (which stream item-at-a-time upserts), a query returns its
+whole result inside the one response `result` object, under a named key:
+
 | method | params | result |
 | --- | --- | --- |
-| `search.chats` | `query`, `limit` | chat rows |
-| `search.messages` | `query`, optional `chat_id`, `limit`, `before_message_id` cursor | message rows + `chat_name`, `has_more` |
-| `contacts.check_phone` | `phone` | `registered`, `jid`, `display_name`, `is_business`, normalized `phone` |
+| `search.chats` | `query`, `limit` | `{chats: [chat row, …]}` |
+| `search.messages` | `query`, optional `chat_id`, `limit`, `before_message_id` cursor | `{messages: […], has_more}` — each message row carries `chat_name`; `has_more` drives the `before_message_id` keyset cursor |
+| `contacts.check_phone` | `phone` | `{registered, jid, display_name, is_business, phone}` (normalized `phone`) |
 
 ## Messages on the wire
 
@@ -316,7 +326,7 @@ Events without `sub`, sent to specific connections. Currently exactly one:
 
 | event | data | meaning |
 | --- | --- | --- |
-| `open_chat` | `chat_id` | the user asked the system to surface a chat (notification click, `whatevr://chat/…` URL); sent to the focused frontend, which should raise its window and open the chat |
+| `open_chat` | `chat_id` | the user asked the system to surface a chat (notification click, `whatevr://chat/…` URL); sent to the most recently focused frontend (per `session.update`), which should raise its window and open the chat. If no frontend is currently focused, it falls back to the most recently active session, so a notification click raises an existing but unfocused window instead of cold-starting a duplicate |
 
 ## Example session
 
