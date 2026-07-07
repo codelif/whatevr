@@ -29,22 +29,29 @@ type Server struct {
 	listener       net.Listener
 	socketPath     string
 	errCh          chan error
-	handlers       map[string]handlerFunc
 	commandActions CommandActions
+
+	handlerMu sync.RWMutex
+	handlers  map[string]handlerFunc
 
 	viewMu sync.RWMutex
 	views  map[string]View
+
+	serveOnce sync.Once
 
 	mu    sync.Mutex
 	conns map[*conn]struct{}
 	wg    sync.WaitGroup
 }
 
-// Start serves the whatevr protocol on socketPath. The daemon creates and
-// owns the socket file; systemd socket activation for this socket arrives
-// when packaging flips over at teardown (the activation unit still carries
-// the legacy gRPC socket during the migration).
-func Start(ctx context.Context, socketPath string, daemon *app.Daemon) (*Server, error) {
+// New binds the whatevr protocol socket on socketPath but does not yet accept
+// connections. Callers register all views and commands, then call Serve — so a
+// client can never reach the handlers/views maps before they are populated
+// (which would both race the maps and answer valid methods with
+// unknown_method). The daemon creates and owns the socket file; systemd socket
+// activation for this socket arrives when packaging flips over at teardown (the
+// activation unit still carries the legacy gRPC socket during the migration).
+func New(socketPath string, daemon *app.Daemon) (*Server, error) {
 	if err := validateSocketDir(socketPath); err != nil {
 		return nil, err
 	}
@@ -74,8 +81,31 @@ func Start(ctx context.Context, socketPath string, daemon *app.Daemon) (*Server,
 		"extend":      server.handleExtend,
 		"unsubscribe": server.handleUnsubscribe,
 	}
+	return server, nil
+}
 
-	go server.serve(ctx)
+// Serve begins accepting connections. It must be called after every view and
+// command is registered; it is safe to call once. The context governs
+// shutdown: cancelling it closes the listener, drains connections, and removes
+// the socket, after which Err's channel closes.
+func (s *Server) Serve(ctx context.Context) {
+	s.serveOnce.Do(func() {
+		go s.serve(ctx)
+	})
+}
+
+// Start binds and immediately serves, registering nothing. It exists for tests
+// and simple callers that register on the returned server before dialing it;
+// production wiring uses New → register → Serve so registration provably
+// precedes the first accepted connection. The handler and view maps are
+// mutex-guarded regardless, so late registration is race-free (it only risks a
+// transient unknown_method for a client that raced the registration).
+func Start(ctx context.Context, socketPath string, daemon *app.Daemon) (*Server, error) {
+	server, err := New(socketPath, daemon)
+	if err != nil {
+		return nil, err
+	}
+	server.Serve(ctx)
 	return server, nil
 }
 
@@ -102,11 +132,18 @@ func (s *Server) serve(ctx context.Context) {
 		<-acceptErr
 	}
 
+	// Snapshot the connections under the lock, then close them outside it:
+	// c.close() invokes the daemon's FrontendSessionEnded callback, which must
+	// never run while s.mu is held (it can reenter the server, e.g. OpenChat).
 	s.mu.Lock()
+	conns := make([]*conn, 0, len(s.conns))
 	for c := range s.conns {
-		c.close()
+		conns = append(conns, c)
 	}
 	s.mu.Unlock()
+	for _, c := range conns {
+		c.close()
+	}
 	s.wg.Wait()
 
 	s.listener.Close()

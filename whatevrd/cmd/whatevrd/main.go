@@ -61,7 +61,7 @@ func main() {
 	daemon := app.NewDaemon(paths)
 	// The whatevr protocol server (PROTOCOL.md) runs alongside gRPC for the
 	// duration of the migration; frontends move over view by view.
-	protocolServer, err := protocol.Start(ctx, paths.ProtocolSocketPath, daemon)
+	protocolServer, err := protocol.New(paths.ProtocolSocketPath, daemon)
 	if err != nil {
 		log.Fatalf("start protocol server: %v", err)
 	}
@@ -92,6 +92,9 @@ func main() {
 
 	protocol.RegisterDaemonViews(protocolServer, daemon, db, waClient)
 	protocol.RegisterDaemonCommands(protocolServer, waClient)
+	// Every view and command is registered above; only now do we accept
+	// connections, so no client can race a half-populated handler surface.
+	protocolServer.Serve(ctx)
 	waClient.Start(ctx)
 
 	log.Printf("whatevrd listening on %s (grpc) and %s (protocol)", paths.SocketPath, paths.ProtocolSocketPath)
