@@ -136,6 +136,10 @@ func (c *Client) SubscribeChatPresence(ctx context.Context, chatID string) error
 }
 
 func (c *Client) SendMedia(ctx context.Context, chatID, filePath, caption, replyToMessageID string) (appstore.SavedTextMessage, error) {
+	return c.SendMediaWithMentions(ctx, chatID, filePath, caption, replyToMessageID, nil)
+}
+
+func (c *Client) SendMediaWithMentions(ctx context.Context, chatID, filePath, caption, replyToMessageID string, mentionedJIDs []string) (appstore.SavedTextMessage, error) {
 	rpcArrival := time.Now()
 	client := c.currentClient()
 	if client == nil {
@@ -189,6 +193,7 @@ func (c *Client) SendMedia(ctx context.Context, chatID, filePath, caption, reply
 			IsGroup:     targetJID.Server == types.GroupServer || targetJID.Server == types.BroadcastServer,
 			CountUnread: false,
 			ReplyTo:     replyTo,
+			Mentions:    c.resolveMentions(ctx, mentionedJIDs),
 		},
 		MediaKind:      appstore.MediaKindImage,
 		MediaMimeType:  mimeType,

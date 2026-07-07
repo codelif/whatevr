@@ -50,6 +50,44 @@ func (fixtureCommands) RequestOlderMessages(context.Context, string) (bool, erro
 func (fixtureCommands) EnsureDirectChat(_ context.Context, jid string) (appstore.Chat, error) {
 	return appstore.Chat{ID: jid}, nil
 }
+func (fixtureCommands) SendText(_ context.Context, chatID, text, _ string, _ []string) (appstore.SavedTextMessage, error) {
+	return appstore.SavedTextMessage{Message: appstore.Message{ID: chatID + ":fixture-text", ChatID: chatID, Text: text}}, nil
+}
+func (fixtureCommands) SendMediaWithMentions(_ context.Context, chatID, path, caption, _ string, _ []string) (appstore.SavedTextMessage, error) {
+	return appstore.SavedTextMessage{Message: appstore.Message{ID: chatID + ":fixture-media", ChatID: chatID, Text: caption, MediaLocalPath: path}}, nil
+}
+func (fixtureCommands) SendSticker(_ context.Context, chatID, cacheKey, _ string) (appstore.SavedTextMessage, error) {
+	return appstore.SavedTextMessage{Message: appstore.Message{ID: chatID + ":fixture-sticker", ChatID: chatID, MediaCacheKey: cacheKey}}, nil
+}
+func (fixtureCommands) SendReaction(context.Context, string, string) (appstore.Message, error) {
+	return appstore.Message{}, nil
+}
+func (fixtureCommands) EditMessage(context.Context, string, string) (appstore.Message, error) {
+	return appstore.Message{}, nil
+}
+func (fixtureCommands) RevokeMessage(context.Context, string) (appstore.Message, error) {
+	return appstore.Message{}, nil
+}
+func (fixtureCommands) DeleteMessageForMe(context.Context, string) error { return nil }
+func (fixtureCommands) SetMessageStarred(context.Context, string, bool) (appstore.Message, error) {
+	return appstore.Message{}, nil
+}
+func (fixtureCommands) PinMessage(context.Context, string, bool, uint32) (appstore.Message, error) {
+	return appstore.Message{}, nil
+}
+func (fixtureCommands) ForwardMessage(_ context.Context, _ string, chatIDs []string) ([]appstore.SavedTextMessage, error) {
+	out := make([]appstore.SavedTextMessage, 0, len(chatIDs))
+	for _, chatID := range chatIDs {
+		out = append(out, appstore.SavedTextMessage{Message: appstore.Message{ID: chatID + ":fixture-forward", ChatID: chatID}})
+	}
+	return out, nil
+}
+func (fixtureCommands) DownloadMessageMedia(context.Context, string) (appstore.Message, error) {
+	return appstore.Message{}, nil
+}
+func (fixtureCommands) FetchProfilePicture(_ context.Context, jid string) (string, error) {
+	return "/cache/avatars/" + jid + ".jpg", nil
+}
 
 func (conformanceSession) Items(max int) []protocol.Item {
 	items := []protocol.Item{

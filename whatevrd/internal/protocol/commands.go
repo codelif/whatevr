@@ -5,14 +5,22 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"math"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"google.golang.org/grpc/codes"
 	grpcstatus "google.golang.org/grpc/status"
 
 	appstore "whatevrd/internal/store"
+)
+
+const (
+	maxCommandTextRunes      = 65536
+	maxCommandCaptionRunes   = 1024
+	maxCommandForwardTargets = 5
 )
 
 // CommandActions is the daemon/WA seam used by protocol commands. *wa.Client
@@ -32,9 +40,22 @@ type CommandActions interface {
 	SetChatPresence(context.Context, string, bool) error
 	RequestOlderMessages(context.Context, string) (bool, error)
 	EnsureDirectChat(context.Context, string) (appstore.Chat, error)
+
+	SendText(context.Context, string, string, string, []string) (appstore.SavedTextMessage, error)
+	SendMediaWithMentions(context.Context, string, string, string, string, []string) (appstore.SavedTextMessage, error)
+	SendSticker(context.Context, string, string, string) (appstore.SavedTextMessage, error)
+	SendReaction(context.Context, string, string) (appstore.Message, error)
+	EditMessage(context.Context, string, string) (appstore.Message, error)
+	RevokeMessage(context.Context, string) (appstore.Message, error)
+	DeleteMessageForMe(context.Context, string) error
+	SetMessageStarred(context.Context, string, bool) (appstore.Message, error)
+	PinMessage(context.Context, string, bool, uint32) (appstore.Message, error)
+	ForwardMessage(context.Context, string, []string) ([]appstore.SavedTextMessage, error)
+	DownloadMessageMedia(context.Context, string) (appstore.Message, error)
+	FetchProfilePicture(context.Context, string) (string, error)
 }
 
-// RegisterDaemonCommands registers the C1 command surface from PROTOCOL.md.
+// RegisterDaemonCommands registers the command surface from PROTOCOL.md.
 func RegisterDaemonCommands(s *Server, actions CommandActions) {
 	s.commandActions = actions
 	cmd := commandHandlers{actions: actions}
@@ -48,6 +69,18 @@ func RegisterDaemonCommands(s *Server, actions CommandActions) {
 	s.RegisterCommand("chat.typing", cmd.chatTyping)
 	s.RegisterCommand("chat.request_older", cmd.chatRequestOlder)
 	s.RegisterCommand("chat.ensure_direct", cmd.chatEnsureDirect)
+	s.RegisterCommand("send.text", cmd.sendText)
+	s.RegisterCommand("send.media", cmd.sendMedia)
+	s.RegisterCommand("send.sticker", cmd.sendSticker)
+	s.RegisterCommand("message.react", cmd.messageReact)
+	s.RegisterCommand("message.edit", cmd.messageEdit)
+	s.RegisterCommand("message.revoke", cmd.messageRevoke)
+	s.RegisterCommand("message.delete", cmd.messageDelete)
+	s.RegisterCommand("message.star", cmd.messageStar)
+	s.RegisterCommand("message.pin", cmd.messagePin)
+	s.RegisterCommand("message.forward", cmd.messageForward)
+	s.RegisterCommand("media.download", cmd.mediaDownload)
+	s.RegisterCommand("media.fetch_profile_picture", cmd.mediaFetchProfilePicture)
 }
 
 // RegisterCommand makes a command request method available. Safe during setup;
@@ -289,6 +322,307 @@ func (h commandHandlers) chatEnsureDirect(_ *conn, req request) (any, *Error) {
 	return map[string]any{"chat_id": chat.ID}, nil
 }
 
+type sendTextParams struct {
+	ChatID   string   `json:"chat_id"`
+	Text     string   `json:"text"`
+	ReplyTo  string   `json:"reply_to"`
+	Mentions []string `json:"mentions"`
+}
+
+func (h commandHandlers) sendText(_ *conn, req request) (any, *Error) {
+	if err := h.requireActions(); err != nil {
+		return nil, err
+	}
+	var p sendTextParams
+	if err := decodeParams(req.Params, &p); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(p.ChatID) == "" {
+		return nil, errorf(CodeInvalidParams, "chat_id is required")
+	}
+	text := strings.TrimSpace(p.Text)
+	if text == "" {
+		return nil, errorf(CodeInvalidParams, "text is required")
+	}
+	if utf8.RuneCountInString(text) > maxCommandTextRunes {
+		return nil, errorf(CodeInvalidParams, "text must be <= %d characters", maxCommandTextRunes)
+	}
+	saved, err := h.actions.SendText(context.Background(), strings.TrimSpace(p.ChatID), text, strings.TrimSpace(p.ReplyTo), trimStringSlice(p.Mentions))
+	if perr := mapCommandError(err); perr != nil {
+		return nil, perr
+	}
+	return map[string]any{"message_id": saved.Message.ID}, nil
+}
+
+type sendMediaParams struct {
+	ChatID   string   `json:"chat_id"`
+	Path     string   `json:"path"`
+	Caption  string   `json:"caption"`
+	ReplyTo  string   `json:"reply_to"`
+	Mentions []string `json:"mentions"`
+}
+
+func (h commandHandlers) sendMedia(_ *conn, req request) (any, *Error) {
+	if err := h.requireActions(); err != nil {
+		return nil, err
+	}
+	var p sendMediaParams
+	if err := decodeParams(req.Params, &p); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(p.ChatID) == "" {
+		return nil, errorf(CodeInvalidParams, "chat_id is required")
+	}
+	path := strings.TrimSpace(p.Path)
+	if path == "" {
+		return nil, errorf(CodeInvalidParams, "path is required")
+	}
+	caption := strings.TrimSpace(p.Caption)
+	if utf8.RuneCountInString(caption) > maxCommandCaptionRunes {
+		return nil, errorf(CodeInvalidParams, "caption must be <= %d characters", maxCommandCaptionRunes)
+	}
+	saved, err := h.actions.SendMediaWithMentions(context.Background(), strings.TrimSpace(p.ChatID), path, caption, strings.TrimSpace(p.ReplyTo), trimStringSlice(p.Mentions))
+	if perr := mapCommandError(err); perr != nil {
+		return nil, perr
+	}
+	return map[string]any{"message_id": saved.Message.ID}, nil
+}
+
+type sendStickerParams struct {
+	ChatID   string `json:"chat_id"`
+	CacheKey string `json:"cache_key"`
+	ReplyTo  string `json:"reply_to"`
+}
+
+func (h commandHandlers) sendSticker(_ *conn, req request) (any, *Error) {
+	if err := h.requireActions(); err != nil {
+		return nil, err
+	}
+	var p sendStickerParams
+	if err := decodeParams(req.Params, &p); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(p.ChatID) == "" {
+		return nil, errorf(CodeInvalidParams, "chat_id is required")
+	}
+	if strings.TrimSpace(p.CacheKey) == "" {
+		return nil, errorf(CodeInvalidParams, "cache_key is required")
+	}
+	saved, err := h.actions.SendSticker(context.Background(), strings.TrimSpace(p.ChatID), strings.TrimSpace(p.CacheKey), strings.TrimSpace(p.ReplyTo))
+	if perr := mapCommandError(err); perr != nil {
+		return nil, perr
+	}
+	return map[string]any{"message_id": saved.Message.ID}, nil
+}
+
+type messageIDParams struct {
+	MessageID string `json:"message_id"`
+}
+
+func (p messageIDParams) valid() *Error {
+	if strings.TrimSpace(p.MessageID) == "" {
+		return errorf(CodeInvalidParams, "message_id is required")
+	}
+	return nil
+}
+
+type messageReactParams struct {
+	MessageID string `json:"message_id"`
+	Emoji     string `json:"emoji"`
+}
+
+func (h commandHandlers) messageReact(_ *conn, req request) (any, *Error) {
+	if err := h.requireActions(); err != nil {
+		return nil, err
+	}
+	var p messageReactParams
+	if err := decodeParams(req.Params, &p); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(p.MessageID) == "" {
+		return nil, errorf(CodeInvalidParams, "message_id is required")
+	}
+	_, err := h.actions.SendReaction(context.Background(), strings.TrimSpace(p.MessageID), strings.TrimSpace(p.Emoji))
+	return nil, mapCommandError(err)
+}
+
+type messageEditParams struct {
+	MessageID string `json:"message_id"`
+	Text      string `json:"text"`
+}
+
+func (h commandHandlers) messageEdit(_ *conn, req request) (any, *Error) {
+	if err := h.requireActions(); err != nil {
+		return nil, err
+	}
+	var p messageEditParams
+	if err := decodeParams(req.Params, &p); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(p.MessageID) == "" {
+		return nil, errorf(CodeInvalidParams, "message_id is required")
+	}
+	text := strings.TrimSpace(p.Text)
+	if text == "" {
+		return nil, errorf(CodeInvalidParams, "text is required")
+	}
+	if utf8.RuneCountInString(text) > maxCommandTextRunes {
+		return nil, errorf(CodeInvalidParams, "text must be <= %d characters", maxCommandTextRunes)
+	}
+	_, err := h.actions.EditMessage(context.Background(), strings.TrimSpace(p.MessageID), text)
+	return nil, mapCommandError(err)
+}
+
+func (h commandHandlers) messageRevoke(_ *conn, req request) (any, *Error) {
+	if err := h.requireActions(); err != nil {
+		return nil, err
+	}
+	var p messageIDParams
+	if err := decodeParams(req.Params, &p); err != nil {
+		return nil, err
+	}
+	if err := p.valid(); err != nil {
+		return nil, err
+	}
+	_, err := h.actions.RevokeMessage(context.Background(), strings.TrimSpace(p.MessageID))
+	return nil, mapCommandError(err)
+}
+
+func (h commandHandlers) messageDelete(_ *conn, req request) (any, *Error) {
+	if err := h.requireActions(); err != nil {
+		return nil, err
+	}
+	var p messageIDParams
+	if err := decodeParams(req.Params, &p); err != nil {
+		return nil, err
+	}
+	if err := p.valid(); err != nil {
+		return nil, err
+	}
+	return nil, mapCommandError(h.actions.DeleteMessageForMe(context.Background(), strings.TrimSpace(p.MessageID)))
+}
+
+type messageStarParams struct {
+	MessageID string `json:"message_id"`
+	Starred   *bool  `json:"starred"`
+}
+
+func (h commandHandlers) messageStar(_ *conn, req request) (any, *Error) {
+	if err := h.requireActions(); err != nil {
+		return nil, err
+	}
+	var p messageStarParams
+	if err := decodeParams(req.Params, &p); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(p.MessageID) == "" {
+		return nil, errorf(CodeInvalidParams, "message_id is required")
+	}
+	if p.Starred == nil {
+		return nil, errorf(CodeInvalidParams, "starred is required")
+	}
+	_, err := h.actions.SetMessageStarred(context.Background(), strings.TrimSpace(p.MessageID), *p.Starred)
+	return nil, mapCommandError(err)
+}
+
+type messagePinParams struct {
+	MessageID    string `json:"message_id"`
+	Pinned       *bool  `json:"pinned"`
+	DurationSecs int64  `json:"duration_secs"`
+}
+
+func (h commandHandlers) messagePin(_ *conn, req request) (any, *Error) {
+	if err := h.requireActions(); err != nil {
+		return nil, err
+	}
+	var p messagePinParams
+	if err := decodeParams(req.Params, &p); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(p.MessageID) == "" {
+		return nil, errorf(CodeInvalidParams, "message_id is required")
+	}
+	if p.Pinned == nil {
+		return nil, errorf(CodeInvalidParams, "pinned is required")
+	}
+	if p.DurationSecs < 0 || p.DurationSecs > math.MaxUint32 {
+		return nil, errorf(CodeInvalidParams, "duration_secs must fit uint32")
+	}
+	_, err := h.actions.PinMessage(context.Background(), strings.TrimSpace(p.MessageID), *p.Pinned, uint32(p.DurationSecs))
+	return nil, mapCommandError(err)
+}
+
+type messageForwardParams struct {
+	MessageID string   `json:"message_id"`
+	ChatIDs   []string `json:"chat_ids"`
+}
+
+func (h commandHandlers) messageForward(_ *conn, req request) (any, *Error) {
+	if err := h.requireActions(); err != nil {
+		return nil, err
+	}
+	var p messageForwardParams
+	if err := decodeParams(req.Params, &p); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(p.MessageID) == "" {
+		return nil, errorf(CodeInvalidParams, "message_id is required")
+	}
+	targets := uniqueTrimmedStrings(p.ChatIDs)
+	if len(targets) == 0 {
+		return nil, errorf(CodeInvalidParams, "at least one chat_id is required")
+	}
+	if len(targets) > maxCommandForwardTargets {
+		return nil, errorf(CodeInvalidParams, "at most %d target chats per forward", maxCommandForwardTargets)
+	}
+	saved, err := h.actions.ForwardMessage(context.Background(), strings.TrimSpace(p.MessageID), targets)
+	if perr := mapCommandError(err); perr != nil {
+		return nil, perr
+	}
+	ids := make([]string, 0, len(saved))
+	for _, result := range saved {
+		ids = append(ids, result.Message.ID)
+	}
+	return map[string]any{"message_ids": ids}, nil
+}
+
+func (h commandHandlers) mediaDownload(_ *conn, req request) (any, *Error) {
+	if err := h.requireActions(); err != nil {
+		return nil, err
+	}
+	var p messageIDParams
+	if err := decodeParams(req.Params, &p); err != nil {
+		return nil, err
+	}
+	if err := p.valid(); err != nil {
+		return nil, err
+	}
+	_, err := h.actions.DownloadMessageMedia(context.Background(), strings.TrimSpace(p.MessageID))
+	return nil, mapCommandError(err)
+}
+
+type fetchProfilePictureParams struct {
+	JID string `json:"jid"`
+}
+
+func (h commandHandlers) mediaFetchProfilePicture(_ *conn, req request) (any, *Error) {
+	if err := h.requireActions(); err != nil {
+		return nil, err
+	}
+	var p fetchProfilePictureParams
+	if err := decodeParams(req.Params, &p); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(p.JID) == "" {
+		return nil, errorf(CodeInvalidParams, "jid is required")
+	}
+	path, err := h.actions.FetchProfilePicture(context.Background(), strings.TrimSpace(p.JID))
+	if perr := mapCommandError(err); perr != nil {
+		return nil, perr
+	}
+	return map[string]any{"path": path}, nil
+}
+
 func decodeParams(raw json.RawMessage, out any) *Error {
 	if len(raw) == 0 {
 		return errorf(CodeInvalidParams, "params are required")
@@ -313,6 +647,30 @@ func rejectNonEmptyParams(raw json.RawMessage) *Error {
 	return nil
 }
 
+func trimStringSlice(in []string) []string {
+	out := in[:0]
+	for _, s := range in {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func uniqueTrimmedStrings(in []string) []string {
+	out := make([]string, 0, len(in))
+	seen := make(map[string]bool, len(in))
+	for _, s := range in {
+		s = strings.TrimSpace(s)
+		if s == "" || seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	return out
+}
+
 func mapCommandError(err error) *Error {
 	if err == nil {
 		return nil
@@ -321,22 +679,37 @@ func mapCommandError(err error) *Error {
 		return errorf(CodeNotFound, "%v", err)
 	}
 	if st, ok := grpcstatus.FromError(err); ok {
+		message := st.Message()
 		switch st.Code() {
 		case codes.InvalidArgument:
-			return errorf(CodeInvalidParams, "%s", st.Message())
+			return errorf(CodeInvalidParams, "%s", message)
 		case codes.NotFound:
-			return errorf(CodeNotFound, "%s", st.Message())
+			return errorf(CodeNotFound, "%s", message)
 		case codes.FailedPrecondition:
-			return errorf(CodeNotLoggedIn, "%s", st.Message())
+			lower := strings.ToLower(message)
+			if strings.Contains(lower, "expired") || strings.Contains(lower, "edit window") || strings.Contains(lower, "revoke window") {
+				return errorf(CodeExpired, "%s", message)
+			}
+			if strings.Contains(lower, "logged in") || strings.Contains(lower, "login") {
+				return errorf(CodeNotLoggedIn, "%s", message)
+			}
+			return errorf(CodeRejected, "%s", message)
 		case codes.Unavailable:
-			return errorf(CodeNotConnected, "%s", st.Message())
+			return errorf(CodeNotConnected, "%s", message)
 		case codes.AlreadyExists:
-			return errorf(CodeAlreadyExists, "%s", st.Message())
-		case codes.ResourceExhausted, codes.Aborted:
-			return errorf(CodeRejected, "%s", st.Message())
+			return errorf(CodeAlreadyExists, "%s", message)
+		case codes.ResourceExhausted, codes.Aborted, codes.Unknown, codes.PermissionDenied:
+			return errorf(CodeRejected, "%s", message)
 		case codes.Internal:
-			return errorf(CodeInternal, "%s", st.Message())
+			return errorf(CodeInternal, "%s", message)
 		}
+	}
+	lower := strings.ToLower(err.Error())
+	if strings.Contains(lower, "not connected") {
+		return errorf(CodeNotConnected, "%v", err)
+	}
+	if strings.Contains(lower, "invalid jid") {
+		return errorf(CodeInvalidParams, "%v", err)
 	}
 	return errorf(CodeInternal, "%v", err)
 }

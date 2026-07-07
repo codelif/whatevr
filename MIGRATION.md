@@ -92,7 +92,7 @@ Status: `todo` | `doing` | `done` | `blocked` | `needs-decision`
 | id | step | status | notes |
 | --- | --- | --- | --- |
 | C1 | Session/chat commands: `session.update`, `daemon.reconnect`, `account.logout`, `chat.*` (mark_read, pin, archive, mute, typing, request_older, ensure_direct) | done | `commands.go` registers C1 acks/results over the protocol; `session.update` maps each socket to a frontend session, chat commands call the WA action seam, and `chat.mark_read` now requires/applies `up_to_message_id` via `wa.MarkChatReadUpTo`. PROTOCOL.md amended accordingly; fixture + raw-socket tests cover the surface. |
-| C2 | `send.*`, `message.*` (react, edit, revoke, delete, star, pin, forward), `media.download` (+`transfers` wiring), `media.fetch_profile_picture` | todo | |
+| C2 | `send.*`, `message.*` (react, edit, revoke, delete, star, pin, forward), `media.download` (+`transfers` wiring), `media.fetch_profile_picture` | done | `commands.go` now registers the C2 command surface with ids/acks only; `wa.SendMediaWithMentions` plumbs protocol media mentions while legacy gRPC keeps its old signature; fixture + raw-socket command tests cover send/message/media commands. |
 | C3 | `privacy.set`, `preferences.set`, `self.set_about`, `contact.block`, sticker commands, queries (`search.chats`, `search.messages`, `contacts.check_phone`), `open_chat` connection-directed routing | todo | |
 | C4 | **Daemon audit milestone:** finish `examples/` shell frontend as a real usable client; run full conformance; line-by-line diff of PROTOCOL.md vs daemon; fix drift or log `needs-decision` items | todo | Model A Windows-section + directional-`extend` PROTOCOL.md amendments already landed with B3c (2026-07-07); the audit re-checks PROTOCOL.md vs daemon end to end. |
 
@@ -405,3 +405,11 @@ _None._
   receipts only through that message's timestamp+rowid frontier. Same-timestamp
   messages beyond the visible row are not over-marked; updates remain ordinary
   `chats`/`messages` view upserts.
+- 2026-07-07 — C2 command implementation readings (PROTOCOL.md unchanged):
+  command responses stay minimal (`message_id`/`message_ids` or `{}`/`path`), and
+  all renderable message/media state still reaches frontends through views. The
+  protocol's `send.media` `mentions` param is supported by a new
+  `wa.SendMediaWithMentions` wrapper so the frozen gRPC `SendMedia` signature and
+  generated proto remain untouched. `message.edit`/`message.revoke` map expired
+  precondition text to protocol `expired`; other ineligible message operations map
+  to `rejected` rather than leaking gRPC status names.
