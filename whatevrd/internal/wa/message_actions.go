@@ -334,14 +334,30 @@ func (c *Client) ForwardMessage(ctx context.Context, sourceMessageID string, tar
 		return nil, grpcstatus.Error(codes.FailedPrecondition, "download the media before forwarding it")
 	}
 
-	saved := make([]appstore.SavedTextMessage, 0, len(targetChatIDs))
+	// Resolve and validate every target *before* saving anything: a bad target
+	// must not leave a partially-forwarded set (earlier copies already saved and
+	// published, then an error for a later one). Parsing/normalization is the
+	// deterministic failure the caller controls, so it all happens up front.
+	type forwardTarget struct {
+		chatID  string
+		isGroup bool
+	}
+	targets := make([]forwardTarget, 0, len(targetChatIDs))
 	for _, targetChatID := range targetChatIDs {
 		targetJID, err := types.ParseJID(strings.TrimSpace(targetChatID))
 		if err != nil {
-			return saved, grpcstatus.Errorf(codes.InvalidArgument, "invalid target chat_id %q: %v", targetChatID, err)
+			return nil, grpcstatus.Errorf(codes.InvalidArgument, "invalid target chat_id %q: %v", targetChatID, err)
 		}
 		targetJID = c.normalizeJIDForChat(ctx, targetJID)
-		chatID := targetJID.String()
+		targets = append(targets, forwardTarget{
+			chatID:  targetJID.String(),
+			isGroup: targetJID.Server == types.GroupServer || targetJID.Server == types.BroadcastServer,
+		})
+	}
+
+	saved := make([]appstore.SavedTextMessage, 0, len(targets))
+	for _, target := range targets {
+		chatID := target.chatID
 
 		input := appstore.TextMessageInput{
 			ID:          internalMessageIDForChat(chatID, client.GenerateMessageID()),
@@ -351,12 +367,13 @@ func (c *Client) ForwardMessage(ctx context.Context, sourceMessageID string, tar
 			Timestamp:   time.Now(),
 			Direction:   appstore.DirectionOutgoing,
 			Status:      appstore.StatusPending,
-			IsGroup:     targetJID.Server == types.GroupServer || targetJID.Server == types.BroadcastServer,
+			IsGroup:     target.isGroup,
 			CountUnread: false,
 			IsForwarded: true,
 		}
 
 		var result appstore.SavedTextMessage
+		var err error
 		if isMedia {
 			result, err = c.store.SaveMediaMessage(ctx, appstore.MediaMessageInput{
 				TextMessageInput:        input,

@@ -223,6 +223,28 @@ func (f *fakeCommandActions) DownloadMessageMedia(_ context.Context, messageID s
 	f.downloadMessage = messageID
 	return appstore.Message{ID: messageID}, f.err
 }
+
+// waitDownloadMessage polls for the message id media.download reaches the seam
+// with; media.download acks immediately and runs the download in a background
+// goroutine, so the assertion cannot read the field synchronously.
+func (f *fakeCommandActions) waitDownloadMessage(t *testing.T) string {
+	t.Helper()
+	deadline := time.After(time.Second)
+	for {
+		f.mu.Lock()
+		v := f.downloadMessage
+		f.mu.Unlock()
+		if v != "" {
+			return v
+		}
+		select {
+		case <-deadline:
+			t.Fatal("timed out waiting for media.download to reach the actions seam")
+			return ""
+		case <-time.After(2 * time.Millisecond):
+		}
+	}
+}
 func (f *fakeCommandActions) FetchProfilePicture(_ context.Context, jid string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -235,17 +257,14 @@ func (f *fakeCommandActions) SetPrivacySetting(_ context.Context, category, audi
 	f.privacyCategory, f.privacyAudience, f.privacyRead = category, audience, readReceipts
 	return app.PrivacySettings{LastSeen: audience, ReadReceipts: readReceipts}, f.err
 }
-func (f *fakeCommandActions) GetAppPreferences(context.Context) (app.AppPreferences, error) {
+func (f *fakeCommandActions) UpdateAppPreferences(_ context.Context, apply func(*app.AppPreferences)) (app.AppPreferences, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.prefs == (app.AppPreferences{}) {
 		f.prefs = app.DefaultAppPreferences()
 	}
-	return f.prefs, f.err
-}
-func (f *fakeCommandActions) SetAppPreferences(_ context.Context, prefs app.AppPreferences) (app.AppPreferences, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
+	prefs := f.prefs
+	apply(&prefs)
 	f.setPrefs = prefs
 	f.prefs = prefs
 	return prefs, f.err
@@ -378,13 +397,14 @@ func TestC2SendCommands(t *testing.T) {
 
 	c.sendLine(`{"id":2,"method":"send.text","params":{"chat_id":"chat@s.whatsapp.net","text":"  hi  ","reply_to":"r1","mentions":[" a@s.whatsapp.net ",""]}}`)
 	result := c.recv()["result"].(map[string]any)
-	if result["message_id"] != "text-id" || actions.sendTextChat != "chat@s.whatsapp.net" || actions.sendTextText != "hi" || actions.sendTextReply != "r1" || len(actions.sendTextMentions) != 1 || actions.sendTextMentions[0] != "a@s.whatsapp.net" {
+	// Whitespace in user-authored text is preserved (only ids/mentions are trimmed).
+	if result["message_id"] != "text-id" || actions.sendTextChat != "chat@s.whatsapp.net" || actions.sendTextText != "  hi  " || actions.sendTextReply != "r1" || len(actions.sendTextMentions) != 1 || actions.sendTextMentions[0] != "a@s.whatsapp.net" {
 		t.Fatalf("send.text result/action = %v/%+v", result, actions)
 	}
 
 	c.sendLine(`{"id":3,"method":"send.media","params":{"chat_id":"chat@s.whatsapp.net","path":"/tmp/p.png","caption":" cap ","reply_to":"r2","mentions":["b@s.whatsapp.net"]}}`)
 	result = c.recv()["result"].(map[string]any)
-	if result["message_id"] != "media-id" || actions.sendMediaPath != "/tmp/p.png" || actions.sendMediaCaption != "cap" || actions.sendMediaReply != "r2" || len(actions.sendMediaMentions) != 1 {
+	if result["message_id"] != "media-id" || actions.sendMediaPath != "/tmp/p.png" || actions.sendMediaCaption != " cap " || actions.sendMediaReply != "r2" || len(actions.sendMediaMentions) != 1 {
 		t.Fatalf("send.media result/action = %v/%+v", result, actions)
 	}
 
@@ -411,7 +431,7 @@ func TestC2MessageAndMediaCommands(t *testing.T) {
 			}
 		}},
 		{`{"id":3,"method":"message.edit","params":{"message_id":"m1","text":" new "}}`, func(t *testing.T) {
-			if actions.editMessage != "m1" || actions.editText != "new" {
+			if actions.editMessage != "m1" || actions.editText != " new " {
 				t.Fatalf("edit call = %q/%q", actions.editMessage, actions.editText)
 			}
 		}},
@@ -436,8 +456,8 @@ func TestC2MessageAndMediaCommands(t *testing.T) {
 			}
 		}},
 		{`{"id":8,"method":"media.download","params":{"message_id":"m1"}}`, func(t *testing.T) {
-			if actions.downloadMessage != "m1" {
-				t.Fatalf("download call = %q", actions.downloadMessage)
+			if got := actions.waitDownloadMessage(t); got != "m1" {
+				t.Fatalf("download call = %q", got)
 			}
 		}},
 	}

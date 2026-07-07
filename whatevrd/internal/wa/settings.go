@@ -47,8 +47,29 @@ func (c *Client) GetAppPreferences(ctx context.Context) (app.AppPreferences, err
 	return c.appPreferences(), nil
 }
 
-// SetAppPreferences persists and caches the daemon-side preferences.
+// SetAppPreferences persists and caches the daemon-side preferences wholesale.
 func (c *Client) SetAppPreferences(ctx context.Context, prefs app.AppPreferences) (app.AppPreferences, error) {
+	c.appPrefsMu.Lock()
+	defer c.appPrefsMu.Unlock()
+	return c.storeAppPreferencesLocked(ctx, prefs)
+}
+
+// UpdateAppPreferences applies a partial patch atomically: it reads the current
+// preferences, runs apply, and persists the result under appPrefsMu, so two
+// concurrent partial updates (the protocol's one partial-object command) cannot
+// clobber each other's fields — the read-modify-write is indivisible. Rule 1:
+// the daemon owns the merge, not the frontend.
+func (c *Client) UpdateAppPreferences(ctx context.Context, apply func(*app.AppPreferences)) (app.AppPreferences, error) {
+	c.appPrefsMu.Lock()
+	defer c.appPrefsMu.Unlock()
+	prefs := c.appPreferences()
+	apply(&prefs)
+	return c.storeAppPreferencesLocked(ctx, prefs)
+}
+
+// storeAppPreferencesLocked persists, caches, and announces prefs. The caller
+// must hold appPrefsMu.
+func (c *Client) storeAppPreferencesLocked(ctx context.Context, prefs app.AppPreferences) (app.AppPreferences, error) {
 	data, err := json.Marshal(prefs)
 	if err != nil {
 		return app.AppPreferences{}, err

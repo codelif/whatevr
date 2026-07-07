@@ -1208,12 +1208,14 @@ func (c *Client) MarkChatReadUpTo(ctx context.Context, chatID, upToMessageID str
 			internalIDs = append(internalIDs, candidate.InternalID)
 		}
 	}
-	c.sendReadReceipts(ctx, chat, chatID, bounded)
-
+	// Commit the local read state first, then emit upstream read receipts: a
+	// failed store write must not happen after WhatsApp (and other devices) have
+	// already been told the messages were read.
 	updatedChat, changed, err := c.store.MarkMessagesReadByIDs(ctx, chatID, internalIDs)
 	if err != nil {
 		return appstore.Chat{}, err
 	}
+	c.sendReadReceipts(ctx, chat, chatID, bounded)
 	if changed {
 		c.daemon.PublishChatUpdated(toDaemonChat(updatedChat))
 	}
