@@ -36,6 +36,7 @@ type DaemonActions interface {
 	PresenceActions
 	MessageInfoActions
 	ContactActions
+	GroupActions
 }
 
 // RegisterDaemonViews registers the daemon-owned views from PROTOCOL.md.
@@ -52,6 +53,8 @@ func RegisterDaemonViews(s *Server, daemon *app.Daemon, store DaemonStore, actio
 	s.RegisterView("receipts", receiptsView{daemon: daemon, actions: actions})
 	s.RegisterView("self", selfView{daemon: daemon, actions: actions})
 	s.RegisterView("contact", contactView{daemon: daemon, actions: actions})
+	s.RegisterView("group", groupView{daemon: daemon, actions: actions})
+	s.RegisterView("group_members", groupMembersView{daemon: daemon, actions: actions})
 }
 
 type connectionView struct {
