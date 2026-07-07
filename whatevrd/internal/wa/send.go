@@ -986,7 +986,7 @@ func (c *Client) handleReceipt(evt *events.Receipt, offlineSync bool) {
 			var changed bool
 			var err error
 			if isParticipantReceipt {
-				message, changed, err = c.applyParticipantReceipt(ctx, normalizedChat, internalID, participant, kind, evt.Timestamp, status, isGroup)
+				message, changed, err = c.applyParticipantReceipt(ctx, normalizedChat, internalID, participant, kind, evt.Timestamp, status, isGroup, offlineSync)
 			} else {
 				message, changed, err = c.store.UpdateMessageStatus(ctx, internalID, status)
 			}
@@ -1043,7 +1043,7 @@ func receiptClearsLocalUnread(evt *events.Receipt) bool {
 // message's aggregate status. 1:1 chats keep the direct mapping (the peer is
 // the only recipient); group messages advance to delivered/read only once
 // every member has the receipt, mirroring WhatsApp's tick semantics.
-func (c *Client) applyParticipantReceipt(ctx context.Context, chatJID types.JID, internalID, participant, kind string, ts time.Time, status string, isGroup bool) (appstore.Message, bool, error) {
+func (c *Client) applyParticipantReceipt(ctx context.Context, chatJID types.JID, internalID, participant, kind string, ts time.Time, status string, isGroup, offlineSync bool) (appstore.Message, bool, error) {
 	message, err := c.store.GetMessage(ctx, internalID)
 	if err != nil {
 		return appstore.Message{}, false, err
@@ -1056,6 +1056,11 @@ func (c *Client) applyParticipantReceipt(ctx context.Context, chatJID types.JID,
 
 	if err := c.store.UpsertMessageReceipt(ctx, internalID, message.ChatID, participant, kind, ts); err != nil {
 		c.log.Warnf("Failed to record receipt for %s from %s: %v", internalID, participant, err)
+	} else if !offlineSync {
+		// The per-member breakdown changed even when the aggregate status below
+		// does not; the `receipts` view keys off this to re-derive live. Skipped
+		// during offline sync, matching the status-publish gating in the caller.
+		c.daemon.PublishMessageReceipt(message.ChatID, internalID)
 	}
 
 	if !isGroup {

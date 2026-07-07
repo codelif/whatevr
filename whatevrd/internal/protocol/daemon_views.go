@@ -27,11 +27,19 @@ type DaemonStore interface {
 	SenderDisplayer
 }
 
+// DaemonActions is the WhatsApp-client seam the protocol views call into — the
+// upstream work a subscription triggers (`presence`) or the derivation a view
+// re-runs on an event (`receipts`). *wa.Client implements it; the fixture and
+// store-free tests pass nil when the views they exercise do not touch it.
+type DaemonActions interface {
+	PresenceActions
+	MessageInfoActions
+}
+
 // RegisterDaemonViews registers the daemon-owned views from PROTOCOL.md.
-// actions is the upstream-driving side some views need (e.g. `presence`
-// subscribing to WhatsApp presence); tests and the fixture may pass nil when the
-// views they exercise do not touch it.
-func RegisterDaemonViews(s *Server, daemon *app.Daemon, store DaemonStore, actions PresenceActions) {
+// actions is the client seam some views need; tests and the fixture may pass nil
+// when the views they exercise do not touch it.
+func RegisterDaemonViews(s *Server, daemon *app.Daemon, store DaemonStore, actions DaemonActions) {
 	s.RegisterView("connection", connectionView{daemon: daemon, pending: store})
 	s.RegisterView("sync", syncView{daemon: daemon})
 	s.RegisterView("login", loginView{daemon: daemon})
@@ -39,6 +47,7 @@ func RegisterDaemonViews(s *Server, daemon *app.Daemon, store DaemonStore, actio
 	s.RegisterView("messages", messagesView{daemon: daemon, lister: store})
 	s.RegisterView("typing", typingView{daemon: daemon, resolver: store})
 	s.RegisterView("presence", presenceView{daemon: daemon, actions: actions})
+	s.RegisterView("receipts", receiptsView{daemon: daemon, actions: actions})
 }
 
 type connectionView struct {
