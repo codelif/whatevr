@@ -44,7 +44,7 @@ func startChatsTestServer(t *testing.T) (string, *app.Daemon, *store.DB) {
 			t.Errorf("server error during shutdown: %v", err)
 		}
 	})
-	RegisterDaemonViews(server, daemon, db)
+	RegisterDaemonViews(server, daemon, db, nil)
 
 	return socketPath, daemon, db
 }
