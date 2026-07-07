@@ -7,18 +7,38 @@ import (
 	"sync"
 )
 
-// eventEnvelope is the daemon→frontend event shape on the wire.
+// eventEnvelope is the daemon→frontend event shape on the wire for events that
+// carry no sort key (reset, remove, ready). Upserts use upsertEnvelope so their
+// `sort` is always present on the wire — see emitUpsert.
 type eventEnvelope struct {
 	Sub       int64           `json:"sub"`
 	Event     string          `json:"event"`
-	Sort      string          `json:"sort,omitempty"`
 	Item      json.RawMessage `json:"item,omitempty"`
 	ID        string          `json:"id,omitempty"`
 	Exhausted bool            `json:"exhausted,omitempty"`
 }
 
+// upsertEnvelope is the wire shape for upserts. `sort` deliberately carries no
+// omitempty: the grammar requires every upsert to carry a sort key, so an empty
+// key must still be marshalled (and is caught by the assertion in emitUpsert)
+// rather than silently dropped into a sort-less, grammar-violating frame.
+type upsertEnvelope struct {
+	Sub   int64           `json:"sub"`
+	Event string          `json:"event"`
+	Sort  string          `json:"sort"`
+	Item  json.RawMessage `json:"item"`
+}
+
 func resetLine(sub int64) []byte {
 	line, _ := json.Marshal(eventEnvelope{Sub: sub, Event: "reset"})
+	return line
+}
+
+// overloadedLine is the terminal frame sent when a connection's outbound queue
+// overflows its connection-level cap: an error response the peer may still read,
+// after which the connection is closed.
+func overloadedLine() []byte {
+	line, _ := json.Marshal(response{ID: nullID, Error: errorf(CodeInternal, "connection outbound queue overflowed; closing")})
 	return line
 }
 
@@ -230,7 +250,15 @@ func (s *subscription) recompute(window int) (exhausted, reset bool) {
 }
 
 func (s *subscription) emitUpsert(id, sort string, body []byte) (reset bool) {
-	line, _ := json.Marshal(eventEnvelope{Sub: s.id, Event: "upsert", Sort: sort, Item: body})
+	if sort == "" {
+		// A sort-less upsert is a grammar violation the frontend engine cannot
+		// place. It means a view returned an Item with an empty Sort — a daemon
+		// bug. Log it loudly; the id-as-sort fallback keeps the frame well-formed
+		// so one buggy view cannot desync the whole subscription.
+		log.Printf("protocol: view emitted upsert with empty sort (sub=%d id=%q); falling back to id", s.id, id)
+		sort = id
+	}
+	line, _ := json.Marshal(upsertEnvelope{Sub: s.id, Event: "upsert", Sort: sort, Item: body})
 	return s.sink.sendEvent(s.id, id, line)
 }
 
