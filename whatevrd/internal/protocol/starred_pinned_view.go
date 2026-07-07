@@ -55,7 +55,8 @@ func (v starredView) Open(params json.RawMessage, invalidate func()) (ViewSessio
 		}
 	}
 	events, cancel := v.daemon.SubscribeDaemonEvents()
-	s := &starredSession{lister: v.lister, chatID: p.ChatID, eventsCancel: cancel, done: make(chan struct{})}
+	ctx, cancelCtx := context.WithCancel(context.Background())
+	s := &starredSession{lister: v.lister, chatID: p.ChatID, eventsCancel: cancel, ctx: ctx, cancelCtx: cancelCtx, done: make(chan struct{})}
 	go s.run(events, invalidate)
 	return s, nil, nil
 }
@@ -64,6 +65,8 @@ type starredSession struct {
 	lister       StarredPinnedLister
 	chatID       string // "" spans all chats
 	eventsCancel func()
+	ctx          context.Context
+	cancelCtx    context.CancelFunc
 	done         chan struct{}
 	closeOnce    sync.Once
 }
@@ -117,7 +120,7 @@ func (s *starredSession) Items(max int) []Item {
 	if limit <= 0 {
 		limit = messagesUnboundedLimit
 	}
-	rows, err := s.lister.ListStarredMessages(context.Background(), s.chatID, limit, "")
+	rows, err := s.lister.ListStarredMessages(s.ctx, s.chatID, limit, "")
 	if err != nil {
 		log.Printf("protocol: list starred messages for view: %v", err)
 		return nil
@@ -153,6 +156,7 @@ func invStarredSort(v int64) int64 {
 
 func (s *starredSession) Close() {
 	s.closeOnce.Do(func() {
+		s.cancelCtx()
 		close(s.done)
 		s.eventsCancel()
 	})
@@ -185,7 +189,8 @@ func (v pinnedView) Open(params json.RawMessage, invalidate func()) (ViewSession
 		return nil, nil, errorf(CodeInvalidParams, "pinned params must carry a chat_id")
 	}
 	events, cancel := v.daemon.SubscribeDaemonEvents()
-	s := &pinnedSession{lister: v.lister, chatID: p.ChatID, eventsCancel: cancel, invalidate: invalidate, done: make(chan struct{})}
+	ctx, cancelCtx := context.WithCancel(context.Background())
+	s := &pinnedSession{lister: v.lister, chatID: p.ChatID, eventsCancel: cancel, ctx: ctx, cancelCtx: cancelCtx, invalidate: invalidate, done: make(chan struct{})}
 	go s.run(events, invalidate)
 	return s, nil, nil
 }
@@ -194,6 +199,8 @@ type pinnedSession struct {
 	lister       StarredPinnedLister
 	chatID       string
 	eventsCancel func()
+	ctx          context.Context
+	cancelCtx    context.CancelFunc
 	invalidate   func()
 	done         chan struct{}
 	closeOnce    sync.Once
@@ -239,7 +246,7 @@ func (s *pinnedSession) Items(int) []Item {
 	if s.lister == nil {
 		return nil
 	}
-	rows, err := s.lister.ListPinnedMessages(context.Background(), s.chatID)
+	rows, err := s.lister.ListPinnedMessages(s.ctx, s.chatID)
 	if err != nil {
 		log.Printf("protocol: list pinned messages for view: %v", err)
 		return nil
@@ -306,6 +313,7 @@ func (s *pinnedSession) armExpiry(rows []store.Message) {
 
 func (s *pinnedSession) Close() {
 	s.closeOnce.Do(func() {
+		s.cancelCtx()
 		close(s.done)
 		s.eventsCancel()
 		s.mu.Lock()

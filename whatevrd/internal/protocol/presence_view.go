@@ -51,11 +51,14 @@ func (v presenceView) Open(params json.RawMessage, invalidate func()) (ViewSessi
 	}
 
 	events, cancel := v.daemon.SubscribeDaemonEvents()
+	ctx, cancelCtx := context.WithCancel(context.Background())
 	s := &presenceSession{
 		daemon:       v.daemon,
 		actions:      v.actions,
 		chatID:       p.ChatID,
 		eventsCancel: cancel,
+		ctx:          ctx,
+		cancelCtx:    cancelCtx,
 		done:         make(chan struct{}),
 		wasOnline:    true,
 	}
@@ -69,7 +72,7 @@ func (v presenceView) Open(params json.RawMessage, invalidate func()) (ViewSessi
 	// for this chat. Results arrive later as ordinary DaemonEventChatPresence
 	// availability events on our subscription. Groups are a no-op upstream.
 	if v.actions != nil {
-		if err := v.actions.SubscribeChatPresence(context.Background(), p.ChatID); err != nil {
+		if err := v.actions.SubscribeChatPresence(ctx, p.ChatID); err != nil {
 			log.Printf("protocol: subscribe chat presence %s: %v", p.ChatID, err)
 		}
 	}
@@ -83,6 +86,8 @@ type presenceSession struct {
 	actions      PresenceActions
 	chatID       string
 	eventsCancel func()
+	ctx          context.Context
+	cancelCtx    context.CancelFunc
 	done         chan struct{}
 	closeOnce    sync.Once
 
@@ -168,7 +173,7 @@ func (s *presenceSession) apply(evt app.DaemonEvent) bool {
 		reconnected := online && !s.wasOnline
 		s.wasOnline = online
 		if reconnected && s.actions != nil {
-			if err := s.actions.SubscribeChatPresence(context.Background(), s.chatID); err != nil {
+			if err := s.actions.SubscribeChatPresence(s.ctx, s.chatID); err != nil {
 				log.Printf("protocol: renew chat presence %s: %v", s.chatID, err)
 			}
 		}
@@ -220,6 +225,7 @@ func (s *presenceSession) itemLocked() presenceItem {
 
 func (s *presenceSession) Close() {
 	s.closeOnce.Do(func() {
+		s.cancelCtx()
 		close(s.done)
 		s.eventsCancel()
 	})

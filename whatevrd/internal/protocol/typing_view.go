@@ -32,10 +32,13 @@ type typingView struct {
 
 func (v typingView) Open(_ json.RawMessage, invalidate func()) (ViewSession, map[string]any, *Error) {
 	events, cancel := v.daemon.SubscribeDaemonEvents()
+	ctx, cancelCtx := context.WithCancel(context.Background())
 	s := &typingSession{
 		daemon:       v.daemon,
 		resolver:     v.resolver,
 		eventsCancel: cancel,
+		ctx:          ctx,
+		cancelCtx:    cancelCtx,
 		done:         make(chan struct{}),
 		composing:    make(map[string]string),
 	}
@@ -55,6 +58,8 @@ type typingSession struct {
 	daemon       *app.Daemon
 	resolver     SenderDisplayer
 	eventsCancel func()
+	ctx          context.Context
+	cancelCtx    context.CancelFunc
 	done         chan struct{}
 	closeOnce    sync.Once
 
@@ -166,7 +171,7 @@ func (s *typingSession) Items(max int) []Item {
 		pairs = pairs[:max]
 	}
 
-	ctx := context.Background()
+	ctx := s.ctx
 	items := make([]Item, 0, len(pairs))
 	for _, p := range pairs {
 		chatID, senderID := p[0], p[1]
@@ -187,6 +192,7 @@ func (s *typingSession) Items(max int) []Item {
 
 func (s *typingSession) Close() {
 	s.closeOnce.Do(func() {
+		s.cancelCtx()
 		close(s.done)
 		s.eventsCancel()
 	})

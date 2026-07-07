@@ -56,13 +56,15 @@ func (v groupView) Open(params json.RawMessage, invalidate func()) (ViewSession,
 	if v.actions == nil {
 		return nil, nil, errorf(CodeInternal, "group view unavailable")
 	}
-	info, err := v.actions.GetGroupInfo(context.Background(), chatID)
+	ctx, cancelCtx := context.WithCancel(context.Background())
+	info, err := v.actions.GetGroupInfo(ctx, chatID)
 	if err != nil {
+		cancelCtx()
 		return nil, nil, errorf(CodeInvalidParams, "invalid group chat_id: %v", err)
 	}
 
 	events, cancel := v.daemon.SubscribeDaemonEvents()
-	s := &groupSession{actions: v.actions, chatID: chatID, info: info, eventsCancel: cancel, done: make(chan struct{})}
+	s := &groupSession{actions: v.actions, chatID: chatID, info: info, eventsCancel: cancel, ctx: ctx, cancelCtx: cancelCtx, done: make(chan struct{})}
 	s.drainInitial(events)
 	go s.run(events, invalidate)
 	return s, nil, nil
@@ -72,6 +74,8 @@ type groupSession struct {
 	actions      GroupActions
 	chatID       string
 	eventsCancel func()
+	ctx          context.Context
+	cancelCtx    context.CancelFunc
 	done         chan struct{}
 	closeOnce    sync.Once
 
@@ -83,7 +87,7 @@ type groupSession struct {
 // the phase-one card and spawns the live enrichment, which re-streams through
 // DaemonEventGroupInfoUpdated — the same two-phase shape as Open.
 func (s *groupSession) refetch() bool {
-	info, err := s.actions.GetGroupInfo(context.Background(), s.chatID)
+	info, err := s.actions.GetGroupInfo(s.ctx, s.chatID)
 	if err != nil {
 		return false
 	}
@@ -184,6 +188,7 @@ func (s *groupSession) Items(max int) []Item {
 
 func (s *groupSession) Close() {
 	s.closeOnce.Do(func() {
+		s.cancelCtx()
 		close(s.done)
 		s.eventsCancel()
 	})
@@ -218,13 +223,15 @@ func (v groupMembersView) Open(params json.RawMessage, invalidate func()) (ViewS
 	if v.actions == nil {
 		return nil, nil, errorf(CodeInternal, "group_members view unavailable")
 	}
-	info, err := v.actions.GetGroupInfo(context.Background(), chatID)
+	ctx, cancelCtx := context.WithCancel(context.Background())
+	info, err := v.actions.GetGroupInfo(ctx, chatID)
 	if err != nil {
+		cancelCtx()
 		return nil, nil, errorf(CodeInvalidParams, "invalid group chat_id: %v", err)
 	}
 
 	events, cancel := v.daemon.SubscribeDaemonEvents()
-	s := &groupMembersSession{actions: v.actions, chatID: chatID, members: info.Members, eventsCancel: cancel, done: make(chan struct{})}
+	s := &groupMembersSession{actions: v.actions, chatID: chatID, members: info.Members, eventsCancel: cancel, ctx: ctx, cancelCtx: cancelCtx, done: make(chan struct{})}
 	s.drainInitial(events)
 	go s.run(events, invalidate)
 	return s, nil, nil
@@ -234,6 +241,8 @@ type groupMembersSession struct {
 	actions      GroupActions
 	chatID       string
 	eventsCancel func()
+	ctx          context.Context
+	cancelCtx    context.CancelFunc
 	done         chan struct{}
 	closeOnce    sync.Once
 
@@ -244,7 +253,7 @@ type groupMembersSession struct {
 // refetch reloads the roster after a dropped-event gap (resync); the live
 // enrichment re-streams through DaemonEventGroupInfoUpdated as after Open.
 func (s *groupMembersSession) refetch() bool {
-	info, err := s.actions.GetGroupInfo(context.Background(), s.chatID)
+	info, err := s.actions.GetGroupInfo(s.ctx, s.chatID)
 	if err != nil {
 		return false
 	}
@@ -337,6 +346,7 @@ func (s *groupMembersSession) Items(_ int) []Item {
 
 func (s *groupMembersSession) Close() {
 	s.closeOnce.Do(func() {
+		s.cancelCtx()
 		close(s.done)
 		s.eventsCancel()
 	})

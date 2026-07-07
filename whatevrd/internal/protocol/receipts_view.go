@@ -66,10 +66,12 @@ func (v receiptsView) Open(params json.RawMessage, invalidate func()) (ViewSessi
 	if v.actions == nil {
 		return nil, nil, errorf(CodeInternal, "receipts view unavailable")
 	}
+	ctx, cancelCtx := context.WithCancel(context.Background())
 	// Validate the message exists up front so a bad message_id is a clean
 	// not_found at subscribe (rather than a silently empty view). Done before
 	// subscribing to events so the early return leaks no subscription.
-	if _, err := v.actions.GetMessageInfo(context.Background(), p.MessageID); err != nil {
+	if _, err := v.actions.GetMessageInfo(ctx, p.MessageID); err != nil {
+		cancelCtx()
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil, errorf(CodeNotFound, "no message %q", p.MessageID)
 		}
@@ -81,6 +83,8 @@ func (v receiptsView) Open(params json.RawMessage, invalidate func()) (ViewSessi
 		messageID:    p.MessageID,
 		actions:      v.actions,
 		eventsCancel: cancel,
+		ctx:          ctx,
+		cancelCtx:    cancelCtx,
 		done:         make(chan struct{}),
 	}
 	go s.run(events, invalidate)
@@ -93,6 +97,8 @@ type receiptsSession struct {
 	messageID    string
 	actions      MessageInfoActions
 	eventsCancel func()
+	ctx          context.Context
+	cancelCtx    context.CancelFunc
 	done         chan struct{}
 	closeOnce    sync.Once
 }
@@ -135,7 +141,7 @@ func (s *receiptsSession) relevant(evt app.DaemonEvent) bool {
 // is ignored; a deleted (or otherwise unreadable) message yields no items, so
 // the engine emits removes and the dialog empties.
 func (s *receiptsSession) Items(_ int) []Item {
-	info, err := s.actions.GetMessageInfo(context.Background(), s.messageID)
+	info, err := s.actions.GetMessageInfo(s.ctx, s.messageID)
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			log.Printf("protocol: receipts re-derive %s: %v", s.messageID, err)
@@ -180,6 +186,7 @@ func (s *receiptsSession) Items(_ int) []Item {
 
 func (s *receiptsSession) Close() {
 	s.closeOnce.Do(func() {
+		s.cancelCtx()
 		close(s.done)
 		s.eventsCancel()
 	})

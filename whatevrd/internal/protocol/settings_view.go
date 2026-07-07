@@ -50,11 +50,13 @@ func (v privacyView) Open(_ json.RawMessage, invalidate func()) (ViewSession, ma
 		return nil, nil, errorf(CodeInternal, "privacy view unavailable")
 	}
 	events, cancel := v.daemon.SubscribeDaemonEvents()
-	s := &privacySession{actions: v.actions, eventsCancel: cancel, done: make(chan struct{})}
-	// Best-effort first load: GetPrivacySettings errors while logged out, leaving
-	// the view empty until the connection comes up (or a change snapshot lands).
-	s.refetch()
-	s.drainInitial(events)
+	ctx, cancelCtx := context.WithCancel(context.Background())
+	s := &privacySession{actions: v.actions, eventsCancel: cancel, cancelCtx: cancelCtx, ctx: ctx, done: make(chan struct{})}
+	// The first load runs inside run (background): GetPrivacySettings reaches the
+	// network, so doing it synchronously here would stall the whole connection at
+	// Open (F12). It errors while logged out anyway, leaving the view empty until
+	// the connection comes up (or a change snapshot lands); the fetch honours the
+	// session context, so a disconnect cancels it in flight (F18).
 	go s.run(events, invalidate)
 	return s, nil, nil
 }
@@ -62,6 +64,8 @@ func (v privacyView) Open(_ json.RawMessage, invalidate func()) (ViewSession, ma
 type privacySession struct {
 	actions      SettingsActions
 	eventsCancel func()
+	ctx          context.Context
+	cancelCtx    context.CancelFunc
 	done         chan struct{}
 	closeOnce    sync.Once
 
@@ -71,7 +75,7 @@ type privacySession struct {
 }
 
 func (s *privacySession) refetch() bool {
-	settings, err := s.actions.GetPrivacySettings(context.Background())
+	settings, err := s.actions.GetPrivacySettings(s.ctx)
 	if err != nil {
 		return false
 	}
@@ -89,18 +93,11 @@ func (s *privacySession) set(settings app.PrivacySettings) bool {
 	return true
 }
 
-func (s *privacySession) drainInitial(events <-chan app.DaemonEvent) {
-	for {
-		select {
-		case evt := <-events:
-			s.apply(evt)
-		default:
-			return
-		}
-	}
-}
-
 func (s *privacySession) run(events <-chan app.DaemonEvent, invalidate func()) {
+	// Best-effort background first load (see Open): fills once, if logged in.
+	if s.refetch() {
+		invalidate()
+	}
 	for {
 		select {
 		case <-s.done:
@@ -159,6 +156,7 @@ func (s *privacySession) Items(max int) []Item {
 
 func (s *privacySession) Close() {
 	s.closeOnce.Do(func() {
+		s.cancelCtx()
 		close(s.done)
 		s.eventsCancel()
 	})
@@ -193,7 +191,11 @@ func (v preferencesView) Open(_ json.RawMessage, invalidate func()) (ViewSession
 		return nil, nil, errorf(CodeInternal, "preferences view unavailable")
 	}
 	events, cancel := v.daemon.SubscribeDaemonEvents()
-	s := &preferencesSession{actions: v.actions, eventsCancel: cancel, done: make(chan struct{})}
+	ctx, cancelCtx := context.WithCancel(context.Background())
+	s := &preferencesSession{actions: v.actions, eventsCancel: cancel, ctx: ctx, cancelCtx: cancelCtx, done: make(chan struct{})}
+	// Preferences are daemon-local (no network round-trip), so the first load
+	// stays synchronous; the session context still lets a disconnect cancel any
+	// in-flight read (F18).
 	s.refetch()
 	s.drainInitial(events)
 	go s.run(events, invalidate)
@@ -203,6 +205,8 @@ func (v preferencesView) Open(_ json.RawMessage, invalidate func()) (ViewSession
 type preferencesSession struct {
 	actions      SettingsActions
 	eventsCancel func()
+	ctx          context.Context
+	cancelCtx    context.CancelFunc
 	done         chan struct{}
 	closeOnce    sync.Once
 
@@ -211,7 +215,7 @@ type preferencesSession struct {
 }
 
 func (s *preferencesSession) refetch() bool {
-	prefs, err := s.actions.GetAppPreferences(context.Background())
+	prefs, err := s.actions.GetAppPreferences(s.ctx)
 	if err != nil {
 		return false
 	}
@@ -281,6 +285,7 @@ func (s *preferencesSession) Items(max int) []Item {
 
 func (s *preferencesSession) Close() {
 	s.closeOnce.Do(func() {
+		s.cancelCtx()
 		close(s.done)
 		s.eventsCancel()
 	})
@@ -313,14 +318,18 @@ func (v blocklistView) Open(_ json.RawMessage, invalidate func()) (ViewSession, 
 		return nil, nil, errorf(CodeInternal, "blocklist view unavailable")
 	}
 	events, cancel := v.daemon.SubscribeDaemonEvents()
+	ctx, cancelCtx := context.WithCancel(context.Background())
 	s := &blocklistSession{
 		actions:      v.actions,
 		eventsCancel: cancel,
+		ctx:          ctx,
+		cancelCtx:    cancelCtx,
 		done:         make(chan struct{}),
 		byJID:        map[string]app.BlockedContact{},
 	}
-	s.refetch()
-	s.drainInitial(events)
+	// First load runs in run (background): GetBlocklist reaches the network, so a
+	// synchronous fetch here would stall the connection at Open (F12). It honours
+	// the session context, so a disconnect cancels it in flight (F18).
 	go s.run(events, invalidate)
 	return s, nil, nil
 }
@@ -328,6 +337,8 @@ func (v blocklistView) Open(_ json.RawMessage, invalidate func()) (ViewSession, 
 type blocklistSession struct {
 	actions      SettingsActions
 	eventsCancel func()
+	ctx          context.Context
+	cancelCtx    context.CancelFunc
 	done         chan struct{}
 	closeOnce    sync.Once
 
@@ -339,7 +350,7 @@ type blocklistSession struct {
 // refetch replaces the whole held set from the live blocklist. It errors while
 // logged out, in which case the set is left as-is (empty on the first attempt).
 func (s *blocklistSession) refetch() bool {
-	contacts, err := s.actions.GetBlocklist(context.Background())
+	contacts, err := s.actions.GetBlocklist(s.ctx)
 	if err != nil {
 		return false
 	}
@@ -369,18 +380,11 @@ func sameBlocklist(a, b map[string]app.BlockedContact) bool {
 	return true
 }
 
-func (s *blocklistSession) drainInitial(events <-chan app.DaemonEvent) {
-	for {
-		select {
-		case evt := <-events:
-			s.apply(evt)
-		default:
-			return
-		}
-	}
-}
-
 func (s *blocklistSession) run(events <-chan app.DaemonEvent, invalidate func()) {
+	// Best-effort background first load (see Open): fills once, if logged in.
+	if s.refetch() {
+		invalidate()
+	}
 	for {
 		select {
 		case <-s.done:
@@ -470,6 +474,7 @@ func blocklistSortKey(bc app.BlockedContact) string {
 
 func (s *blocklistSession) Close() {
 	s.closeOnce.Do(func() {
+		s.cancelCtx()
 		close(s.done)
 		s.eventsCancel()
 	})

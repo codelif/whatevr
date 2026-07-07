@@ -86,14 +86,16 @@ func TestPrivacyViewSnapshotUpdate(t *testing.T) {
 	c.hello()
 	sub := c.subscribe(2, `{"view":"privacy"}`)
 
-	first := c.expectUpsert(sub, "self")
+	first := c.awaitInitialFill(sub, 1)[0]
+	if got := first["item"].(map[string]any)["id"]; got != "self" {
+		t.Fatalf("initial fill id = %v, want self", got)
+	}
 	if ls := itemField(t, first, "last_seen"); ls != "contacts" {
 		t.Fatalf("last_seen = %q, want contacts", ls)
 	}
 	if rr := itemBool(t, first, "read_receipts"); !rr {
 		t.Fatalf("read_receipts = false, want true")
 	}
-	c.expectReady(sub, true)
 
 	// A change (here or on the phone) arrives as a full snapshot.
 	server.daemon.PublishPrivacySettingsChanged(app.PrivacySettings{LastSeen: "nobody", Online: "match_last_seen", ReadReceipts: false})
@@ -199,13 +201,17 @@ func TestBlocklistViewLifecycle(t *testing.T) {
 	c.hello()
 	sub := c.subscribe(2, `{"view":"blocklist"}`)
 
-	// Ordered by display name: Amy before Zed.
-	first := c.expectUpsert(sub, "amy@s.whatsapp.net")
-	if n := itemField(t, first, "name"); n != "Amy" {
+	// Ordered by display name: Amy before Zed (one contiguous fill batch).
+	fill := c.awaitInitialFill(sub, 2)
+	if id := fill[0]["item"].(map[string]any)["id"]; id != "amy@s.whatsapp.net" {
+		t.Fatalf("first fill id = %v, want amy", id)
+	}
+	if n := itemField(t, fill[0], "name"); n != "Amy" {
 		t.Fatalf("first name = %q, want Amy", n)
 	}
-	c.expectUpsert(sub, "zed@s.whatsapp.net")
-	c.expectReady(sub, true)
+	if id := fill[1]["item"].(map[string]any)["id"]; id != "zed@s.whatsapp.net" {
+		t.Fatalf("second fill id = %v, want zed", id)
+	}
 
 	// Unblock Zed, block Bob: Zed removed, Bob inserted (sorts after Amy).
 	actions.setBlocklist([]app.BlockedContact{

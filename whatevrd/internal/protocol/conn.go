@@ -102,6 +102,9 @@ func (c *conn) run() {
 func (c *conn) reportReadError(err error) {
 	var ne net.Error
 	switch {
+	case errors.Is(err, net.ErrClosed):
+		// We closed the socket (shutdown, unsubscribe teardown, or a prior fatal
+		// frame). This is normal termination, not a framing failure.
 	case errors.Is(err, bufio.ErrTooLong):
 		log.Printf("protocol: oversized frame (> %d bytes) closed the connection", maxLineBytes)
 		c.respondError(nullID, errorf(CodeInvalidRequest, "frame exceeds the %d byte maximum", maxLineBytes), true)
