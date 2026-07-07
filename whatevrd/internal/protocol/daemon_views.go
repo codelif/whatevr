@@ -80,7 +80,7 @@ type connectionView struct {
 
 func (v connectionView) Open(_ json.RawMessage, invalidate func()) (ViewSession, map[string]any, *Error) {
 	events, cancel := v.daemon.SubscribeDaemonEvents()
-	s := &connectionSession{eventsCancel: cancel, pending: v.pending, done: make(chan struct{})}
+	s := &connectionSession{daemon: v.daemon, eventsCancel: cancel, pending: v.pending, done: make(chan struct{})}
 	s.refreshPendingCount()
 	s.drainInitial(events)
 	go s.run(events, invalidate)
@@ -88,6 +88,8 @@ func (v connectionView) Open(_ json.RawMessage, invalidate func()) (ViewSession,
 }
 
 type connectionSession struct {
+	daemon *app.Daemon
+
 	mu           sync.Mutex
 	state        app.State
 	detail       string
@@ -100,6 +102,23 @@ type connectionSession struct {
 	eventsCancel func()
 	done         chan struct{}
 	closeOnce    sync.Once
+}
+
+// reloadState reloads the connection state from the daemon snapshot, recovering
+// from a dropped ConnectionChanged after a resync.
+func (s *connectionSession) reloadState() bool {
+	state, detail, attempt, next, canReconnect := s.daemon.ConnectionSnapshot()
+	s.mu.Lock()
+	old := s.itemLocked()
+	s.state = state
+	s.detail = detail
+	s.retryAttempt = attempt
+	s.nextRetry = next
+	s.canReconnect = canReconnect
+	s.refreshPendingCountLocked()
+	changed := old != s.itemLocked()
+	s.mu.Unlock()
+	return changed
 }
 
 type connectionItem struct {
@@ -137,6 +156,9 @@ func (s *connectionSession) run(events <-chan app.DaemonEvent, invalidate func()
 }
 
 func (s *connectionSession) apply(evt app.DaemonEvent) bool {
+	if evt.Kind == app.DaemonEventResync {
+		return s.reloadState()
+	}
 	s.mu.Lock()
 	old := s.itemLocked()
 	changed := false
@@ -216,7 +238,7 @@ type syncView struct {
 
 func (v syncView) Open(_ json.RawMessage, invalidate func()) (ViewSession, map[string]any, *Error) {
 	events, cancel := v.daemon.SubscribeDaemonEvents()
-	s := &syncSession{eventsCancel: cancel, done: make(chan struct{})}
+	s := &syncSession{daemon: v.daemon, eventsCancel: cancel, done: make(chan struct{})}
 	s.event = inactiveSyncEvent()
 	s.drainInitial(events)
 	go s.run(events, invalidate)
@@ -224,11 +246,29 @@ func (v syncView) Open(_ json.RawMessage, invalidate func()) (ViewSession, map[s
 }
 
 type syncSession struct {
+	daemon       *app.Daemon
 	mu           sync.Mutex
 	event        app.HistorySyncEvent
 	eventsCancel func()
 	done         chan struct{}
 	closeOnce    sync.Once
+}
+
+// reloadState reloads history-sync progress from the daemon snapshot after a
+// resync; with no active sync it falls back to the inactive/complete state.
+func (s *syncSession) reloadState() bool {
+	fresh, ok := s.daemon.LatestHistorySync()
+	if !ok {
+		fresh = inactiveSyncEvent()
+	} else if fresh.Phase == app.HistorySyncPhaseUnspecified && fresh.IsComplete {
+		fresh.Phase = app.HistorySyncPhaseComplete
+	}
+	s.mu.Lock()
+	old := s.itemLocked()
+	s.event = fresh
+	changed := old != s.itemLocked()
+	s.mu.Unlock()
+	return changed
 }
 
 type syncItem struct {
@@ -273,6 +313,9 @@ func (s *syncSession) run(events <-chan app.DaemonEvent, invalidate func()) {
 }
 
 func (s *syncSession) apply(evt app.DaemonEvent) bool {
+	if evt.Kind == app.DaemonEventResync {
+		return s.reloadState()
+	}
 	if evt.Kind != app.DaemonEventHistorySyncProgress {
 		return false
 	}

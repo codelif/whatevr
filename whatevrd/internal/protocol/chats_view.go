@@ -117,7 +117,8 @@ func (s *chatsSession) run(events <-chan app.DaemonEvent, invalidate func()) {
 
 func chatEventAffectsList(kind app.DaemonEventKind) bool {
 	switch kind {
-	case app.DaemonEventNewMessage,
+	case app.DaemonEventResync, // re-read the store after a dropped-event gap
+		app.DaemonEventNewMessage,
 		app.DaemonEventChatUpdated,
 		app.DaemonEventChatDeleted,
 		app.DaemonEventChatCleared,

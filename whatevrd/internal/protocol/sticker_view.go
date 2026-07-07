@@ -103,6 +103,8 @@ func (s *stickersSession) run(events <-chan app.DaemonEvent, invalidate func()) 
 
 func (s *stickersSession) eventAffects(evt app.DaemonEvent) bool {
 	switch evt.Kind {
+	case app.DaemonEventResync:
+		return true
 	case app.DaemonEventStickerLibraryChanged:
 		return stickerLibraryEventMatches(s.source, evt.StickerSource)
 	case app.DaemonEventStickerDownloadChanged:
@@ -227,7 +229,7 @@ func (s *stickerPacksSession) run(events <-chan app.DaemonEvent, invalidate func
 		case <-s.done:
 			return
 		case evt := <-events:
-			if evt.Kind == app.DaemonEventStickerLibraryChanged {
+			if evt.Kind == app.DaemonEventStickerLibraryChanged || evt.Kind == app.DaemonEventResync {
 				invalidate()
 			}
 		}
@@ -332,6 +334,8 @@ func (s *stickerPackSession) run(events <-chan app.DaemonEvent, invalidate func(
 
 func (s *stickerPackSession) eventAffects(evt app.DaemonEvent) bool {
 	switch evt.Kind {
+	case app.DaemonEventResync:
+		return true
 	case app.DaemonEventStickerLibraryChanged:
 		return evt.StickerSource == app.StickerSourceUnspecified || evt.StickerSource == app.StickerSourceAll
 	case app.DaemonEventStickerDownloadChanged:

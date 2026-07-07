@@ -33,6 +33,7 @@ type typingView struct {
 func (v typingView) Open(_ json.RawMessage, invalidate func()) (ViewSession, map[string]any, *Error) {
 	events, cancel := v.daemon.SubscribeDaemonEvents()
 	s := &typingSession{
+		daemon:       v.daemon,
 		resolver:     v.resolver,
 		eventsCancel: cancel,
 		done:         make(chan struct{}),
@@ -41,9 +42,7 @@ func (v typingView) Open(_ json.RawMessage, invalidate func()) (ViewSession, map
 	// Snapshot the current composing set for the initial fill, then drain any
 	// events buffered since SubscribeDaemonEvents. The two may overlap, but the
 	// map writes are idempotent so a doubly-applied event is harmless.
-	for _, cc := range v.daemon.ComposingChats() {
-		s.composing[cc.ChatID] = cc.SenderID
-	}
+	s.reloadComposing()
 	s.drainInitial(events)
 	go s.run(events, invalidate)
 	return s, nil, nil
@@ -53,6 +52,7 @@ func (v typingView) Open(_ json.RawMessage, invalidate func()) (ViewSession, map
 // It mirrors the daemon's single-slot presence model: one sender per chat,
 // cleared as soon as composing stops.
 type typingSession struct {
+	daemon       *app.Daemon
 	resolver     SenderDisplayer
 	eventsCancel func()
 	done         chan struct{}
@@ -60,6 +60,19 @@ type typingSession struct {
 
 	mu        sync.Mutex
 	composing map[string]string // chat_id -> composing sender jid
+}
+
+// reloadComposing rebuilds the composing set from the daemon snapshot. It is the
+// initial fill and the resync recovery: after a dropped-event gap the folded map
+// cannot be trusted, so it is replaced wholesale with the authoritative snapshot.
+func (s *typingSession) reloadComposing() {
+	fresh := make(map[string]string)
+	for _, cc := range s.daemon.ComposingChats() {
+		fresh[cc.ChatID] = cc.SenderID
+	}
+	s.mu.Lock()
+	s.composing = fresh
+	s.mu.Unlock()
 }
 
 type typingItem struct {
@@ -101,6 +114,10 @@ func (s *typingSession) run(events <-chan app.DaemonEvent, invalidate func()) {
 // carry a SenderID, availability events never do — so a missing SenderID is the
 // discriminator that keeps availability churn from touching the typing view.
 func (s *typingSession) apply(evt app.DaemonEvent) bool {
+	if evt.Kind == app.DaemonEventResync {
+		s.reloadComposing()
+		return true
+	}
 	if evt.Kind != app.DaemonEventChatPresence || evt.SenderID == "" {
 		return false
 	}
