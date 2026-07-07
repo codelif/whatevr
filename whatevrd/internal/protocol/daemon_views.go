@@ -24,6 +24,7 @@ type DaemonStore interface {
 	PendingOutgoingCounter
 	ChatLister
 	MessageLister
+	StarredPinnedLister
 	SenderDisplayer
 }
 
@@ -59,6 +60,8 @@ func RegisterDaemonViews(s *Server, daemon *app.Daemon, store DaemonStore, actio
 	s.RegisterView("privacy", privacyView{daemon: daemon, actions: actions})
 	s.RegisterView("preferences", preferencesView{daemon: daemon, actions: actions})
 	s.RegisterView("blocklist", blocklistView{daemon: daemon, actions: actions})
+	s.RegisterView("starred", starredView{daemon: daemon, lister: store})
+	s.RegisterView("pinned", pinnedView{daemon: daemon, lister: store})
 }
 
 type connectionView struct {

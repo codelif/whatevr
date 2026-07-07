@@ -55,6 +55,14 @@ func (f *fakePendingCounter) SenderDisplay(context.Context, string) (string, str
 	return "", "", nil
 }
 
+func (f *fakePendingCounter) ListStarredMessages(context.Context, string, int, string) ([]store.StarredMessage, error) {
+	return nil, nil
+}
+
+func (f *fakePendingCounter) ListPinnedMessages(context.Context, string) ([]store.Message, error) {
+	return nil, nil
+}
+
 func (f *fakePendingCounter) set(count int) {
 	f.mu.Lock()
 	f.count = count
