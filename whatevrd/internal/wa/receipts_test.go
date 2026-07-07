@@ -13,8 +13,6 @@ import (
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	waLog "go.mau.fi/whatsmeow/util/log"
-	"google.golang.org/grpc/codes"
-	grpcstatus "google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
 	"whatevrd/internal/app"
@@ -313,8 +311,8 @@ func TestEditMessageRejectsIneligibleMessages(t *testing.T) {
 		c, db := newReceiptTestClient(t)
 		messageID := seedGroupMessage(t, db, appstore.StatusSent)
 		_, err := c.EditMessage(ctx, messageID, "too late")
-		if grpcstatus.Code(err) != codes.FailedPrecondition {
-			t.Fatalf("expected FailedPrecondition, got %v", err)
+		if ce, ok := app.AsCommandError(err); !ok || ce.Kind != app.CommandErrorExpired {
+			t.Fatalf("expected CommandErrorExpired, got %v", err)
 		}
 	})
 
@@ -334,8 +332,8 @@ func TestEditMessageRejectsIneligibleMessages(t *testing.T) {
 			t.Fatalf("save incoming: %v", err)
 		}
 		_, err := c.EditMessage(ctx, messageID, "nope")
-		if grpcstatus.Code(err) != codes.FailedPrecondition {
-			t.Fatalf("expected FailedPrecondition, got %v", err)
+		if ce, ok := app.AsCommandError(err); !ok || ce.Kind != app.CommandErrorRejected {
+			t.Fatalf("expected CommandErrorRejected, got %v", err)
 		}
 	})
 
@@ -358,8 +356,8 @@ func TestEditMessageRejectsIneligibleMessages(t *testing.T) {
 			t.Fatalf("revoke: %v", err)
 		}
 		_, err := c.EditMessage(ctx, messageID, "nope")
-		if grpcstatus.Code(err) != codes.FailedPrecondition {
-			t.Fatalf("expected FailedPrecondition, got %v", err)
+		if ce, ok := app.AsCommandError(err); !ok || ce.Kind != app.CommandErrorRejected {
+			t.Fatalf("expected CommandErrorRejected, got %v", err)
 		}
 	})
 }

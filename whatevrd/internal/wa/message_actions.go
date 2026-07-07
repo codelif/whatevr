@@ -9,8 +9,6 @@ import (
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/types"
-	"google.golang.org/grpc/codes"
-	grpcstatus "google.golang.org/grpc/status"
 
 	"whatevrd/internal/app"
 	appstore "whatevrd/internal/store"
@@ -222,7 +220,7 @@ func (c *Client) RevokeMessage(ctx context.Context, messageID string) (appstore.
 		return appstore.Message{}, err
 	}
 	if message.Direction != appstore.DirectionOutgoing {
-		return appstore.Message{}, grpcstatus.Error(codes.FailedPrecondition, "only your own messages can be deleted for everyone")
+		return appstore.Message{}, app.NewCommandError(app.CommandErrorRejected, "only your own messages can be deleted for everyone")
 	}
 	if message.IsRevoked {
 		return message, nil
@@ -230,17 +228,17 @@ func (c *Client) RevokeMessage(ctx context.Context, messageID string) (appstore.
 
 	client := c.currentClient()
 	if client == nil || !client.IsLoggedIn() {
-		return appstore.Message{}, grpcstatus.Error(codes.Unavailable, "WhatsApp client is not logged in")
+		return appstore.Message{}, app.NewCommandError(app.CommandErrorNotLoggedIn, "WhatsApp client is not logged in")
 	}
 
 	chatJID, err := types.ParseJID(message.ChatID)
 	if err != nil {
-		return appstore.Message{}, grpcstatus.Errorf(codes.InvalidArgument, "invalid chat_id: %v", err)
+		return appstore.Message{}, app.NewCommandError(app.CommandErrorInvalidArgument, "invalid chat_id: %v", err)
 	}
 
 	externalID := types.MessageID(appstore.ExternalMessageID(message.ChatID, message.ID))
 	if _, err := client.SendMessage(ctx, chatJID, client.BuildRevoke(chatJID, types.EmptyJID, externalID)); err != nil {
-		return appstore.Message{}, grpcstatus.Errorf(codes.Unknown, "delete for everyone failed: %v", err)
+		return appstore.Message{}, app.NewCommandError(app.CommandErrorRejected, "delete for everyone failed: %v", err)
 	}
 
 	updated, chat, changed, err := c.store.MarkMessageRevoked(ctx, message.ID)
@@ -264,33 +262,33 @@ func (c *Client) EditMessage(ctx context.Context, messageID, newText string) (ap
 		return appstore.Message{}, err
 	}
 	if message.Direction != appstore.DirectionOutgoing {
-		return appstore.Message{}, grpcstatus.Error(codes.FailedPrecondition, "only your own messages can be edited")
+		return appstore.Message{}, app.NewCommandError(app.CommandErrorRejected, "only your own messages can be edited")
 	}
 	if message.IsRevoked {
-		return appstore.Message{}, grpcstatus.Error(codes.FailedPrecondition, "a deleted message cannot be edited")
+		return appstore.Message{}, app.NewCommandError(app.CommandErrorRejected, "a deleted message cannot be edited")
 	}
 	if time.Since(time.Unix(message.TimestampUnix, 0)) > whatsmeow.EditWindow {
-		return appstore.Message{}, grpcstatus.Error(codes.FailedPrecondition, "the edit window for this message has expired")
+		return appstore.Message{}, app.NewCommandError(app.CommandErrorExpired, "the edit window for this message has expired")
 	}
 
 	client := c.currentClient()
 	if client == nil || !client.IsLoggedIn() {
-		return appstore.Message{}, grpcstatus.Error(codes.Unavailable, "WhatsApp client is not logged in")
+		return appstore.Message{}, app.NewCommandError(app.CommandErrorNotLoggedIn, "WhatsApp client is not logged in")
 	}
 
 	chatJID, err := types.ParseJID(message.ChatID)
 	if err != nil {
-		return appstore.Message{}, grpcstatus.Errorf(codes.InvalidArgument, "invalid chat_id: %v", err)
+		return appstore.Message{}, app.NewCommandError(app.CommandErrorInvalidArgument, "invalid chat_id: %v", err)
 	}
 
 	content := c.buildEditContent(ctx, client, message, newText)
 	if content == nil {
-		return appstore.Message{}, grpcstatus.Error(codes.FailedPrecondition, "this message cannot be edited")
+		return appstore.Message{}, app.NewCommandError(app.CommandErrorRejected, "this message cannot be edited")
 	}
 
 	externalID := types.MessageID(appstore.ExternalMessageID(message.ChatID, message.ID))
 	if _, err := client.SendMessage(ctx, chatJID, client.BuildEdit(chatJID, externalID, content)); err != nil {
-		return appstore.Message{}, grpcstatus.Errorf(codes.Unknown, "edit failed: %v", err)
+		return appstore.Message{}, app.NewCommandError(app.CommandErrorRejected, "edit failed: %v", err)
 	}
 
 	// nil preserves the existing mentions: editing our own message doesn't
@@ -313,10 +311,10 @@ func (c *Client) EditMessage(ctx context.Context, messageID, newText string) (ap
 func (c *Client) ForwardMessage(ctx context.Context, sourceMessageID string, targetChatIDs []string) ([]appstore.SavedTextMessage, error) {
 	client := c.currentClient()
 	if client == nil {
-		return nil, grpcstatus.Error(codes.Unavailable, "WhatsApp client is not initialized")
+		return nil, app.NewCommandError(app.CommandErrorNotConnected, "WhatsApp client is not initialized")
 	}
 	if client.Store.ID == nil {
-		return nil, grpcstatus.Error(codes.FailedPrecondition, "WhatsApp session is not logged in")
+		return nil, app.NewCommandError(app.CommandErrorNotLoggedIn, "WhatsApp session is not logged in")
 	}
 
 	source, err := c.store.GetMessage(ctx, sourceMessageID)
@@ -324,14 +322,14 @@ func (c *Client) ForwardMessage(ctx context.Context, sourceMessageID string, tar
 		return nil, err
 	}
 	if source.IsRevoked {
-		return nil, grpcstatus.Error(codes.FailedPrecondition, "deleted messages cannot be forwarded")
+		return nil, app.NewCommandError(app.CommandErrorRejected, "deleted messages cannot be forwarded")
 	}
 	isMedia := source.MediaKind != "" || source.MediaMimeType != "" || source.MediaLocalPath != ""
 	if !isMedia && strings.TrimSpace(source.Text) == "" {
-		return nil, grpcstatus.Error(codes.FailedPrecondition, "message has no content to forward")
+		return nil, app.NewCommandError(app.CommandErrorRejected, "message has no content to forward")
 	}
 	if isMedia && source.MediaLocalPath == "" && len(source.MediaPayload) == 0 {
-		return nil, grpcstatus.Error(codes.FailedPrecondition, "download the media before forwarding it")
+		return nil, app.NewCommandError(app.CommandErrorRejected, "download the media before forwarding it")
 	}
 
 	// Resolve and validate every target *before* saving anything: a bad target
@@ -346,7 +344,7 @@ func (c *Client) ForwardMessage(ctx context.Context, sourceMessageID string, tar
 	for _, targetChatID := range targetChatIDs {
 		targetJID, err := types.ParseJID(strings.TrimSpace(targetChatID))
 		if err != nil {
-			return nil, grpcstatus.Errorf(codes.InvalidArgument, "invalid target chat_id %q: %v", targetChatID, err)
+			return nil, app.NewCommandError(app.CommandErrorInvalidArgument, "invalid target chat_id %q: %v", targetChatID, err)
 		}
 		targetJID = c.normalizeJIDForChat(ctx, targetJID)
 		targets = append(targets, forwardTarget{

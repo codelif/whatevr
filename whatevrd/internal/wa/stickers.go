@@ -23,8 +23,6 @@ import (
 	waSyncAction "go.mau.fi/whatsmeow/proto/waSyncAction"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
-	"google.golang.org/grpc/codes"
-	grpcstatus "google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
 	"whatevrd/internal/app"
@@ -95,14 +93,14 @@ func (c *Client) ListStickerPacks(ctx context.Context, forceRefresh bool) ([]app
 func (c *Client) GetStickerPack(ctx context.Context, packID string) (appstore.StickerPack, []appstore.Sticker, error) {
 	packID = strings.TrimSpace(packID)
 	if packID == "" {
-		return appstore.StickerPack{}, nil, grpcstatus.Error(codes.InvalidArgument, "pack_id is required")
+		return appstore.StickerPack{}, nil, app.NewCommandError(app.CommandErrorInvalidArgument, "pack_id is required")
 	}
 	pack, ok, err := c.store.GetStickerPack(ctx, packID)
 	if err != nil {
 		return appstore.StickerPack{}, nil, err
 	}
 	if !ok {
-		return appstore.StickerPack{}, nil, grpcstatus.Error(codes.NotFound, "sticker pack not found")
+		return appstore.StickerPack{}, nil, app.NewCommandError(app.CommandErrorNotFound, "sticker pack not found")
 	}
 	if pack.ContentsFetchedAt == 0 {
 		if err := c.fetchStickerPackContents(ctx, packID); err != nil {
@@ -122,7 +120,7 @@ func (c *Client) GetStickerPack(ctx context.Context, packID string) (appstore.St
 func (c *Client) DownloadSticker(ctx context.Context, cacheKey string) (appstore.Sticker, error) {
 	cacheKey = strings.TrimSpace(cacheKey)
 	if cacheKey == "" {
-		return appstore.Sticker{}, grpcstatus.Error(codes.InvalidArgument, "cache_key is required")
+		return appstore.Sticker{}, app.NewCommandError(app.CommandErrorInvalidArgument, "cache_key is required")
 	}
 	return c.ensureStickerFile(ctx, cacheKey, false)
 }
@@ -130,12 +128,12 @@ func (c *Client) DownloadSticker(ctx context.Context, cacheKey string) (appstore
 func (c *Client) SetStickerPackInstalled(ctx context.Context, packID string, installed bool) (appstore.StickerPack, error) {
 	packID = strings.TrimSpace(packID)
 	if packID == "" {
-		return appstore.StickerPack{}, grpcstatus.Error(codes.InvalidArgument, "pack_id is required")
+		return appstore.StickerPack{}, app.NewCommandError(app.CommandErrorInvalidArgument, "pack_id is required")
 	}
 	if _, ok, err := c.store.GetStickerPack(ctx, packID); err != nil {
 		return appstore.StickerPack{}, err
 	} else if !ok {
-		return appstore.StickerPack{}, grpcstatus.Error(codes.NotFound, "sticker pack not found")
+		return appstore.StickerPack{}, app.NewCommandError(app.CommandErrorNotFound, "sticker pack not found")
 	}
 	if err := c.store.SetStickerPackInstalled(ctx, packID, installed, time.Now()); err != nil {
 		return appstore.StickerPack{}, err
@@ -327,11 +325,11 @@ func (c *Client) downloadTrayImage(ctx context.Context, trayDir, imageID string)
 func (c *Client) fetchStickerPackContents(ctx context.Context, packID string) error {
 	client := c.currentClient()
 	if client == nil {
-		return grpcstatus.Error(codes.Unavailable, "WhatsApp client is not initialized")
+		return app.NewCommandError(app.CommandErrorNotConnected, "WhatsApp client is not initialized")
 	}
 	pack, err := client.FetchStickerPack(ctx, packID)
 	if err != nil {
-		return grpcstatus.Errorf(codes.Unavailable, "fetch sticker pack: %v", err)
+		return app.NewCommandError(app.CommandErrorNotConnected, "fetch sticker pack: %v", err)
 	}
 	if err := c.store.ClearPackStickerMembership(ctx, packID); err != nil {
 		return err
@@ -445,7 +443,7 @@ func (c *Client) ensureStickerFileLocked(ctx context.Context, cacheKey string, n
 		return appstore.Sticker{}, err
 	}
 	if !ok {
-		return appstore.Sticker{}, grpcstatus.Error(codes.NotFound, "sticker not found")
+		return appstore.Sticker{}, app.NewCommandError(app.CommandErrorNotFound, "sticker not found")
 	}
 
 	isLottie := isWhatsAppAnimatedSticker(sticker.MimeType)
@@ -463,16 +461,16 @@ func (c *Client) ensureStickerFileLocked(ctx context.Context, cacheKey string, n
 	}
 
 	if len(sticker.StickerPayload) == 0 {
-		return appstore.Sticker{}, grpcstatus.Error(codes.FailedPrecondition, "sticker has no download metadata")
+		return appstore.Sticker{}, app.NewCommandError(app.CommandErrorRejected, "sticker has no download metadata")
 	}
 	var stickerMsg waE2E.StickerMessage
 	if err := proto.Unmarshal(sticker.StickerPayload, &stickerMsg); err != nil {
-		return appstore.Sticker{}, grpcstatus.Errorf(codes.Internal, "decode sticker metadata: %v", err)
+		return appstore.Sticker{}, app.NewCommandError(app.CommandErrorInternal, "decode sticker metadata: %v", err)
 	}
 
 	client := c.currentClient()
 	if client == nil || !client.IsConnected() {
-		return appstore.Sticker{}, grpcstatus.Error(codes.Unavailable, "WhatsApp is not connected")
+		return appstore.Sticker{}, app.NewCommandError(app.CommandErrorNotConnected, "WhatsApp is not connected")
 	}
 
 	c.stickerDownloadSem <- struct{}{}
@@ -509,12 +507,12 @@ func (c *Client) ensureStickerFileLocked(ctx context.Context, cacheKey string, n
 		// path can never be refreshed. Report it as non-retryable so the client
 		// marks the tile unavailable instead of hammering the dead path.
 		if staleMediaDownloadError(err) {
-			return appstore.Sticker{}, grpcstatus.Errorf(codes.NotFound, "sticker media is no longer available: %v", err)
+			return appstore.Sticker{}, app.NewCommandError(app.CommandErrorNotFound, "sticker media is no longer available: %v", err)
 		}
-		return appstore.Sticker{}, grpcstatus.Errorf(codes.Unavailable, "download sticker: %v", err)
+		return appstore.Sticker{}, app.NewCommandError(app.CommandErrorNotConnected, "download sticker: %v", err)
 	}
 	if len(data) == 0 || len(data) > maxOutboundMediaBytes {
-		return appstore.Sticker{}, grpcstatus.Error(codes.ResourceExhausted, "sticker file size out of range")
+		return appstore.Sticker{}, app.NewCommandError(app.CommandErrorRejected, "sticker file size out of range")
 	}
 
 	// Canonicalize identity on the plaintext hash so favorites merge with the
@@ -530,13 +528,13 @@ func (c *Client) ensureStickerFileLocked(ctx context.Context, cacheKey string, n
 
 	stickerDir := filepath.Join(c.paths.MediaCacheDir, "stickers")
 	if err := os.MkdirAll(stickerDir, 0o700); err != nil {
-		return appstore.Sticker{}, grpcstatus.Errorf(codes.Internal, "create sticker cache directory: %v", err)
+		return appstore.Sticker{}, app.NewCommandError(app.CommandErrorInternal, "create sticker cache directory: %v", err)
 	}
 
 	localPath := filepath.Join(stickerDir, canonicalKey+mediaExtension(sticker.MimeType))
 	archivePath := sticker.ArchivePath
 	if err := writeFileAtomic(localPath, data, 0o600); err != nil {
-		return appstore.Sticker{}, grpcstatus.Errorf(codes.Internal, "write sticker cache file: %v", err)
+		return appstore.Sticker{}, app.NewCommandError(app.CommandErrorInternal, "write sticker cache file: %v", err)
 	}
 	// WhatsApp's library metadata can't tell an animated WebP from a static one
 	// (both are image/webp with no animation flag), so detect it from the bytes
@@ -625,14 +623,14 @@ func fileLooksAnimatedWebP(path string) bool {
 func (c *Client) SendSticker(ctx context.Context, chatID, cacheKey, replyToMessageID string) (appstore.SavedTextMessage, error) {
 	client := c.currentClient()
 	if client == nil {
-		return appstore.SavedTextMessage{}, grpcstatus.Error(codes.Unavailable, "WhatsApp client is not initialized")
+		return appstore.SavedTextMessage{}, app.NewCommandError(app.CommandErrorNotConnected, "WhatsApp client is not initialized")
 	}
 	if client.Store.ID == nil {
-		return appstore.SavedTextMessage{}, grpcstatus.Error(codes.FailedPrecondition, "WhatsApp session is not logged in")
+		return appstore.SavedTextMessage{}, app.NewCommandError(app.CommandErrorNotLoggedIn, "WhatsApp session is not logged in")
 	}
 	cacheKey = strings.TrimSpace(cacheKey)
 	if cacheKey == "" {
-		return appstore.SavedTextMessage{}, grpcstatus.Error(codes.InvalidArgument, "cache_key is required")
+		return appstore.SavedTextMessage{}, app.NewCommandError(app.CommandErrorInvalidArgument, "cache_key is required")
 	}
 
 	sticker, err := c.ensureStickerFile(ctx, cacheKey, true)
@@ -642,7 +640,7 @@ func (c *Client) SendSticker(ctx context.Context, chatID, cacheKey, replyToMessa
 
 	targetJID, err := types.ParseJID(chatID)
 	if err != nil {
-		return appstore.SavedTextMessage{}, grpcstatus.Errorf(codes.InvalidArgument, "invalid chat_id: %v", err)
+		return appstore.SavedTextMessage{}, app.NewCommandError(app.CommandErrorInvalidArgument, "invalid chat_id: %v", err)
 	}
 	targetJID = c.normalizeJIDForChat(ctx, targetJID)
 	chatID = targetJID.String()
@@ -921,7 +919,7 @@ func favoriteStickerFromAction(action *waSyncAction.StickerAction, encKey string
 func (c *Client) SetStickerFavorite(ctx context.Context, cacheKey, messageID string, favorite bool) (appstore.Sticker, error) {
 	client := c.currentClient()
 	if client == nil || !client.IsLoggedIn() {
-		return appstore.Sticker{}, grpcstatus.Error(codes.Unavailable, "WhatsApp client is not logged in")
+		return appstore.Sticker{}, app.NewCommandError(app.CommandErrorNotLoggedIn, "WhatsApp client is not logged in")
 	}
 
 	cacheKey = strings.TrimSpace(cacheKey)
@@ -940,7 +938,7 @@ func (c *Client) SetStickerFavorite(ctx context.Context, cacheKey, messageID str
 			return err
 		}
 		if msg.MediaKind != appstore.MediaKindSticker {
-			return grpcstatus.Error(codes.InvalidArgument, "message is not a sticker")
+			return app.NewCommandError(app.CommandErrorInvalidArgument, "message is not a sticker")
 		}
 		message = msg
 		haveMessage = true
@@ -958,7 +956,7 @@ func (c *Client) SetStickerFavorite(ctx context.Context, cacheKey, messageID str
 		}
 	}
 	if cacheKey == "" {
-		return appstore.Sticker{}, grpcstatus.Error(codes.InvalidArgument, "sticker could not be identified")
+		return appstore.Sticker{}, app.NewCommandError(app.CommandErrorInvalidArgument, "sticker could not be identified")
 	}
 
 	sticker, ok, err := c.store.GetSticker(ctx, cacheKey)
@@ -975,11 +973,11 @@ func (c *Client) SetStickerFavorite(ctx context.Context, cacheKey, messageID str
 			return appstore.Sticker{}, err
 		}
 		if !haveMessage || len(message.MediaPayload) == 0 {
-			return appstore.Sticker{}, grpcstatus.Error(codes.NotFound, "sticker is not available")
+			return appstore.Sticker{}, app.NewCommandError(app.CommandErrorNotFound, "sticker is not available")
 		}
 		var stickerMsg waE2E.StickerMessage
 		if err := proto.Unmarshal(message.MediaPayload, &stickerMsg); err != nil {
-			return appstore.Sticker{}, grpcstatus.Error(codes.InvalidArgument, "sticker payload is unreadable")
+			return appstore.Sticker{}, app.NewCommandError(app.CommandErrorInvalidArgument, "sticker payload is unreadable")
 		}
 		mimeType := strings.TrimSpace(stickerMsg.GetMimetype())
 		if mimeType == "" {

@@ -11,8 +11,6 @@ import (
 	waWeb "go.mau.fi/whatsmeow/proto/waWeb"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
-	"google.golang.org/grpc/codes"
-	grpcstatus "google.golang.org/grpc/status"
 
 	"whatevrd/internal/app"
 	appstore "whatevrd/internal/store"
@@ -208,17 +206,17 @@ func (c *Client) SendReaction(ctx context.Context, messageID, emoji string) (app
 		return appstore.Message{}, err
 	}
 	if message.IsRevoked {
-		return appstore.Message{}, grpcstatus.Error(codes.FailedPrecondition, "deleted messages cannot be reacted to")
+		return appstore.Message{}, app.NewCommandError(app.CommandErrorRejected, "deleted messages cannot be reacted to")
 	}
 
 	client := c.currentClient()
 	if client == nil || !client.IsLoggedIn() {
-		return appstore.Message{}, grpcstatus.Error(codes.Unavailable, "WhatsApp client is not logged in")
+		return appstore.Message{}, app.NewCommandError(app.CommandErrorNotLoggedIn, "WhatsApp client is not logged in")
 	}
 
 	chatJID, err := types.ParseJID(message.ChatID)
 	if err != nil {
-		return appstore.Message{}, grpcstatus.Errorf(codes.InvalidArgument, "invalid chat_id: %v", err)
+		return appstore.Message{}, app.NewCommandError(app.CommandErrorInvalidArgument, "invalid chat_id: %v", err)
 	}
 
 	// The target message's sender drives the reaction key: empty for our own
@@ -232,7 +230,7 @@ func (c *Client) SendReaction(ctx context.Context, messageID, emoji string) (app
 
 	externalID := types.MessageID(appstore.ExternalMessageID(message.ChatID, message.ID))
 	if _, err := client.SendMessage(ctx, chatJID, client.BuildReaction(chatJID, targetSender, externalID, emoji)); err != nil {
-		return appstore.Message{}, grpcstatus.Errorf(codes.Unknown, "send reaction failed: %v", err)
+		return appstore.Message{}, app.NewCommandError(app.CommandErrorRejected, "send reaction failed: %v", err)
 	}
 
 	updated, chat, changed, err := c.store.SaveReaction(ctx, message.ID, "me", "", emoji, time.Now().Unix(), true)
