@@ -26,8 +26,9 @@ One session = one step. Each session (see `.claude/commands/migrate.md`):
    previous session's notes, open blockers/decisions.
 2. If the next step is `blocked` or `needs-decision`, resolve that first
    (ask the user); otherwise take the **first step not marked `done`**.
-3. If the step is too big for one session, **split it in the table** (e.g.
-   B3 → B3a/B3b) instead of pushing through — then do the first half.
+3. If the step is too big for one session (and really make sure it needs 
+   another session, don't split willy nilly), **split it in the table** 
+   (e.g. B3 → B3a/B3b) instead of pushing through — then do the first half.
 4. Implement only that step. Write/extend tests as part of it.
 5. Verify: `just build`, tests, and the conformance script (once A3 exists)
    must pass; walk the Spirit checklist below.
@@ -77,7 +78,7 @@ Status: `todo` | `doing` | `done` | `blocked` | `needs-decision`
 | B3b | `messages` view — `unread` + `{message_id}` anchors: `anchor_id` subscribe meta, around-anchor (mid-sequence) windows (needs A2 engine support beyond the prefix window) | done | `messages_view.go`: anchored windows reuse A2's prefix engine **unchanged** — the session returns items ordered by *proximity to the anchor* (engine keeps the closest `window` as its prefix), each carrying the ascending timestamp sort key, so `extend` widens the contiguous neighborhood both directions. Reuses store `ListMessagesAround` (balanced split) + `ListMessagesAroundUnread` (resolves oldest-unread anchor from the chat's unread count via `GetChat`); anchor pinned once at `Open` so `anchor_id` never drifts. Message-id anchor not in chat → `not_found`; `unread` with nothing unread degrades to the live edge with no `anchor_id`. `MessageLister` widened (+`ListMessagesAround`/`ListMessagesAroundUnread`/`GetChat`). Store + raw-socket tests; hand-verified over socket (anchor_id meta, balanced window, ascending render keys, bidirectional extend, not_found). Anchored `extend` is **symmetric** here; **B3c** makes it directional (Decision log 2026-07-07). |
 | B3c | `messages` directional `extend`: a **required** `direction` (`older`\|`newer`) on `extend`; anchored windows grow one frontier at a time (supersedes B3b's symmetric growth); `direction:"newer"` on a `latest`-anchored window errors | done | `extend` now requires `direction` (`older`\|`newer`) — missing/other → `invalid_params`. New engine capability `DirectionalSession` (`view.go`): when Open returns one, the engine hands it window ownership — `extend` routes `(direction,count)` to `ExtendWindow`, `Items(0)` is the whole current window (no prefix trim), `Exhausted()` (per the frontier last extended) drives `ready`. `messagesSession` split into `latestMessagesSession` (unchanged prefix window) and `anchoredMessagesSession` (DirectionalSession: independent `olderReach`/`newerReach`; older frontier via `ListMessages` before the anchor, newer via new store `ListMessagesAfter`, anchor via `GetMessage`). Prefix/live-edge windows (latest messages, chats, object views) reject `newer` in `subscription.validateExtend` — **resolves the open sub-question**: there is no per-view special-casing, a prefix window's newer edge is simply the live edge. Store `ListMessagesAfter` + `MessageLister` (+`ListMessagesAfter`/`GetMessage`); store + protocol + conformance tests; hand-verified over socket (one-frontier growth, per-direction exhaustion, newer-on-latest + missing-direction errors). PROTOCOL.md amended to match (2026-07-07): `extend` verb row → `sub, count, direction`, and the Windows section rewritten for directional extend + Model A. | Planned in the B3b discussion (Harsh); required direction, newer-on-`latest` is an error. Engine-adjacent: the session must track older-reach + newer-reach independently — today `Items(max)` receives a single count, so `handleExtend`/the A2 engine must route direction (or hand window ownership to the session). `direction:"newer"` on `latest` → `invalid_params` (the newer edge *is* the live edge; new messages arrive unsolicited). Amends PROTOCOL.md `extend` verb row (`sub, count` → `sub, count, direction`; direction required) — sign-off at implementation. **Open sub-question to settle here:** what a required `direction` means for prefix/collection views (`chats`, `starred`, blocklist…) that have no older/newer axis. Independent of B4–B7; sequence anytime. |
 | B4a | `typing` view: global unwindowed collection, one item per composing chat, live upsert/remove | done | `typing_view.go` (typingView/typingSession over `DaemonEventChatPresence`; item id = chat_id, `senders` [jid+name]). Daemon gained `ComposingChats()` snapshot for the initial fill (TTL-filtered). Discriminator: composing events carry a `SenderID`, availability events never do — a missing SenderID is how the view ignores availability churn (the same overloaded event feeds B4b's `presence`). Mirrors the daemon's single-slot presence model (≤1 sender per chat today; `senders` is a list for forward-compat). Sender names via new `SenderDisplayer` (added to `DaemonStore`; *store.DB.SenderDisplay). Store + raw-socket tests; hand-verified over socat (initial fill+ready, live upsert, availability event ignored, stop→remove). |
-| B4b | `presence` view: per-chat, one item per participant, subscription-driven upstream WA presence subscribe, availability/last_seen | todo | Subscribing triggers `Client.SubscribeChatPresence` upstream (+ replay via `PublishCachedChatPresence`); availability events are the SenderID-empty `DaemonEventChatPresence` (the counterpart to B4a's discriminator). Needs an actions interface on the protocol server for the upstream subscribe. |
+| B4b | `presence` view: per-chat, one item per participant, subscription-driven upstream WA presence subscribe, availability/last_seen | done | `presence_view.go` (presenceView/presenceSession over the SenderID-empty half of `DaemonEventChatPresence` — the counterpart to B4a's discriminator; item id = participant jid, == chat_id for a direct chat, `availability`/`last_seen_unix`). New `PresenceActions` interface (first view that *drives* upstream, not just reads store/events): subscribing calls `Client.SubscribeChatPresence` — `RegisterDaemonViews` gained an `actions` param (main passes `waClient`, fixture/tests pass nil). Initial fill from a new **synchronous** daemon snapshot `ChatAvailability` (mirrors B4a's `ComposingChats`) instead of the async `PublishCachedChatPresence` replay the plan named — cleaner, ready reflects cached state, no re-broadcast to unrelated subs (Decision log 2026-07-07). last_seen carried only while offline. Store-free raw-socket tests; hand-verified over socat (empty→ready + upstream subscribe, live online/offline upserts, cached initial fill before ready, composing-event ignored, other-chat filtered, missing chat_id → invalid_params). |
 | B4c | `receipts` view: per-message, one item per participant, live re-derive on status updates | todo | Re-derives `Client.GetMessageInfo` (store `ListMessageReceipts`) keyed by `message_id`; invalidates on `DaemonEventMessageUpdated`/`MessageDeleted` filtered to the message. Needs a GetMessageInfo actions interface. |
 | B5 | `self`, `contact`, `group`, `group_members` — two-phase local→network upserts | todo | |
 | B6 | `privacy`, `preferences`, `blocklist`, `starred`, `pinned` | todo | |
@@ -214,6 +215,25 @@ _None._
   a stable deterministic key keeps upserts idempotent). New daemon accessor
   `ComposingChats()` supplies the initial fill, TTL-filtering stale entries
   whose expiry timer has not yet fired.
+- 2026-07-07 — B4b implementation readings (PROTOCOL.md unchanged, flag if you
+  disagree): (1) The plan named `PublishCachedChatPresence` for the initial
+  fill, but that replays cached presence *asynchronously* by re-broadcasting to
+  every daemon-event subscriber. Instead the view reads a new **synchronous**
+  daemon accessor `ChatAvailability(chatID)` at Open (the availability-half twin
+  of B4a's `ComposingChats()`): the `ready` then honestly reflects any cached
+  state, and no redundant upserts spray other presence subs. The upstream
+  `SubscribeChatPresence` (the actual *point* of subscribing — availability only
+  flows on request) is still called; only the replay mechanism differs.
+  (2) `presence` is the first view that drives an upstream action, so
+  `RegisterDaemonViews` gained an `actions PresenceActions` param; a nil actions
+  (fixture/tests, and B4b-irrelevant callers) simply skips the upstream call.
+  B4c will widen this actions seam for `GetMessageInfo`. (3) The daemon tracks a
+  single availability slot per chat and availability is an individual-only WA
+  signal (group presence subscribe is a no-op), so the view carries ≤1 item,
+  keyed by the participant jid (== chat_id for a direct chat); modelled as a
+  keyed collection so group availability needs no wire change. (4) `last_seen` is
+  emitted only while `offline` — an online contact's event carries last_seen 0
+  and the frontend renders "online" regardless.
 - 2026-07-07 — **Problem 2 (`extend` direction) resolved** (decided by Harsh);
   **supersedes** the symmetric-growth reading in the 2026-07-06 B3b entry
   (item 2). `extend` gains a **required** `direction` field (`older`|`newer`).

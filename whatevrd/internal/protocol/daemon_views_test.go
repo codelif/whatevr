@@ -64,7 +64,7 @@ func (f *fakePendingCounter) set(count int) {
 func TestConnectionViewInitialAndLiveUpdates(t *testing.T) {
 	socketPath, server := startTestServer(t)
 	pending := &fakePendingCounter{count: 2}
-	RegisterDaemonViews(server, server.daemon, pending)
+	RegisterDaemonViews(server, server.daemon, pending, nil)
 
 	c := dialTest(t, socketPath)
 	c.hello()
@@ -96,7 +96,7 @@ func TestConnectionViewInitialAndLiveUpdates(t *testing.T) {
 func TestLoginViewStateQRAndExpiry(t *testing.T) {
 	socketPath, server := startTestServer(t)
 	server.daemon.SetStateDetail(app.StateNeedLogin, "scan a code")
-	RegisterDaemonViews(server, server.daemon, nil)
+	RegisterDaemonViews(server, server.daemon, nil, nil)
 
 	c := dialTest(t, socketPath)
 	c.hello()
@@ -145,7 +145,7 @@ func TestSyncViewInitialAndLiveProgress(t *testing.T) {
 		ProcessedConversations: 2,
 		ProcessedMessages:      50,
 	})
-	RegisterDaemonViews(server, server.daemon, nil)
+	RegisterDaemonViews(server, server.daemon, nil, nil)
 
 	c := dialTest(t, socketPath)
 	c.hello()

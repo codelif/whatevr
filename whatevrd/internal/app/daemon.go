@@ -768,6 +768,22 @@ func (d *Daemon) ComposingChats() []ComposingChat {
 	return out
 }
 
+// ChatAvailability snapshots the cached availability/last-seen for a chat, for
+// the `presence` view's initial fill. ok is false until WhatsApp has delivered
+// availability for the chat (which only happens once something has subscribed
+// to its presence upstream), mirroring PublishCachedChatPresence's guard. The
+// composing half of the presence state belongs to the `typing` view; this
+// accessor is the availability half's counterpart to ComposingChats.
+func (d *Daemon) ChatAvailability(chatID string) (ContactAvailability, int64, bool) {
+	d.subMu.Lock()
+	defer d.subMu.Unlock()
+	state, ok := d.presenceByChatID[chatID]
+	if !ok || (state.Availability == ContactAvailabilityUnspecified && state.LastSeenUnix == 0) {
+		return ContactAvailabilityUnspecified, 0, false
+	}
+	return state.Availability, state.LastSeenUnix, true
+}
+
 func (d *Daemon) PublishMediaDownloadChanged(messageID, chatID string, downloading bool, errorText string, receivedBytes, totalBytes uint64) {
 	evt := MediaDownloadEvent{MessageID: messageID, ChatID: chatID, Downloading: downloading, ErrorText: errorText, ReceivedBytes: receivedBytes, TotalBytes: totalBytes}
 	d.subMu.Lock()

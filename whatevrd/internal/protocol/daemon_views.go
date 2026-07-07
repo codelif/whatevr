@@ -28,13 +28,17 @@ type DaemonStore interface {
 }
 
 // RegisterDaemonViews registers the daemon-owned views from PROTOCOL.md.
-func RegisterDaemonViews(s *Server, daemon *app.Daemon, store DaemonStore) {
+// actions is the upstream-driving side some views need (e.g. `presence`
+// subscribing to WhatsApp presence); tests and the fixture may pass nil when the
+// views they exercise do not touch it.
+func RegisterDaemonViews(s *Server, daemon *app.Daemon, store DaemonStore, actions PresenceActions) {
 	s.RegisterView("connection", connectionView{daemon: daemon, pending: store})
 	s.RegisterView("sync", syncView{daemon: daemon})
 	s.RegisterView("login", loginView{daemon: daemon})
 	s.RegisterView("chats", chatsView{daemon: daemon, lister: store})
 	s.RegisterView("messages", messagesView{daemon: daemon, lister: store})
 	s.RegisterView("typing", typingView{daemon: daemon, resolver: store})
+	s.RegisterView("presence", presenceView{daemon: daemon, actions: actions})
 }
 
 type connectionView struct {
