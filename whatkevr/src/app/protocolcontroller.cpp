@@ -16,9 +16,11 @@
 
 #include <utility>
 
+#include "collectionviewmodel.h"
 #include "objectviewmodel.h"
 #include "protocolclient.h"
 
+using whatevr::proto::CollectionViewModel;
 using whatevr::proto::ObjectViewModel;
 using whatevr::proto::ProtocolClient;
 using whatevr::proto::ProtocolError;
@@ -87,6 +89,12 @@ ProtocolController::ProtocolController(QString socketPath, QObject *parent)
     connect(m_connectionModel, &ObjectViewModel::valueChanged, this, &ProtocolController::onConnectionValueChanged);
     connect(m_loginModel, &ObjectViewModel::valueChanged, this, &ProtocolController::onLoginValueChanged);
 
+    // The chat-list model (D2b1). loading/empty are derived from its ready/count,
+    // so fan those into chatsChanged for the QML placeholder bindings.
+    m_chatsModel = new CollectionViewModel(this);
+    connect(m_chatsModel, &CollectionViewModel::readyChanged, this, &ProtocolController::chatsChanged);
+    connect(m_chatsModel, &CollectionViewModel::countChanged, this, &ProtocolController::chatsChanged);
+
     m_startupGraceTimer = new QTimer(this);
     m_startupGraceTimer->setSingleShot(true);
     m_startupGraceTimer->setInterval(kStartupGraceMs);
@@ -104,13 +112,15 @@ ProtocolController::ProtocolController(QString socketPath, QObject *parent)
 
 ProtocolController::~ProtocolController()
 {
-    // Tear the subscriptions down while their sinks (the object view models) are
-    // still alive, so no late event is routed to a dangling sink during member
+    // Tear the subscriptions down while their sinks (the view models) are still
+    // alive, so no late event is routed to a dangling sink during member
     // destruction.
     delete m_connectionSub;
     delete m_loginSub;
+    delete m_chatsSub;
     m_connectionSub = nullptr;
     m_loginSub = nullptr;
+    m_chatsSub = nullptr;
     if (m_client) {
         m_client->stop();
     }
@@ -147,7 +157,103 @@ void ProtocolController::start()
     // reports state otherwise).
     m_connectionSub = m_client->subscribe(QStringLiteral("connection"), {}, m_connectionModel);
     m_loginSub = m_client->subscribe(QStringLiteral("login"), {}, m_loginModel);
+    subscribeChats();
     m_client->start();
+}
+
+// --- chat list (D2b1) ------------------------------------------------------
+
+QString ProtocolController::chatFilterName() const
+{
+    switch (m_chatFilter) {
+    case 1:
+        return QStringLiteral("direct");
+    case 2:
+        return QStringLiteral("groups");
+    default:
+        return QStringLiteral("all");
+    }
+}
+
+void ProtocolController::subscribeChats()
+{
+    // A filter switch is a fresh subscription with new params; drop the old rows
+    // first so the list never briefly shows the previous filter (rule 1: the
+    // frontend does no filtering itself — the daemon returns exactly the window).
+    delete m_chatsSub;
+    m_chatsSub = nullptr;
+    m_chatsModel->onReset();
+
+    // Archived chats are a separate subscription (`archived: true`), deferred to
+    // D2b2; this list is the active chats for the selected filter.
+    const QJsonObject params{
+        {QStringLiteral("filter"), chatFilterName()},
+        {QStringLiteral("archived"), false},
+    };
+    m_chatsSub = m_client->subscribe(QStringLiteral("chats"), params, m_chatsModel);
+}
+
+QAbstractItemModel *ProtocolController::chatsModel() const
+{
+    return m_chatsModel;
+}
+
+void ProtocolController::setChatFilter(int filter)
+{
+    if (filter < 0 || filter > 2) {
+        filter = 0;
+    }
+    if (filter == m_chatFilter) {
+        return;
+    }
+    m_chatFilter = filter;
+    // Only resubscribe once started (the connection/chats subs exist); before
+    // start() the new filter is picked up by the initial subscribeChats().
+    if (m_chatsSub) {
+        subscribeChats();
+    }
+    Q_EMIT chatFilterChanged();
+    Q_EMIT chatsChanged();
+}
+
+bool ProtocolController::chatsLoading() const
+{
+    // Subscribed but the initial window hasn't landed yet.
+    return !m_chatsModel->isReady();
+}
+
+bool ProtocolController::chatsEmpty() const
+{
+    return m_chatsModel->count() == 0;
+}
+
+void ProtocolController::setChatPinned(const QString &chatId, bool pinned)
+{
+    if (chatId.isEmpty()) {
+        return;
+    }
+    m_client->request(QStringLiteral("chat.pin"),
+                      {{QStringLiteral("chat_id"), chatId}, {QStringLiteral("pinned"), pinned}});
+}
+
+void ProtocolController::setChatArchived(const QString &chatId, bool archived)
+{
+    if (chatId.isEmpty()) {
+        return;
+    }
+    m_client->request(QStringLiteral("chat.archive"),
+                      {{QStringLiteral("chat_id"), chatId}, {QStringLiteral("archived"), archived}});
+}
+
+void ProtocolController::setChatMuted(const QString &chatId, bool muted, int durationSecs)
+{
+    if (chatId.isEmpty()) {
+        return;
+    }
+    m_client->request(QStringLiteral("chat.mute"),
+                      {{QStringLiteral("chat_id"), chatId},
+                       {QStringLiteral("muted"), muted},
+                       {QStringLiteral("duration_secs"), durationSecs}});
 }
 
 // --- transport phase ------------------------------------------------------
