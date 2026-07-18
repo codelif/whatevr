@@ -12,6 +12,7 @@
 #include <KLocalizedString>
 
 #include "app/appcontroller.h"
+#include "app/protocolcontroller.h"
 #include "app/settings.h"
 #include "version.h"
 
@@ -117,6 +118,13 @@ int main(int argc, char *argv[])
     AppController appController;
     AppController::setInstance(&appController);
 
+    // The whatevr-protocol connection lifecycle (D2a onward). Runs alongside the
+    // still-gRPC AppController during the migration: it drives the status/login/
+    // splash screens and the shell-visibility gate, while AppController keeps
+    // serving the not-yet-ported chat shell until the D-phase port completes.
+    ProtocolController protocolController;
+    ProtocolController::setInstance(&protocolController);
+
     // Single-instance: a second launch (e.g. clicking a notification, which runs
     // `whatkevr whatevr://chat/<id>` via the desktop scheme handler) forwards its
     // command line to the running instance through activateRequested instead of
@@ -139,6 +147,10 @@ int main(int argc, char *argv[])
         Qt::QueuedConnection);
 
     engine.loadFromModule(QStringLiteral("Whatevr"), QStringLiteral("Main"));
+
+    // Begin connecting the protocol client (async; signals arrive once the event
+    // loop below is running).
+    protocolController.start();
 
     // Assert the saved color scheme onto the live palette. The org.kde.desktop
     // platform integration resets qApp's palette to the *system* scheme when the

@@ -85,13 +85,13 @@ Kirigami.ApplicationWindow {
         // Initial pre-status window: show a neutral splash, not the daemon-status
         // page, so a normal sub-second connect doesn't flash "Connecting to
         // whatevrd" (which reads as the not-running screen).
-        if (Whatevr.AppController.starting) {
+        if (Whatevr.ProtocolController.starting) {
             return "starting"
         }
-        if (Whatevr.AppController.loginRequired) {
+        if (Whatevr.ProtocolController.loginRequired) {
             return "login"
         }
-        if (!Whatevr.AppController.shellVisible) {
+        if (!Whatevr.ProtocolController.shellVisible) {
             return "status"
         }
         return "chat"
@@ -414,17 +414,23 @@ Kirigami.ApplicationWindow {
         rebuildPageStack()
     }
 
+    // Shell routing follows the protocol connection lifecycle (D2a): its
+    // connection/login views decide splash/login/status/chat.
     Connections {
-        target: Whatevr.AppController
+        target: Whatevr.ProtocolController
 
         function onStateChanged() {
             // Coalesce bursts of state changes into one rebuild per frame.
             Qt.callLater(root.rebuildPageStack)
             // Logging out returns to the login screen; don't leave settings open.
-            if (Whatevr.AppController.loginRequired) {
+            if (Whatevr.ProtocolController.loginRequired) {
                 settingsView.close()
             }
         }
+    }
+
+    Connections {
+        target: Whatevr.AppController
 
         function onActivateWindowRequested() {
             root.activateWindow()

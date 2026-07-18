@@ -48,10 +48,10 @@ Kirigami.ScrollablePage {
 
         Kirigami.InlineMessage {
             Layout.fillWidth: true
-            visible: Whatevr.AppController.bannerText.length > 0
+            visible: Whatevr.ProtocolController.bannerText.length > 0
             type: Kirigami.MessageType.Warning
             showCloseButton: false
-            text: Whatevr.AppController.bannerText
+            text: Whatevr.ProtocolController.bannerText
         }
 
         Item {
@@ -113,13 +113,13 @@ Kirigami.ScrollablePage {
                     Kirigami.Heading {
                         Layout.fillWidth: true
                         level: 1
-                        text: Whatevr.AppController.statusTitle
+                        text: Whatevr.ProtocolController.statusTitle
                         wrapMode: Text.WordWrap
                     }
 
                     Label {
                         Layout.fillWidth: true
-                        text: Whatevr.AppController.statusText
+                        text: Whatevr.ProtocolController.statusText
                         wrapMode: Text.WordWrap
                         color: Kirigami.Theme.disabledTextColor
                     }
@@ -191,8 +191,8 @@ Kirigami.ScrollablePage {
 
             Label {
                 Layout.fillWidth: true
-                visible: Whatevr.AppController.detailText.length > 0
-                text: Whatevr.AppController.detailText
+                visible: Whatevr.ProtocolController.detailText.length > 0
+                text: Whatevr.ProtocolController.detailText
                 wrapMode: Text.WrapAnywhere
                 textFormat: Text.PlainText
                 font.pointSize: Kirigami.Theme.smallFont.pointSize
@@ -208,12 +208,12 @@ Kirigami.ScrollablePage {
                 Layout.topMargin: Kirigami.Units.smallSpacing
 
                 Button {
-                    text: Whatevr.AppController.primaryActionText
-                    enabled: Whatevr.AppController.primaryActionEnabled
-                    icon.name: Whatevr.AppController.primaryActionText === Whatevr.I18n.i18n("Reconnect")
+                    text: Whatevr.ProtocolController.primaryActionText
+                    enabled: Whatevr.ProtocolController.primaryActionEnabled
+                    icon.name: Whatevr.ProtocolController.primaryActionText === Whatevr.I18n.i18n("Reconnect")
                                ? "network-connect-symbolic"
                                : "view-refresh-symbolic"
-                    onClicked: Whatevr.AppController.triggerPrimaryAction()
+                    onClicked: Whatevr.ProtocolController.triggerPrimaryAction()
                 }
 
                 Item {
@@ -272,36 +272,36 @@ Kirigami.ScrollablePage {
                         * Math.max(1, Math.ceil(targetPx / Math.max(1, implicitWidth)))
 
                     anchors.centerIn: parent
-                    visible: Whatevr.AppController.qrAvailable
+                    visible: Whatevr.ProtocolController.qrAvailable
                     width: renderSize
                     height: renderSize
                     transformOrigin: Item.Center
                     scale: targetPx / renderSize
                     smooth: false
                     barcodeType: Prison.Barcode.QRCode
-                    content: Whatevr.AppController.qrCode
+                    content: Whatevr.ProtocolController.qrCode
                     foregroundColor: "black"
                     backgroundColor: "white"
                 }
 
                 BusyIndicator {
                     anchors.centerIn: parent
-                    running: !Whatevr.AppController.qrAvailable
+                    running: !Whatevr.ProtocolController.qrAvailable
                     visible: running
                 }
             }
 
             StatusChip {
                 Layout.alignment: Qt.AlignHCenter
-                visible: Whatevr.AppController.qrAvailable && Whatevr.AppController.qrExpiryText.length > 0
-                text: Whatevr.AppController.qrExpiryText
+                visible: Whatevr.ProtocolController.qrAvailable && Whatevr.ProtocolController.qrExpiryText.length > 0
+                text: Whatevr.ProtocolController.qrExpiryText
                 foregroundColor: Kirigami.Theme.neutralTextColor
                 backgroundColor: Qt.alpha(Kirigami.Theme.neutralTextColor, 0.14)
             }
 
             Label {
                 Layout.alignment: Qt.AlignHCenter
-                visible: !Whatevr.AppController.qrAvailable
+                visible: !Whatevr.ProtocolController.qrAvailable
                 text: Whatevr.I18n.i18nc("@info", "Waiting for a fresh QR code")
                 color: Kirigami.Theme.disabledTextColor
             }

@@ -19,3 +19,32 @@ target_link_libraries(tst_protocolcore PRIVATE
 )
 
 add_test(NAME tst_protocolcore COMMAND tst_protocolcore)
+
+# ProtocolController tests (D2a). The controller derives the status/login gate
+# from the connection/login object views, so this target pulls in the controller
+# plus the protocol client + object view model, and the libraries the controller
+# touches (Gui for the clipboard seam, Qml for the QML singleton macros, I18n for
+# the user-facing strings). Runs headless (QTEST_GUILESS_MAIN).
+qt_add_executable(tst_protocolcontroller
+    tst_protocolcontroller.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/app/protocolcontroller.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/app/protocolcontroller.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/protocol/protocolclient.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/protocol/objectviewmodel.cpp
+)
+
+target_include_directories(tst_protocolcontroller PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/app
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/protocol
+)
+
+target_link_libraries(tst_protocolcontroller PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Network
+    Qt6::Qml
+    Qt6::Test
+    KF6::I18n
+)
+
+add_test(NAME tst_protocolcontroller COMMAND tst_protocolcontroller)

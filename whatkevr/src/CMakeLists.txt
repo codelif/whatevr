@@ -7,6 +7,8 @@ qt_add_executable(whatkevr
     main.cpp
     app/appcontroller.cpp
     app/appcontroller.h
+    app/protocolcontroller.cpp
+    app/protocolcontroller.h
     app/settings.cpp
     app/settings.h
     app/stickercontroller.cpp
