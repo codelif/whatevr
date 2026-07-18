@@ -21,6 +21,8 @@ qt_add_executable(whatkevr
     models/emojimodel.h
     models/messagelistmodel.cpp
     models/messagelistmodel.h
+    models/protocolmessagemodel.cpp
+    models/protocolmessagemodel.h
     models/starredmessagesmodel.cpp
     models/starredmessagesmodel.h
     models/pinnedmessagesmodel.cpp

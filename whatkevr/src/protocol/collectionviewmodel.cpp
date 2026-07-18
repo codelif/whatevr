@@ -114,13 +114,16 @@ void CollectionViewModel::onUpsert(const QString &sort, const QJsonObject &item)
         return;
     }
 
-    // Sort key changed: the item moves. Compute its destination as if it were
-    // absent, then emit a move (or a same-slot replace when nothing shifts).
-    m_items.removeAt(existing);
-    int dest = lowerBound(next);
+    // Sort key changed: compute its destination as if the existing row were
+    // absent, but do not mutate until beginMoveRows has notified observers.
+    int dest = 0;
+    for (int row = 0; row < m_items.size(); ++row) {
+        if (row != existing && sortsBefore(m_items.at(row), next)) {
+            ++dest;
+        }
+    }
     if (dest == existing) {
-        m_items.insert(dest, next);
-        rebuildIndex(dest);
+        m_items[existing] = next;
         const QModelIndex idx = index(dest);
         Q_EMIT dataChanged(idx, idx, {ItemRole, SortRole});
         return;
@@ -130,6 +133,7 @@ void CollectionViewModel::onUpsert(const QString &sort, const QJsonObject &item)
     // moving downward, the target index is one past the visual landing slot.
     const int moveTo = dest > existing ? dest + 1 : dest;
     beginMoveRows(QModelIndex(), existing, existing, QModelIndex(), moveTo);
+    m_items.removeAt(existing);
     m_items.insert(dest, next);
     endMoveRows();
     rebuildIndex(std::min(existing, dest));
@@ -156,12 +160,12 @@ void CollectionViewModel::onReady(bool exhausted, bool hasExhausted)
     // A `ready` without the flag leaves exhaustion unknown; treat as not
     // exhausted so a frontend never wrongly stops extending.
     const bool nextExhausted = hasExhausted && exhausted;
-    if (m_ready && m_exhausted == nextExhausted) {
-        return;
+    if (!m_ready || m_exhausted != nextExhausted) {
+        m_ready = true;
+        m_exhausted = nextExhausted;
+        Q_EMIT readyChanged();
     }
-    m_ready = true;
-    m_exhausted = nextExhausted;
-    Q_EMIT readyChanged();
+    Q_EMIT readyReceived(nextExhausted);
 }
 
 void CollectionViewModel::onReset()
