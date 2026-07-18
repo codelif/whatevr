@@ -291,6 +291,11 @@ func (c *Client) resetClient(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// Layer the daemon message store under whatsmeow's retry buffer so retry
+	// receipts can be answered even after the buffer's 7-day retention.
+	if device.EventBuffer != nil {
+		device.EventBuffer = &retryFallbackBuffer{EventBuffer: device.EventBuffer, client: c}
+	}
 
 	client := whatsmeow.NewClient(device, c.log.Sub("Client"))
 	client.BackgroundEventCtx = ctx
