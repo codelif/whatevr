@@ -52,6 +52,37 @@ QString formatQrExpiry(qint64 expiresAtUnix)
     const qint64 minutes = (secondsLeft + 59) / 60;
     return i18ncp("@info countdown", "Expires in %1 minute", "Expires in %1 minutes", minutes);
 }
+
+// Human label for a history-sync type (the `sync` view's `type` string). Mirrors
+// AppController::syncTypeLabel so the strip reads identically on either stack.
+QString syncTypeLabel(const QString &type)
+{
+    if (type == QLatin1String("initial_bootstrap")) {
+        return i18nc("@label", "Initial history sync");
+    }
+    if (type == QLatin1String("initial_status_v3")) {
+        return i18nc("@label", "Status history sync");
+    }
+    if (type == QLatin1String("full")) {
+        return i18nc("@label", "Full history sync");
+    }
+    if (type == QLatin1String("recent")) {
+        return i18nc("@label", "Recent history sync");
+    }
+    if (type == QLatin1String("push_name")) {
+        return i18nc("@label", "Updating names");
+    }
+    if (type == QLatin1String("non_blocking_data")) {
+        return i18nc("@label", "Syncing background data");
+    }
+    if (type == QLatin1String("on_demand")) {
+        return i18nc("@label", "Loading requested history");
+    }
+    if (type == QLatin1String("offline_catchup")) {
+        return i18nc("@label", "Syncing missed messages");
+    }
+    return i18nc("@label", "Syncing history");
+}
 } // namespace
 
 void ProtocolController::setInstance(ProtocolController *instance)
@@ -95,6 +126,28 @@ ProtocolController::ProtocolController(QString socketPath, QObject *parent)
     connect(m_chatsModel, &CollectionViewModel::readyChanged, this, &ProtocolController::chatsChanged);
     connect(m_chatsModel, &CollectionViewModel::countChanged, this, &ProtocolController::chatsChanged);
 
+    // Archived chats (D2b2): a sibling `chats` collection; archivedCount tracks
+    // its row count for the section header.
+    m_archivedModel = new CollectionViewModel(this);
+    connect(m_archivedModel, &CollectionViewModel::countChanged, this, &ProtocolController::archivedChanged);
+
+    // Typing overlay (D2b2): the global `typing` collection. Any change (a chat
+    // starting/stopping, or a reset) bumps typingRevision so per-row isTyping
+    // bindings re-evaluate.
+    m_typingModel = new CollectionViewModel(this);
+    const auto bumpTyping = [this] {
+        ++m_typingRevision;
+        Q_EMIT typingChanged();
+    };
+    connect(m_typingModel, &CollectionViewModel::countChanged, this, bumpTyping);
+    connect(m_typingModel, &CollectionViewModel::modelReset, this, bumpTyping);
+    connect(m_typingModel, &CollectionViewModel::dataChanged, this, bumpTyping);
+
+    // History-sync strip (D2b2): the `sync` object view; the strip state is
+    // derived from its single item.
+    m_syncModel = new ObjectViewModel(this);
+    connect(m_syncModel, &ObjectViewModel::valueChanged, this, &ProtocolController::recomputeHistorySync);
+
     m_startupGraceTimer = new QTimer(this);
     m_startupGraceTimer->setSingleShot(true);
     m_startupGraceTimer->setInterval(kStartupGraceMs);
@@ -118,9 +171,15 @@ ProtocolController::~ProtocolController()
     delete m_connectionSub;
     delete m_loginSub;
     delete m_chatsSub;
+    delete m_archivedSub;
+    delete m_typingSub;
+    delete m_syncSub;
     m_connectionSub = nullptr;
     m_loginSub = nullptr;
     m_chatsSub = nullptr;
+    m_archivedSub = nullptr;
+    m_typingSub = nullptr;
+    m_syncSub = nullptr;
     if (m_client) {
         m_client->stop();
     }
@@ -158,6 +217,10 @@ void ProtocolController::start()
     m_connectionSub = m_client->subscribe(QStringLiteral("connection"), {}, m_connectionModel);
     m_loginSub = m_client->subscribe(QStringLiteral("login"), {}, m_loginModel);
     subscribeChats();
+    // The typing and sync views are global (unfiltered) and observed for the
+    // whole session, like connection/login.
+    m_typingSub = m_client->subscribe(QStringLiteral("typing"), {}, m_typingModel);
+    m_syncSub = m_client->subscribe(QStringLiteral("sync"), {}, m_syncModel);
     m_client->start();
 }
 
@@ -181,21 +244,45 @@ void ProtocolController::subscribeChats()
     // first so the list never briefly shows the previous filter (rule 1: the
     // frontend does no filtering itself — the daemon returns exactly the window).
     delete m_chatsSub;
+    delete m_archivedSub;
     m_chatsSub = nullptr;
+    m_archivedSub = nullptr;
     m_chatsModel->onReset();
+    m_archivedModel->onReset();
 
-    // Archived chats are a separate subscription (`archived: true`), deferred to
-    // D2b2; this list is the active chats for the selected filter.
-    const QJsonObject params{
-        {QStringLiteral("filter"), chatFilterName()},
-        {QStringLiteral("archived"), false},
-    };
-    m_chatsSub = m_client->subscribe(QStringLiteral("chats"), params, m_chatsModel);
+    // Active and archived are two disjoint `chats` subscriptions; both honour the
+    // selected filter so the archived section narrows with the sidebar the same
+    // way the active list does.
+    m_chatsSub = m_client->subscribe(
+        QStringLiteral("chats"),
+        {{QStringLiteral("filter"), chatFilterName()}, {QStringLiteral("archived"), false}},
+        m_chatsModel);
+    m_archivedSub = m_client->subscribe(
+        QStringLiteral("chats"),
+        {{QStringLiteral("filter"), chatFilterName()}, {QStringLiteral("archived"), true}},
+        m_archivedModel);
 }
 
 QAbstractItemModel *ProtocolController::chatsModel() const
 {
     return m_chatsModel;
+}
+
+QAbstractItemModel *ProtocolController::archivedChatsModel() const
+{
+    return m_archivedModel;
+}
+
+int ProtocolController::archivedCount() const
+{
+    return m_archivedModel->count();
+}
+
+bool ProtocolController::chatTyping(const QString &chatId) const
+{
+    // The typing view is keyed by chat_id; a present row means someone is
+    // composing in that chat.
+    return !chatId.isEmpty() && m_typingModel->indexOfId(chatId) >= 0;
 }
 
 void ProtocolController::setChatFilter(int filter)
@@ -254,6 +341,89 @@ void ProtocolController::setChatMuted(const QString &chatId, bool muted, int dur
                       {{QStringLiteral("chat_id"), chatId},
                        {QStringLiteral("muted"), muted},
                        {QStringLiteral("duration_secs"), durationSecs}});
+}
+
+// --- history-sync strip (D2b2) --------------------------------------------
+
+void ProtocolController::recomputeHistorySync()
+{
+    const QVariantMap item = m_syncModel->value();
+    const QString type = item.value(QStringLiteral("type")).toString();
+    const QString phase = item.value(QStringLiteral("phase")).toString();
+    const bool isComplete = item.value(QStringLiteral("is_complete")).toBool();
+    const int percent = qBound(0, item.value(QStringLiteral("progress_percent")).toInt(), 100);
+
+    // Hidden when there is no active sync (absent/complete) or for on-demand
+    // (per-chat) history, which the conversation view surfaces on its own. This
+    // is a simpler policy than AppController's cross-event cursor: the `sync`
+    // object view already delivers a single current state, so the strip renders
+    // it directly (see the D2b2 note on the dropped type-dedup).
+    const bool visible = m_syncModel->isPresent() && !isComplete && !type.isEmpty()
+        && type != QLatin1String("on_demand");
+
+    const bool wasVisible = m_historySyncVisible;
+    QString title;
+    QString detail;
+    int shownPercent = 0;
+    if (visible) {
+        title = syncTypeLabel(type);
+        // Never let the bar jump backwards within one visible session (a new
+        // chunk restarts low); take the max, seed from the incoming value when
+        // the strip first appears.
+        shownPercent = wasVisible ? qMax(m_historySyncPercent, percent) : percent;
+
+        const auto count = [&item](const char *key) {
+            return item.value(QLatin1String(key)).toInt();
+        };
+        const int msgs = count("processed_messages");
+        const int msgsIn = count("messages_in_chunk");
+        const int convs = count("processed_conversations");
+        const int convsIn = count("conversations_in_chunk");
+        const int chunk = count("chunk_order");
+
+        if (phase == QLatin1String("stalled")) {
+            detail = i18nc("@info", "Sync paused — open WhatsApp on your phone to continue");
+        } else if (type == QLatin1String("offline_catchup")) {
+            const QString messagesText = msgsIn > 0
+                ? i18nc("@info", "%1/%2 messages", msgs, msgsIn)
+                : i18ncp("@info", "%1 message", "%1 messages", msgs);
+            const QString eventsText = convsIn > 0
+                ? i18nc("@info", "%1/%2 events", convs, convsIn)
+                : i18ncp("@info", "%1 event", "%1 events", convs);
+            detail = i18nc("@info", "%1 · %2", messagesText, eventsText);
+        } else {
+            const QString chunkText = chunk > 0 ? i18nc("@info", "Chunk %1", chunk)
+                                                : i18nc("@info", "Processing chunk");
+            if (phase == QLatin1String("queued")) {
+                detail = i18nc("@info", "%1 · Queued", chunkText);
+            } else if (phase == QLatin1String("downloading")) {
+                detail = i18nc("@info", "%1 · Downloading", chunkText);
+            } else {
+                QStringList details;
+                details << chunkText;
+                if (convsIn > 0) {
+                    details << i18nc("@info", "%1/%2 conversations", convs, convsIn);
+                }
+                if (msgsIn > 0) {
+                    details << i18nc("@info", "%1/%2 messages", msgs, msgsIn);
+                }
+                if (details.size() == 1) {
+                    details << i18nc("@info", "Processing");
+                }
+                detail = details.join(i18nc("@info list separator", " · "));
+            }
+        }
+    }
+
+    if (visible == m_historySyncVisible && shownPercent == m_historySyncPercent
+        && title == m_historySyncTitle && detail == m_historySyncDetail) {
+        return;
+    }
+    m_historySyncVisible = visible;
+    m_historySyncPercent = shownPercent;
+    m_historySyncTitle = title;
+    m_historySyncDetail = detail;
+    Q_EMIT historySyncChanged();
 }
 
 // --- transport phase ------------------------------------------------------

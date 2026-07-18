@@ -73,6 +73,23 @@ class ProtocolController final : public QObject
     Q_PROPERTY(bool chatsLoading READ chatsLoading NOTIFY chatsChanged FINAL)
     Q_PROPERTY(bool chatsEmpty READ chatsEmpty NOTIFY chatsChanged FINAL)
 
+    // Archived chats (D2b2): a second `chats` subscription (`archived: true`) for
+    // the collapsible archived section; honours the same filter as the main list.
+    Q_PROPERTY(QAbstractItemModel *archivedChatsModel READ archivedChatsModel CONSTANT FINAL)
+    Q_PROPERTY(int archivedCount READ archivedCount NOTIFY archivedChanged FINAL)
+
+    // Typing overlay (D2b2): the global `typing` view, keyed by chat_id. The
+    // delegate reads chatTyping(chatId); typingRevision bumps on every change so
+    // the binding re-evaluates (a function call alone would not).
+    Q_PROPERTY(int typingRevision READ typingRevision NOTIFY typingChanged FINAL)
+
+    // History-sync strip (D2b2): derived from the `sync` object view. The names
+    // mirror AppController's so the HistorySyncStrip bindings carry over verbatim.
+    Q_PROPERTY(bool historySyncVisible READ historySyncVisible NOTIFY historySyncChanged FINAL)
+    Q_PROPERTY(int historySyncPercent READ historySyncPercent NOTIFY historySyncChanged FINAL)
+    Q_PROPERTY(QString historySyncTitle READ historySyncTitle NOTIFY historySyncChanged FINAL)
+    Q_PROPERTY(QString historySyncDetail READ historySyncDetail NOTIFY historySyncChanged FINAL)
+
 public:
     static void setInstance(ProtocolController *instance);
     static ProtocolController *create(QQmlEngine *qmlEngine, QJSEngine *jsEngine);
@@ -116,6 +133,17 @@ public:
     [[nodiscard]] bool chatsLoading() const;
     [[nodiscard]] bool chatsEmpty() const;
 
+    [[nodiscard]] QAbstractItemModel *archivedChatsModel() const;
+    [[nodiscard]] int archivedCount() const;
+
+    [[nodiscard]] int typingRevision() const { return m_typingRevision; }
+    [[nodiscard]] Q_INVOKABLE bool chatTyping(const QString &chatId) const;
+
+    [[nodiscard]] bool historySyncVisible() const { return m_historySyncVisible; }
+    [[nodiscard]] int historySyncPercent() const { return m_historySyncPercent; }
+    [[nodiscard]] QString historySyncTitle() const { return m_historySyncTitle; }
+    [[nodiscard]] QString historySyncDetail() const { return m_historySyncDetail; }
+
     Q_INVOKABLE void startDaemon();
     Q_INVOKABLE void triggerPrimaryAction();
     Q_INVOKABLE void copyToClipboard(const QString &text);
@@ -135,6 +163,9 @@ Q_SIGNALS:
     void stateChanged();
     void chatFilterChanged();
     void chatsChanged();
+    void archivedChanged();
+    void typingChanged();
+    void historySyncChanged();
 
 private:
     // Transport reachability, independent of the daemon-reported WhatsApp state.
@@ -160,21 +191,38 @@ private:
     void requestReconnect();
     void launchDaemonBinary();
 
-    // (Re)subscribe the `chats` view for the current filter. Clears the model
-    // first so a filter switch never briefly shows the old filter's rows.
+    // (Re)subscribe the `chats` view (active + archived) for the current filter.
+    // Clears the models first so a filter switch never briefly shows the old
+    // filter's rows.
     void subscribeChats();
     // "all" / "direct" / "groups" for the current m_chatFilter (0/1/2).
     [[nodiscard]] QString chatFilterName() const;
+
+    // Recompute the derived history-sync strip state from the `sync` view item.
+    void recomputeHistorySync();
 
     QString m_socketPath;
     whatevr::proto::ProtocolClient *m_client = nullptr;
     whatevr::proto::ObjectViewModel *m_connectionModel = nullptr;
     whatevr::proto::ObjectViewModel *m_loginModel = nullptr;
     whatevr::proto::CollectionViewModel *m_chatsModel = nullptr;
+    whatevr::proto::CollectionViewModel *m_archivedModel = nullptr;
+    whatevr::proto::CollectionViewModel *m_typingModel = nullptr;
+    whatevr::proto::ObjectViewModel *m_syncModel = nullptr;
     whatevr::proto::Subscription *m_connectionSub = nullptr;
     whatevr::proto::Subscription *m_loginSub = nullptr;
     whatevr::proto::Subscription *m_chatsSub = nullptr;
+    whatevr::proto::Subscription *m_archivedSub = nullptr;
+    whatevr::proto::Subscription *m_typingSub = nullptr;
+    whatevr::proto::Subscription *m_syncSub = nullptr;
     int m_chatFilter = 0; // 0 = all, 1 = direct, 2 = groups
+    int m_typingRevision = 0;
+
+    // Derived history-sync strip state (see recomputeHistorySync).
+    bool m_historySyncVisible = false;
+    int m_historySyncPercent = 0;
+    QString m_historySyncTitle;
+    QString m_historySyncDetail;
 
     bool m_clientReady = false;
     bool m_startupGrace = true;

@@ -118,7 +118,7 @@ Kirigami.Page {
 
         HistorySyncStrip {
             Layout.margins: Kirigami.Units.largeSpacing
-            Layout.bottomMargin: Whatevr.AppController.historySyncVisible ? Kirigami.Units.smallSpacing : 0
+            Layout.bottomMargin: Whatevr.ProtocolController.historySyncVisible ? Kirigami.Units.smallSpacing : 0
         }
 
         Kirigami.InlineMessage {
@@ -203,29 +203,81 @@ Kirigami.Page {
                 cacheBuffer: Math.max(0, Math.round(height * 0.3))
                 ScrollBar.vertical: DiscreetScrollBar {}
 
-                // Archived chats sort last (model) and carry chatSection ===
-                // "archived". Only the archived section gets a visible header —
-                // the active section's header collapses to nothing.
-                section.property: "chatSection"
-                section.criteria: ViewSection.FullString
-                section.delegate: Item {
-                    id: sectionHeader
+                // One row shape for both the active list and the archived footer
+                // section. The generic collection model exposes the whole daemon
+                // `chats` row as `model.item` (id/name/preview/unread/pinned/…);
+                // archived-vs-active is just the row's own `archived` flag.
+                Component {
+                    id: chatRowDelegate
 
-                    // ListView assigns "section" to the section delegate as a
-                    // required property (the chatSection role: "archived"/"active").
-                    required property string section
+                    ChatListDelegate {
+                        id: chatDelegate
 
-                    readonly property bool isArchivedSection: section === "archived"
+                        required property var model
+                        readonly property var chat: model.item
+
+                        chatId: String(chat.id || "")
+                        name: String(chat.name || "")
+                        lastMessage: String(chat.preview || "")
+                        lastMessageDirection: root.directionToInt(String(chat.last_message_direction || ""))
+                        lastMessageStatus: root.statusToInt(String(chat.last_message_status || ""))
+                        avatarLocalPath: String(chat.avatar_path || "")
+                        initials: root.initialsFor(String(chat.name || ""))
+                        unreadCount: Number(chat.unread || 0)
+                        isPinned: Boolean(chat.pinned || false)
+                        isArchived: Boolean(chat.archived || false)
+                        isMuted: Boolean(chat.muted || false)
+                        archivedExpanded: chatList.archivedExpanded
+                        // Live "typing…" from the global typing view, keyed by
+                        // chat_id; typingRevision forces the re-check on change.
+                        isTyping: (Whatevr.ProtocolController.typingRevision,
+                                   Whatevr.ProtocolController.chatTyping(chatId))
+                        // Re-read the frontend draft whenever the selection changes
+                        // (leaving a chat is when its composer draft is committed).
+                        // Draft is frontend-only state, still on the gRPC
+                        // AppController until the composer port (D4).
+                        hasDraft: draftText.length > 0
+                        draftText: (Whatevr.AppController.selectedChatId, chatId.length > 0
+                                    ? Whatevr.AppController.chatDraft(chatId) : "")
+                        current: Whatevr.AppController.selectedChatId === chatId
+                        onSelected: id => {
+                            Whatevr.AppController.selectChat(id)
+                            root.chatSelected(id)
+                        }
+                        onPinToggled: (id, pinned) => Whatevr.ProtocolController.setChatPinned(id, pinned)
+                        onContextMenuRequested: (id, pinned, archived, muted, x, y) => {
+                            chatList.contextChatId = id
+                            chatList.contextChatPinned = pinned
+                            chatList.contextChatArchived = archived
+                            chatList.contextChatMuted = muted
+                            // Collapse the hidden mute/unmute row before open() so the
+                            // menu is sized correctly on the first frame (doing it in
+                            // onAboutToShow lands a frame late, leaving a stray scrollbar).
+                            chatContextMenu.refreshMuteItems()
+                            const pos = chatDelegate.mapToItem(chatContextMenu.parent, x, y)
+                            chatContextMenu.x = pos.x
+                            chatContextMenu.y = pos.y
+                            chatContextMenu.open()
+                        }
+                    }
+                }
+
+                delegate: chatRowDelegate
+
+                // The archived chats are a separate `chats` subscription
+                // (`archived: true`); they render in a collapsible footer section
+                // that scrolls with the list. Reusing chatRowDelegate keeps the
+                // rows identical; each archived row collapses to nothing until the
+                // section is expanded (the delegate's own archived-collapse logic).
+                footer: Column {
                     width: chatList.width
-                    height: isArchivedSection ? archivedHeader.implicitHeight : 0
-                    visible: isArchivedSection
 
                     ItemDelegate {
                         id: archivedHeader
 
-                        anchors.fill: parent
-                        visible: sectionHeader.isArchivedSection
-                        implicitHeight: Kirigami.Units.gridUnit * 2.0
+                        width: parent.width
+                        visible: Whatevr.ProtocolController.archivedCount > 0
+                        implicitHeight: visible ? Kirigami.Units.gridUnit * 2.0 : 0
                         padding: 0
                         onClicked: chatList.archivedExpanded = !chatList.archivedExpanded
 
@@ -253,62 +305,16 @@ Kirigami.Page {
                                 Layout.fillWidth: true
                                 text: Whatevr.I18n.i18nc("@title:group chat list section",
                                                          "Archived (%1)",
-                                                         Whatevr.AppController.chatListModel.archivedCount)
+                                                         Whatevr.ProtocolController.archivedCount)
                                 elide: Text.ElideRight
                                 font.bold: true
                             }
                         }
                     }
-                }
 
-                delegate: ChatListDelegate {
-                    id: chatDelegate
-
-                    // The generic collection model exposes the whole daemon row
-                    // as `model.item` (a map); fields are the `chats` view's own
-                    // (id/name/preview/unread/pinned/…). Draft is frontend-only
-                    // presentation state, still owned by the gRPC AppController
-                    // until the composer port (D4). Typing lands in D2b2.
-                    required property var model
-                    readonly property var chat: model.item
-
-                    chatId: String(chat.id || "")
-                    name: String(chat.name || "")
-                    lastMessage: String(chat.preview || "")
-                    lastMessageDirection: root.directionToInt(String(chat.last_message_direction || ""))
-                    lastMessageStatus: root.statusToInt(String(chat.last_message_status || ""))
-                    avatarLocalPath: String(chat.avatar_path || "")
-                    initials: root.initialsFor(String(chat.name || ""))
-                    unreadCount: Number(chat.unread || 0)
-                    isPinned: Boolean(chat.pinned || false)
-                    isArchived: Boolean(chat.archived || false)
-                    isMuted: Boolean(chat.muted || false)
-                    archivedExpanded: chatList.archivedExpanded
-                    isTyping: false
-                    // Re-read the frontend draft whenever the selection changes
-                    // (leaving a chat is when its composer draft is committed).
-                    hasDraft: draftText.length > 0
-                    draftText: (Whatevr.AppController.selectedChatId, chatId.length > 0
-                                ? Whatevr.AppController.chatDraft(chatId) : "")
-                    current: Whatevr.AppController.selectedChatId === chatId
-                    onSelected: id => {
-                        Whatevr.AppController.selectChat(id)
-                        root.chatSelected(id)
-                    }
-                    onPinToggled: (id, pinned) => Whatevr.ProtocolController.setChatPinned(id, pinned)
-                    onContextMenuRequested: (id, pinned, archived, muted, x, y) => {
-                        chatList.contextChatId = id
-                        chatList.contextChatPinned = pinned
-                        chatList.contextChatArchived = archived
-                        chatList.contextChatMuted = muted
-                        // Collapse the hidden mute/unmute row before open() so the
-                        // menu is sized correctly on the first frame (doing it in
-                        // onAboutToShow lands a frame late, leaving a stray scrollbar).
-                        chatContextMenu.refreshMuteItems()
-                        const pos = chatDelegate.mapToItem(chatContextMenu.parent, x, y)
-                        chatContextMenu.x = pos.x
-                        chatContextMenu.y = pos.y
-                        chatContextMenu.open()
+                    Repeater {
+                        model: Whatevr.ProtocolController.archivedChatsModel
+                        delegate: chatRowDelegate
                     }
                 }
 
@@ -439,10 +445,10 @@ Kirigami.Page {
                     width: Math.min(parent.width - Kirigami.Units.largeSpacing * 4,
                                     Kirigami.Units.gridUnit * 16)
                     visible: !Whatevr.ProtocolController.chatsLoading && Whatevr.ProtocolController.chatsEmpty
-                    text: Whatevr.AppController.historySyncVisible
+                    text: Whatevr.ProtocolController.historySyncVisible
                           ? Whatevr.I18n.i18nc("@info", "Syncing your messages…")
                           : Whatevr.I18n.i18nc("@info", "No chats yet")
-                    explanation: Whatevr.AppController.historySyncVisible
+                    explanation: Whatevr.ProtocolController.historySyncVisible
                                  ? Whatevr.I18n.i18nc("@info", "Your chats will appear here in a moment. You can start using them as they arrive.")
                                  : Whatevr.I18n.i18nc("@info", "Chats will appear here as history sync stores them locally.")
                 }

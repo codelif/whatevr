@@ -75,7 +75,9 @@ ItemDelegate {
     // not the chat list.
     readonly property real rowHeightUnits: 4.4
 
-    width: ListView.view ? ListView.view.width : implicitWidth
+    // In the ListView the row spans the view; reused in the archived section's
+    // Repeater (no ListView.view) it falls back to its parent's width.
+    width: ListView.view ? ListView.view.width : (parent ? parent.width : implicitWidth)
     implicitHeight: Kirigami.Units.gridUnit * root.rowHeightUnits
     // Collapse to zero height (not visible:false) so the ListView still counts
     // the row for section grouping and keeps the "Archived" header rendered.

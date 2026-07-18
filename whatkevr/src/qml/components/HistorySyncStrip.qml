@@ -7,7 +7,7 @@ import Whatevr as Whatevr
 Frame {
     id: root
 
-    visible: Whatevr.AppController.historySyncVisible
+    visible: Whatevr.ProtocolController.historySyncVisible
     Layout.fillWidth: true
     padding: Kirigami.Units.largeSpacing
 
@@ -26,13 +26,13 @@ Frame {
 
             Label {
                 Layout.fillWidth: true
-                text: Whatevr.AppController.historySyncTitle
+                text: Whatevr.ProtocolController.historySyncTitle
                 font.weight: Font.DemiBold
                 elide: Text.ElideRight
             }
 
             Label {
-                text: Whatevr.I18n.i18nc("@info", "%1%", Whatevr.AppController.historySyncPercent)
+                text: Whatevr.I18n.i18nc("@info", "%1%", Whatevr.ProtocolController.historySyncPercent)
                 color: Kirigami.Theme.highlightColor
                 font.weight: Font.DemiBold
             }
@@ -42,12 +42,12 @@ Frame {
             Layout.fillWidth: true
             from: 0
             to: 100
-            value: Whatevr.AppController.historySyncPercent
+            value: Whatevr.ProtocolController.historySyncPercent
         }
 
         Label {
             Layout.fillWidth: true
-            text: Whatevr.AppController.historySyncDetail
+            text: Whatevr.ProtocolController.historySyncDetail
             color: Kirigami.Theme.disabledTextColor
             elide: Text.ElideRight
         }
