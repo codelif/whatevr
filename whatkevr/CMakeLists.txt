@@ -76,7 +76,17 @@ endif()
 
 qt_standard_project_setup(REQUIRES ${QT_MIN_VERSION})
 
+# Off by default so `just build` never needs Qt6::Test; enable with
+# -DWHATEVR_BUILD_TESTS=ON to build and run the protocol-core unit tests.
+option(WHATEVR_BUILD_TESTS "Build whatkevr unit tests" OFF)
+
 add_subdirectory(src)
+
+if(WHATEVR_BUILD_TESTS)
+    find_package(Qt6 ${QT_MIN_VERSION} REQUIRED COMPONENTS Test)
+    enable_testing()
+    add_subdirectory(tests)
+endif()
 
 install(FILES data/in.codelif.Whatevr.desktop DESTINATION ${KDE_INSTALL_APPDIR})
 install(FILES data/in.codelif.Whatevr.metainfo.xml DESTINATION ${KDE_INSTALL_METAINFODIR})
