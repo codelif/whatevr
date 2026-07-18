@@ -58,6 +58,7 @@ Grep the daemon log after the recipient shows the placeholder:
 | `Sent retry #N for <chat>/<id> to <sender>` (DEBUG) | We answered. Repeated `#1..#4` with the placeholder still stuck means the recipient cannot decrypt *our re-encryptions either*: a session/identity problem — go to step 4. |
 | `Failed to handle retry receipt …: failed to encrypt message for retry / failed to fetch prekeys / didn't get prekey bundle` | Re-encryption itself failing; usually connectivity or a server-side prekey problem for that device. |
 | `Dropping retry request … internal retry counter is 10` | We gave up on that (sender, message) pair. |
+| `Error decrypting message …: failed to decrypt prekey message: untrusted identity` | The peer's Signal identity changed (they reinstalled/re-registered WhatsApp). **This blocks both directions at once** — their messages fail to decrypt here, and our messages were encrypted for their dead pre-reinstall session, so their phone shows the placeholder. Auto-trust (the default since 2026-07-18) clears the stale identity and self-heals on the next message; it appears as WARN `WhatsApp identity changed for <jid>`. If you opted into strict mode (`WHATEVRD_AUTO_TRUST_IDENTITY=0`) this stays broken until you clear the peer's rows from `whatsmeow_identity_keys`/`whatsmeow_sessions` with the daemon stopped. |
 
 ## 4. Inspect the session store (read-only!)
 
