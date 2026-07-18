@@ -29,6 +29,12 @@ qt_add_executable(whatkevr
     models/stickermodel.h
     models/stickerpackmodel.cpp
     models/stickerpackmodel.h
+    protocol/protocolclient.cpp
+    protocol/protocolclient.h
+    protocol/collectionviewmodel.cpp
+    protocol/collectionviewmodel.h
+    protocol/objectviewmodel.cpp
+    protocol/objectviewmodel.h
     ui/rlottiestickeritem.cpp
     ui/rlottiestickeritem.h
     util/messagemarkup.cpp
@@ -65,6 +71,7 @@ target_include_directories(whatkevr PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/app
     ${CMAKE_CURRENT_SOURCE_DIR}/models
+    ${CMAKE_CURRENT_SOURCE_DIR}/protocol
     ${CMAKE_CURRENT_SOURCE_DIR}/ui
     ${CMAKE_CURRENT_SOURCE_DIR}/util
 )

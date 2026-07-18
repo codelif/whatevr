@@ -100,7 +100,7 @@ Status: `todo` | `doing` | `done` | `blocked` | `needs-decision`
 
 | id | step | status | notes |
 | --- | --- | --- | --- |
-| D1 | Qt client core: socket transport + dispatcher, generic keyed/sorted `QAbstractListModel` over a collection view, object-view wrapper; no UI changes yet | todo | |
+| D1 | Qt client core: socket transport + dispatcher, generic keyed/sorted `QAbstractListModel` over a collection view, object-view wrapper; no UI changes yet | done | New `whatkevr/src/protocol/`: `ProtocolClient` (QLocalSocket + NDJSON framing, `hello` handshake, id-correlated request/response, `sub`-routed view events, `open_chat`, auto-reconnect + resubscribe), `Subscription` (owns the daemon `sub`, `extend(count,direction)`, exposes subscribe meta e.g. `anchor_id`), `CollectionViewModel` (generic keyed list; orders **only** by bytewise `sort`, id tiebreak; ItemRole=whole QVariantMap), `ObjectViewModel` (single-item view). No UI wiring, no QML registration, gRPC untouched — pure scaffolding for D2+. Built into the main target (`just build` green); `WHATEVR_BUILD_TESTS=ON` adds `whatkevr/tests/tst_protocolcore` (13 QtTest cases driving the real client over a real socket via an in-process fake daemon — fill/sort/replace/move/remove/reset, ready-exhausted, directional extend, subscribe meta, object view, open_chat, pre-hello request queue). |
 | D2 | Port connection/status/login pages + chat list (incl. `typing` overlay) | todo | |
 | D3 | Port conversation view: messages, receipts dialog, presence header, jump-to-message anchors | todo | |
 | D4 | Port composer + all send paths, media download/`transfers` progress, image viewer | todo | |
@@ -118,6 +118,27 @@ Status: `todo` | `doing` | `done` | `blocked` | `needs-decision`
 ## Blockers
 
 _None._
+
+## D-phase notes
+
+- 2026-07-18 — D1 implementation readings (no PROTOCOL.md change; flag if you
+  disagree): (1) **Ordering is the daemon's, not the model's.** `CollectionViewModel`
+  orders rows by a bytewise compare of the opaque `sort` string's UTF-8, with `id`
+  as a deterministic tiebreak only — never by any item field. Keyed upsert-by-`id`
+  is the protocol's universal algorithm, not frontend dedup. (2) **Items are opaque
+  QVariantMaps.** The generic models expose the whole item as `ItemRole` (QML binds
+  `model.item.<field>`); they interpret no field, so a new message `kind`/`fallback`
+  or any view's fields flow through with zero model changes. No per-view roles, no
+  QML type registration yet — that lands page-by-page in D2+ as each UI adopts a
+  view. (3) **Reconnect resubscribes.** On socket drop every live `Subscription`'s
+  sink gets `onReset()` and in-flight requests fail with code `io`; after the next
+  `hello` the client re-issues all subscriptions (fresh window) and flushes commands
+  queued while connecting. This mirrors the daemon-side slow-consumer `reset`
+  contract on the client edge; no wire change. (4) **`hello` rides the normal
+  request path** (id-correlated, first on the wire); other requests queue behind it.
+  (5) Tests are opt-in (`-DWHATEVR_BUILD_TESTS=ON`) so `just build` never needs
+  Qt6::Test; they compile the three protocol .cpp directly (Qt6 Core/Network only,
+  no GUI/gRPC) and drive the real client over a real Unix socket.
 
 ## Decision log
 
