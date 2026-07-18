@@ -31,6 +31,7 @@ qt_add_executable(tst_protocolcontroller
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/app/protocolcontroller.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/protocol/protocolclient.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/protocol/objectviewmodel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/protocol/collectionviewmodel.cpp
 )
 
 target_include_directories(tst_protocolcontroller PRIVATE

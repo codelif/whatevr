@@ -15,12 +15,45 @@ Kirigami.Page {
     // default. Hiding it clears any active query.
     property bool searchBarVisible: false
 
-    // Sidebar chat-type filter: 0 = Home (all), 1 = DMs, 2 = Groups.
+    // Sidebar chat-type filter: 0 = Home (all), 1 = DMs, 2 = Groups. This is a
+    // daemon-side `chats` subscribe param, so changing it re-subscribes — the
+    // frontend never filters the list itself.
     property int activeFilter: 0
+    onActiveFilterChanged: Whatevr.ProtocolController.chatFilter = activeFilter
+    Component.onCompleted: Whatevr.ProtocolController.chatFilter = activeFilter
 
     function hideSearch() {
         searchBarVisible = false
         Whatevr.AppController.clearSearch()
+    }
+
+    // Two-letter initials from a display name, for avatar fallbacks (the daemon
+    // `chats` row carries no precomputed initials — pure presentation).
+    function initialsFor(name) {
+        const parts = (name || "").trim().split(/\s+/).filter(p => p.length > 0)
+        if (parts.length === 0)
+            return "?"
+        let initials = parts[0].charAt(0)
+        if (parts.length > 1)
+            initials += parts[parts.length - 1].charAt(0)
+        return initials.toUpperCase()
+    }
+
+    // Map the daemon `chats` row's string status/direction onto the delegate's
+    // integer enums (1 pending, 2 sent, 3 delivered, 4 read, 5 failed; direction
+    // 2 = outgoing). Presentation mapping only — no state is derived here.
+    function statusToInt(status) {
+        switch (status) {
+        case "pending": return 1
+        case "sent": return 2
+        case "delivered": return 3
+        case "read": return 4
+        case "failed": return 5
+        default: return 0
+        }
+    }
+    function directionToInt(direction) {
+        return direction === "outgoing" ? 2 : 1
     }
 
     Layout.fillHeight: true
@@ -67,17 +100,6 @@ Kirigami.Page {
             }
         }
     ]
-
-    // Chat list filtered by the sidebar category. The text search lives in a
-    // separate model (searchResultsModel), so this proxy only narrows by type.
-    Whatevr.ChatListFilterModel {
-        id: chatFilterModel
-
-        sourceModel: Whatevr.AppController.chatListModel
-        chatCategory: root.activeFilter === 1 ? Whatevr.ChatListFilterModel.DirectMessages
-                    : root.activeFilter === 2 ? Whatevr.ChatListFilterModel.Groups
-                    : Whatevr.ChatListFilterModel.All
-    }
 
     RowLayout {
         anchors.fill: parent
@@ -171,7 +193,7 @@ Kirigami.Page {
 
                 anchors.fill: parent
                 clip: true
-                model: chatFilterModel
+                model: Whatevr.ProtocolController.chatsModel
                 currentIndex: -1
                 boundsBehavior: Flickable.StopAtBounds
                 flickableDirection: Flickable.VerticalFlick
@@ -242,29 +264,38 @@ Kirigami.Page {
                 delegate: ChatListDelegate {
                     id: chatDelegate
 
+                    // The generic collection model exposes the whole daemon row
+                    // as `model.item` (a map); fields are the `chats` view's own
+                    // (id/name/preview/unread/pinned/…). Draft is frontend-only
+                    // presentation state, still owned by the gRPC AppController
+                    // until the composer port (D4). Typing lands in D2b2.
                     required property var model
+                    readonly property var chat: model.item
 
-                    chatId: String(model.chatId || "")
-                    name: String(model.name || "")
-                    lastMessage: String(model.lastMessage || "")
-                    lastMessageDirection: Number(model.lastMessageDirection || 0)
-                    lastMessageStatus: Number(model.lastMessageStatus || 0)
-                    avatarLocalPath: String(model.avatarLocalPath || "")
-                    initials: String(model.initials || "?")
-                    unreadCount: Number(model.unreadCount || 0)
-                    isPinned: Boolean(model.isPinned || false)
-                    isArchived: Boolean(model.isArchived || false)
-                    isMuted: Boolean(model.isMuted || false)
+                    chatId: String(chat.id || "")
+                    name: String(chat.name || "")
+                    lastMessage: String(chat.preview || "")
+                    lastMessageDirection: root.directionToInt(String(chat.last_message_direction || ""))
+                    lastMessageStatus: root.statusToInt(String(chat.last_message_status || ""))
+                    avatarLocalPath: String(chat.avatar_path || "")
+                    initials: root.initialsFor(String(chat.name || ""))
+                    unreadCount: Number(chat.unread || 0)
+                    isPinned: Boolean(chat.pinned || false)
+                    isArchived: Boolean(chat.archived || false)
+                    isMuted: Boolean(chat.muted || false)
                     archivedExpanded: chatList.archivedExpanded
-                    isTyping: Boolean(model.isTyping || false)
-                    hasDraft: Boolean(model.hasDraft || false)
-                    draftText: String(model.draftText || "")
+                    isTyping: false
+                    // Re-read the frontend draft whenever the selection changes
+                    // (leaving a chat is when its composer draft is committed).
+                    hasDraft: draftText.length > 0
+                    draftText: (Whatevr.AppController.selectedChatId, chatId.length > 0
+                                ? Whatevr.AppController.chatDraft(chatId) : "")
                     current: Whatevr.AppController.selectedChatId === chatId
                     onSelected: id => {
                         Whatevr.AppController.selectChat(id)
                         root.chatSelected(id)
                     }
-                    onPinToggled: (id, pinned) => Whatevr.AppController.setChatPinned(id, pinned)
+                    onPinToggled: (id, pinned) => Whatevr.ProtocolController.setChatPinned(id, pinned)
                     onContextMenuRequested: (id, pinned, archived, muted, x, y) => {
                         chatList.contextChatId = id
                         chatList.contextChatPinned = pinned
@@ -341,7 +372,7 @@ Kirigami.Page {
                               ? Whatevr.I18n.i18nc("@action:menu", "Unpin chat")
                               : Whatevr.I18n.i18nc("@action:menu", "Pin chat")
                         icon.name: chatList.contextChatPinned ? "window-unpin" : "window-pin"
-                        onTriggered: Whatevr.AppController.setChatPinned(chatList.contextChatId, !chatList.contextChatPinned)
+                        onTriggered: Whatevr.ProtocolController.setChatPinned(chatList.contextChatId, !chatList.contextChatPinned)
                     }
 
                     MenuItem {
@@ -349,7 +380,7 @@ Kirigami.Page {
                               ? Whatevr.I18n.i18nc("@action:menu", "Unarchive chat")
                               : Whatevr.I18n.i18nc("@action:menu", "Archive chat")
                         icon.name: chatList.contextChatArchived ? "package-up-symbolic" : "package-down-symbolic"
-                        onTriggered: Whatevr.AppController.setChatArchived(chatList.contextChatId, !chatList.contextChatArchived)
+                        onTriggered: Whatevr.ProtocolController.setChatArchived(chatList.contextChatId, !chatList.contextChatArchived)
                     }
 
                     MenuItem {
@@ -359,7 +390,7 @@ Kirigami.Page {
                         icon.name: "notifications-symbolic"
                         // visible / implicitHeight are driven imperatively by
                         // chatContextMenu.refreshMuteItems() (see above).
-                        onTriggered: Whatevr.AppController.setChatMuted(chatList.contextChatId, false, 0)
+                        onTriggered: Whatevr.ProtocolController.setChatMuted(chatList.contextChatId, false, 0)
                     }
 
                     Menu {
@@ -380,15 +411,15 @@ Kirigami.Page {
 
                         MenuItem {
                             text: Whatevr.I18n.i18nc("@action:inmenu mute duration", "For 8 hours")
-                            onTriggered: Whatevr.AppController.setChatMuted(chatList.contextChatId, true, 8 * 60 * 60)
+                            onTriggered: Whatevr.ProtocolController.setChatMuted(chatList.contextChatId, true, 8 * 60 * 60)
                         }
                         MenuItem {
                             text: Whatevr.I18n.i18nc("@action:inmenu mute duration", "For 1 week")
-                            onTriggered: Whatevr.AppController.setChatMuted(chatList.contextChatId, true, 7 * 24 * 60 * 60)
+                            onTriggered: Whatevr.ProtocolController.setChatMuted(chatList.contextChatId, true, 7 * 24 * 60 * 60)
                         }
                         MenuItem {
                             text: Whatevr.I18n.i18nc("@action:inmenu mute duration", "Always")
-                            onTriggered: Whatevr.AppController.setChatMuted(chatList.contextChatId, true, 0)
+                            onTriggered: Whatevr.ProtocolController.setChatMuted(chatList.contextChatId, true, 0)
                         }
                         MenuItem {
                             text: Whatevr.I18n.i18nc("@action:inmenu mute for a custom duration", "Custom…")
@@ -399,7 +430,7 @@ Kirigami.Page {
 
                 BusyIndicator {
                     anchors.centerIn: parent
-                    running: Whatevr.AppController.chatsLoading && Whatevr.AppController.chatsEmpty
+                    running: Whatevr.ProtocolController.chatsLoading && Whatevr.ProtocolController.chatsEmpty
                     visible: running
                 }
 
@@ -407,7 +438,7 @@ Kirigami.Page {
                     anchors.centerIn: parent
                     width: Math.min(parent.width - Kirigami.Units.largeSpacing * 4,
                                     Kirigami.Units.gridUnit * 16)
-                    visible: !Whatevr.AppController.chatsLoading && Whatevr.AppController.chatsEmpty
+                    visible: !Whatevr.ProtocolController.chatsLoading && Whatevr.ProtocolController.chatsEmpty
                     text: Whatevr.AppController.historySyncVisible
                           ? Whatevr.I18n.i18nc("@info", "Syncing your messages…")
                           : Whatevr.I18n.i18nc("@info", "No chats yet")
@@ -573,7 +604,7 @@ Kirigami.Page {
                 icon.name: "notifications-disabled-symbolic"
                 onTriggered: {
                     const secs = amountSpin.value * customMuteDialog.unitSeconds[unitCombo.currentIndex]
-                    Whatevr.AppController.setChatMuted(customMuteDialog.chatId, true, secs)
+                    Whatevr.ProtocolController.setChatMuted(customMuteDialog.chatId, true, secs)
                     customMuteDialog.close()
                 }
             }

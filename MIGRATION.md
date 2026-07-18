@@ -102,7 +102,8 @@ Status: `todo` | `doing` | `done` | `blocked` | `needs-decision`
 | --- | --- | --- | --- |
 | D1 | Qt client core: socket transport + dispatcher, generic keyed/sorted `QAbstractListModel` over a collection view, object-view wrapper; no UI changes yet | done | New `whatkevr/src/protocol/`: `ProtocolClient` (QLocalSocket + NDJSON framing, `hello` handshake, id-correlated request/response, `sub`-routed view events, `open_chat`, auto-reconnect + resubscribe), `Subscription` (owns the daemon `sub`, `extend(count,direction)`, exposes subscribe meta e.g. `anchor_id`), `CollectionViewModel` (generic keyed list; orders **only** by bytewise `sort`, id tiebreak; ItemRole=whole QVariantMap), `ObjectViewModel` (single-item view). No UI wiring, no QML registration, gRPC untouched — pure scaffolding for D2+. Built into the main target (`just build` green); `WHATEVR_BUILD_TESTS=ON` adds `whatkevr/tests/tst_protocolcore` (13 QtTest cases driving the real client over a real socket via an in-process fake daemon — fill/sort/replace/move/remove/reset, ready-exhausted, directional extend, subscribe meta, object view, open_chat, pre-hello request queue). |
 | D2a | Port connection/status/login pages onto the protocol (`connection`+`login` views) | done | New `whatkevr/src/app/protocolcontroller.{h,cpp}`: a QML singleton owning the D1 `ProtocolClient` + two `ObjectViewModel`s (`connection`, `login`), deriving every string the status/login/splash pages bind to (phase, `statusTitle/Text`, `detailText`, QR + countdown, `primaryAction*`) plus `startDaemon`/`triggerPrimaryAction`(→`daemon.reconnect`)/`copyToClipboard`. Runs **alongside** the gRPC `AppController` (strangler): `Main.qml` `appMode()` + the rebuild/logout gate now key off `ProtocolController`; `StatusPage`/`LoginPage` bindings repointed; `AppController` keeps serving the chat shell + deep-link signals until later D-steps. Transport phase = client-ready + cold-start grace + socket-exists (the client's own auto-reconnect subsumes AppController's channel/probe/retry). Socket-path seam added for tests; `daemonSocketExists()` now checks the path actually used (was a latent bug). New QtTest `tst_protocolcontroller` (fake daemon over a real socket: not-running-after-grace, online→shell, need_login→QR+countdown, live state flip, reconnect command). `just build` green; whatkevr tests + conformance pass; hand-verified `connection`/`login` over socat and a headless app launch against the live online daemon (no QML errors, reaches chat mode). No PROTOCOL.md change. |
-| D2b | Port chat list (`chats` view, filters/archived) + `typing` overlay + `sync` history strip | todo | Split from D2: the chat shell is the second half. Reuses the D2a `ProtocolController`/client. |
+| D2b1 | Port chat list core: `chats` view active list, filters (all/direct/groups) as subscribe params, row/field mapping, list commands (pin/archive/mute), selection routing to gRPC conversation, loading/empty | done | `ProtocolController` grew a generic `chatsModel` (`CollectionViewModel`) subscribed to `chats {filter, archived:false}`, a `chatFilter` int that **re-subscribes** (no frontend filtering — the D1 `ChatListFilterModel` proxy is gone from the pane), derived `chatsLoading`/`chatsEmpty`, and `setChatPinned/Archived/Muted` mapping to `chat.*` acks. `ChatListPane.qml` binds the delegate to `model.item.<daemon field>` with pure-presentation string→int status/direction + initials helpers; context-menu/loading bindings repointed to `ProtocolController`. Selection still routes to the gRPC `AppController.selectChat` (conversation is D3); drafts read from gRPC `AppController.chatDraft` (frontend state, allowed; composer is D4). Archived-section QML left inert (D2b2). `tst_protocolcontroller` +3 cases (fill/order, filter re-subscribe, command mapping) via a collection-serving fake daemon; `just build` + whatkevr tests + conformance pass; hand-verified over socat (fill+ready, daemon-side groups/direct filters, `chat.pin` ack) and a headless app launch (no QML errors, reaches chat shell). No PROTOCOL.md change. |
+| D2b2 | Port archived chats section (second `chats` subscription) + `typing` overlay + `sync` history strip | todo | Split from D2b (2026-07-18): layers on the D2b1 chat list. |
 | D3 | Port conversation view: messages, receipts dialog, presence header, jump-to-message anchors | todo | |
 | D4 | Port composer + all send paths, media download/`transfers` progress, image viewer | todo | |
 | D5 | Port info dialogs (contact/group/members), starred/pinned pages, unified + in-chat search | todo | |
@@ -169,6 +170,49 @@ _None._
   no GUI/gRPC) and drive the real client over a real Unix socket.
 
 ## Decision log
+
+- 2026-07-19 — **D2b split into D2b1 + D2b2** (implementation judgement; flag if
+  you disagree). D2b (chat list *and* `typing` overlay *and* `sync` strip on a
+  mature gRPC UI) was materially larger than D2a: the chat list alone needs row-
+  shape adaptation, daemon-side filter params, list commands, selection that must
+  still cross to the gRPC conversation until D3, and loading/empty — so it split
+  into **D2b1** (the chat-list widget) and **D2b2** (`typing` overlay + `sync`
+  strip). Two sub-decisions inside D2b1, both to keep it one clean session:
+  (1) **Archived section moved to D2b2.** PROTOCOL's `chats` view returns active
+  and archived as *disjoint* subscriptions (`archived:false`/`true`); reproducing
+  the current single-list collapsible "Archived (n)" section means a second
+  subscription presented alongside the first, which pairs naturally with the
+  other D2b2 overlays. D2b1 subscribes `archived:false` only; the section QML is
+  left inert (never triggers) rather than deleted, so D2b2 just adds the second
+  sub. (2) **`chat.ensure_direct` deferred to D5.** Its only caller is the phone-
+  number search result (start-a-new-chat), which is part of unified search (D5);
+  wiring it in D2b1 would be an unused invokable. The chat-list context menu needs
+  only pin/archive/mute.
+- 2026-07-19 — D2b1 implementation readings (no PROTOCOL.md change; flag if you
+  disagree): (1) **Filtering is a re-subscribe, not a proxy.** The three sidebar
+  filters (all/direct/groups) are the `chats` view's `filter` param, so switching
+  filter deletes the subscription and subscribes fresh (clearing the model first
+  so the old filter never flashes). This *removed* the frontend `ChatListFilterModel`
+  QSortFilterProxyModel from the pane — a net deletion of frontend filtering, the
+  spirit-correct direction. (2) **The list uses the generic `CollectionViewModel`;
+  QML binds `model.item.<field>`.** No per-view C++ roles: the delegate reads the
+  daemon `chats` row's own fields (`id`/`name`/`preview`/`unread`/`pinned`/…). The
+  daemon emits status/direction as *strings* (`sent`/`delivered`/…, `outgoing`)
+  while the delegate wants int enums, so a tiny `statusToInt`/`directionToInt`
+  maps them **in QML** — pure presentation (which icon), no state derived; same for
+  the `initialsFor` avatar fallback (the row carries no precomputed initials).
+  (3) **Selection stays gRPC until D3.** Clicking a row still calls
+  `AppController.selectChat` (loads the gRPC conversation) and `current` binds
+  `AppController.selectedChatId`; only the *rows* moved to the protocol. This is the
+  same "ProtocolController drives, AppController still renders" strangler shape as
+  D2a. (4) **Drafts read from the gRPC `AppController.chatDraft(chatId)`.** Drafts
+  are frontend presentation state (rule 1 explicitly allows them); the composer that
+  authors them is still gRPC until D4, so the delegate reads the draft from there,
+  re-evaluating on `selectedChatId` changes (leaving a chat is when its draft is
+  committed) — a mid-migration cross-stack read, not new daemon state. (5)
+  **`chatsLoading` = `!model.ready`, `chatsEmpty` = `count == 0`** (not gated on
+  ready), so the busy spinner shows during the initial fill and the "No chats"
+  placeholder only once ready with zero rows — matching the old gRPC semantics.
 
 - 2026-07-18 — **D2 split + D-phase controller shape** (decided by Harsh). D2
   was too big for one session (whole connection/login state machine *and* the

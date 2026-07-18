@@ -14,7 +14,10 @@
 #include <QTemporaryDir>
 #include <QTest>
 
+#include "collectionviewmodel.h"
 #include "protocolcontroller.h"
+
+using whatevr::proto::CollectionViewModel;
 
 namespace
 {
@@ -53,10 +56,26 @@ public:
         }
     }
 
+    // Seed a collection view's rows (each row carries its own "id"; the row's
+    // "sort" field, or its index, orders it). Replayed on the next subscribe.
+    void setCollection(const QString &view, const QList<QJsonObject> &rows)
+    {
+        m_collections.insert(view, rows);
+    }
+
     int reconnectCount = 0;
+    // Params of the most recent `chats` subscribe, and how many landed — lets a
+    // test assert the filter re-subscribe without racing the reply.
+    QJsonObject lastChatsParams;
+    int chatsSubscribeCount = 0;
+    // The most recent chat.* command the controller sent.
+    QString lastCommandMethod;
+    QJsonObject lastCommandParams;
 
 Q_SIGNALS:
     void reconnectRequested();
+    void chatsSubscribed();
+    void commandReceived();
 
 private:
     void onReadyRead()
@@ -92,22 +111,41 @@ private:
             if (m_items.contains(view)) {
                 sendUpsert(sub, m_items.value(view));
             }
+            if (m_collections.contains(view)) {
+                const QList<QJsonObject> rows = m_collections.value(view);
+                for (int i = 0; i < rows.size(); ++i) {
+                    const QJsonObject &row = rows.at(i);
+                    const QString sort = row.value(QStringLiteral("sort")).toString(
+                        QStringLiteral("%1").arg(i, 4, 10, QLatin1Char('0')));
+                    sendUpsert(sub, row, sort);
+                }
+            }
             sendReady(sub);
+            if (view == QLatin1String("chats")) {
+                lastChatsParams = params;
+                ++chatsSubscribeCount;
+                Q_EMIT chatsSubscribed();
+            }
         } else if (method == QLatin1String("daemon.reconnect")) {
             ++reconnectCount;
             reply(id, QJsonObject{});
             Q_EMIT reconnectRequested();
+        } else if (method.startsWith(QLatin1String("chat."))) {
+            lastCommandMethod = method;
+            lastCommandParams = params;
+            reply(id, QJsonObject{});
+            Q_EMIT commandReceived();
         } else {
             reply(id, QJsonObject{});
         }
     }
 
-    void sendUpsert(int sub, const QJsonObject &item)
+    void sendUpsert(int sub, const QJsonObject &item, const QString &sort = QStringLiteral("0"))
     {
         writeObject(QJsonObject{
             {QStringLiteral("sub"), sub},
             {QStringLiteral("event"), QStringLiteral("upsert")},
-            {QStringLiteral("sort"), QStringLiteral("0")},
+            {QStringLiteral("sort"), sort},
             {QStringLiteral("item"), item},
         });
     }
@@ -138,7 +176,22 @@ private:
     int m_subCount = 0;
     QHash<QString, int> m_subByView;
     QHash<QString, QJsonObject> m_items;
+    QHash<QString, QList<QJsonObject>> m_collections;
 };
+
+QJsonObject chatRow(const QString &id, const QString &name, const QString &sort,
+                    const QJsonObject &extra = {})
+{
+    QJsonObject row{
+        {QStringLiteral("id"), id},
+        {QStringLiteral("name"), name},
+        {QStringLiteral("sort"), sort},
+    };
+    for (auto it = extra.begin(); it != extra.end(); ++it) {
+        row.insert(it.key(), it.value());
+    }
+    return row;
+}
 
 QJsonObject connectionItem(const QString &state, bool canReconnect = false)
 {
@@ -271,6 +324,71 @@ private Q_SLOTS:
         QVERIFY(reconnectSpy.wait());
         QCOMPARE(daemon.reconnectCount, 1);
         QTRY_VERIFY(ctrl.primaryActionEnabled()); // ack re-enables
+    }
+
+    // The chat list fills from the `chats` collection view: rows land as keyed
+    // upserts ordered by the daemon `sort`, and loading/empty track ready+count.
+    void chatsFillAndReady()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+        daemon.setCollection(QStringLiteral("chats"),
+                             {chatRow(QStringLiteral("a@s"), QStringLiteral("Alice"), QStringLiteral("1-000")),
+                              chatRow(QStringLiteral("b@s"), QStringLiteral("Bob"), QStringLiteral("1-001"))});
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+        QVERIFY(ctrl.chatsLoading()); // not ready before the first window lands
+
+        auto *model = qobject_cast<CollectionViewModel *>(ctrl.chatsModel());
+        QVERIFY(model);
+        QTRY_COMPARE(model->count(), 2);
+        QVERIFY(!ctrl.chatsLoading());
+        QVERIFY(!ctrl.chatsEmpty());
+        // Ordered by the opaque sort; fields are the daemon row's own.
+        QCOMPARE(model->indexOfId(QStringLiteral("a@s")), 0);
+        QCOMPARE(model->indexOfId(QStringLiteral("b@s")), 1);
+        QCOMPARE(model->itemById(QStringLiteral("a@s")).value(QStringLiteral("name")).toString(),
+                 QStringLiteral("Alice"));
+    }
+
+    // Changing the filter re-subscribes with the new `filter` param (daemon-side
+    // filtering) rather than narrowing the list in the frontend.
+    void chatFilterResubscribes()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+        daemon.setCollection(QStringLiteral("chats"),
+                             {chatRow(QStringLiteral("a@s"), QStringLiteral("Alice"), QStringLiteral("1-000"))});
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+        QTRY_COMPARE(daemon.chatsSubscribeCount, 1);
+        QCOMPARE(daemon.lastChatsParams.value(QStringLiteral("filter")).toString(), QStringLiteral("all"));
+
+        ctrl.setChatFilter(2); // groups
+        QTRY_COMPARE(daemon.chatsSubscribeCount, 2);
+        QCOMPARE(daemon.lastChatsParams.value(QStringLiteral("filter")).toString(), QStringLiteral("groups"));
+        QCOMPARE(ctrl.chatFilter(), 2);
+    }
+
+    // A list command maps to the daemon `chat.*` command (ack only); no local
+    // state — the row change would arrive back through the `chats` view.
+    void chatCommandMapsToDaemon()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+        QTRY_VERIFY(ctrl.shellVisible());
+
+        QSignalSpy commandSpy(&daemon, &FakeDaemon::commandReceived);
+        ctrl.setChatPinned(QStringLiteral("a@s"), true);
+        QVERIFY(commandSpy.wait());
+        QCOMPARE(daemon.lastCommandMethod, QStringLiteral("chat.pin"));
+        QCOMPARE(daemon.lastCommandParams.value(QStringLiteral("chat_id")).toString(), QStringLiteral("a@s"));
+        QCOMPARE(daemon.lastCommandParams.value(QStringLiteral("pinned")).toBool(), true);
     }
 
 private:

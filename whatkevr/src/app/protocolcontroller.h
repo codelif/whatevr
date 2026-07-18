@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QAbstractItemModel>
 #include <QObject>
 #include <QString>
 #include <QVariantMap>
@@ -17,6 +18,7 @@ namespace whatevr::proto
 {
 class ProtocolClient;
 class ObjectViewModel;
+class CollectionViewModel;
 class Subscription;
 } // namespace whatevr::proto
 
@@ -62,6 +64,15 @@ class ProtocolController final : public QObject
     Q_PROPERTY(QString qrCode READ qrCode NOTIFY stateChanged FINAL)
     Q_PROPERTY(QString qrExpiryText READ qrExpiryText NOTIFY stateChanged FINAL)
 
+    // Chat list (D2b1). The model is the generic keyed/sorted collection over
+    // the `chats` view; QML binds `model.item.<field>` off its rows. The filter
+    // is a subscribe param (all/direct/groups), so changing it re-subscribes —
+    // no frontend-side filtering. loading/empty drive the list placeholders.
+    Q_PROPERTY(QAbstractItemModel *chatsModel READ chatsModel CONSTANT FINAL)
+    Q_PROPERTY(int chatFilter READ chatFilter WRITE setChatFilter NOTIFY chatFilterChanged FINAL)
+    Q_PROPERTY(bool chatsLoading READ chatsLoading NOTIFY chatsChanged FINAL)
+    Q_PROPERTY(bool chatsEmpty READ chatsEmpty NOTIFY chatsChanged FINAL)
+
 public:
     static void setInstance(ProtocolController *instance);
     static ProtocolController *create(QQmlEngine *qmlEngine, QJSEngine *jsEngine);
@@ -99,9 +110,21 @@ public:
     [[nodiscard]] QString qrCode() const;
     [[nodiscard]] QString qrExpiryText() const;
 
+    [[nodiscard]] QAbstractItemModel *chatsModel() const;
+    [[nodiscard]] int chatFilter() const { return m_chatFilter; }
+    void setChatFilter(int filter);
+    [[nodiscard]] bool chatsLoading() const;
+    [[nodiscard]] bool chatsEmpty() const;
+
     Q_INVOKABLE void startDaemon();
     Q_INVOKABLE void triggerPrimaryAction();
     Q_INVOKABLE void copyToClipboard(const QString &text);
+
+    // Chat-list mutations, mapped to the daemon's `chat.*` commands (acks only;
+    // the row change lands back through the `chats` view — no local state).
+    Q_INVOKABLE void setChatPinned(const QString &chatId, bool pinned);
+    Q_INVOKABLE void setChatArchived(const QString &chatId, bool archived);
+    Q_INVOKABLE void setChatMuted(const QString &chatId, bool muted, int durationSecs);
 
     // The daemon's protocol socket, `$XDG_RUNTIME_DIR/whatevr/whatevrd.sock`
     // (distinct from the gRPC socket under whatevrd/). Empty if XDG_RUNTIME_DIR
@@ -110,6 +133,8 @@ public:
 
 Q_SIGNALS:
     void stateChanged();
+    void chatFilterChanged();
+    void chatsChanged();
 
 private:
     // Transport reachability, independent of the daemon-reported WhatsApp state.
@@ -135,12 +160,21 @@ private:
     void requestReconnect();
     void launchDaemonBinary();
 
+    // (Re)subscribe the `chats` view for the current filter. Clears the model
+    // first so a filter switch never briefly shows the old filter's rows.
+    void subscribeChats();
+    // "all" / "direct" / "groups" for the current m_chatFilter (0/1/2).
+    [[nodiscard]] QString chatFilterName() const;
+
     QString m_socketPath;
     whatevr::proto::ProtocolClient *m_client = nullptr;
     whatevr::proto::ObjectViewModel *m_connectionModel = nullptr;
     whatevr::proto::ObjectViewModel *m_loginModel = nullptr;
+    whatevr::proto::CollectionViewModel *m_chatsModel = nullptr;
     whatevr::proto::Subscription *m_connectionSub = nullptr;
     whatevr::proto::Subscription *m_loginSub = nullptr;
+    whatevr::proto::Subscription *m_chatsSub = nullptr;
+    int m_chatFilter = 0; // 0 = all, 1 = direct, 2 = groups
 
     bool m_clientReady = false;
     bool m_startupGrace = true;
