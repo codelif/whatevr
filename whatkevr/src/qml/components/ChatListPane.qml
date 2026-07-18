@@ -237,10 +237,12 @@ Kirigami.Page {
                         // Draft is frontend-only state, still on the gRPC
                         // AppController until the composer port (D4).
                         hasDraft: draftText.length > 0
-                        draftText: (Whatevr.AppController.selectedChatId, chatId.length > 0
-                                    ? Whatevr.AppController.chatDraft(chatId) : "")
-                        current: Whatevr.AppController.selectedChatId === chatId
+                        draftText: (Whatevr.ProtocolController.selectedChatId, chatId.length > 0
+                                     ? Whatevr.AppController.chatDraft(chatId) : "")
+                        current: Whatevr.ProtocolController.selectedChatId === chatId
                         onSelected: id => {
+                            Whatevr.ProtocolController.selectChat(id)
+                            // The composer/pins/chrome remain on gRPC until D3c/D4.
                             Whatevr.AppController.selectChat(id)
                             root.chatSelected(id)
                         }
@@ -514,12 +516,14 @@ Kirigami.Page {
                     registered: Boolean(model.registered || false)
 
                     onChatActivated: id => {
+                        Whatevr.ProtocolController.selectChat(id)
                         Whatevr.AppController.selectChat(id)
                         root.hideSearch()
                         root.chatSelected(id)
                     }
                     onMessageActivated: (cId, mId) => {
-                        Whatevr.AppController.showMessageInChat(cId, mId)
+                        Whatevr.ProtocolController.showMessageInChat(cId, mId)
+                        Whatevr.AppController.selectChat(cId)
                         root.hideSearch()
                         root.chatSelected(cId)
                     }

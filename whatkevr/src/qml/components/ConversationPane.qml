@@ -15,7 +15,7 @@ Kirigami.Page {
     // one (the chat list page has its own actions).
     readonly property bool closeChatActionVisible: {
         const window = applicationWindow()
-        if (!window || !Whatevr.AppController.hasSelectedChat) {
+        if (!window || !Whatevr.ProtocolController.hasSelectedChat) {
             return false
         }
         return !window.chatSingleColumnLayout || root.isCurrentPage
@@ -38,24 +38,24 @@ Kirigami.Page {
     property string editingMessageId: ""
     property string editingOriginalText: ""
 
-    readonly property bool messagesCurrent: Whatevr.AppController.hasSelectedChat
-                                            && Whatevr.AppController.displayedMessagesChatId === Whatevr.AppController.selectedChatId
-    readonly property bool waitingForMessages: Whatevr.AppController.hasSelectedChat
-                                               && (Whatevr.AppController.messagesLoading
-                                                   || Whatevr.AppController.unreadAnchorResolving
+    readonly property bool messagesCurrent: Whatevr.ProtocolController.hasSelectedChat
+                                             && Whatevr.ProtocolController.displayedMessagesChatId === Whatevr.ProtocolController.selectedChatId
+    readonly property bool waitingForMessages: Whatevr.ProtocolController.hasSelectedChat
+                                               && (Whatevr.ProtocolController.messagesLoading
+                                                   || Whatevr.ProtocolController.unreadAnchorResolving
                                                    || !root.pinnedLayoutReady)
                                                && (!root.messagesCurrent
-                                                   || Whatevr.AppController.messagesEmpty
-                                                   || Whatevr.AppController.unreadAnchorResolving
+                                                   || Whatevr.ProtocolController.messagesEmpty
+                                                   || Whatevr.ProtocolController.unreadAnchorResolving
                                                    || !root.pinnedLayoutReady)
     property string pinnedLayoutChatId: ""
     property bool pinnedLayoutSettled: false
-    readonly property bool pinnedSlotReserved: Whatevr.AppController.hasSelectedChat
+    readonly property bool pinnedSlotReserved: Whatevr.ProtocolController.hasSelectedChat
                                                && root.messagesCurrent
                                                && (!Whatevr.AppController.pinnedMessagesReady
                                                    || pinnedBanner.count > 0)
-    readonly property bool pinnedLayoutReady: !Whatevr.AppController.hasSelectedChat
-                                              || (root.pinnedLayoutChatId === Whatevr.AppController.selectedChatId
+    readonly property bool pinnedLayoutReady: !Whatevr.ProtocolController.hasSelectedChat
+                                               || (root.pinnedLayoutChatId === Whatevr.ProtocolController.selectedChatId
                                                   && Whatevr.AppController.pinnedMessagesReady
                                                   && root.pinnedLayoutSettled)
 
@@ -63,10 +63,10 @@ Kirigami.Page {
     onPinnedSlotReservedChanged: requestPinnedLayoutSettle()
 
     function beginPinnedLayoutSettle() {
-        root.pinnedLayoutChatId = Whatevr.AppController.selectedChatId
+        root.pinnedLayoutChatId = Whatevr.ProtocolController.selectedChatId
         root.pinnedLayoutSettled = false
         pinnedLayoutSettleTimer.stop()
-        if (Whatevr.AppController.hasSelectedChat
+        if (Whatevr.ProtocolController.hasSelectedChat
                 && root.messagesCurrent
                 && Whatevr.AppController.pinnedMessagesReady) {
             pinnedLayoutSettleTimer.start()
@@ -74,14 +74,14 @@ Kirigami.Page {
     }
 
     function requestPinnedLayoutSettle() {
-        if (!Whatevr.AppController.hasSelectedChat) {
+        if (!Whatevr.ProtocolController.hasSelectedChat) {
             root.pinnedLayoutChatId = ""
             root.pinnedLayoutSettled = true
             pinnedLayoutSettleTimer.stop()
             return
         }
 
-        if (root.pinnedLayoutChatId !== Whatevr.AppController.selectedChatId) {
+        if (root.pinnedLayoutChatId !== Whatevr.ProtocolController.selectedChatId) {
             root.beginPinnedLayoutSettle()
             return
         }
@@ -98,8 +98,8 @@ Kirigami.Page {
 
     Layout.fillWidth: true
     Layout.fillHeight: true
-    title: Whatevr.AppController.hasSelectedChat
-           ? Whatevr.AppController.selectedChatName
+    title: Whatevr.ProtocolController.hasSelectedChat
+           ? Whatevr.ProtocolController.selectedChatName
            : ""
     padding: 0
     focus: true
@@ -122,7 +122,7 @@ Kirigami.Page {
     // Opens the contact/group info page for the currently selected chat. Group
     // JIDs end with "@g.us"; everything else is a 1:1 user.
     function openChatInfo() {
-        const chatId = Whatevr.AppController.selectedChatId
+        const chatId = Whatevr.ProtocolController.selectedChatId
         if (chatId.length === 0) {
             return
         }
@@ -134,7 +134,7 @@ Kirigami.Page {
     }
 
     function shouldTypeIntoComposer(event) {
-        if (!Whatevr.AppController.hasSelectedChat || !composer.visible || !Whatevr.AppController.composerEnabled) {
+        if (!Whatevr.ProtocolController.hasSelectedChat || !composer.visible || !Whatevr.AppController.composerEnabled) {
             return false
         }
         if (event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) {
@@ -144,7 +144,7 @@ Kirigami.Page {
     }
 
     function typeIntoComposer(text) {
-        if (!Whatevr.AppController.hasSelectedChat || !composer.visible || !Whatevr.AppController.composerEnabled || text.length === 0) {
+        if (!Whatevr.ProtocolController.hasSelectedChat || !composer.visible || !Whatevr.AppController.composerEnabled || text.length === 0) {
             return
         }
 
@@ -163,12 +163,12 @@ Kirigami.Page {
     }
 
     function setReplyTarget(messageId, senderName, text, mediaKind, mediaMimeType, outgoing) {
-        if (messageId.length === 0 || !Whatevr.AppController.hasSelectedChat) {
+        if (messageId.length === 0 || !Whatevr.ProtocolController.hasSelectedChat) {
             return
         }
         // Reply and edit are mutually exclusive; starting a reply cancels an edit.
         root.clearEditTarget()
-        replyChatId = Whatevr.AppController.selectedChatId
+        replyChatId = Whatevr.ProtocolController.selectedChatId
         replyToMessageId = messageId
         replyToSenderName = senderName
         replyToText = text
@@ -185,12 +185,12 @@ Kirigami.Page {
     }
 
     function setEditTarget(messageId, text) {
-        if (messageId.length === 0 || !Whatevr.AppController.hasSelectedChat) {
+        if (messageId.length === 0 || !Whatevr.ProtocolController.hasSelectedChat) {
             return
         }
         // Reply and edit are mutually exclusive; starting an edit cancels a reply.
         root.clearReplyTarget()
-        editChatId = Whatevr.AppController.selectedChatId
+        editChatId = Whatevr.ProtocolController.selectedChatId
         // Set the body before the id: the composer prefills on editingMessageId
         // becoming non-empty and reads editingOriginalText then.
         editingOriginalText = text
@@ -207,7 +207,7 @@ Kirigami.Page {
         // chat. By the time ESC reaches here no popup was open: leave selection
         // mode, then clear a pending reply, else close the chat.
         if (event.key === Qt.Key_Escape) {
-            if (!Whatevr.AppController.hasSelectedChat) {
+            if (!Whatevr.ProtocolController.hasSelectedChat) {
                 return
             }
             if (messageView.selectionActive) {
@@ -234,21 +234,21 @@ Kirigami.Page {
     PointHandler {
         target: null
         acceptedButtons: Qt.LeftButton
-        enabled: Whatevr.AppController.hasSelectedChat
+        enabled: Whatevr.ProtocolController.hasSelectedChat
         onActiveChanged: if (active) messageView.clearMessageSelection()
     }
 
     DragHandler {
         target: null
         acceptedButtons: Qt.LeftButton
-        enabled: Whatevr.AppController.hasSelectedChat
+        enabled: Whatevr.ProtocolController.hasSelectedChat
     }
 
     Connections {
-        target: Whatevr.AppController
+        target: Whatevr.ProtocolController
 
         function onSelectionChanged() {
-            const newChatId = Whatevr.AppController.selectedChatId
+            const newChatId = Whatevr.ProtocolController.selectedChatId
             if (newChatId !== root.pinnedLayoutChatId) {
                 root.beginPinnedLayoutSettle()
             }
@@ -291,9 +291,9 @@ Kirigami.Page {
         function onPinnedMessagesReadyChanged() {
             if (Whatevr.AppController.pinnedMessagesReady) {
                 root.requestPinnedLayoutSettle()
-            } else if (root.pinnedLayoutChatId !== Whatevr.AppController.selectedChatId
+            } else if (root.pinnedLayoutChatId !== Whatevr.ProtocolController.selectedChatId
                        || !root.pinnedLayoutSettled) {
-                root.pinnedLayoutChatId = Whatevr.AppController.selectedChatId
+                root.pinnedLayoutChatId = Whatevr.ProtocolController.selectedChatId
                 root.pinnedLayoutSettled = false
                 pinnedLayoutSettleTimer.stop()
             }
@@ -304,17 +304,17 @@ Kirigami.Page {
         id: pinnedLayoutSettleTimer
 
         interval: 0
-        onTriggered: root.pinnedLayoutSettled = Whatevr.AppController.hasSelectedChat
+        onTriggered: root.pinnedLayoutSettled = Whatevr.ProtocolController.hasSelectedChat
                                                 && root.messagesCurrent
                                                 && Whatevr.AppController.pinnedMessagesReady
-                                                && root.pinnedLayoutChatId === Whatevr.AppController.selectedChatId
+                                                 && root.pinnedLayoutChatId === Whatevr.ProtocolController.selectedChatId
     }
 
     titleDelegate: RowLayout {
         id: headerTitle
 
         readonly property bool selectionActive: messageView.selectionActive
-        readonly property bool hasPresenceText: Whatevr.AppController.hasSelectedChat
+        readonly property bool hasPresenceText: Whatevr.ProtocolController.hasSelectedChat
                                                 && Whatevr.AppController.selectedChatPresenceText.length > 0
         readonly property real avatarSize: Kirigami.Units.gridUnit * 1.8
         readonly property real subtextPixelSize: Math.max(8, Math.round(Kirigami.Theme.smallFont.pixelSize * 0.82))
@@ -349,15 +349,15 @@ Kirigami.Page {
         }
 
         AvatarImage {
-            visible: !headerTitle.selectionActive && Whatevr.AppController.hasSelectedChat
+            visible: !headerTitle.selectionActive && Whatevr.ProtocolController.hasSelectedChat
             Layout.alignment: Qt.AlignVCenter
             Layout.preferredWidth: headerTitle.avatarSize
             Layout.preferredHeight: headerTitle.avatarSize
-            avatarLocalPath: Whatevr.AppController.selectedChatAvatarLocalPath
-            initials: root.initialsForName(Whatevr.AppController.selectedChatName)
+            avatarLocalPath: Whatevr.ProtocolController.selectedChatAvatarLocalPath
+            initials: root.initialsForName(Whatevr.ProtocolController.selectedChatName)
 
             TapHandler {
-                enabled: Whatevr.AppController.hasSelectedChat
+                enabled: Whatevr.ProtocolController.hasSelectedChat
                 onTapped: root.openChatInfo()
             }
         }
@@ -370,7 +370,7 @@ Kirigami.Page {
             Layout.preferredHeight: headerTitle.avatarSize
 
             TapHandler {
-                enabled: Whatevr.AppController.hasSelectedChat
+                enabled: Whatevr.ProtocolController.hasSelectedChat
                 onTapped: root.openChatInfo()
             }
 
@@ -395,7 +395,7 @@ Kirigami.Page {
                 anchors.right: parent.right
                 anchors.top: titleLabel.bottom
                 anchors.topMargin: Kirigami.Units.smallSpacing / 3
-                visible: Whatevr.AppController.hasSelectedChat
+                visible: Whatevr.ProtocolController.hasSelectedChat
                 text: headerTitle.hasPresenceText ? Whatevr.AppController.selectedChatPresenceText : " "
                 elide: Text.ElideRight
                 opacity: headerTitle.hasPresenceText ? 1 : 0
@@ -415,7 +415,7 @@ Kirigami.Page {
             icon.name: "search-symbolic"
             text: Whatevr.I18n.i18nc("@action:button search within this chat", "Search")
             displayHint: Kirigami.DisplayHint.IconOnly
-            visible: Whatevr.AppController.hasSelectedChat
+            visible: Whatevr.ProtocolController.hasSelectedChat
             checkable: true
             checked: Whatevr.AppController.chatSearchActive
             onTriggered: {
@@ -430,13 +430,13 @@ Kirigami.Page {
             icon.name: "starred-symbolic"
             text: Whatevr.I18n.i18nc("@action:button starred messages in this chat", "Starred messages")
             displayHint: Kirigami.DisplayHint.AlwaysHide
-            visible: Whatevr.AppController.hasSelectedChat
+            visible: Whatevr.ProtocolController.hasSelectedChat
             onTriggered: {
-                Whatevr.AppController.loadStarredMessages(Whatevr.AppController.selectedChatId)
+                Whatevr.AppController.loadStarredMessages(Whatevr.ProtocolController.selectedChatId)
                 applicationWindow().pageStack.layers.push(Qt.resolvedUrl("StarredMessagesPage.qml"), {
-                    chatId: Whatevr.AppController.selectedChatId,
+                    chatId: Whatevr.ProtocolController.selectedChatId,
                     headerTitle: Whatevr.I18n.i18nc("@title starred messages in one chat",
-                                                    "Starred in %1", Whatevr.AppController.selectedChatName)
+                                                    "Starred in %1", Whatevr.ProtocolController.selectedChatName)
                 })
             }
         },
@@ -444,7 +444,7 @@ Kirigami.Page {
             icon.name: "dialog-close-symbolic"
             text: Whatevr.I18n.i18nc("@action:button", "Close Chat")
             displayHint: Kirigami.DisplayHint.AlwaysHide
-            visible: Whatevr.AppController.hasSelectedChat && root.closeChatActionVisible
+            visible: Whatevr.ProtocolController.hasSelectedChat && root.closeChatActionVisible
             onTriggered: root.closeChatRequested()
         }
     ]
@@ -654,7 +654,7 @@ Kirigami.Page {
                 id: pinnedBanner
 
                 anchors.fill: parent
-                visible: Whatevr.AppController.hasSelectedChat
+                visible: Whatevr.ProtocolController.hasSelectedChat
                          && Whatevr.AppController.pinnedMessagesReady
                          && root.messagesCurrent
                          && count > 0
@@ -686,7 +686,7 @@ Kirigami.Page {
                 originX: timelineArea.x
                 originY: timelineArea.y
                 source: {
-                    if (!Whatevr.AppController.hasSelectedChat) {
+                    if (!Whatevr.ProtocolController.hasSelectedChat) {
                         return "";
                     }
                     switch (Whatevr.Settings.chatWallpaperPattern) {
@@ -716,20 +716,27 @@ Kirigami.Page {
 
                 anchors.fill: parent
                 anchors.margins: Kirigami.Units.smallSpacing
-                visible: Whatevr.AppController.hasSelectedChat
-                         && root.pinnedLayoutReady
-                         && root.messagesCurrent
-                         && !Whatevr.AppController.unreadAnchorResolving
-                         && Whatevr.AppController.messageErrorText.length === 0
-                         && !Whatevr.AppController.messagesEmpty
-                chatId: Whatevr.AppController.selectedChatId
-                model: Whatevr.AppController.messageListModel
-                loadingOlderMessages: Whatevr.AppController.olderMessagesLoading
-                canLoadOlderMessages: Whatevr.AppController.canLoadOlderMessages
-                historyExhausted: Whatevr.AppController.selectedChatHistoryExhausted
-                phoneHistoryRequesting: Whatevr.AppController.phoneHistoryRequesting
-                onLoadOlderMessagesRequested: Whatevr.AppController.loadOlderMessages()
-                onLoadPhoneHistoryRequested: Whatevr.AppController.requestOlderMessagesFromPhone()
+                visible: Whatevr.ProtocolController.hasSelectedChat
+                          && root.pinnedLayoutReady
+                          && root.messagesCurrent
+                          && !Whatevr.ProtocolController.unreadAnchorResolving
+                          && Whatevr.ProtocolController.messageErrorText.length === 0
+                          && !Whatevr.ProtocolController.messagesEmpty
+                chatId: Whatevr.ProtocolController.selectedChatId
+                model: Whatevr.ProtocolController.messageListModel
+                loadingMessages: Whatevr.ProtocolController.messagesLoading
+                loadingOlderMessages: Whatevr.ProtocolController.olderMessagesLoading
+                loadingNewerMessages: Whatevr.ProtocolController.newerMessagesLoading
+                canLoadOlderMessages: Whatevr.ProtocolController.canLoadOlderMessages
+                canLoadNewerMessages: Whatevr.ProtocolController.canLoadNewerMessages
+                olderMessagesFailed: Whatevr.ProtocolController.olderMessagesFailed
+                newerMessagesFailed: Whatevr.ProtocolController.newerMessagesFailed
+                messagesAtLiveEdge: Whatevr.ProtocolController.messagesAtLiveEdge
+                historyExhausted: Whatevr.ProtocolController.selectedChatHistoryExhausted
+                phoneHistoryRequesting: Whatevr.ProtocolController.phoneHistoryRequesting
+                onLoadOlderMessagesRequested: Whatevr.ProtocolController.loadOlderMessages()
+                onLoadNewerMessagesRequested: Whatevr.ProtocolController.loadNewerMessages()
+                onLoadPhoneHistoryRequested: Whatevr.ProtocolController.requestOlderMessagesFromPhone()
                 onConversationFocusRequested: root.forceActiveFocus(Qt.MouseFocusReason)
                 onTypeIntoComposerRequested: text => root.typeIntoComposer(text)
                 onReplyToMessageRequested: (messageId, senderName, text, mediaKind, mediaMimeType, outgoing) => root.setReplyTarget(messageId, senderName, text, mediaKind, mediaMimeType, outgoing)
@@ -769,7 +776,7 @@ Kirigami.Page {
 
                 text: Whatevr.I18n.i18nc("@action:button", "Retry")
                 icon.name: "view-refresh-symbolic"
-                onTriggered: Whatevr.AppController.retryMessages()
+                onTriggered: Whatevr.ProtocolController.retryMessages()
             }
 
             Kirigami.PlaceholderMessage {
@@ -778,18 +785,18 @@ Kirigami.Page {
                                 Kirigami.Units.gridUnit * 22)
                 visible: !root.waitingForMessages
                          && !messageView.visible
-                text: !Whatevr.AppController.hasSelectedChat
+                text: !Whatevr.ProtocolController.hasSelectedChat
                       ? Whatevr.I18n.i18nc("@info", "Select a chat")
-                      : (Whatevr.AppController.messageErrorText.length > 0
+                       : (Whatevr.ProtocolController.messageErrorText.length > 0
                          ? Whatevr.I18n.i18nc("@info", "Messages could not be loaded")
                          : Whatevr.I18n.i18nc("@info", "No messages yet"))
-                explanation: !Whatevr.AppController.hasSelectedChat
+                explanation: !Whatevr.ProtocolController.hasSelectedChat
                              ? Whatevr.I18n.i18nc("@info", "Choose a conversation from the chat list to open it here.")
-                             : (Whatevr.AppController.messageErrorText.length > 0
-                                ? Whatevr.AppController.messageErrorText
+                              : (Whatevr.ProtocolController.messageErrorText.length > 0
+                                 ? Whatevr.ProtocolController.messageErrorText
                                 : Whatevr.I18n.i18nc("@info", "Messages you send and receive will appear here."))
 
-                helpfulAction: Whatevr.AppController.hasSelectedChat && Whatevr.AppController.messageErrorText.length > 0
+                helpfulAction: Whatevr.ProtocolController.hasSelectedChat && Whatevr.ProtocolController.messageErrorText.length > 0
                                ? retryMessagesAction
                                : null
             }
@@ -799,7 +806,7 @@ Kirigami.Page {
             id: composer
 
             Layout.fillWidth: true
-            visible: Whatevr.AppController.hasSelectedChat
+            visible: Whatevr.ProtocolController.hasSelectedChat
             enabledForChat: Whatevr.AppController.composerEnabled
             sending: Whatevr.AppController.sendInFlight
             errorText: Whatevr.AppController.composerErrorText

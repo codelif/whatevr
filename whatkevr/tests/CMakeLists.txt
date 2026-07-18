@@ -57,11 +57,17 @@ qt_add_executable(tst_protocolcontroller
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/protocol/protocolclient.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/protocol/objectviewmodel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/protocol/collectionviewmodel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/models/protocolmessagemodel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/util/messagemarkup.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/util/richtext.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/util/tlds.cpp
 )
 
 target_include_directories(tst_protocolcontroller PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/app
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/models
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/protocol
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/util
 )
 
 target_link_libraries(tst_protocolcontroller PRIVATE

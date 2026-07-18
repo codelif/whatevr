@@ -14,8 +14,11 @@
 #include <QTemporaryDir>
 #include <QTest>
 
+#include <utility>
+
 #include "collectionviewmodel.h"
 #include "protocolcontroller.h"
+#include "protocolmessagemodel.h"
 
 using whatevr::proto::CollectionViewModel;
 
@@ -67,6 +70,48 @@ public:
     // archived are two disjoint subscriptions of the same view.
     void setActiveChats(const QList<QJsonObject> &rows) { m_chatsActive = rows; }
     void setArchivedChats(const QList<QJsonObject> &rows) { m_chatsArchived = rows; }
+    void setMessages(const QList<QJsonObject> &rows) { m_messages = rows; }
+    void setUnreadAnchorId(const QString &id) { m_unreadAnchorId = id; }
+    void setInitialMessagesExhausted(bool exhausted) { m_initialMessagesExhausted = exhausted; }
+    void setNextExtendExhausted(bool exhausted) { m_nextExtendExhausted = exhausted; }
+    void setHoldMessagesReady(bool hold) { m_holdMessagesReady = hold; }
+    void setHoldExtendReady(bool hold) { m_holdExtendReady = hold; }
+    void setRejectNextExtend(bool reject) { m_rejectNextExtend = reject; }
+
+    void sendOpenChat(const QString &chatId)
+    {
+        writeObject(QJsonObject{{QStringLiteral("event"), QStringLiteral("open_chat")},
+                                {QStringLiteral("chat_id"), chatId}});
+    }
+
+    void resetMessages()
+    {
+        const int sub = m_subByView.value(QStringLiteral("messages"), -1);
+        if (sub >= 0) {
+            writeObject(QJsonObject{{QStringLiteral("sub"), sub},
+                                    {QStringLiteral("event"), QStringLiteral("reset")}});
+        }
+    }
+    void pushMessage(const QJsonObject &item, const QString &sort)
+    {
+        const int sub = m_subByView.value(QStringLiteral("messages"), -1);
+        if (sub >= 0) {
+            sendUpsert(sub, item, sort);
+        }
+    }
+    void readyMessages(bool exhausted)
+    {
+        const int sub = m_subByView.value(QStringLiteral("messages"), -1);
+        if (sub >= 0) {
+            sendReady(sub, true, exhausted);
+        }
+    }
+    void releaseExtendReady()
+    {
+        if (m_heldExtendSub >= 0) {
+            sendReady(std::exchange(m_heldExtendSub, -1), true, m_heldExtendExhausted);
+        }
+    }
 
     // Push a live collection update to whichever sub currently owns `view`.
     void pushUpsert(const QString &view, const QJsonObject &item, const QString &sort)
@@ -94,11 +139,21 @@ public:
     // The most recent chat.* command the controller sent.
     QString lastCommandMethod;
     QJsonObject lastCommandParams;
+    QJsonObject lastMessagesParams;
+    QJsonObject lastExtendParams;
+    QJsonObject lastSessionParams;
+    QJsonObject lastMarkReadParams;
+    int messagesSubscribeCount = 0;
+    int extendCount = 0;
 
 Q_SIGNALS:
     void reconnectRequested();
     void chatsSubscribed();
     void commandReceived();
+    void messagesSubscribed();
+    void extended();
+    void sessionUpdated();
+    void markReadReceived();
 
 private:
     void onReadyRead()
@@ -130,7 +185,21 @@ private:
             const QString view = params.value(QStringLiteral("view")).toString();
             const int sub = ++m_subCount;
             m_subByView.insert(view, sub);
-            reply(id, QJsonObject{{QStringLiteral("sub"), sub}});
+            if (view == QLatin1String("messages")
+                && params.value(QStringLiteral("anchor")).toString() == QLatin1String("not-found")) {
+                error(id, QStringLiteral("not_found"), QStringLiteral("message not found"));
+                return;
+            }
+            QJsonObject result{{QStringLiteral("sub"), sub}};
+            if (view == QLatin1String("messages")) {
+                const QString anchor = params.value(QStringLiteral("anchor")).toString();
+                if (anchor == QLatin1String("unread") && !m_unreadAnchorId.isEmpty()) {
+                    result.insert(QStringLiteral("anchor_id"), m_unreadAnchorId);
+                } else if (anchor != QLatin1String("latest") && anchor != QLatin1String("unread")) {
+                    result.insert(QStringLiteral("anchor_id"), anchor);
+                }
+            }
+            reply(id, result);
             if (m_items.contains(view)) {
                 sendUpsert(sub, m_items.value(view));
             }
@@ -138,6 +207,9 @@ private:
             bool hasRows = false;
             if (view == QLatin1String("chats")) {
                 rows = params.value(QStringLiteral("archived")).toBool() ? m_chatsArchived : m_chatsActive;
+                hasRows = true;
+            } else if (view == QLatin1String("messages")) {
+                rows = m_messages;
                 hasRows = true;
             } else if (m_collections.contains(view)) {
                 rows = m_collections.value(view);
@@ -151,12 +223,49 @@ private:
                     sendUpsert(sub, row, sort);
                 }
             }
-            sendReady(sub);
+            if (view != QLatin1String("messages") || !m_holdMessagesReady) {
+                sendReady(sub, view == QLatin1String("messages"), m_initialMessagesExhausted);
+            }
             if (view == QLatin1String("chats")) {
                 lastChatsParams = params;
                 ++chatsSubscribeCount;
                 Q_EMIT chatsSubscribed();
+            } else if (view == QLatin1String("messages")) {
+                lastMessagesParams = params;
+                ++messagesSubscribeCount;
+                Q_EMIT messagesSubscribed();
             }
+        } else if (method == QLatin1String("extend")) {
+            lastExtendParams = params;
+            ++extendCount;
+            if (std::exchange(m_rejectNextExtend, false)) {
+                error(id, QStringLiteral("invalid_params"), QStringLiteral("extend rejected"));
+                Q_EMIT extended();
+                return;
+            }
+            reply(id, QJsonObject{});
+            if (m_holdExtendReady) {
+                m_heldExtendSub = params.value(QStringLiteral("sub")).toInt();
+                m_heldExtendExhausted = m_nextExtendExhausted;
+            } else {
+                sendReady(params.value(QStringLiteral("sub")).toInt(), true, m_nextExtendExhausted);
+            }
+            Q_EMIT extended();
+        } else if (method == QLatin1String("unsubscribe")) {
+            reply(id, QJsonObject{});
+        } else if (method == QLatin1String("session.update")) {
+            lastSessionParams = params;
+            reply(id, QJsonObject{});
+            Q_EMIT sessionUpdated();
+        } else if (method == QLatin1String("chat.mark_read")) {
+            lastMarkReadParams = params;
+            reply(id, QJsonObject{});
+            Q_EMIT markReadReceived();
+        } else if (method == QLatin1String("chat.request_older")) {
+            lastCommandMethod = method;
+            lastCommandParams = params;
+            reply(id, QJsonObject{{QStringLiteral("requested"), true}});
+            Q_EMIT commandReceived();
         } else if (method == QLatin1String("daemon.reconnect")) {
             ++reconnectCount;
             reply(id, QJsonObject{});
@@ -181,17 +290,30 @@ private:
         });
     }
 
-    void sendReady(int sub)
+    void sendReady(int sub, bool includeExhausted = false, bool exhausted = false)
     {
-        writeObject(QJsonObject{
+        QJsonObject ready{
             {QStringLiteral("sub"), sub},
             {QStringLiteral("event"), QStringLiteral("ready")},
-        });
+        };
+        if (includeExhausted) {
+            ready.insert(QStringLiteral("exhausted"), exhausted);
+        }
+        writeObject(ready);
     }
 
     void reply(int id, const QJsonObject &result)
     {
         writeObject(QJsonObject{{QStringLiteral("id"), id}, {QStringLiteral("result"), result}});
+    }
+
+    void error(int id, const QString &code, const QString &message)
+    {
+        writeObject(QJsonObject{{QStringLiteral("id"), id},
+                                {QStringLiteral("error"), QJsonObject{
+                                     {QStringLiteral("code"), code},
+                                     {QStringLiteral("message"), message},
+                                 }}});
     }
 
     void writeObject(const QJsonObject &obj)
@@ -210,6 +332,15 @@ private:
     QHash<QString, QList<QJsonObject>> m_collections;
     QList<QJsonObject> m_chatsActive;
     QList<QJsonObject> m_chatsArchived;
+    QList<QJsonObject> m_messages;
+    QString m_unreadAnchorId;
+    bool m_initialMessagesExhausted = false;
+    bool m_nextExtendExhausted = false;
+    bool m_holdMessagesReady = false;
+    bool m_holdExtendReady = false;
+    bool m_heldExtendExhausted = false;
+    int m_heldExtendSub = -1;
+    bool m_rejectNextExtend = false;
 };
 
 QJsonObject chatRow(const QString &id, const QString &name, const QString &sort,
@@ -244,6 +375,23 @@ QJsonObject loginQrItem(const QString &code, int expiresInSecs)
         {QStringLiteral("state"), QStringLiteral("need_login")},
         {QStringLiteral("qr"), QJsonObject{{QStringLiteral("code"), code},
                                            {QStringLiteral("expires_at"), expiresAt}}},
+    };
+}
+
+QJsonObject messageRow(const QString &id, const QString &sort)
+{
+    return QJsonObject{
+        {QStringLiteral("id"), id},
+        {QStringLiteral("chat_id"), QStringLiteral("a@s" )},
+        {QStringLiteral("kind"), QStringLiteral("text")},
+        {QStringLiteral("fallback"), id},
+        {QStringLiteral("text"), id},
+        {QStringLiteral("sender"), QJsonObject{{QStringLiteral("id"), QStringLiteral("a@s")},
+                                                {QStringLiteral("name"), QStringLiteral("Alice")}}},
+        {QStringLiteral("timestamp"), 1'700'000'000},
+        {QStringLiteral("direction"), QStringLiteral("incoming")},
+        {QStringLiteral("status"), QStringLiteral("delivered")},
+        {QStringLiteral("sort"), sort},
     };
 }
 } // namespace
@@ -510,6 +658,341 @@ private Q_SLOTS:
         // Give the update a chance to land, then assert it stayed hidden.
         QTest::qWait(50);
         QVERIFY(!ctrl.historySyncVisible());
+    }
+
+    void latestConversationUsesProtocolTimelineAndSession()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+        daemon.setActiveChats({chatRow(QStringLiteral("a@s"), QStringLiteral("Alice"), QStringLiteral("1-000"),
+                                       QJsonObject{{QStringLiteral("unread"), 0},
+                                                   {QStringLiteral("avatar_path"), QStringLiteral("/alice.jpg")}})});
+        daemon.setMessages({messageRow(QStringLiteral("m2"), QStringLiteral("0002")),
+                            messageRow(QStringLiteral("m1"), QStringLiteral("0001"))});
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+        QTRY_VERIFY(!ctrl.chatsLoading());
+        ctrl.setConversationVisible(true);
+        ctrl.selectChat(QStringLiteral("a@s"));
+
+        QTRY_COMPARE(daemon.messagesSubscribeCount, 1);
+        QTRY_COMPARE(ctrl.displayedMessagesChatId(), QStringLiteral("a@s"));
+        QCOMPARE(daemon.lastMessagesParams.value(QStringLiteral("anchor")).toString(), QStringLiteral("latest"));
+        QCOMPARE(daemon.lastMessagesParams.value(QStringLiteral("limit")).toInt(), 80);
+        QCOMPARE(ctrl.selectedChatName(), QStringLiteral("Alice"));
+        QCOMPARE(ctrl.selectedChatAvatarLocalPath(), QStringLiteral("/alice.jpg"));
+        QVERIFY(ctrl.messagesAtLiveEdge());
+        QVERIFY(ctrl.canLoadOlderMessages());
+        QVERIFY(!ctrl.canLoadNewerMessages());
+
+        auto *messages = qobject_cast<ProtocolMessageModel *>(ctrl.messageListModel());
+        QVERIFY(messages);
+        QCOMPARE(messages->allMessageIds(), QStringList({QStringLiteral("m1"), QStringLiteral("m2")}));
+        QTRY_COMPARE(daemon.lastSessionParams.value(QStringLiteral("active_chat_id")).toString(), QStringLiteral("a@s"));
+    }
+
+    void unreadConversationExtendsFrontiersIndependently()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+        daemon.setActiveChats({chatRow(QStringLiteral("a@s"), QStringLiteral("Alice"), QStringLiteral("1-000"),
+                                       QJsonObject{{QStringLiteral("unread"), 3}})});
+        daemon.setUnreadAnchorId(QStringLiteral("u1"));
+        daemon.setMessages({messageRow(QStringLiteral("m0"), QStringLiteral("0000")),
+                            messageRow(QStringLiteral("u1"), QStringLiteral("0001")),
+                            messageRow(QStringLiteral("m2"), QStringLiteral("0002"))});
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+        QTRY_VERIFY(!ctrl.chatsLoading());
+        ctrl.setConversationVisible(true);
+        ctrl.selectChat(QStringLiteral("a@s"));
+        QTRY_COMPARE(ctrl.unreadAnchorMessageId(), QStringLiteral("u1"));
+        QCOMPARE(ctrl.unreadAnchorCount(), 3);
+        QVERIFY(!ctrl.unreadAnchorResolving());
+        QVERIFY(ctrl.canLoadOlderMessages());
+        QVERIFY(ctrl.canLoadNewerMessages());
+        QVERIFY(!ctrl.messagesAtLiveEdge());
+
+        daemon.setNextExtendExhausted(true);
+        ctrl.loadOlderMessages();
+        QTRY_COMPARE(daemon.extendCount, 1);
+        QCOMPARE(daemon.lastExtendParams.value(QStringLiteral("direction")).toString(), QStringLiteral("older"));
+        QTRY_VERIFY(!ctrl.olderMessagesLoading());
+        QVERIFY(!ctrl.canLoadOlderMessages());
+
+        daemon.setNextExtendExhausted(false);
+        ctrl.loadNewerMessages();
+        QTRY_COMPARE(daemon.extendCount, 2);
+        QCOMPARE(daemon.lastExtendParams.value(QStringLiteral("direction")).toString(), QStringLiteral("newer"));
+        QVERIFY(ctrl.canLoadNewerMessages());
+        QVERIFY(!ctrl.messagesAtLiveEdge());
+
+        daemon.setNextExtendExhausted(true);
+        ctrl.loadNewerMessages();
+        QTRY_COMPARE(daemon.extendCount, 3);
+        QTRY_VERIFY(ctrl.messagesAtLiveEdge());
+        QVERIFY(!ctrl.canLoadNewerMessages());
+    }
+
+    void messageJumpReanchorsAndBottomReturnsToLatest()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+        daemon.setActiveChats({chatRow(QStringLiteral("a@s"), QStringLiteral("Alice"), QStringLiteral("1-000"))});
+        daemon.setMessages({messageRow(QStringLiteral("m1"), QStringLiteral("0001"))});
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+        QTRY_VERIFY(!ctrl.chatsLoading());
+        ctrl.setConversationVisible(true);
+        ctrl.selectChat(QStringLiteral("a@s"));
+        QTRY_COMPARE(ctrl.displayedMessagesChatId(), QStringLiteral("a@s"));
+
+        QSignalSpy readySpy(&ctrl, &ProtocolController::messageJumpReady);
+        ctrl.jumpToMessage(QStringLiteral("m1"));
+        QTRY_COMPARE(readySpy.count(), 1);
+        QCOMPARE(daemon.messagesSubscribeCount, 1); // already loaded: no re-subscribe
+
+        daemon.setMessages({messageRow(QStringLiteral("target"), QStringLiteral("0005"))});
+        ctrl.jumpToMessage(QStringLiteral("target"));
+        QTRY_COMPARE(daemon.messagesSubscribeCount, 2);
+        QTRY_COMPARE(readySpy.count(), 2);
+        QCOMPARE(daemon.lastMessagesParams.value(QStringLiteral("anchor")).toString(), QStringLiteral("target"));
+        QVERIFY(!ctrl.messagesAtLiveEdge());
+
+        ctrl.jumpToBottom();
+        QTRY_COMPARE(daemon.messagesSubscribeCount, 3);
+        QCOMPARE(daemon.lastMessagesParams.value(QStringLiteral("anchor")).toString(), QStringLiteral("latest"));
+        QTRY_VERIFY(ctrl.messagesAtLiveEdge());
+
+        QSignalSpy unavailableSpy(&ctrl, &ProtocolController::messageJumpUnavailable);
+        ctrl.jumpToMessage(QStringLiteral("not-found"));
+        QTRY_COMPARE(unavailableSpy.count(), 1);
+        QVERIFY(ctrl.messageErrorText().isEmpty());
+        QTRY_COMPARE(daemon.messagesSubscribeCount, 4); // prior latest window restored
+    }
+
+    void readWatermarkAndOpenChatUseConnectionSurface()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+        daemon.setActiveChats({chatRow(QStringLiteral("a@s"), QStringLiteral("Alice"), QStringLiteral("1-000"),
+                                       QJsonObject{{QStringLiteral("unread"), 1}})});
+        daemon.setUnreadAnchorId(QStringLiteral("m1"));
+        daemon.setMessages({messageRow(QStringLiteral("m1"), QStringLiteral("0001")),
+                            messageRow(QStringLiteral("m2"), QStringLiteral("0002"))});
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+        QTRY_VERIFY(!ctrl.chatsLoading());
+        ctrl.setConversationVisible(true);
+        ctrl.selectChat(QStringLiteral("a@s"));
+        QTRY_COMPARE(ctrl.displayedMessagesChatId(), QStringLiteral("a@s"));
+
+        QSignalSpy markSpy(&daemon, &FakeDaemon::markReadReceived);
+        ctrl.markSelectedChatViewed(QStringLiteral("m2"));
+        ctrl.markSelectedChatViewed(QStringLiteral("m1")); // must not regress the debounce frontier
+        QTRY_COMPARE_WITH_TIMEOUT(markSpy.count(), 1, 1000);
+        QCOMPARE(daemon.lastMarkReadParams.value(QStringLiteral("chat_id")).toString(), QStringLiteral("a@s"));
+        QCOMPARE(daemon.lastMarkReadParams.value(QStringLiteral("up_to_message_id")).toString(), QStringLiteral("m2"));
+
+        QSignalSpy openSpy(&ctrl, &ProtocolController::openChatRequested);
+        daemon.sendOpenChat(QStringLiteral("b@s"));
+        QTRY_COMPARE(openSpy.count(), 1);
+        QCOMPARE(openSpy.first().first().toString(), QStringLiteral("b@s"));
+    }
+
+    void resetPreservesUnreadMetadataAndFrontiers()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+        daemon.setActiveChats({chatRow(QStringLiteral("a@s"), QStringLiteral("Alice"), QStringLiteral("1-000"),
+                                       QJsonObject{{QStringLiteral("unread"), 2}})});
+        daemon.setUnreadAnchorId(QStringLiteral("u1"));
+        daemon.setMessages({messageRow(QStringLiteral("u1"), QStringLiteral("0001"))});
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+        QTRY_VERIFY(!ctrl.chatsLoading());
+        ctrl.setConversationVisible(true);
+        ctrl.selectChat(QStringLiteral("a@s"));
+        QTRY_COMPARE(ctrl.unreadAnchorMessageId(), QStringLiteral("u1"));
+
+        daemon.setNextExtendExhausted(true);
+        ctrl.loadOlderMessages();
+        QTRY_VERIFY(!ctrl.olderMessagesLoading());
+        QVERIFY(!ctrl.canLoadOlderMessages());
+        QVERIFY(ctrl.canLoadNewerMessages());
+
+        daemon.resetMessages();
+        QTRY_VERIFY(ctrl.messagesLoading());
+        QCOMPARE(ctrl.unreadAnchorMessageId(), QStringLiteral("u1"));
+        QVERIFY(!ctrl.unreadAnchorResolving());
+        daemon.pushMessage(messageRow(QStringLiteral("u1"), QStringLiteral("0001")), QStringLiteral("0001"));
+        daemon.readyMessages(false);
+
+        QTRY_VERIFY(!ctrl.messagesLoading());
+        QCOMPARE(ctrl.displayedMessagesChatId(), QStringLiteral("a@s"));
+        QVERIFY(!ctrl.canLoadOlderMessages());
+        QVERIFY(ctrl.canLoadNewerMessages());
+    }
+
+    void hiddenConversationClearsSessionAndResubscribesWhenShown()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+        daemon.setActiveChats({chatRow(QStringLiteral("a@s"), QStringLiteral("Alice"), QStringLiteral("1-000"))});
+        daemon.setMessages({messageRow(QStringLiteral("m1"), QStringLiteral("0001"))});
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+        QTRY_VERIFY(!ctrl.chatsLoading());
+        ctrl.setConversationVisible(true);
+        ctrl.selectChat(QStringLiteral("a@s"));
+        QTRY_COMPARE(daemon.messagesSubscribeCount, 1);
+        QTRY_COMPARE(daemon.lastSessionParams.value(QStringLiteral("active_chat_id")).toString(), QStringLiteral("a@s"));
+
+        ctrl.setConversationVisible(false);
+        QTRY_COMPARE(daemon.lastSessionParams.value(QStringLiteral("active_chat_id")).toString(), QString());
+        QVERIFY(ctrl.hasSelectedChat()); // presentation selection survives the status page
+        QVERIFY(ctrl.displayedMessagesChatId().isEmpty());
+
+        ctrl.setConversationVisible(true);
+        QTRY_COMPARE(daemon.messagesSubscribeCount, 2);
+        QTRY_COMPARE(ctrl.displayedMessagesChatId(), QStringLiteral("a@s"));
+    }
+
+    void resetDuringInitialFillStillCompletesUnreadAndJump()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+        daemon.setActiveChats({chatRow(QStringLiteral("a@s"), QStringLiteral("Alice"), QStringLiteral("1-000"),
+                                       QJsonObject{{QStringLiteral("unread"), 1}})});
+        daemon.setUnreadAnchorId(QStringLiteral("u1"));
+        daemon.setMessages({messageRow(QStringLiteral("u1"), QStringLiteral("0001"))});
+        daemon.setHoldMessagesReady(true);
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+        QTRY_VERIFY(!ctrl.chatsLoading());
+        ctrl.setConversationVisible(true);
+        ctrl.selectChat(QStringLiteral("a@s"));
+        QTRY_COMPARE(ctrl.unreadAnchorMessageId(), QStringLiteral("u1"));
+        QVERIFY(ctrl.messagesLoading());
+
+        daemon.resetMessages();
+        daemon.pushMessage(messageRow(QStringLiteral("u1"), QStringLiteral("0001")), QStringLiteral("0001"));
+        daemon.readyMessages(false);
+        QTRY_VERIFY(!ctrl.messagesLoading());
+        QCOMPARE(ctrl.displayedMessagesChatId(), QStringLiteral("a@s"));
+        QVERIFY(ctrl.canLoadOlderMessages());
+        QVERIFY(ctrl.canLoadNewerMessages());
+
+        daemon.setMessages({messageRow(QStringLiteral("target"), QStringLiteral("0002"))});
+        QSignalSpy jumpSpy(&ctrl, &ProtocolController::messageJumpReady);
+        ctrl.jumpToMessage(QStringLiteral("target"));
+        QTRY_COMPARE(daemon.messagesSubscribeCount, 2);
+        daemon.resetMessages();
+        daemon.pushMessage(messageRow(QStringLiteral("target"), QStringLiteral("0002")), QStringLiteral("0002"));
+        daemon.readyMessages(false);
+        QTRY_COMPARE(jumpSpy.count(), 1);
+        QCOMPARE(jumpSpy.first().first().toString(), QStringLiteral("target"));
+    }
+
+    void resetDuringExtendKeepsDirectionalCompletion()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+        daemon.setActiveChats({chatRow(QStringLiteral("a@s"), QStringLiteral("Alice"), QStringLiteral("1-000"))});
+        daemon.setMessages({messageRow(QStringLiteral("m1"), QStringLiteral("0001"))});
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+        QTRY_VERIFY(!ctrl.chatsLoading());
+        ctrl.setConversationVisible(true);
+        ctrl.selectChat(QStringLiteral("a@s"));
+        QTRY_COMPARE(ctrl.displayedMessagesChatId(), QStringLiteral("a@s"));
+
+        daemon.setNextExtendExhausted(true);
+        daemon.setHoldExtendReady(true);
+        ctrl.loadOlderMessages();
+        QTRY_COMPARE(daemon.extendCount, 1);
+        QVERIFY(ctrl.olderMessagesLoading());
+        daemon.resetMessages();
+        daemon.pushMessage(messageRow(QStringLiteral("m1"), QStringLiteral("0001")), QStringLiteral("0001"));
+        daemon.releaseExtendReady();
+
+        QTRY_VERIFY(!ctrl.olderMessagesLoading());
+        QVERIFY(!ctrl.canLoadOlderMessages());
+        QCOMPARE(ctrl.displayedMessagesChatId(), QStringLiteral("a@s"));
+    }
+
+    void phoneHistoryWaitsForSettledOlderRows()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+        daemon.setActiveChats({chatRow(QStringLiteral("a@s"), QStringLiteral("Alice"), QStringLiteral("1-000"),
+                                       QJsonObject{{QStringLiteral("history_exhausted"), false}})});
+        daemon.setMessages({messageRow(QStringLiteral("m1"), QStringLiteral("0001"))});
+        daemon.setInitialMessagesExhausted(true);
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+        QTRY_VERIFY(!ctrl.chatsLoading());
+        ctrl.setConversationVisible(true);
+        ctrl.selectChat(QStringLiteral("a@s"));
+        QTRY_COMPARE(ctrl.displayedMessagesChatId(), QStringLiteral("a@s"));
+        QVERIFY(!ctrl.canLoadOlderMessages());
+
+        ctrl.requestOlderMessagesFromPhone();
+        QTRY_VERIFY(ctrl.phoneHistoryRequesting());
+        QTRY_COMPARE(daemon.extendCount, 1);
+        daemon.pushMessage(messageRow(QStringLiteral("live"), QStringLiteral("0002")), QStringLiteral("0002"));
+        QTest::qWait(75);
+        QVERIFY(ctrl.phoneHistoryRequesting()); // a live append is not backfill completion
+
+        daemon.pushMessage(messageRow(QStringLiteral("old2"), QStringLiteral("0000")), QStringLiteral("0000"));
+        daemon.pushMessage(messageRow(QStringLiteral("old1"), QStringLiteral("0000a")), QStringLiteral("0000a"));
+        QTRY_VERIFY(!ctrl.phoneHistoryRequesting());
+        auto *messages = qobject_cast<ProtocolMessageModel *>(ctrl.messageListModel());
+        QVERIFY(messages);
+        QCOMPARE(messages->messageIdAt(0), QStringLiteral("old2"));
+
+        ctrl.requestOlderMessagesFromPhone();
+        QTRY_VERIFY(ctrl.phoneHistoryRequesting());
+        ctrl.setConversationVisible(false);
+        QVERIFY(!ctrl.phoneHistoryRequesting());
+    }
+
+    void extendFailureIsNonfatalAndStopsPrefetchRetry()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+        daemon.setActiveChats({chatRow(QStringLiteral("a@s"), QStringLiteral("Alice"), QStringLiteral("1-000"))});
+        daemon.setMessages({messageRow(QStringLiteral("m1"), QStringLiteral("0001"))});
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+        QTRY_VERIFY(!ctrl.chatsLoading());
+        ctrl.setConversationVisible(true);
+        ctrl.selectChat(QStringLiteral("a@s"));
+        QTRY_VERIFY(ctrl.canLoadOlderMessages());
+
+        daemon.setRejectNextExtend(true);
+        ctrl.loadOlderMessages();
+        QTRY_COMPARE(daemon.extendCount, 1);
+        QTRY_VERIFY(!ctrl.olderMessagesLoading());
+        QVERIFY(!ctrl.canLoadOlderMessages());
+        QVERIFY(ctrl.olderMessagesFailed());
+        QVERIFY(ctrl.messageErrorText().isEmpty());
+
+        daemon.setNextExtendExhausted(true);
+        ctrl.loadOlderMessages();
+        QTRY_COMPARE(daemon.extendCount, 2);
+        QTRY_VERIFY(!ctrl.olderMessagesFailed());
+        QVERIFY(!ctrl.canLoadOlderMessages()); // successful retry reached exhaustion
     }
 
 private:

@@ -105,7 +105,7 @@ Status: `todo` | `doing` | `done` | `blocked` | `needs-decision`
 | D2b1 | Port chat list core: `chats` view active list, filters (all/direct/groups) as subscribe params, row/field mapping, list commands (pin/archive/mute), selection routing to gRPC conversation, loading/empty | done | `ProtocolController` grew a generic `chatsModel` (`CollectionViewModel`) subscribed to `chats {filter, archived:false}`, a `chatFilter` int that **re-subscribes** (no frontend filtering — the D1 `ChatListFilterModel` proxy is gone from the pane), derived `chatsLoading`/`chatsEmpty`, and `setChatPinned/Archived/Muted` mapping to `chat.*` acks. `ChatListPane.qml` binds the delegate to `model.item.<daemon field>` with pure-presentation string→int status/direction + initials helpers; context-menu/loading bindings repointed to `ProtocolController`. Selection still routes to the gRPC `AppController.selectChat` (conversation is D3); drafts read from gRPC `AppController.chatDraft` (frontend state, allowed; composer is D4). Archived-section QML left inert (D2b2). `tst_protocolcontroller` +3 cases (fill/order, filter re-subscribe, command mapping) via a collection-serving fake daemon; `just build` + whatkevr tests + conformance pass; hand-verified over socat (fill+ready, daemon-side groups/direct filters, `chat.pin` ack) and a headless app launch (no QML errors, reaches chat shell). No PROTOCOL.md change. |
 | D2b2 | Port archived chats section (second `chats` subscription) + `typing` overlay + `sync` history strip | done | `ProtocolController` grew `archivedChatsModel` (a second `chats` sub, `archived:true`, same filter, re-subscribed with the active list) + `archivedCount`; a `typing` collection with `chatTyping(chatId)` + a `typingRevision` tick; and a `sync` object view feeding derived `historySyncVisible/Percent/Title/Detail` (names mirror `AppController`). `ChatListPane.qml`: the inline row became a shared `chatRowDelegate` `Component` used by both the active `ListView` and a collapsible **`footer`** (header + `Repeater` over `archivedChatsModel`) — the old `section.property="chatSection"` machinery is gone; `ChatListDelegate` width gained a `parent.width` fallback for the footer. `isTyping` binds `chatTyping(chatId)` keyed on `typingRevision`; `HistorySyncStrip` + placeholder repointed to `ProtocolController.historySync*`. Sync display policy is simplified vs the gRPC cursor (renders the single current `sync` item; drops cross-event type-dedup) — see Decision log. `tst_protocolcontroller` +3 (archived separate model, typing live start/stop, sync derivation incl. complete/on-demand hiding); `just build` + all whatkevr tests (13) + conformance pass; hand-verified over socat (archived count, `typing` ready, `sync` item) and a headless app launch (no QML errors). No PROTOCOL.md change. **D2b complete.** |
 | D3a | Protocol message presentation model over the generic daemon-sorted collection; expose every `ready` completion for directional pagination; no UI wiring | done | New `ProtocolMessageModel` mirrors `CollectionViewModel` rows unchanged (ascending daemon `sort`) and maps whole message items into the timeline's presentation roles/helpers, including unknown-kind `fallback`, nested sender/media/reply/reactions, ascending day/sender grouping, markup/layout memoization, snapshots/copy/selection helpers. `CollectionViewModel::readyReceived` exposes every `ready`; its move mutation now obeys Qt's begin/end contract. New model/core tests include `QAbstractItemModelTester`; no UI wiring or PROTOCOL.md change. |
-| D3b | Port conversation selection + timeline: `messages` latest/unread/message-id anchors, directional extend, jump navigation, read watermark, session/open-chat routing | todo | |
+| D3b | Port conversation selection + timeline: `messages` latest/unread/message-id anchors, directional extend, jump navigation, read watermark, session/open-chat routing | done | `ProtocolController` now owns selected-chat `messages` subscriptions (latest/unread/message-id), independent directional pagination/exhaustion, jump/re-anchor, exact read watermarks, visible-session updates, and `open_chat`; `MessageView.qml`/`RowScrollBar.qml` render the ascending daemon-sorted model and preserve prepend viewport anchors. Protocol core hardens delayed subscribe/extend replies and exposes extend failures. Controller/core/model tests cover anchors, resets, jumps, pagination, phone-history, session/read routing; `just build`, all Qt tests, conformance, live raw-socket exercise, and offscreen launch pass. No PROTOCOL.md change. |
 | D3c | Port conversation chrome: selected-chat `presence` header + dialog-scoped live `receipts` view | todo | |
 | D4 | Port composer + all send paths, media download/`transfers` progress, image viewer | todo | |
 | D5 | Port info dialogs (contact/group/members), starred/pinned pages, unified + in-chat search | todo | |
@@ -172,6 +172,30 @@ _None._
   no GUI/gRPC) and drive the real client over a real Unix socket.
 
 ## Decision log
+
+- 2026-07-19 — D3b implementation readings (no PROTOCOL.md change): (1) The
+  conversation now renders `ProtocolMessageModel` in ascending daemon `sort`
+  order; `MessageView` and its row scrollbar were converted from the legacy
+  newest-first/inverted geometry rather than adding a frontend reorder layer.
+  Older extends prepend and restore a presentation-only viewport anchor; phone
+  backfill keeps reapplying that anchor for arbitrarily delayed older upserts
+  until the user scrolls. (2) `ProtocolController` owns one authoritative
+  `messages` subscription for the selected chat. Unread and message-id anchors
+  keep independent older/newer frontier state; off-window jumps replace the
+  subscription, and jump-to-bottom re-subscribes `latest` per Model A. Missing
+  jump targets restore the prior window instead of blanking the timeline. (3)
+  `chat.mark_read` carries the highest actually-visible message id observed by
+  the debounced UI; a pending watermark is flushed before re-anchoring. (4)
+  `session.update` reports an active chat only while the conversation pages are
+  visible. Protocol `open_chat` is now the primary route; selection is mirrored
+  into the frozen gRPC controller only for composer/pins/search and other D4/D5
+  surfaces still awaiting their own port. (5) Steady-state `reset`, reconnect,
+  initial-fill reset, and reset-during-extend preserve the appropriate metadata
+  and frontier completion. Late replies are guarded by QObject identity and
+  stale daemon subscriptions are explicitly removed. (6) QML compilation and
+  an offscreen launch cover the rewritten timeline surface; socket/controller
+  lifecycle behavior has focused Qt tests. Presence header and receipt-dialog
+  scope remain untouched for D3c.
 
 - 2026-07-19 — **D3 split into D3a/D3b/D3c** (implementation judgement; no
   PROTOCOL.md change). The original step combines three substantial mechanics:

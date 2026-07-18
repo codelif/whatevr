@@ -88,6 +88,7 @@ public:
     [[nodiscard]] QHash<int, QByteArray> roleNames() const override;
 
     [[nodiscard]] Q_INVOKABLE int indexOf(const QString &messageId) const;
+    [[nodiscard]] Q_INVOKABLE QString messageIdAt(int row) const;
     [[nodiscard]] Q_INVOKABLE QString dateTextForRow(int row) const;
     Q_INVOKABLE void setBodyMetricsFont(const QFont &font);
     Q_INVOKABLE bool expandMessageText(const QString &messageId);

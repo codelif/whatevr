@@ -82,6 +82,9 @@ Q_SIGNALS:
     void subscribed(const QVariantMap &meta);
     // The subscribe request was rejected.
     void failed(const QString &code, const QString &message);
+    // An extend request was rejected. View completion still arrives through
+    // `ready`; this signal exists only so callers can clear in-flight UI state.
+    void extendFailed(const QString &code, const QString &message);
 
 private:
     friend class ProtocolClient;
@@ -169,7 +172,7 @@ private:
 
     // Subscription plumbing (called by Subscription).
     void sendSubscribe(Subscription *sub);
-    void sendExtend(int subId, int count, const QString &direction);
+    void sendExtend(Subscription *sub, int count, const QString &direction);
     void sendUnsubscribe(Subscription *sub);
     void removeSubscription(Subscription *sub);
 
