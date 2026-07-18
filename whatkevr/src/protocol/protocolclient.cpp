@@ -4,6 +4,7 @@
 #include <QJsonDocument>
 #include <QJsonValue>
 #include <QLocalSocket>
+#include <QPointer>
 #include <QTimer>
 #include <QtGlobal>
 
@@ -62,7 +63,7 @@ void Subscription::extend(int count, const QString &direction)
         return;
     }
     if (m_client) {
-        m_client->sendExtend(m_subId, count, direction);
+        m_client->sendExtend(this, count, direction);
     }
 }
 
@@ -380,13 +381,20 @@ void ProtocolClient::sendSubscribe(Subscription *sub)
 {
     QJsonObject params = sub->m_params;
     params.insert(QStringLiteral("view"), sub->m_view);
+    const QPointer<Subscription> guardedSub(sub);
     sendRequest(QStringLiteral("subscribe"), params,
-                [this, sub](const QJsonObject &result, const ProtocolError &error) {
-                    // The subscription may have been torn down before the
-                    // response arrived; ignore it if so.
-                    if (!m_subscriptions.contains(sub)) {
+                [this, guardedSub](const QJsonObject &result, const ProtocolError &error) {
+                    // A replaced subscription can be allocated at the same raw
+                    // address. QPointer tracks the original QObject identity.
+                    if (!guardedSub) {
+                        const int staleSubId = result.value(QStringLiteral("sub")).toInt(-1);
+                        if (!error.isError() && staleSubId >= 0) {
+                            sendRequest(QStringLiteral("unsubscribe"),
+                                        QJsonObject{{QStringLiteral("sub"), staleSubId}}, {});
+                        }
                         return;
                     }
+                    Subscription *sub = guardedSub.data();
                     if (error.isError()) {
                         Q_EMIT sub->failed(error.code, error.message);
                         return;
@@ -402,24 +410,29 @@ void ProtocolClient::sendSubscribe(Subscription *sub)
                     const auto pending = sub->m_pendingExtends;
                     sub->m_pendingExtends.clear();
                     for (const auto &ext : pending) {
-                        sendExtend(sub->m_subId, ext.count, ext.direction);
+                        sendExtend(sub, ext.count, ext.direction);
                     }
                     Q_EMIT sub->subscribed(meta);
                 });
 }
 
-void ProtocolClient::sendExtend(int subId, int count, const QString &direction)
+void ProtocolClient::sendExtend(Subscription *sub, int count, const QString &direction)
 {
-    if (m_state != State::Ready || subId < 0) {
+    if (m_state != State::Ready || !sub || sub->m_subId < 0) {
         return;
     }
+    const QPointer<Subscription> guardedSub(sub);
     sendRequest(QStringLiteral("extend"),
-                QJsonObject{
-                    {QStringLiteral("sub"), subId},
-                    {QStringLiteral("count"), count},
-                    {QStringLiteral("direction"), direction},
-                },
-                {});
+                 QJsonObject{
+                     {QStringLiteral("sub"), sub->m_subId},
+                     {QStringLiteral("count"), count},
+                     {QStringLiteral("direction"), direction},
+                 },
+                 [guardedSub](const QJsonObject &, const ProtocolError &error) {
+                     if (error.isError() && guardedSub) {
+                         Q_EMIT guardedSub->extendFailed(error.code, error.message);
+                     }
+                 });
 }
 
 void ProtocolClient::sendUnsubscribe(Subscription *sub)

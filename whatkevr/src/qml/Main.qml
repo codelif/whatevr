@@ -198,16 +198,16 @@ Kirigami.ApplicationWindow {
         // Pushing the conversation page leaves currentIndex at 1. Anchor it to
         // the actual selection so the very first wide -> single-column switch
         // shows the right column instead of an empty conversation pane.
-        navTargetChatId = Whatevr.AppController.selectedChatId
-        pageStack.currentIndex = Whatevr.AppController.hasSelectedChat ? 1 : 0
+        navTargetChatId = Whatevr.ProtocolController.selectedChatId
+        pageStack.currentIndex = Whatevr.ProtocolController.hasSelectedChat ? 1 : 0
         navProgrammaticIndexChange = false
     }
 
     function showConversation(chatId) {
-        if (currentMode !== "chat" || !Whatevr.AppController.hasSelectedChat) {
+        if (currentMode !== "chat" || !Whatevr.ProtocolController.hasSelectedChat) {
             return
         }
-        navTargetChatId = chatId || Whatevr.AppController.selectedChatId
+        navTargetChatId = chatId || Whatevr.ProtocolController.selectedChatId
         navProgrammaticIndexChange = true
         pageStack.currentIndex = 1
         navProgrammaticIndexChange = false
@@ -219,8 +219,9 @@ Kirigami.ApplicationWindow {
 
     function closeConversation() {
         navTargetChatId = ""
-        if (chatWideLayout && Whatevr.AppController.hasSelectedChat) {
+        if (chatWideLayout && Whatevr.ProtocolController.hasSelectedChat) {
             // No slide in the wide layout; clear immediately.
+            Whatevr.ProtocolController.selectChat("")
             Whatevr.AppController.selectChat("")
         }
         if (pageStack.currentIndex > 0) {
@@ -269,7 +270,8 @@ Kirigami.ApplicationWindow {
         if (navTargetChatId === "") {
             if (chatSingleColumnLayout
                     && pageStack.currentIndex === 0
-                    && Whatevr.AppController.hasSelectedChat) {
+                    && Whatevr.ProtocolController.hasSelectedChat) {
+                Whatevr.ProtocolController.selectChat("")
                 Whatevr.AppController.selectChat("")
             }
             return
@@ -288,6 +290,7 @@ Kirigami.ApplicationWindow {
 
     function rebuildPageStack() {
         const nextMode = appMode()
+        Whatevr.ProtocolController.setConversationVisible(nextMode === "chat")
         if (nextMode === currentMode) {
             return
         }
@@ -307,7 +310,7 @@ Kirigami.ApplicationWindow {
             pageStack.clear()
             currentMode = nextMode
             ensureChatPages()
-            if (pendingShowConversation && Whatevr.AppController.hasSelectedChat) {
+            if (pendingShowConversation && Whatevr.ProtocolController.hasSelectedChat) {
                 pendingShowConversation = false
                 showConversation()
             }
@@ -327,9 +330,9 @@ Kirigami.ApplicationWindow {
         }
         // Land on the column matching the selection so a wide -> single-column
         // switch never reveals an empty conversation pane.
-        navTargetChatId = Whatevr.AppController.selectedChatId
+        navTargetChatId = Whatevr.ProtocolController.selectedChatId
         navProgrammaticIndexChange = true
-        pageStack.currentIndex = Whatevr.AppController.hasSelectedChat ? 1 : 0
+        pageStack.currentIndex = Whatevr.ProtocolController.hasSelectedChat ? 1 : 0
         navProgrammaticIndexChange = false
         scheduleNavSettle()
     }
@@ -427,6 +430,18 @@ Kirigami.ApplicationWindow {
                 settingsView.close()
             }
         }
+
+        function onOpenChatRequested(chatId) {
+            root.activateWindow()
+            Whatevr.ProtocolController.selectChat(chatId)
+            // Keep not-yet-ported composer/chrome state aligned during D3b.
+            Whatevr.AppController.selectChat(chatId)
+            if (root.currentMode === "chat") {
+                root.showConversation(chatId)
+            } else {
+                root.pendingShowConversation = true
+            }
+        }
     }
 
     Connections {
@@ -438,7 +453,8 @@ Kirigami.ApplicationWindow {
 
         function onOpenChatRequested(chatId) {
             root.activateWindow()
-            // The controller has already selected the chat at this point.
+            // Local URI and transitional gRPC routes still enter here.
+            Whatevr.ProtocolController.selectChat(chatId)
             if (root.currentMode === "chat") {
                 root.showConversation(chatId)
             } else {

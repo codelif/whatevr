@@ -609,6 +609,11 @@ int ProtocolMessageModel::indexOf(const QString &messageId) const
     return m_source ? m_source->indexOfId(messageId) : -1;
 }
 
+QString ProtocolMessageModel::messageIdAt(int row) const
+{
+    return wireItem(row).value(QStringLiteral("id")).toString();
+}
+
 QString ProtocolMessageModel::dateTextForRow(int row) const
 {
     return row >= 0 && row < rowCount() ? cachedRelativeDate(wireItem(row)) : QString();

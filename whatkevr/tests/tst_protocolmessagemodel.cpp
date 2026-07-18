@@ -102,6 +102,9 @@ private Q_SLOTS:
         source.onUpsert(QStringLiteral("0003"), message(QStringLiteral("m3"), 1'700'000'120, QStringLiteral("outgoing")));
 
         QCOMPARE(model.allMessageIds(), QStringList({QStringLiteral("m1"), QStringLiteral("m2"), QStringLiteral("m3")}));
+        QCOMPARE(model.messageIdAt(0), QStringLiteral("m1"));
+        QCOMPARE(model.messageIdAt(2), QStringLiteral("m3"));
+        QVERIFY(model.messageIdAt(3).isEmpty());
         QVERIFY(role(model, 0, ProtocolMessageModel::GroupStartRole).toBool());
         QVERIFY(!role(model, 0, ProtocolMessageModel::GroupEndRole).toBool());
         QVERIFY(!role(model, 1, ProtocolMessageModel::GroupStartRole).toBool());

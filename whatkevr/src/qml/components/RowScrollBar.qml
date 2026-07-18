@@ -12,16 +12,16 @@ import org.kde.kirigami as Kirigami
 // actually enter or leave the viewport — and while pressed the thumb is
 // pointer-bound, so the view chases the thumb and never the reverse.
 //
-// Written for a BottomToTop ListView: index 0 = newest = visual bottom,
-// highest index = oldest = visual top.
+// Written for an ascending ListView: index 0 = oldest = visual top, highest
+// index = newest = visual bottom.
 Item {
     id: root
 
     // Row-window inputs, bound by the owner (see MessageView.updateScrollState).
     property int count: 0
-    // Row at the visual top of the viewport (highest visible index).
+    // Row at the visual top of the viewport (lowest visible index).
     property int topVisibleIndex: -1
-    // Row at the visual bottom of the viewport (lowest visible index).
+    // Row at the visual bottom of the viewport (highest visible index).
     property int bottomVisibleIndex: -1
     // Fraction (0..1) of the top row scrolled off above the viewport.
     property real topRowFraction: 0
@@ -37,13 +37,13 @@ Item {
     readonly property real visualWidth: hoveredOrActive ? Kirigami.Units.smallSpacing * 1.5 : 2
 
     readonly property real visibleSpan: topVisibleIndex >= 0 && bottomVisibleIndex >= 0
-                                        ? Math.max(1, topVisibleIndex - bottomVisibleIndex + 1)
+                                         ? Math.max(1, bottomVisibleIndex - topVisibleIndex + 1)
                                         : 1
     readonly property bool scrollable: count > 0 && visibleSpan < count
     // Whole rows fully above the viewport plus the fractional part of the top
     // row: sweeps continuously as rows pass the top edge, so the thumb moves
     // smoothly instead of in row-sized steps.
-    readonly property real rowsAbove: Math.max(0, (count - 1 - topVisibleIndex) + topRowFraction)
+    readonly property real rowsAbove: Math.max(0, topVisibleIndex + topRowFraction)
     readonly property real denom: Math.max(1, count - visibleSpan)
     readonly property real posFraction: Math.max(0, Math.min(1, rowsAbove / denom))
     readonly property real thumbHeight: Math.max(minThumb, (visibleSpan / Math.max(1, count)) * height)
@@ -69,7 +69,7 @@ Item {
         const frac = travel > 0 ? dragThumbY / travel : 0
         if (frac <= 0.001) {
             // Track top: oldest row flush with the viewport top.
-            dragPositionRequested(count - 1, 0)
+            dragPositionRequested(0, 0)
             return
         }
         if (frac >= 0.999) {
@@ -78,7 +78,7 @@ Item {
         }
         const targetRowsAbove = frac * denom
         const whole = Math.floor(targetRowsAbove)
-        const idx = Math.max(0, Math.min(count - 1, count - 1 - whole))
+        const idx = Math.max(0, Math.min(count - 1, whole))
         dragPositionRequested(idx, targetRowsAbove - whole)
     }
 

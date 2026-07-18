@@ -13,6 +13,8 @@
 #include <QTemporaryDir>
 #include <QTest>
 
+#include <utility>
+
 #include "collectionviewmodel.h"
 #include "objectviewmodel.h"
 #include "protocolclient.h"
@@ -96,10 +98,25 @@ public:
     QString lastExtendDirection;
     int subscribeCount = 0;
     int unsubscribeCount = 0;
+    bool rejectNextExtend = false;
+    bool holdNextSubscribe = false;
+
+    void releaseHeldSubscribe()
+    {
+        if (m_heldSubscribeId < 0) {
+            return;
+        }
+        const int sub = ++subscribeCount;
+        QJsonObject result = nextSubscribeMeta;
+        result.insert(QStringLiteral("sub"), sub);
+        reply(std::exchange(m_heldSubscribeId, -1), result);
+        Q_EMIT subscribed(sub);
+    }
 
 Q_SIGNALS:
     void subscribed(int sub);
     void extended();
+    void subscribeHeld();
 
 private:
     void onReadyRead()
@@ -131,6 +148,11 @@ private:
                       });
         } else if (method == QLatin1String("subscribe")) {
             lastSubscribeParams = params;
+            if (std::exchange(holdNextSubscribe, false)) {
+                m_heldSubscribeId = id;
+                Q_EMIT subscribeHeld();
+                return;
+            }
             const int sub = ++subscribeCount;
             QJsonObject result = nextSubscribeMeta;
             result.insert(QStringLiteral("sub"), sub);
@@ -139,7 +161,17 @@ private:
         } else if (method == QLatin1String("extend")) {
             lastExtendCount = params.value(QStringLiteral("count")).toInt();
             lastExtendDirection = params.value(QStringLiteral("direction")).toString();
-            reply(id, QJsonObject{});
+            if (std::exchange(rejectNextExtend, false)) {
+                writeObject(QJsonObject{
+                    {QStringLiteral("id"), id},
+                    {QStringLiteral("error"), QJsonObject{
+                         {QStringLiteral("code"), QStringLiteral("invalid_params")},
+                         {QStringLiteral("message"), QStringLiteral("bad direction")},
+                     }},
+                });
+            } else {
+                reply(id, QJsonObject{});
+            }
             Q_EMIT extended();
         } else if (method == QLatin1String("unsubscribe")) {
             ++unsubscribeCount;
@@ -167,6 +199,7 @@ private:
     QLocalServer *m_server;
     QLocalSocket *m_conn = nullptr;
     QByteArray m_buf;
+    int m_heldSubscribeId = -1;
 };
 
 QJsonObject item(const QString &id, const QString &name)
@@ -321,6 +354,22 @@ private Q_SLOTS:
         QCOMPARE(m_daemon->lastExtendDirection, QStringLiteral("older"));
     }
 
+    void extendFailureIsObservable()
+    {
+        CollectionViewModel model;
+        connectAndSubscribe(&model, QStringLiteral("messages"));
+        Subscription *sub = m_sub;
+        waitForSub();
+        m_daemon->rejectNextExtend = true;
+        QSignalSpy failureSpy(sub, &Subscription::extendFailed);
+
+        sub->extend(25, QStringLiteral("newer"));
+
+        QVERIFY(failureSpy.wait());
+        QCOMPARE(failureSpy.first().at(0).toString(), QStringLiteral("invalid_params"));
+        QCOMPARE(failureSpy.first().at(1).toString(), QStringLiteral("bad direction"));
+    }
+
     void subscribeMetaIsExposed()
     {
         m_daemon->nextSubscribeMeta = QJsonObject{{QStringLiteral("anchor_id"), QStringLiteral("m42")}};
@@ -332,6 +381,29 @@ private Q_SLOTS:
         QCOMPARE(meta.value(QStringLiteral("anchor_id")).toString(), QStringLiteral("m42"));
         QVERIFY(!meta.contains(QStringLiteral("sub")));
         QCOMPARE(m_sub->meta().value(QStringLiteral("anchor_id")).toString(), QStringLiteral("m42"));
+    }
+
+    void staleSubscribeReplyCannotAttachToReplacement()
+    {
+        QSignalSpy readySpy(m_client, &ProtocolClient::ready);
+        m_client->start();
+        QVERIFY(readySpy.wait());
+        CollectionViewModel firstModel;
+        CollectionViewModel secondModel;
+        m_daemon->holdNextSubscribe = true;
+        QSignalSpy heldSpy(m_daemon, &FakeDaemon::subscribeHeld);
+        Subscription *first = m_client->subscribe(QStringLiteral("messages"), QJsonObject{}, &firstModel);
+        QVERIFY(heldSpy.wait());
+        delete first;
+
+        Subscription *second = m_client->subscribe(QStringLiteral("messages"), QJsonObject{}, &secondModel);
+        QSignalSpy secondSpy(second, &Subscription::subscribed);
+        QVERIFY(secondSpy.wait());
+        QVERIFY(second->isActive());
+
+        m_daemon->releaseHeldSubscribe();
+        QTRY_COMPARE(m_daemon->unsubscribeCount, 1);
+        QVERIFY(second->isActive());
     }
 
     void objectView()

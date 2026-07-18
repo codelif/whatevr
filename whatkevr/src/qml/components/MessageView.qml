@@ -13,29 +13,35 @@ Item {
 
     property string chatId: ""
     property alias model: list.model
+    property bool loadingMessages: false
     property bool loadingOlderMessages: false
+    property bool loadingNewerMessages: false
     property bool showLoadingOlderMessages: false
     property bool canLoadOlderMessages: false
+    property bool canLoadNewerMessages: false
+    property bool olderMessagesFailed: false
+    property bool newerMessagesFailed: false
+    property bool messagesAtLiveEdge: true
     // On-demand history from the phone: shown at the visual top once the
     // daemon's local history is fully loaded. historyExhausted means the
     // phone already answered "nothing older exists".
     property bool historyExhausted: false
     property bool phoneHistoryRequesting: false
 
-    // The list is inverted (newest at index 0, rendered bottom-to-top). Loading
-    // older history therefore appends at the *end* of the model, which can never
-    // shift the anchored viewport, so no scroll-position restoration is needed.
-    //
-    // followNewest: true while the newest message is in view, so freshly arrived
-    // messages keep the view pinned to the bottom. Detection is index-based
-    // (orientation-agnostic): the newest message is always index 0 and the
-    // oldest is always the highest index, regardless of the physical edge they
-    // map to.
+    // Protocol rows are oldest-to-newest in daemon `sort` order. Older extends
+    // prepend rows, so their completion restores the prior top-row anchor.
+    // followNewest stays true while the highest row is in view.
     property bool openingChat: false
     property bool followNewest: true
     property bool atNewest: true
     property int pendingNewestMessageCount: 0
     property bool olderLoadRequestQueued: false
+    property bool newerLoadRequestQueued: false
+    property string olderViewportAnchorId: ""
+    property real olderViewportAnchorOffset: 0
+    property string phoneHistoryViewportAnchorId: ""
+    property real phoneHistoryViewportAnchorOffset: 0
+    property bool phoneHistoryAnchorActive: false
 
     // How close (in rows) to the newest message we must be to keep following it.
     property int followRowThreshold: 2
@@ -74,8 +80,8 @@ Item {
     // row never changes, so the model lookup is skipped while it stays put.
     property int lastTopIndex: -1
     // Visible-row window feeding the index-based scrollbar. topVisibleIndex is
-    // the row at the visual top (oldest visible — highest index in this
-    // BottomToTop list); topRowFraction is how much of it is scrolled off
+    // the row at the visual top (the lowest visible index); topRowFraction is
+    // how much of it is scrolled off
     // above the viewport. They keep their last value when the indexAt probes
     // land in row spacing, so the thumb never flickers.
     property int topVisibleIndex: -1
@@ -88,11 +94,10 @@ Item {
     property string pendingJumpMessageId: ""
     property double pendingJumpDeadlineMs: 0
 
-    // Unread divider anchor for the open chat (AppController resolves it once
-    // per chat open; it stays put until the chat is switched).
-    readonly property string unreadAnchorMessageId: Whatevr.AppController.unreadAnchorMessageId
-    readonly property int unreadAnchorCount: Whatevr.AppController.unreadAnchorCount
-    readonly property bool unreadAnchorResolving: Whatevr.AppController.unreadAnchorResolving
+    // Unread divider anchor returned in the messages subscribe metadata.
+    readonly property string unreadAnchorMessageId: Whatevr.ProtocolController.unreadAnchorMessageId
+    readonly property int unreadAnchorCount: Whatevr.ProtocolController.unreadAnchorCount
+    readonly property bool unreadAnchorResolving: Whatevr.ProtocolController.unreadAnchorResolving
     // Set on the first genuine user scroll after a chat opens; a late-arriving
     // unread anchor must not yank the viewport away from where the user went.
     property bool userScrolledSinceOpen: false
@@ -100,6 +105,7 @@ Item {
     property bool unreadAnchorPositioned: false
 
     signal loadOlderMessagesRequested()
+    signal loadNewerMessagesRequested()
     signal loadPhoneHistoryRequested()
     signal conversationFocusRequested()
     signal typeIntoComposerRequested(string text)
@@ -119,7 +125,11 @@ Item {
 
         loadingOlderMessagesDelayTimer.stop()
         showLoadingOlderMessages = false
+        if (!phoneHistoryRequesting) {
+            restoreOlderViewport()
+        }
     }
+    onPhoneHistoryRequestingChanged: if (!phoneHistoryRequesting) restorePhoneHistoryViewport()
 
     Timer {
         id: loadingOlderMessagesDelayTimer
@@ -525,7 +535,7 @@ Item {
     function scrollToNewest() {
         if (list.count > 0) {
             programmaticScroll = true
-            list.positionViewAtBeginning()
+            list.positionViewAtEnd()
             floatingDateActive = false
             floatingDateIdleTimer.stop()
             bottomSettleTimer.restart()
@@ -534,6 +544,73 @@ Item {
         pendingNewestMessageCount = 0
         followNewest = true
         atNewest = true
+    }
+
+    function captureOlderViewport() {
+        olderViewportAnchorId = ""
+        if (topVisibleIndex < 0 || !list.model || typeof list.model.messageIdAt !== "function") {
+            return
+        }
+        const item = list.itemAtIndex(topVisibleIndex)
+        olderViewportAnchorId = list.model.messageIdAt(topVisibleIndex)
+        olderViewportAnchorOffset = item !== null ? item.y - list.contentY : 0
+    }
+
+    function restoreOlderViewport() {
+        if (olderViewportAnchorId.length === 0 || !list.model || typeof list.model.indexOf !== "function") {
+            return
+        }
+        const id = olderViewportAnchorId
+        const offset = olderViewportAnchorOffset
+        olderViewportAnchorId = ""
+        const index = list.model.indexOf(id)
+        if (index < 0) {
+            return
+        }
+        programmaticScroll = true
+        list.positionViewAtIndex(index, ListView.Visible)
+        list.forceLayout()
+        const item = list.itemAtIndex(index)
+        if (item !== null) {
+            list.contentY = Math.max(kineticWheelScroller.minimumY(),
+                                     Math.min(kineticWheelScroller.maximumY(), item.y - offset))
+        }
+        Qt.callLater(() => {
+            root.programmaticScroll = false
+            root.updateScrollState()
+        })
+    }
+
+    function capturePhoneHistoryViewport() {
+        captureOlderViewport()
+        phoneHistoryViewportAnchorId = olderViewportAnchorId
+        phoneHistoryViewportAnchorOffset = olderViewportAnchorOffset
+        phoneHistoryAnchorActive = phoneHistoryViewportAnchorId.length > 0
+        olderViewportAnchorId = ""
+    }
+
+    function restorePhoneHistoryViewport() {
+        if (!phoneHistoryAnchorActive || phoneHistoryViewportAnchorId.length === 0
+                || !list.model || typeof list.model.indexOf !== "function") {
+            return
+        }
+        const index = list.model.indexOf(phoneHistoryViewportAnchorId)
+        if (index < 0) {
+            return
+        }
+        programmaticScroll = true
+        list.positionViewAtIndex(index, ListView.Visible)
+        list.forceLayout()
+        const item = list.itemAtIndex(index)
+        if (item !== null) {
+            list.contentY = Math.max(kineticWheelScroller.minimumY(),
+                                     Math.min(kineticWheelScroller.maximumY(),
+                                              item.y - phoneHistoryViewportAnchorOffset))
+        }
+        Qt.callLater(() => {
+            root.programmaticScroll = false
+            root.updateScrollState()
+        })
     }
 
     // Place the unread divider near the middle of the viewport so the user sees
@@ -577,23 +654,25 @@ Item {
         if (chatId.length === 0 || list.count === 0 || !visible) {
             return
         }
-        if (Whatevr.AppController.selectedChatId !== chatId
-                || Whatevr.AppController.selectedChatUnreadCount <= 0
+        if (Whatevr.ProtocolController.selectedChatId !== chatId
+                || Whatevr.ProtocolController.selectedChatUnreadCount <= 0
                 || Qt.application.state !== Qt.ApplicationActive) {
             return
         }
 
-        // The unread region spans rows 0..anchorIndex (index 0 is newest).
+        // The unread region spans anchorIndex..last (the highest row is newest).
         // Without a locatable anchor only the newest row counts as "viewing".
-        let regionTop = 0
+        let regionStart = list.count - 1
         if (unreadAnchorMessageId.length > 0 && list.model && typeof list.model.indexOf === "function") {
             const anchorIndex = list.model.indexOf(unreadAnchorMessageId)
             if (anchorIndex >= 0) {
-                regionTop = anchorIndex
+                regionStart = anchorIndex
             }
         }
-        if (atNewest || (bottomVisibleIndex >= 0 && bottomVisibleIndex <= regionTop)) {
-            Whatevr.AppController.markSelectedChatViewed()
+        if (bottomVisibleIndex >= regionStart && list.model
+                && typeof list.model.messageIdAt === "function") {
+            const watermark = list.model.messageIdAt(bottomVisibleIndex)
+            Whatevr.ProtocolController.markSelectedChatViewed(watermark)
         }
     }
 
@@ -674,7 +753,7 @@ Item {
             return
         }
         beginProgrammaticJump(messageId)
-        Whatevr.AppController.jumpToMessage(messageId)
+        Whatevr.ProtocolController.jumpToMessage(messageId)
     }
 
     function jumpToLoadedMessage(messageId) {
@@ -761,27 +840,30 @@ Item {
             hi = hi < 0 ? bottomIndex : Math.max(hi, bottomIndex)
         }
 
-        if (hi >= 0) {
-            topVisibleIndex = hi
-        }
         if (lo >= 0) {
-            bottomVisibleIndex = lo
+            topVisibleIndex = lo
+        }
+        if (hi >= 0) {
+            bottomVisibleIndex = hi
         }
 
-        if (lo >= 0) {
-            atNewest = lo === 0
-            followNewest = lo <= followRowThreshold
+        if (hi >= 0) {
+            atNewest = hi === list.count - 1
+            followNewest = hi >= list.count - 1 - followRowThreshold
         } else {
-            atNewest = list.atYBeginning
-            followNewest = list.atYBeginning
+            atNewest = list.atYEnd
+            followNewest = list.atYEnd
         }
 
         if (atNewest) {
             pendingNewestMessageCount = 0
         }
 
-        if (shouldPrefetchOlder(hi)) {
+        if (shouldPrefetchOlder(lo)) {
             queueOlderLoadRequest()
+        }
+        if (shouldPrefetchNewer(hi)) {
+            queueNewerLoadRequest()
         }
 
         maybeMarkViewedRead()
@@ -793,7 +875,7 @@ Item {
                 && topIndex >= 0
                 && canLoadOlderMessages
                 && !loadingOlderMessages
-                && topIndex >= list.count - 1 - prefetchRowThreshold
+                && topIndex <= prefetchRowThreshold
     }
 
     function queueOlderLoadRequest() {
@@ -804,7 +886,30 @@ Item {
         Qt.callLater(() => {
             olderLoadRequestQueued = false
             if (shouldPrefetchOlder(topVisibleIndex)) {
+                captureOlderViewport()
                 loadOlderMessagesRequested()
+            }
+        })
+    }
+
+    function shouldPrefetchNewer(bottomIndex) {
+        return !openingChat
+                && pendingJumpMessageId.length === 0
+                && bottomIndex >= 0
+                && canLoadNewerMessages
+                && !loadingNewerMessages
+                && bottomIndex >= list.count - 1 - prefetchRowThreshold
+    }
+
+    function queueNewerLoadRequest() {
+        if (newerLoadRequestQueued) {
+            return
+        }
+        newerLoadRequestQueued = true
+        Qt.callLater(() => {
+            newerLoadRequestQueued = false
+            if (shouldPrefetchNewer(bottomVisibleIndex)) {
+                loadNewerMessagesRequested()
             }
         })
     }
@@ -822,6 +927,7 @@ Item {
         }
         lastScrollY = list.contentY
         userScrolledSinceOpen = true
+        phoneHistoryAnchorActive = false
         if (floatingDateText.length > 0) {
             floatingDateActive = true
             floatingDateIdleTimer.restart()
@@ -829,6 +935,9 @@ Item {
     }
 
     function afterModelReset() {
+        if (loadingMessages) {
+            return
+        }
         lastTopIndex = -1
         topVisibleIndex = -1
         bottomVisibleIndex = -1
@@ -868,6 +977,8 @@ Item {
         followNewest = true
         userScrolledSinceOpen = false
         unreadAnchorPositioned = false
+        phoneHistoryAnchorActive = false
+        phoneHistoryViewportAnchorId = ""
         if (chatId.length === 0) {
             openingChat = false
         } else {
@@ -888,12 +999,13 @@ Item {
         }
     }
 
+    onLoadingMessagesChanged: if (!loadingMessages && chatId.length > 0) Qt.callLater(afterModelReset)
+
     ListView {
         id: list
 
-        // Pin to the bottom and only grow as tall as the content until it
-        // overflows the viewport. A BottomToTop ListView otherwise parks short
-        // content at the top, leaving a gap above the composer.
+        // Pin the viewport itself to the bottom and only grow as tall as content,
+        // keeping short conversations adjacent to the composer.
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
@@ -920,21 +1032,17 @@ Item {
                 // scrollToNewest then settles followNewest/atNewest state.
                 if (list.count > 0) {
                     root.programmaticScroll = true
-                    list.positionViewAtBeginning()
+                    list.positionViewAtEnd()
                     Qt.callLater(() => { root.programmaticScroll = false })
                 }
                 Qt.callLater(root.scrollToNewest)
             }
         }
 
-        // Newest at the bottom; older history stacks upward off the top edge.
-        verticalLayoutDirection: ListView.BottomToTop
-
-        // In a BottomToTop list the footer sits above the oldest message —
-        // the visual top. Once the daemon's local history is fully loaded it
-        // offers pulling older messages from the phone (on-demand sync), or
+        // Once the daemon's local history is fully loaded, the header at the
+        // visual top offers pulling older messages from the phone, or
         // states that nothing older exists there.
-        footer: Item {
+        header: Item {
             width: list.width
             height: phoneHistoryColumn.visible
                     ? phoneHistoryColumn.implicitHeight + Kirigami.Units.largeSpacing * 2
@@ -945,10 +1053,20 @@ Item {
 
                 anchors.centerIn: parent
                 spacing: Kirigami.Units.smallSpacing
-                visible: list.count > 0 && !root.canLoadOlderMessages && !root.openingChat
+                visible: list.count > 0
+                         && (!root.canLoadOlderMessages || root.olderMessagesFailed)
+                         && !root.openingChat
+
+                ToolButton {
+                    visible: root.olderMessagesFailed
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: Whatevr.I18n.i18nc("@action:button", "Retry loading older messages")
+                    icon.name: "view-refresh-symbolic"
+                    onClicked: root.loadOlderMessagesRequested()
+                }
 
                 Label {
-                    visible: root.historyExhausted
+                    visible: !root.olderMessagesFailed && root.historyExhausted
                     anchors.horizontalCenter: parent.horizontalCenter
                     width: Math.min(implicitWidth, list.width - Kirigami.Units.gridUnit * 4)
                     horizontalAlignment: Text.AlignHCenter
@@ -959,7 +1077,7 @@ Item {
                 }
 
                 Row {
-                    visible: !root.historyExhausted && root.phoneHistoryRequesting
+                    visible: !root.olderMessagesFailed && !root.historyExhausted && root.phoneHistoryRequesting
                     anchors.horizontalCenter: parent.horizontalCenter
                     spacing: Kirigami.Units.smallSpacing
 
@@ -979,11 +1097,14 @@ Item {
                 }
 
                 ToolButton {
-                    visible: !root.historyExhausted && !root.phoneHistoryRequesting
+                    visible: !root.olderMessagesFailed && !root.historyExhausted && !root.phoneHistoryRequesting
                     anchors.horizontalCenter: parent.horizontalCenter
                     text: Whatevr.I18n.i18nc("@action:button", "Load older messages from phone")
                     icon.name: "cloud-download-symbolic"
-                    onClicked: root.loadPhoneHistoryRequested()
+                    onClicked: {
+                        root.capturePhoneHistoryViewport()
+                        root.loadPhoneHistoryRequested()
+                    }
                 }
             }
         }
@@ -1212,7 +1333,7 @@ Item {
                     && root.pendingJumpMessageId.length === 0
                     && list.count > 0) {
                 root.programmaticScroll = true
-                list.positionViewAtBeginning()
+                list.positionViewAtEnd()
                 Qt.callLater(() => { root.programmaticScroll = false })
             }
             root.updateScrollState()
@@ -1238,15 +1359,19 @@ Item {
                 }
             }
             function onRowsInserted(parent, first, last) {
-                // first === 0 means a new newest message arrived at the bottom.
-                // Older history is appended at the end (first > 0) and must not
-                // move the viewport.
-                if (first === 0) {
+                // Live-edge messages append at the end. Older extends prepend;
+                // their viewport is restored when loadingOlderMessages clears.
+                if (!root.openingChat && last === list.count - 1) {
                     if (root.followNewest && root.pendingJumpMessageId.length === 0) {
                         Qt.callLater(root.scrollToNewest)
                     } else {
                         root.pendingNewestMessageCount = Math.min(100, root.pendingNewestMessageCount + last - first + 1)
                     }
+                }
+                if (root.phoneHistoryAnchorActive && list.model
+                        && typeof list.model.indexOf === "function"
+                        && first < list.model.indexOf(root.phoneHistoryViewportAnchorId)) {
+                    Qt.callLater(root.restorePhoneHistoryViewport)
                 }
             }
         }
@@ -1258,15 +1383,7 @@ Item {
     }
 
     Connections {
-        target: Whatevr.AppController
-
-        function onOutgoingMessageAddedToSelectedChat() {
-            if (root.pendingJumpMessageId.length > 0) {
-                return
-            }
-            root.followNewest = true
-            Qt.callLater(root.scrollToNewest)
-        }
+        target: Whatevr.ProtocolController
 
         function onUnreadAnchorChanged() {
             // The anchor can resolve after the chat already opened from the
@@ -1282,9 +1399,9 @@ Item {
                 if (root.userScrolledSinceOpen || root.pendingJumpMessageId.length > 0) {
                     return
                 }
-                if (Whatevr.AppController.unreadAnchorMessageId.length > 0) {
+                if (Whatevr.ProtocolController.unreadAnchorMessageId.length > 0) {
                     root.positionAtUnreadAnchor()
-                } else if (root.openingChat && !Whatevr.AppController.unreadAnchorResolving) {
+                } else if (root.openingChat && !Whatevr.ProtocolController.unreadAnchorResolving) {
                     root.scrollToNewest()
                     root.openingChat = false
                 }
@@ -1362,9 +1479,8 @@ Item {
         }
 
         onDragPositionRequested: (index, fraction) => {
-            // positionViewAtIndex only materialises the row near the viewport;
-            // the exact alignment is done through contentY below, so the
-            // BottomToTop Beginning/End anchor semantics never matter.
+            // positionViewAtIndex materialises the row near the viewport; the
+            // exact alignment is done through contentY below.
             list.positionViewAtIndex(index, ListView.Visible)
             const item = list.itemAtIndex(index)
             if (item !== null && item.height > 0) {
@@ -1375,7 +1491,10 @@ Item {
                                                   item.y + fraction * item.height))
             }
         }
-        onJumpToNewestRequested: list.positionViewAtBeginning()
+        onJumpToNewestRequested: {
+            Whatevr.ProtocolController.jumpToBottom()
+            list.positionViewAtEnd()
+        }
     }
 
     AbstractButton {
@@ -1388,7 +1507,7 @@ Item {
         anchors.margins: Kirigami.Units.largeSpacing
         width: Kirigami.Units.gridUnit * 2.25
         height: width
-        visible: list.count > 0 && !root.atNewest
+        visible: list.count > 0 && (!root.atNewest || !root.messagesAtLiveEdge)
         z: kineticWheelScroller.z + 1
         hoverEnabled: true
         focusPolicy: Qt.NoFocus
@@ -1401,6 +1520,7 @@ Item {
             root.pendingNewestMessageCount = 0
             kineticWheelScroller.stopKinetic()
             if (list.flicking) list.cancelFlick()
+            Whatevr.ProtocolController.jumpToBottom()
             root.scrollToNewest()
             root.conversationFocusRequested()
         }
