@@ -6,7 +6,8 @@
 #   examples/shell-frontend.sh                     # just watch the chat list
 #   examples/shell-frontend.sh <chat_id>           # also read + send to a chat
 #
-# Type a line and press enter to send it to <chat_id>; Ctrl-D or Ctrl-C to quit.
+# Type a line and press enter to send it to <chat_id>; Ctrl-D stops typing but
+# keeps watching; Ctrl-C quits.
 set -euo pipefail
 
 socket="${WHATEVR_SOCKET:-${XDG_RUNTIME_DIR:?XDG_RUNTIME_DIR is not set}/whatevr/whatevrd.sock}"
@@ -18,27 +19,37 @@ req="$(mktemp -u)"; mkfifo "$req"; trap 'rm -f "$req"' EXIT
 
 {
     printf '%s\n' '{"id":1,"method":"hello","params":{"client":"examples/shell-frontend.sh","protocol":1}}'
-    printf '%s\n' '{"id":2,"method":"subscribe","params":{"view":"chats","filter":"all","archived":false,"limit":20}}'
+    printf '%s\n' '{"id":2,"method":"subscribe","params":{"view":"chats","filter":"all","archived":false,"limit":3}}'
     if [ -n "$chat" ]; then
-        # Read the conversation (sub 3) and send each typed line to it.
-        jq -cn --arg c "$chat" '{id:3,method:"subscribe",params:{view:"messages",chat_id:$c,anchor:"latest",limit:20}}'
+        # Read the conversation (request id 3) and send each typed line to it.
+        jq -cn --arg c "$chat" '{id:3,method:"subscribe",params:{view:"messages",chat_id:$c,anchor:"latest",limit:3}}'
         while IFS= read -r line; do
             jq -cn --arg c "$chat" --arg t "$line" '{id:9,method:"send.text",params:{chat_id:$c,text:$t}}'
         done
-    else
-        while sleep 3600; do :; done
     fi
+    # Never let the request stream hit EOF: an EOF here lets socat half-close and
+    # race the daemon's in-flight snapshot (response → upserts → ready all ride
+    # one connection). Idle until Ctrl-C so every frame has time to arrive.
+    while sleep 3600; do :; done
 } > "$req" &
 
-socat - "UNIX-CONNECT:${socket}" < "$req" | jq -r '
-    if .result.daemon then "connected: \(.result.daemon) protocol=\(.result.protocol) state=\(.result.state)"
-    elif .result.sub then "subscribed: \(.result.sub)"
-    elif .result.message_id then "sent: \(.result.message_id)"
-    elif .error then "error[\(.id)]: \(.error.code): \(.error.message)"
-    elif .event == "upsert" and .sub == 2 then "chat  id=\(.item.id) name=\(.item.name // "") unread=\(.item.unread // 0) preview=\(.item.preview // "")"
-    elif .event == "upsert" and .sub == 3 then "msg   \(if .item.direction == "outgoing" then "→" else "←" end) \(.item.text // "[\(.item.kind)]")"
-    elif .event == "remove" then "remove \(.id) (sub \(.sub))"
-    elif .event == "ready" then "ready sub=\(.sub) exhausted=\(.exhausted // false)"
-    elif .event == "reset" then "reset sub=\(.sub)"
-    else tostring end
+# The daemon assigns each subscription its own `sub` id, unrelated to our request
+# id (PROTOCOL.md rule 3). So learn sub → view from the subscribe responses
+# (id 2 is chats, id 3 is messages) and route events by what we were told.
+socat - "UNIX-CONNECT:${socket}" < "$req" | jq -rn --unbuffered '
+    {"2":"chats","3":"messages"} as $roles
+    | foreach inputs as $m ({role:{}};
+        if $m.result.sub then .role[($m.result.sub|tostring)] = ($roles[$m.id|tostring] // "?") else . end
+      ;
+        (.role[$m.sub|tostring]) as $view
+        | if   $m.result.daemon     then "connected: \($m.result.daemon) protocol=\($m.result.protocol) state=\($m.result.state)"
+          elif $m.result.sub        then "subscribed: \($m.result.sub) (\($roles[$m.id|tostring] // "?"))"
+          elif $m.result.message_id then "sent: \($m.result.message_id)"
+          elif $m.error             then "error[\($m.id)]: \($m.error.code): \($m.error.message)"
+          elif $m.event == "upsert" and $view == "chats"    then "chat  id=\($m.item.id) name=\($m.item.name // "") unread=\($m.item.unread // 0) preview=\($m.item.preview // "")"
+          elif $m.event == "upsert" and $view == "messages" then "msg   \(if $m.item.direction == "outgoing" then "→" else "←" end) \($m.item.text // "[\($m.item.kind)]")"
+          elif $m.event == "remove" then "remove \($m.id) (sub \($m.sub))"
+          elif $m.event == "ready"  then "ready sub=\($m.sub) exhausted=\($m.exhausted // false)"
+          elif $m.event == "reset"  then "reset sub=\($m.sub)"
+          else ($m|tostring) end)
 '
