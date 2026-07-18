@@ -12,8 +12,9 @@ import (
 )
 
 // errNotConnected is returned by the contact/group lookups when there is no
-// logged-in WhatsApp client to query (the RPC layer maps it to Unavailable).
-var errNotConnected = errors.New("not connected to WhatsApp")
+// logged-in WhatsApp client to query. It is a structured CommandError so every
+// frontend boundary classifies it without matching on the message text.
+var errNotConnected = app.NewCommandError(app.CommandErrorNotConnected, "not connected to WhatsApp")
 
 // digitsOnly keeps only ASCII digits, dropping spaces, dashes, parentheses and
 // a leading plus so a typed number can be handed to usync.
@@ -76,10 +77,10 @@ func (c *Client) CheckPhoneOnWhatsApp(ctx context.Context, phone string) (app.Ph
 func (c *Client) EnsureDirectChat(ctx context.Context, jidStr string) (appstore.Chat, error) {
 	jid, err := types.ParseJID(strings.TrimSpace(jidStr))
 	if err != nil || jid.User == "" {
-		return appstore.Chat{}, errors.New("invalid user jid")
+		return appstore.Chat{}, app.NewCommandError(app.CommandErrorInvalidArgument, "invalid user jid")
 	}
 	if jid.Server == types.GroupServer {
-		return appstore.Chat{}, errors.New("jid is a group, not a user")
+		return appstore.Chat{}, app.NewCommandError(app.CommandErrorInvalidArgument, "jid is a group, not a user")
 	}
 
 	chatJID := c.normalizeJIDForChat(ctx, jid.ToNonAD())
@@ -103,10 +104,10 @@ func (c *Client) EnsureDirectChat(ctx context.Context, jidStr string) (appstore.
 func (c *Client) GetContactInfo(ctx context.Context, jidStr string) (app.ContactInfo, error) {
 	jid, err := types.ParseJID(strings.TrimSpace(jidStr))
 	if err != nil || jid.User == "" {
-		return app.ContactInfo{}, errors.New("invalid user jid")
+		return app.ContactInfo{}, app.NewCommandError(app.CommandErrorInvalidArgument, "invalid user jid")
 	}
 	if jid.Server == types.GroupServer {
-		return app.ContactInfo{}, errors.New("jid is a group, not a user")
+		return app.ContactInfo{}, app.NewCommandError(app.CommandErrorInvalidArgument, "jid is a group, not a user")
 	}
 	pnJID := c.normalizeJIDForChat(ctx, jid.ToNonAD())
 
@@ -339,7 +340,7 @@ func (c *Client) refreshGroupInfoLive(ctx context.Context, chatJID types.JID, av
 func (c *Client) FetchProfilePicture(ctx context.Context, jidStr string) (string, error) {
 	jid, err := types.ParseJID(strings.TrimSpace(jidStr))
 	if err != nil || jid.User == "" {
-		return "", errors.New("invalid jid")
+		return "", app.NewCommandError(app.CommandErrorInvalidArgument, "invalid jid")
 	}
 	if jid.Server != types.GroupServer {
 		jid = c.normalizeJIDForChat(ctx, jid.ToNonAD())

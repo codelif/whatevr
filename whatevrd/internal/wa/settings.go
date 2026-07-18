@@ -184,7 +184,7 @@ func (c *Client) UpdateBlocklist(ctx context.Context, jidStr string, block bool)
 	}
 	jid, err := types.ParseJID(strings.TrimSpace(jidStr))
 	if err != nil || jid.User == "" {
-		return nil, errors.New("invalid jid")
+		return nil, app.NewCommandError(app.CommandErrorInvalidArgument, "invalid jid")
 	}
 	action := waEvents.BlocklistChangeActionUnblock
 	if block {
