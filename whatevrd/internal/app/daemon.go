@@ -179,6 +179,12 @@ const (
 	// it to re-derive the per-member breakdown, and views that only track message
 	// status ignore it.
 	DaemonEventMessageReceipt
+	// DaemonEventIdentityChanged fires when a contact's WhatsApp identity key
+	// (security code) changes — they reinstalled or re-registered — and the
+	// daemon accepted the new identity. Carries the contact jid in SenderID.
+	// No view consumes it yet; it exists so a "security code changed" notice
+	// can be rendered without a daemon change.
+	DaemonEventIdentityChanged
 	// DaemonEventPreferencesChanged fires when the daemon-persisted app
 	// preferences change (via SetAppPreferences). It carries no payload; the
 	// `preferences` view re-reads GetAppPreferences off it.
@@ -935,6 +941,12 @@ func (d *Daemon) PublishBlocklistChanged() {
 // changed, so an open `preferences` view re-reads them.
 func (d *Daemon) PublishPreferencesChanged() {
 	d.broadcastDaemonEvent(DaemonEvent{Kind: DaemonEventPreferencesChanged})
+}
+
+// PublishIdentityChanged signals that a contact's WhatsApp identity (security
+// code) changed and the new identity was accepted.
+func (d *Daemon) PublishIdentityChanged(jid string) {
+	d.broadcastDaemonEvent(DaemonEvent{Kind: DaemonEventIdentityChanged, SenderID: jid})
 }
 
 // PublishGroupInfoUpdated delivers the live-fetched group fields (subject,

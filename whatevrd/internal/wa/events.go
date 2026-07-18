@@ -141,6 +141,15 @@ func (c *Client) handleEvent(eventGen uint64, raw any) {
 		isComposing := evt.State == types.ChatPresenceComposing
 		c.log.Infof("Received WhatsApp chat presence event: chat=%s sender=%s state=%s media=%s composing=%t", chatJID, evt.Sender, evt.State, evt.Media, isComposing)
 		c.daemon.PublishChatPresence(chatJID.String(), evt.Sender.String(), isComposing)
+	case *events.IdentityChange:
+		// A contact's Signal identity changed (they reinstalled/re-registered
+		// WhatsApp). With auto-trust on (the default) whatsmeow has already
+		// dropped the stale identity and session, so traffic self-heals; log the
+		// "security code changed" fact and publish it so a frontend notice can
+		// render without further daemon changes.
+		jid := c.normalizeJIDForChat(c.backgroundContext(), evt.JID)
+		c.log.Warnf("WhatsApp identity changed for %s (implicit=%t)", jid, evt.Implicit)
+		c.daemon.PublishIdentityChanged(jid.ToNonAD().String())
 	case *events.Presence:
 		chatJID := c.normalizeJIDForChat(c.backgroundContext(), evt.From)
 		availability := app.ContactAvailabilityOnline

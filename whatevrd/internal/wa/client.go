@@ -303,8 +303,8 @@ func (c *Client) resetClient(ctx context.Context) error {
 	client.ManualHistorySyncDownload = true
 	client.DisableManualHistorySyncReceipt = true
 	client.AutoTrustIdentity = autoTrustIdentityEnabled()
-	if client.AutoTrustIdentity {
-		c.log.Warnf("WHATEVRD_AUTO_TRUST_IDENTITY is enabled; changed WhatsApp identities will be trusted automatically")
+	if !client.AutoTrustIdentity {
+		c.log.Warnf("WHATEVRD_AUTO_TRUST_IDENTITY is disabled; contacts whose WhatsApp identity changes (reinstall/re-register) stay unreachable in both directions until their stored identity is cleared manually")
 	}
 	client.SetForceActiveDeliveryReceipts(true)
 	client.UseRetryMessageStore = true
@@ -320,12 +320,17 @@ func (c *Client) resetClient(ctx context.Context) error {
 	return nil
 }
 
+// autoTrustIdentityEnabled reports whether changed WhatsApp identities are
+// trusted automatically — the official-client behavior and the default: a
+// contact who reinstalls WhatsApp keeps working, and the identity change is
+// surfaced via DaemonEventIdentityChanged instead of a silent two-way decrypt
+// deadlock. WHATEVRD_AUTO_TRUST_IDENTITY=0/false/no/off opts into strict mode.
 func autoTrustIdentityEnabled() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("WHATEVRD_AUTO_TRUST_IDENTITY"))) {
-	case "1", "true", "yes", "on":
-		return true
-	default:
+	case "0", "false", "no", "off":
 		return false
+	default:
+		return true
 	}
 }
 
