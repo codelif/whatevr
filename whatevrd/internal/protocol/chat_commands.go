@@ -22,7 +22,7 @@ type chatMarkReadParams struct {
 	UpToMessageID string `json:"up_to_message_id"`
 }
 
-func (h commandHandlers) chatMarkRead(_ *conn, req request) (any, *Error) {
+func (h commandHandlers) chatMarkRead(ctx context.Context, _ *conn, req request) (any, *Error) {
 	if err := h.requireActions(); err != nil {
 		return nil, err
 	}
@@ -36,7 +36,7 @@ func (h commandHandlers) chatMarkRead(_ *conn, req request) (any, *Error) {
 	if strings.TrimSpace(p.UpToMessageID) == "" {
 		return nil, errorf(CodeInvalidParams, "up_to_message_id is required")
 	}
-	_, err := h.actions.MarkChatReadUpTo(context.Background(), strings.TrimSpace(p.ChatID), strings.TrimSpace(p.UpToMessageID))
+	_, err := h.actions.MarkChatReadUpTo(ctx, strings.TrimSpace(p.ChatID), strings.TrimSpace(p.UpToMessageID))
 	return nil, mapCommandError(err)
 }
 
@@ -45,7 +45,7 @@ type chatPinParams struct {
 	Pinned *bool  `json:"pinned"`
 }
 
-func (h commandHandlers) chatPin(_ *conn, req request) (any, *Error) {
+func (h commandHandlers) chatPin(ctx context.Context, _ *conn, req request) (any, *Error) {
 	if err := h.requireActions(); err != nil {
 		return nil, err
 	}
@@ -59,7 +59,7 @@ func (h commandHandlers) chatPin(_ *conn, req request) (any, *Error) {
 	if p.Pinned == nil {
 		return nil, errorf(CodeInvalidParams, "pinned is required")
 	}
-	_, err := h.actions.SetChatPinned(context.Background(), strings.TrimSpace(p.ChatID), *p.Pinned)
+	_, err := h.actions.SetChatPinned(ctx, strings.TrimSpace(p.ChatID), *p.Pinned)
 	return nil, mapCommandError(err)
 }
 
@@ -68,7 +68,7 @@ type chatArchiveParams struct {
 	Archived *bool  `json:"archived"`
 }
 
-func (h commandHandlers) chatArchive(_ *conn, req request) (any, *Error) {
+func (h commandHandlers) chatArchive(ctx context.Context, _ *conn, req request) (any, *Error) {
 	if err := h.requireActions(); err != nil {
 		return nil, err
 	}
@@ -82,7 +82,7 @@ func (h commandHandlers) chatArchive(_ *conn, req request) (any, *Error) {
 	if p.Archived == nil {
 		return nil, errorf(CodeInvalidParams, "archived is required")
 	}
-	_, err := h.actions.SetChatArchived(context.Background(), strings.TrimSpace(p.ChatID), *p.Archived)
+	_, err := h.actions.SetChatArchived(ctx, strings.TrimSpace(p.ChatID), *p.Archived)
 	return nil, mapCommandError(err)
 }
 
@@ -92,7 +92,7 @@ type chatMuteParams struct {
 	DurationSecs int64  `json:"duration_secs"`
 }
 
-func (h commandHandlers) chatMute(_ *conn, req request) (any, *Error) {
+func (h commandHandlers) chatMute(ctx context.Context, _ *conn, req request) (any, *Error) {
 	if err := h.requireActions(); err != nil {
 		return nil, err
 	}
@@ -112,7 +112,7 @@ func (h commandHandlers) chatMute(_ *conn, req request) (any, *Error) {
 	if p.DurationSecs > maxCommandDurationSecs {
 		return nil, errorf(CodeInvalidParams, "duration_secs is too large")
 	}
-	_, err := h.actions.SetChatMuted(context.Background(), strings.TrimSpace(p.ChatID), *p.Muted, time.Duration(p.DurationSecs)*time.Second)
+	_, err := h.actions.SetChatMuted(ctx, strings.TrimSpace(p.ChatID), *p.Muted, time.Duration(p.DurationSecs)*time.Second)
 	return nil, mapCommandError(err)
 }
 
@@ -121,7 +121,7 @@ type chatTypingParams struct {
 	Composing *bool  `json:"composing"`
 }
 
-func (h commandHandlers) chatTyping(_ *conn, req request) (any, *Error) {
+func (h commandHandlers) chatTyping(ctx context.Context, _ *conn, req request) (any, *Error) {
 	if err := h.requireActions(); err != nil {
 		return nil, err
 	}
@@ -135,10 +135,10 @@ func (h commandHandlers) chatTyping(_ *conn, req request) (any, *Error) {
 	if p.Composing == nil {
 		return nil, errorf(CodeInvalidParams, "composing is required")
 	}
-	return nil, mapCommandError(h.actions.SetChatPresence(context.Background(), strings.TrimSpace(p.ChatID), *p.Composing))
+	return nil, mapCommandError(h.actions.SetChatPresence(ctx, strings.TrimSpace(p.ChatID), *p.Composing))
 }
 
-func (h commandHandlers) chatRequestOlder(_ *conn, req request) (any, *Error) {
+func (h commandHandlers) chatRequestOlder(ctx context.Context, _ *conn, req request) (any, *Error) {
 	if err := h.requireActions(); err != nil {
 		return nil, err
 	}
@@ -149,7 +149,7 @@ func (h commandHandlers) chatRequestOlder(_ *conn, req request) (any, *Error) {
 	if err := p.valid(); err != nil {
 		return nil, err
 	}
-	requested, err := h.actions.RequestOlderMessages(context.Background(), strings.TrimSpace(p.ChatID))
+	requested, err := h.actions.RequestOlderMessages(ctx, strings.TrimSpace(p.ChatID))
 	if perr := mapCommandError(err); perr != nil {
 		return nil, perr
 	}

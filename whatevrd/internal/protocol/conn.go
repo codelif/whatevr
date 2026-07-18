@@ -3,6 +3,7 @@ package protocol
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"log"
@@ -36,6 +37,13 @@ type conn struct {
 	done      chan struct{}
 	closeOnce sync.Once
 
+	// ctx is the connection's lifecycle context, cancelled on close. Work that
+	// is only useful while this peer can still receive the result (backgrounded
+	// queries) derives from it; view sessions keep their own per-session
+	// contexts.
+	ctx    context.Context
+	cancel context.CancelFunc
+
 	// helloDone flips after successful negotiation; every other method is
 	// rejected until then.
 	helloDone bool
@@ -60,12 +68,15 @@ type conn struct {
 }
 
 func newConn(srv *Server, nc net.Conn) *conn {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &conn{
-		srv:  srv,
-		nc:   nc,
-		q:    newOutQueue(),
-		done: make(chan struct{}),
-		subs: map[int64]*subscription{},
+		srv:    srv,
+		nc:     nc,
+		q:      newOutQueue(),
+		done:   make(chan struct{}),
+		ctx:    ctx,
+		cancel: cancel,
+		subs:   map[int64]*subscription{},
 	}
 }
 
@@ -147,6 +158,7 @@ func (c *conn) writeLoop() {
 // session, which is the connection-drop half of subscription cleanup.
 func (c *conn) close() {
 	c.closeOnce.Do(func() {
+		c.cancel()
 		close(c.done)
 		_ = c.nc.Close()
 

@@ -11,7 +11,7 @@ type stickerFavoriteParams struct {
 	Favorite  *bool  `json:"favorite"`
 }
 
-func (h commandHandlers) stickerFavorite(_ *conn, req request) (any, *Error) {
+func (h commandHandlers) stickerFavorite(ctx context.Context, _ *conn, req request) (any, *Error) {
 	if err := h.requireActions(); err != nil {
 		return nil, err
 	}
@@ -27,7 +27,7 @@ func (h commandHandlers) stickerFavorite(_ *conn, req request) (any, *Error) {
 	if p.Favorite == nil {
 		return nil, errorf(CodeInvalidParams, "favorite is required")
 	}
-	_, err := h.actions.SetStickerFavorite(context.Background(), cacheKey, messageID, *p.Favorite)
+	_, err := h.actions.SetStickerFavorite(ctx, cacheKey, messageID, *p.Favorite)
 	return nil, mapCommandError(err)
 }
 
@@ -35,7 +35,7 @@ type stickerDownloadParams struct {
 	CacheKey string `json:"cache_key"`
 }
 
-func (h commandHandlers) stickerDownload(_ *conn, req request) (any, *Error) {
+func (h commandHandlers) stickerDownload(ctx context.Context, _ *conn, req request) (any, *Error) {
 	if err := h.requireActions(); err != nil {
 		return nil, err
 	}
@@ -47,7 +47,7 @@ func (h commandHandlers) stickerDownload(_ *conn, req request) (any, *Error) {
 	if cacheKey == "" {
 		return nil, errorf(CodeInvalidParams, "cache_key is required")
 	}
-	_, err := h.actions.DownloadSticker(context.Background(), cacheKey)
+	_, err := h.actions.DownloadSticker(ctx, cacheKey)
 	return nil, mapCommandError(err)
 }
 

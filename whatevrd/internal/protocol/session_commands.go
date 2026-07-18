@@ -44,12 +44,12 @@ func (h commandHandlers) daemonReconnect(_ *conn, req request) (any, *Error) {
 	return nil, mapCommandError(h.actions.Reconnect(context.Background()))
 }
 
-func (h commandHandlers) accountLogout(_ *conn, req request) (any, *Error) {
+func (h commandHandlers) accountLogout(ctx context.Context, _ *conn, req request) (any, *Error) {
 	if err := h.requireActions(); err != nil {
 		return nil, err
 	}
 	if err := rejectNonEmptyParams(req.Params); err != nil {
 		return nil, err
 	}
-	return nil, mapCommandError(h.actions.Logout(context.Background()))
+	return nil, mapCommandError(h.actions.Logout(ctx))
 }

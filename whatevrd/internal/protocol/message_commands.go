@@ -119,7 +119,7 @@ type messageReactParams struct {
 	Emoji     string `json:"emoji"`
 }
 
-func (h commandHandlers) messageReact(_ *conn, req request) (any, *Error) {
+func (h commandHandlers) messageReact(ctx context.Context, _ *conn, req request) (any, *Error) {
 	if err := h.requireActions(); err != nil {
 		return nil, err
 	}
@@ -130,7 +130,7 @@ func (h commandHandlers) messageReact(_ *conn, req request) (any, *Error) {
 	if strings.TrimSpace(p.MessageID) == "" {
 		return nil, errorf(CodeInvalidParams, "message_id is required")
 	}
-	_, err := h.actions.SendReaction(context.Background(), strings.TrimSpace(p.MessageID), strings.TrimSpace(p.Emoji))
+	_, err := h.actions.SendReaction(ctx, strings.TrimSpace(p.MessageID), strings.TrimSpace(p.Emoji))
 	return nil, mapCommandError(err)
 }
 
@@ -139,7 +139,7 @@ type messageEditParams struct {
 	Text      string `json:"text"`
 }
 
-func (h commandHandlers) messageEdit(_ *conn, req request) (any, *Error) {
+func (h commandHandlers) messageEdit(ctx context.Context, _ *conn, req request) (any, *Error) {
 	if err := h.requireActions(); err != nil {
 		return nil, err
 	}
@@ -157,11 +157,11 @@ func (h commandHandlers) messageEdit(_ *conn, req request) (any, *Error) {
 	if utf8.RuneCountInString(p.Text) > maxCommandTextRunes {
 		return nil, errorf(CodeInvalidParams, "text must be <= %d characters", maxCommandTextRunes)
 	}
-	_, err := h.actions.EditMessage(context.Background(), strings.TrimSpace(p.MessageID), p.Text)
+	_, err := h.actions.EditMessage(ctx, strings.TrimSpace(p.MessageID), p.Text)
 	return nil, mapCommandError(err)
 }
 
-func (h commandHandlers) messageRevoke(_ *conn, req request) (any, *Error) {
+func (h commandHandlers) messageRevoke(ctx context.Context, _ *conn, req request) (any, *Error) {
 	if err := h.requireActions(); err != nil {
 		return nil, err
 	}
@@ -172,7 +172,7 @@ func (h commandHandlers) messageRevoke(_ *conn, req request) (any, *Error) {
 	if err := p.valid(); err != nil {
 		return nil, err
 	}
-	_, err := h.actions.RevokeMessage(context.Background(), strings.TrimSpace(p.MessageID))
+	_, err := h.actions.RevokeMessage(ctx, strings.TrimSpace(p.MessageID))
 	return nil, mapCommandError(err)
 }
 
@@ -195,7 +195,7 @@ type messageStarParams struct {
 	Starred   *bool  `json:"starred"`
 }
 
-func (h commandHandlers) messageStar(_ *conn, req request) (any, *Error) {
+func (h commandHandlers) messageStar(ctx context.Context, _ *conn, req request) (any, *Error) {
 	if err := h.requireActions(); err != nil {
 		return nil, err
 	}
@@ -209,7 +209,7 @@ func (h commandHandlers) messageStar(_ *conn, req request) (any, *Error) {
 	if p.Starred == nil {
 		return nil, errorf(CodeInvalidParams, "starred is required")
 	}
-	_, err := h.actions.SetMessageStarred(context.Background(), strings.TrimSpace(p.MessageID), *p.Starred)
+	_, err := h.actions.SetMessageStarred(ctx, strings.TrimSpace(p.MessageID), *p.Starred)
 	return nil, mapCommandError(err)
 }
 
@@ -219,7 +219,7 @@ type messagePinParams struct {
 	DurationSecs int64  `json:"duration_secs"`
 }
 
-func (h commandHandlers) messagePin(_ *conn, req request) (any, *Error) {
+func (h commandHandlers) messagePin(ctx context.Context, _ *conn, req request) (any, *Error) {
 	if err := h.requireActions(); err != nil {
 		return nil, err
 	}
@@ -236,7 +236,7 @@ func (h commandHandlers) messagePin(_ *conn, req request) (any, *Error) {
 	if p.DurationSecs < 0 || p.DurationSecs > math.MaxUint32 {
 		return nil, errorf(CodeInvalidParams, "duration_secs must fit uint32")
 	}
-	_, err := h.actions.PinMessage(context.Background(), strings.TrimSpace(p.MessageID), *p.Pinned, uint32(p.DurationSecs))
+	_, err := h.actions.PinMessage(ctx, strings.TrimSpace(p.MessageID), *p.Pinned, uint32(p.DurationSecs))
 	return nil, mapCommandError(err)
 }
 

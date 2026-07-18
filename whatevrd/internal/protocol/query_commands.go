@@ -104,7 +104,7 @@ type contactsCheckPhoneParams struct {
 	Phone string `json:"phone"`
 }
 
-func (h commandHandlers) contactsCheckPhone(_ *conn, req request) (any, *Error) {
+func (h commandHandlers) contactsCheckPhone(ctx context.Context, _ *conn, req request) (any, *Error) {
 	if err := h.requireActions(); err != nil {
 		return nil, err
 	}
@@ -116,7 +116,7 @@ func (h commandHandlers) contactsCheckPhone(_ *conn, req request) (any, *Error) 
 	if phone == "" {
 		return nil, errorf(CodeInvalidParams, "phone is required")
 	}
-	check, err := h.actions.CheckPhoneOnWhatsApp(context.Background(), phone)
+	check, err := h.actions.CheckPhoneOnWhatsApp(ctx, phone)
 	if perr := mapCommandError(err); perr != nil {
 		return nil, perr
 	}

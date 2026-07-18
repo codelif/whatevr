@@ -83,6 +83,14 @@ type fakeCommandActions struct {
 	checkPhone       string
 
 	err error
+
+	// pinGate, when non-nil, blocks SetChatPinned until closed — lets tests
+	// hold a backgrounded mutation in flight.
+	pinGate chan struct{}
+	// checkPhoneCtx, when non-nil, makes CheckPhoneOnWhatsApp block until its
+	// context is done and then report ctx.Err() — lets tests observe the
+	// conn-tied cancellation of backgrounded queries.
+	checkPhoneCtx chan error
 }
 
 type frontendStateCall struct {
@@ -115,6 +123,9 @@ func (f *fakeCommandActions) MarkChatReadUpTo(_ context.Context, chatID, upTo st
 	return appstore.Chat{ID: chatID}, f.err
 }
 func (f *fakeCommandActions) SetChatPinned(_ context.Context, chatID string, pinned bool) (appstore.Chat, error) {
+	if f.pinGate != nil {
+		<-f.pinGate
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.pinnedChat, f.pinned = chatID, pinned
@@ -311,7 +322,12 @@ func (f *fakeCommandActions) SearchMessages(_ context.Context, query, chatID str
 		{Message: appstore.Message{ID: "m1", ChatID: "chat@s.whatsapp.net", Text: "hello", TimestampUnix: 10, SortSeq: 1, Direction: appstore.DirectionIncoming, Status: appstore.StatusDelivered}, ChatName: "Alice"},
 	}, f.err
 }
-func (f *fakeCommandActions) CheckPhoneOnWhatsApp(_ context.Context, phone string) (app.PhoneCheck, error) {
+func (f *fakeCommandActions) CheckPhoneOnWhatsApp(ctx context.Context, phone string) (app.PhoneCheck, error) {
+	if f.checkPhoneCtx != nil {
+		<-ctx.Done()
+		f.checkPhoneCtx <- ctx.Err()
+		return app.PhoneCheck{}, ctx.Err()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.checkPhone = phone

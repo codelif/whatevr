@@ -37,7 +37,7 @@ type fetchProfilePictureParams struct {
 	JID string `json:"jid"`
 }
 
-func (h commandHandlers) mediaFetchProfilePicture(_ *conn, req request) (any, *Error) {
+func (h commandHandlers) mediaFetchProfilePicture(ctx context.Context, _ *conn, req request) (any, *Error) {
 	if err := h.requireActions(); err != nil {
 		return nil, err
 	}
@@ -48,7 +48,7 @@ func (h commandHandlers) mediaFetchProfilePicture(_ *conn, req request) (any, *E
 	if strings.TrimSpace(p.JID) == "" {
 		return nil, errorf(CodeInvalidParams, "jid is required")
 	}
-	path, err := h.actions.FetchProfilePicture(context.Background(), strings.TrimSpace(p.JID))
+	path, err := h.actions.FetchProfilePicture(ctx, strings.TrimSpace(p.JID))
 	if perr := mapCommandError(err); perr != nil {
 		return nil, perr
 	}
