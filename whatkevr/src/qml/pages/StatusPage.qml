@@ -9,7 +9,7 @@ import Whatevr as Whatevr
 Kirigami.ScrollablePage {
     id: root
 
-    title: Whatevr.AppController.statusTitle
+    title: Whatevr.ProtocolController.statusTitle
     padding: 0
 
     readonly property bool wideLayout: width >= Kirigami.Units.gridUnit * 48
@@ -18,7 +18,7 @@ Kirigami.ScrollablePage {
 
     // Phase → icon name + accent color, so the hero reads at a glance.
     readonly property string phaseIcon: {
-        switch (Whatevr.AppController.connectionPhase) {
+        switch (Whatevr.ProtocolController.connectionPhase) {
         case "connected":
             return "network-connect"
         case "connecting":
@@ -30,7 +30,7 @@ Kirigami.ScrollablePage {
         }
     }
     readonly property color phaseColor: {
-        switch (Whatevr.AppController.connectionPhase) {
+        switch (Whatevr.ProtocolController.connectionPhase) {
         case "connected":
             return Kirigami.Theme.positiveTextColor
         case "connecting":
@@ -42,7 +42,7 @@ Kirigami.ScrollablePage {
         }
     }
     readonly property string phaseLabel: {
-        switch (Whatevr.AppController.connectionPhase) {
+        switch (Whatevr.ProtocolController.connectionPhase) {
         case "connected":
             return Whatevr.I18n.i18n("Connected")
         case "connecting":
@@ -65,18 +65,18 @@ Kirigami.ScrollablePage {
 
         Kirigami.InlineMessage {
             Layout.fillWidth: true
-            visible: Whatevr.AppController.bannerText.length > 0
+            visible: Whatevr.ProtocolController.bannerText.length > 0
             type: Kirigami.MessageType.Warning
             showCloseButton: false
-            text: Whatevr.AppController.bannerText
+            text: Whatevr.ProtocolController.bannerText
         }
 
         Kirigami.InlineMessage {
             Layout.fillWidth: true
-            visible: Whatevr.AppController.actionError.length > 0
+            visible: Whatevr.ProtocolController.actionError.length > 0
             type: Kirigami.MessageType.Error
             showCloseButton: false
-            text: Whatevr.AppController.actionError
+            text: Whatevr.ProtocolController.actionError
         }
 
         // Hero: status block, and (when the daemon isn't running) a panel of
@@ -94,7 +94,7 @@ Kirigami.ScrollablePage {
 
                 StatusPanel {}
                 HowToStartPanel {
-                    visible: !Whatevr.AppController.daemonRunning
+                    visible: !Whatevr.ProtocolController.daemonRunning
                 }
             }
 
@@ -107,18 +107,18 @@ Kirigami.ScrollablePage {
 
                 StatusPanel {}
                 HowToStartPanel {
-                    visible: !Whatevr.AppController.daemonRunning
+                    visible: !Whatevr.ProtocolController.daemonRunning
                 }
             }
         }
 
         // Footer: subtle debug info (socket path always; daemon state only when
-        // connected — see AppController::detailText()).
+        // connected — see ProtocolController::detailText()).
         Label {
             Layout.fillWidth: true
             Layout.topMargin: Kirigami.Units.largeSpacing
-            visible: Whatevr.AppController.detailText.length > 0
-            text: Whatevr.AppController.detailText
+            visible: Whatevr.ProtocolController.detailText.length > 0
+            text: Whatevr.ProtocolController.detailText
             textFormat: Text.PlainText
             wrapMode: Text.WrapAnywhere
             font.pointSize: Kirigami.Theme.smallFont.pointSize
@@ -133,7 +133,7 @@ Kirigami.ScrollablePage {
 
     component StatusPanel: Frame {
         Layout.fillWidth: true
-        Layout.preferredWidth: root.wideLayout && !Whatevr.AppController.daemonRunning
+        Layout.preferredWidth: root.wideLayout && !Whatevr.ProtocolController.daemonRunning
                                ? root.pageContentWidth * 0.52 : -1
         padding: Kirigami.Units.largeSpacing * 2
 
@@ -158,14 +158,14 @@ Kirigami.ScrollablePage {
                 Layout.fillWidth: true
                 horizontalAlignment: Text.AlignHCenter
                 level: 1
-                text: Whatevr.AppController.statusTitle
+                text: Whatevr.ProtocolController.statusTitle
                 wrapMode: Text.WordWrap
             }
 
             Label {
                 Layout.fillWidth: true
                 horizontalAlignment: Text.AlignHCenter
-                text: Whatevr.AppController.statusText
+                text: Whatevr.ProtocolController.statusText
                 wrapMode: Text.WordWrap
                 color: Kirigami.Theme.disabledTextColor
             }
@@ -191,26 +191,26 @@ Kirigami.ScrollablePage {
                 }
 
                 Button {
-                    visible: !Whatevr.AppController.daemonRunning
+                    visible: !Whatevr.ProtocolController.daemonRunning
                     text: Whatevr.I18n.i18n("Start whatevrd")
                     icon.name: "media-playback-start-symbolic"
                     highlighted: true
-                    onClicked: Whatevr.AppController.startDaemon()
+                    onClicked: Whatevr.ProtocolController.startDaemon()
                 }
 
                 Button {
-                    text: Whatevr.AppController.primaryActionText
-                    enabled: Whatevr.AppController.primaryActionEnabled
-                    icon.name: Whatevr.AppController.primaryActionText === Whatevr.I18n.i18n("Reconnect")
+                    text: Whatevr.ProtocolController.primaryActionText
+                    enabled: Whatevr.ProtocolController.primaryActionEnabled
+                    icon.name: Whatevr.ProtocolController.primaryActionText === Whatevr.I18n.i18n("Reconnect")
                                ? "network-connect-symbolic"
                                : "view-refresh-symbolic"
-                    onClicked: Whatevr.AppController.triggerPrimaryAction()
+                    onClicked: Whatevr.ProtocolController.triggerPrimaryAction()
                 }
 
                 BusyIndicator {
                     Layout.preferredHeight: Kirigami.Units.iconSizes.medium
                     Layout.preferredWidth: Kirigami.Units.iconSizes.medium
-                    running: Whatevr.AppController.loading
+                    running: Whatevr.ProtocolController.loading
                     visible: running
                 }
 
@@ -251,12 +251,12 @@ Kirigami.ScrollablePage {
 
             CommandBox {
                 tag: Whatevr.I18n.i18nc("@label", "systemd")
-                command: Whatevr.AppController.daemonServiceCommand
+                command: Whatevr.ProtocolController.daemonServiceCommand
             }
 
             CommandBox {
                 tag: Whatevr.I18n.i18nc("@label", "direct")
-                command: Whatevr.AppController.daemonBinaryCommand
+                command: Whatevr.ProtocolController.daemonBinaryCommand
             }
         }
     }
@@ -303,7 +303,7 @@ Kirigami.ScrollablePage {
                 text: Whatevr.I18n.i18nc("@action:button", "Copy")
                 ToolTip.visible: hovered
                 ToolTip.text: text
-                onClicked: Whatevr.AppController.copyToClipboard(commandBox.command)
+                onClicked: Whatevr.ProtocolController.copyToClipboard(commandBox.command)
             }
         }
     }

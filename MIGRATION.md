@@ -101,7 +101,8 @@ Status: `todo` | `doing` | `done` | `blocked` | `needs-decision`
 | id | step | status | notes |
 | --- | --- | --- | --- |
 | D1 | Qt client core: socket transport + dispatcher, generic keyed/sorted `QAbstractListModel` over a collection view, object-view wrapper; no UI changes yet | done | New `whatkevr/src/protocol/`: `ProtocolClient` (QLocalSocket + NDJSON framing, `hello` handshake, id-correlated request/response, `sub`-routed view events, `open_chat`, auto-reconnect + resubscribe), `Subscription` (owns the daemon `sub`, `extend(count,direction)`, exposes subscribe meta e.g. `anchor_id`), `CollectionViewModel` (generic keyed list; orders **only** by bytewise `sort`, id tiebreak; ItemRole=whole QVariantMap), `ObjectViewModel` (single-item view). No UI wiring, no QML registration, gRPC untouched — pure scaffolding for D2+. Built into the main target (`just build` green); `WHATEVR_BUILD_TESTS=ON` adds `whatkevr/tests/tst_protocolcore` (13 QtTest cases driving the real client over a real socket via an in-process fake daemon — fill/sort/replace/move/remove/reset, ready-exhausted, directional extend, subscribe meta, object view, open_chat, pre-hello request queue). |
-| D2 | Port connection/status/login pages + chat list (incl. `typing` overlay) | todo | |
+| D2a | Port connection/status/login pages onto the protocol (`connection`+`login` views) | done | New `whatkevr/src/app/protocolcontroller.{h,cpp}`: a QML singleton owning the D1 `ProtocolClient` + two `ObjectViewModel`s (`connection`, `login`), deriving every string the status/login/splash pages bind to (phase, `statusTitle/Text`, `detailText`, QR + countdown, `primaryAction*`) plus `startDaemon`/`triggerPrimaryAction`(→`daemon.reconnect`)/`copyToClipboard`. Runs **alongside** the gRPC `AppController` (strangler): `Main.qml` `appMode()` + the rebuild/logout gate now key off `ProtocolController`; `StatusPage`/`LoginPage` bindings repointed; `AppController` keeps serving the chat shell + deep-link signals until later D-steps. Transport phase = client-ready + cold-start grace + socket-exists (the client's own auto-reconnect subsumes AppController's channel/probe/retry). Socket-path seam added for tests; `daemonSocketExists()` now checks the path actually used (was a latent bug). New QtTest `tst_protocolcontroller` (fake daemon over a real socket: not-running-after-grace, online→shell, need_login→QR+countdown, live state flip, reconnect command). `just build` green; whatkevr tests + conformance pass; hand-verified `connection`/`login` over socat and a headless app launch against the live online daemon (no QML errors, reaches chat mode). No PROTOCOL.md change. |
+| D2b | Port chat list (`chats` view, filters/archived) + `typing` overlay + `sync` history strip | todo | Split from D2: the chat shell is the second half. Reuses the D2a `ProtocolController`/client. |
 | D3 | Port conversation view: messages, receipts dialog, presence header, jump-to-message anchors | todo | |
 | D4 | Port composer + all send paths, media download/`transfers` progress, image viewer | todo | |
 | D5 | Port info dialogs (contact/group/members), starred/pinned pages, unified + in-chat search | todo | |
@@ -120,6 +121,33 @@ Status: `todo` | `doing` | `done` | `blocked` | `needs-decision`
 _None._
 
 ## D-phase notes
+
+- 2026-07-18 — D2a implementation readings (no PROTOCOL.md change; flag if you
+  disagree): (1) **Coexistence is two live connections.** With a monolithic
+  gRPC `AppController`, "page by page" means the new `ProtocolClient` and the
+  gRPC channel are both up for the whole D phase; each D-step moves one page's
+  bindings from `AppController` to `ProtocolController` (which owns the client),
+  and E1/D7 delete the gRPC side. Nothing is dual-*driven* dangerously: both
+  merely *observe* the same daemon, so their states converge (e.g. a logout seen
+  by gRPC also arrives on the `connection` view). (2) **`ProtocolController`
+  drives the shell gate; `AppController` still renders the shell.** `appMode()`
+  and the rebuild/logout trigger key off `ProtocolController`; once it reports
+  `shellVisible`, the still-gRPC chat pages render `AppController`'s data. A brief
+  race (protocol online before gRPC chats load, or vice-versa) is no worse than
+  today's async chat-list fill. Deep-link (`open_chat`) / window-activation stay
+  on `AppController` until D3 — `ProtocolClient::openChatRequested` is left
+  unwired this step to avoid double routing. (3) **The client's auto-reconnect
+  subsumes AppController's transport machinery.** No channel/probe/QFileSystem
+  watcher port: transport phase is derived from client-ready + a 1s cold-start
+  grace + socket-exists, and the client already retries every 1s. `startDaemon`
+  just launches the unit/binary and lets that loop pick up the socket. (4)
+  **Two-phase/derived strings live in C++, matching the codebase.** The i18n
+  status/QR strings are computed in `ProtocolController` (mirroring
+  `AppController`'s wording verbatim so either stack reads identically mid-
+  migration), not in QML — chosen over QML-side derivation to keep the thin-QML
+  house style. (5) `login` is subscribed for the whole session; when online it
+  just reports state with no `qr` (verified over socat), so no lazy-subscribe
+  dance is needed and the QR pairing flow still attaches while logged out.
 
 - 2026-07-18 — D1 implementation readings (no PROTOCOL.md change; flag if you
   disagree): (1) **Ordering is the daemon's, not the model's.** `CollectionViewModel`
@@ -141,6 +169,18 @@ _None._
   no GUI/gRPC) and drive the real client over a real Unix socket.
 
 ## Decision log
+
+- 2026-07-18 — **D2 split + D-phase controller shape** (decided by Harsh). D2
+  was too big for one session (whole connection/login state machine *and* the
+  chat list + typing on a monolithic gRPC controller), so it split into **D2a**
+  (`connection`/`login` pages, done) and **D2b** (`chats` + `typing` + `sync`
+  strip). The ported pages get a **new C++ `ProtocolController` singleton** that
+  owns the `ProtocolClient` and generic view models and derives the pages'
+  bindings — running *beside* `AppController` (both connections live), not
+  folded into it and not derived in QML. Rationale: matches the codebase's
+  thin-QML/fat-C++ style, keeps each stack's logic separable so D7 is a clean
+  delete, and avoids putting a real state machine in QML. Later D-steps subscribe
+  their views on the same client via `ProtocolController::client()`.
 
 - 2026-07-06 — Envelope: bespoke minimal (no `jsonrpc` field, string error
   codes). Decided by Harsh.
