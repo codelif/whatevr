@@ -61,6 +61,9 @@ public:
 
 Q_SIGNALS:
     void readyChanged();
+    // Emitted for every wire `ready`, including repeated completions whose
+    // ready/exhausted property values did not change.
+    void readyReceived(bool exhausted);
     void countChanged();
 
 private:

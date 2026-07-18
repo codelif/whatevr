@@ -104,7 +104,9 @@ Status: `todo` | `doing` | `done` | `blocked` | `needs-decision`
 | D2a | Port connection/status/login pages onto the protocol (`connection`+`login` views) | done | New `whatkevr/src/app/protocolcontroller.{h,cpp}`: a QML singleton owning the D1 `ProtocolClient` + two `ObjectViewModel`s (`connection`, `login`), deriving every string the status/login/splash pages bind to (phase, `statusTitle/Text`, `detailText`, QR + countdown, `primaryAction*`) plus `startDaemon`/`triggerPrimaryAction`(→`daemon.reconnect`)/`copyToClipboard`. Runs **alongside** the gRPC `AppController` (strangler): `Main.qml` `appMode()` + the rebuild/logout gate now key off `ProtocolController`; `StatusPage`/`LoginPage` bindings repointed; `AppController` keeps serving the chat shell + deep-link signals until later D-steps. Transport phase = client-ready + cold-start grace + socket-exists (the client's own auto-reconnect subsumes AppController's channel/probe/retry). Socket-path seam added for tests; `daemonSocketExists()` now checks the path actually used (was a latent bug). New QtTest `tst_protocolcontroller` (fake daemon over a real socket: not-running-after-grace, online→shell, need_login→QR+countdown, live state flip, reconnect command). `just build` green; whatkevr tests + conformance pass; hand-verified `connection`/`login` over socat and a headless app launch against the live online daemon (no QML errors, reaches chat mode). No PROTOCOL.md change. |
 | D2b1 | Port chat list core: `chats` view active list, filters (all/direct/groups) as subscribe params, row/field mapping, list commands (pin/archive/mute), selection routing to gRPC conversation, loading/empty | done | `ProtocolController` grew a generic `chatsModel` (`CollectionViewModel`) subscribed to `chats {filter, archived:false}`, a `chatFilter` int that **re-subscribes** (no frontend filtering — the D1 `ChatListFilterModel` proxy is gone from the pane), derived `chatsLoading`/`chatsEmpty`, and `setChatPinned/Archived/Muted` mapping to `chat.*` acks. `ChatListPane.qml` binds the delegate to `model.item.<daemon field>` with pure-presentation string→int status/direction + initials helpers; context-menu/loading bindings repointed to `ProtocolController`. Selection still routes to the gRPC `AppController.selectChat` (conversation is D3); drafts read from gRPC `AppController.chatDraft` (frontend state, allowed; composer is D4). Archived-section QML left inert (D2b2). `tst_protocolcontroller` +3 cases (fill/order, filter re-subscribe, command mapping) via a collection-serving fake daemon; `just build` + whatkevr tests + conformance pass; hand-verified over socat (fill+ready, daemon-side groups/direct filters, `chat.pin` ack) and a headless app launch (no QML errors, reaches chat shell). No PROTOCOL.md change. |
 | D2b2 | Port archived chats section (second `chats` subscription) + `typing` overlay + `sync` history strip | done | `ProtocolController` grew `archivedChatsModel` (a second `chats` sub, `archived:true`, same filter, re-subscribed with the active list) + `archivedCount`; a `typing` collection with `chatTyping(chatId)` + a `typingRevision` tick; and a `sync` object view feeding derived `historySyncVisible/Percent/Title/Detail` (names mirror `AppController`). `ChatListPane.qml`: the inline row became a shared `chatRowDelegate` `Component` used by both the active `ListView` and a collapsible **`footer`** (header + `Repeater` over `archivedChatsModel`) — the old `section.property="chatSection"` machinery is gone; `ChatListDelegate` width gained a `parent.width` fallback for the footer. `isTyping` binds `chatTyping(chatId)` keyed on `typingRevision`; `HistorySyncStrip` + placeholder repointed to `ProtocolController.historySync*`. Sync display policy is simplified vs the gRPC cursor (renders the single current `sync` item; drops cross-event type-dedup) — see Decision log. `tst_protocolcontroller` +3 (archived separate model, typing live start/stop, sync derivation incl. complete/on-demand hiding); `just build` + all whatkevr tests (13) + conformance pass; hand-verified over socat (archived count, `typing` ready, `sync` item) and a headless app launch (no QML errors). No PROTOCOL.md change. **D2b complete.** |
-| D3 | Port conversation view: messages, receipts dialog, presence header, jump-to-message anchors | todo | |
+| D3a | Protocol message presentation model over the generic daemon-sorted collection; expose every `ready` completion for directional pagination; no UI wiring | done | New `ProtocolMessageModel` mirrors `CollectionViewModel` rows unchanged (ascending daemon `sort`) and maps whole message items into the timeline's presentation roles/helpers, including unknown-kind `fallback`, nested sender/media/reply/reactions, ascending day/sender grouping, markup/layout memoization, snapshots/copy/selection helpers. `CollectionViewModel::readyReceived` exposes every `ready`; its move mutation now obeys Qt's begin/end contract. New model/core tests include `QAbstractItemModelTester`; no UI wiring or PROTOCOL.md change. |
+| D3b | Port conversation selection + timeline: `messages` latest/unread/message-id anchors, directional extend, jump navigation, read watermark, session/open-chat routing | todo | |
+| D3c | Port conversation chrome: selected-chat `presence` header + dialog-scoped live `receipts` view | todo | |
 | D4 | Port composer + all send paths, media download/`transfers` progress, image viewer | todo | |
 | D5 | Port info dialogs (contact/group/members), starred/pinned pages, unified + in-chat search | todo | |
 | D6 | Port settings pages (privacy/prefs/blocklist/profile) + sticker/emoji pickers | todo | |
@@ -170,6 +172,29 @@ _None._
   no GUI/gRPC) and drive the real client over a real Unix socket.
 
 ## Decision log
+
+- 2026-07-19 — **D3 split into D3a/D3b/D3c** (implementation judgement; no
+  PROTOCOL.md change). The original step combines three substantial mechanics:
+  adapting a mature newest-first gRPC message model/UI to daemon-sorted ascending
+  whole items; owning selection plus latest/unread/message-id subscription,
+  directional-pagination, read-watermark, session and deep-link lifecycle; and
+  two independently scoped live views (`presence` per selected chat, `receipts`
+  per open dialog). Doing all three together would make ordering and lifecycle
+  regressions hard to isolate. **D3a** landed the read-only presentation adapter
+  and completion primitive; **D3b** ports timeline ownership/navigation; **D3c**
+  ports presence/receipts chrome. D3a readings: (1) `ProtocolMessageModel` mirrors
+  every source insert/move/remove/reset and never orders by item fields; ascending
+  neighbors determine date/sender grouping. Its `m_textById` state is only lazy
+  presentation-derived markup/font metrics (allowed presentation state), never a
+  copy of authoritative daemon rows. (2) Unsupported/new message kinds render
+  their mandatory wire `fallback`; known image/sticker kinds retain caption/media
+  presentation. (3) Direction/status strings map to the existing UI enum numbers
+  only to select icons/labels; no state is derived. (4) Repeated wire `ready`
+  events needed an unconditional `readyReceived(exhausted)` signal: the existing
+  `readyChanged` correctly remains property-change-only and cannot complete two
+  extends with equal exhaustion. (5) Mirroring exposed a D1 Qt model-contract bug:
+  a sort-key move removed its row before `beginMoveRows`; mutation now occurs
+  between begin/end, covered for source+adapter by `QAbstractItemModelTester`.
 
 - 2026-07-19 — D2b2 implementation readings (no PROTOCOL.md change; flag if you
   disagree): (1) **Archived is a sibling subscription, presented as a footer.**

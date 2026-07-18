@@ -293,6 +293,21 @@ private Q_SLOTS:
         QVERIFY(!model.isExhausted());
     }
 
+    void everyReadyCompletionIsObservable()
+    {
+        CollectionViewModel model;
+        connectAndSubscribe(&model, QStringLiteral("messages"));
+        const int sub = waitForSub();
+        QSignalSpy completionSpy(&model, &CollectionViewModel::readyReceived);
+
+        m_daemon->sendReady(sub, false);
+        m_daemon->sendReady(sub, false);
+
+        QTRY_COMPARE(completionSpy.count(), 2);
+        QCOMPARE(completionSpy.at(0).first().toBool(), false);
+        QCOMPARE(completionSpy.at(1).first().toBool(), false);
+    }
+
     void extendCarriesDirection()
     {
         CollectionViewModel model;
