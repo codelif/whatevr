@@ -103,7 +103,7 @@ Status: `todo` | `doing` | `done` | `blocked` | `needs-decision`
 | D1 | Qt client core: socket transport + dispatcher, generic keyed/sorted `QAbstractListModel` over a collection view, object-view wrapper; no UI changes yet | done | New `whatkevr/src/protocol/`: `ProtocolClient` (QLocalSocket + NDJSON framing, `hello` handshake, id-correlated request/response, `sub`-routed view events, `open_chat`, auto-reconnect + resubscribe), `Subscription` (owns the daemon `sub`, `extend(count,direction)`, exposes subscribe meta e.g. `anchor_id`), `CollectionViewModel` (generic keyed list; orders **only** by bytewise `sort`, id tiebreak; ItemRole=whole QVariantMap), `ObjectViewModel` (single-item view). No UI wiring, no QML registration, gRPC untouched — pure scaffolding for D2+. Built into the main target (`just build` green); `WHATEVR_BUILD_TESTS=ON` adds `whatkevr/tests/tst_protocolcore` (13 QtTest cases driving the real client over a real socket via an in-process fake daemon — fill/sort/replace/move/remove/reset, ready-exhausted, directional extend, subscribe meta, object view, open_chat, pre-hello request queue). |
 | D2a | Port connection/status/login pages onto the protocol (`connection`+`login` views) | done | New `whatkevr/src/app/protocolcontroller.{h,cpp}`: a QML singleton owning the D1 `ProtocolClient` + two `ObjectViewModel`s (`connection`, `login`), deriving every string the status/login/splash pages bind to (phase, `statusTitle/Text`, `detailText`, QR + countdown, `primaryAction*`) plus `startDaemon`/`triggerPrimaryAction`(→`daemon.reconnect`)/`copyToClipboard`. Runs **alongside** the gRPC `AppController` (strangler): `Main.qml` `appMode()` + the rebuild/logout gate now key off `ProtocolController`; `StatusPage`/`LoginPage` bindings repointed; `AppController` keeps serving the chat shell + deep-link signals until later D-steps. Transport phase = client-ready + cold-start grace + socket-exists (the client's own auto-reconnect subsumes AppController's channel/probe/retry). Socket-path seam added for tests; `daemonSocketExists()` now checks the path actually used (was a latent bug). New QtTest `tst_protocolcontroller` (fake daemon over a real socket: not-running-after-grace, online→shell, need_login→QR+countdown, live state flip, reconnect command). `just build` green; whatkevr tests + conformance pass; hand-verified `connection`/`login` over socat and a headless app launch against the live online daemon (no QML errors, reaches chat mode). No PROTOCOL.md change. |
 | D2b1 | Port chat list core: `chats` view active list, filters (all/direct/groups) as subscribe params, row/field mapping, list commands (pin/archive/mute), selection routing to gRPC conversation, loading/empty | done | `ProtocolController` grew a generic `chatsModel` (`CollectionViewModel`) subscribed to `chats {filter, archived:false}`, a `chatFilter` int that **re-subscribes** (no frontend filtering — the D1 `ChatListFilterModel` proxy is gone from the pane), derived `chatsLoading`/`chatsEmpty`, and `setChatPinned/Archived/Muted` mapping to `chat.*` acks. `ChatListPane.qml` binds the delegate to `model.item.<daemon field>` with pure-presentation string→int status/direction + initials helpers; context-menu/loading bindings repointed to `ProtocolController`. Selection still routes to the gRPC `AppController.selectChat` (conversation is D3); drafts read from gRPC `AppController.chatDraft` (frontend state, allowed; composer is D4). Archived-section QML left inert (D2b2). `tst_protocolcontroller` +3 cases (fill/order, filter re-subscribe, command mapping) via a collection-serving fake daemon; `just build` + whatkevr tests + conformance pass; hand-verified over socat (fill+ready, daemon-side groups/direct filters, `chat.pin` ack) and a headless app launch (no QML errors, reaches chat shell). No PROTOCOL.md change. |
-| D2b2 | Port archived chats section (second `chats` subscription) + `typing` overlay + `sync` history strip | todo | Split from D2b (2026-07-18): layers on the D2b1 chat list. |
+| D2b2 | Port archived chats section (second `chats` subscription) + `typing` overlay + `sync` history strip | done | `ProtocolController` grew `archivedChatsModel` (a second `chats` sub, `archived:true`, same filter, re-subscribed with the active list) + `archivedCount`; a `typing` collection with `chatTyping(chatId)` + a `typingRevision` tick; and a `sync` object view feeding derived `historySyncVisible/Percent/Title/Detail` (names mirror `AppController`). `ChatListPane.qml`: the inline row became a shared `chatRowDelegate` `Component` used by both the active `ListView` and a collapsible **`footer`** (header + `Repeater` over `archivedChatsModel`) — the old `section.property="chatSection"` machinery is gone; `ChatListDelegate` width gained a `parent.width` fallback for the footer. `isTyping` binds `chatTyping(chatId)` keyed on `typingRevision`; `HistorySyncStrip` + placeholder repointed to `ProtocolController.historySync*`. Sync display policy is simplified vs the gRPC cursor (renders the single current `sync` item; drops cross-event type-dedup) — see Decision log. `tst_protocolcontroller` +3 (archived separate model, typing live start/stop, sync derivation incl. complete/on-demand hiding); `just build` + all whatkevr tests (13) + conformance pass; hand-verified over socat (archived count, `typing` ready, `sync` item) and a headless app launch (no QML errors). No PROTOCOL.md change. **D2b complete.** |
 | D3 | Port conversation view: messages, receipts dialog, presence header, jump-to-message anchors | todo | |
 | D4 | Port composer + all send paths, media download/`transfers` progress, image viewer | todo | |
 | D5 | Port info dialogs (contact/group/members), starred/pinned pages, unified + in-chat search | todo | |
@@ -170,6 +170,35 @@ _None._
   no GUI/gRPC) and drive the real client over a real Unix socket.
 
 ## Decision log
+
+- 2026-07-19 — D2b2 implementation readings (no PROTOCOL.md change; flag if you
+  disagree): (1) **Archived is a sibling subscription, presented as a footer.**
+  PROTOCOL returns active/archived as disjoint `chats` subscriptions; rather than
+  a proxy that concatenates or a section role, the active list is the `ListView`
+  and the archived chats render in its **`footer`** (a collapsible "Archived (N)"
+  header + a `Repeater` over `archivedChatsModel`). This scrolls as one list (the
+  old single-scroll UX) with zero frontend merging — each model stays a pure
+  keyed/sorted collection; the row's own `archived` flag drives per-row collapse.
+  Both subs carry the same sidebar `filter`, so the archived section narrows with
+  the sidebar exactly like the active list. (2) **Typing is membership, not a
+  merged field.** The delegate's `isTyping` asks `chatTyping(chatId)` (is the
+  chat_id present in the global `typing` view) — the daemon owns the `typing`
+  collection; the frontend composes it into the row at render time, never folding
+  typing state into the chat row. A `typingRevision` counter (bumped on any typing
+  model change) forces the binding to re-evaluate, since a bare function call is
+  not reactive. (3) **The sync strip renders the single current `sync` item.** The
+  gRPC `AppController` ran a cross-event *cursor* (suppressing auxiliary sync types
+  while a primary is active, picking among concurrent types, keeping max percent).
+  The `sync` **object view** already delivers one current state, so the strip
+  derives visible/percent/title/detail from it directly, keeping only two bits of
+  presentation policy: hide `on_demand` (per-chat history has its own loading UI)
+  and never let percent jump backwards within one visible session. The dropped
+  type-dedup can, in principle, show a brief auxiliary-type label where gRPC would
+  have suppressed it; if that ever matters the spirit-correct fix is **daemon-side**
+  (have the `sync` view compute a single displayable state), not a frontend cursor.
+  Flag if you want that daemon change now. (4) **Selection/search/drafts stay on
+  gRPC** (D3/D5/D4): D2b2 only added read views; the list still routes clicks to
+  `AppController.selectChat` and reads drafts from `AppController.chatDraft`.
 
 - 2026-07-19 — **D2b split into D2b1 + D2b2** (implementation judgement; flag if
   you disagree). D2b (chat list *and* `typing` overlay *and* `sync` strip on a

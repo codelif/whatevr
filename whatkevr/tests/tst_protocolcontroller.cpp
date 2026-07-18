@@ -63,6 +63,29 @@ public:
         m_collections.insert(view, rows);
     }
 
+    // The `chats` view is served per the subscribe `archived` param: active and
+    // archived are two disjoint subscriptions of the same view.
+    void setActiveChats(const QList<QJsonObject> &rows) { m_chatsActive = rows; }
+    void setArchivedChats(const QList<QJsonObject> &rows) { m_chatsArchived = rows; }
+
+    // Push a live collection update to whichever sub currently owns `view`.
+    void pushUpsert(const QString &view, const QJsonObject &item, const QString &sort)
+    {
+        const int sub = m_subByView.value(view, -1);
+        if (sub >= 0) {
+            sendUpsert(sub, item, sort);
+        }
+    }
+    void pushRemove(const QString &view, const QString &id)
+    {
+        const int sub = m_subByView.value(view, -1);
+        if (sub >= 0) {
+            writeObject(QJsonObject{{QStringLiteral("sub"), sub},
+                                    {QStringLiteral("event"), QStringLiteral("remove")},
+                                    {QStringLiteral("id"), id}});
+        }
+    }
+
     int reconnectCount = 0;
     // Params of the most recent `chats` subscribe, and how many landed — lets a
     // test assert the filter re-subscribe without racing the reply.
@@ -111,8 +134,16 @@ private:
             if (m_items.contains(view)) {
                 sendUpsert(sub, m_items.value(view));
             }
-            if (m_collections.contains(view)) {
-                const QList<QJsonObject> rows = m_collections.value(view);
+            QList<QJsonObject> rows;
+            bool hasRows = false;
+            if (view == QLatin1String("chats")) {
+                rows = params.value(QStringLiteral("archived")).toBool() ? m_chatsArchived : m_chatsActive;
+                hasRows = true;
+            } else if (m_collections.contains(view)) {
+                rows = m_collections.value(view);
+                hasRows = true;
+            }
+            if (hasRows) {
                 for (int i = 0; i < rows.size(); ++i) {
                     const QJsonObject &row = rows.at(i);
                     const QString sort = row.value(QStringLiteral("sort")).toString(
@@ -177,6 +208,8 @@ private:
     QHash<QString, int> m_subByView;
     QHash<QString, QJsonObject> m_items;
     QHash<QString, QList<QJsonObject>> m_collections;
+    QList<QJsonObject> m_chatsActive;
+    QList<QJsonObject> m_chatsArchived;
 };
 
 QJsonObject chatRow(const QString &id, const QString &name, const QString &sort,
@@ -332,7 +365,7 @@ private Q_SLOTS:
     {
         FakeDaemon daemon(m_path);
         daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
-        daemon.setCollection(QStringLiteral("chats"),
+        daemon.setActiveChats(
                              {chatRow(QStringLiteral("a@s"), QStringLiteral("Alice"), QStringLiteral("1-000")),
                               chatRow(QStringLiteral("b@s"), QStringLiteral("Bob"), QStringLiteral("1-001"))});
 
@@ -358,16 +391,17 @@ private Q_SLOTS:
     {
         FakeDaemon daemon(m_path);
         daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
-        daemon.setCollection(QStringLiteral("chats"),
+        daemon.setActiveChats(
                              {chatRow(QStringLiteral("a@s"), QStringLiteral("Alice"), QStringLiteral("1-000"))});
 
         ProtocolController ctrl(m_path, nullptr);
         ctrl.start();
-        QTRY_COMPARE(daemon.chatsSubscribeCount, 1);
+        // Two `chats` subscribes per filter: active (archived:false) + archived.
+        QTRY_COMPARE(daemon.chatsSubscribeCount, 2);
         QCOMPARE(daemon.lastChatsParams.value(QStringLiteral("filter")).toString(), QStringLiteral("all"));
 
-        ctrl.setChatFilter(2); // groups
-        QTRY_COMPARE(daemon.chatsSubscribeCount, 2);
+        ctrl.setChatFilter(2); // groups → both subscriptions re-issued
+        QTRY_COMPARE(daemon.chatsSubscribeCount, 4);
         QCOMPARE(daemon.lastChatsParams.value(QStringLiteral("filter")).toString(), QStringLiteral("groups"));
         QCOMPARE(ctrl.chatFilter(), 2);
     }
@@ -389,6 +423,93 @@ private Q_SLOTS:
         QCOMPARE(daemon.lastCommandMethod, QStringLiteral("chat.pin"));
         QCOMPARE(daemon.lastCommandParams.value(QStringLiteral("chat_id")).toString(), QStringLiteral("a@s"));
         QCOMPARE(daemon.lastCommandParams.value(QStringLiteral("pinned")).toBool(), true);
+    }
+
+    // Archived chats are a *separate* `chats` subscription (`archived: true`) with
+    // its own model and count; the active model never contains archived rows.
+    void archivedPopulatesSeparateModel()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+        daemon.setActiveChats({chatRow(QStringLiteral("a@s"), QStringLiteral("Alice"), QStringLiteral("1-000"))});
+        daemon.setArchivedChats({chatRow(QStringLiteral("z@s"), QStringLiteral("Zed"), QStringLiteral("1-000")),
+                                 chatRow(QStringLiteral("y@s"), QStringLiteral("Yara"), QStringLiteral("1-001"))});
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+
+        auto *active = qobject_cast<CollectionViewModel *>(ctrl.chatsModel());
+        auto *archived = qobject_cast<CollectionViewModel *>(ctrl.archivedChatsModel());
+        QVERIFY(active);
+        QVERIFY(archived);
+        QTRY_COMPARE(active->count(), 1);
+        QTRY_COMPARE(archived->count(), 2);
+        QCOMPARE(ctrl.archivedCount(), 2);
+        QCOMPARE(active->indexOfId(QStringLiteral("z@s")), -1); // not in the active list
+    }
+
+    // The typing overlay tracks the global `typing` view keyed by chat_id; live
+    // start/stop flips chatTyping() and bumps typingRevision for the row binding.
+    void typingOverlayTracksView()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+        daemon.setCollection(QStringLiteral("typing"),
+                             {QJsonObject{{QStringLiteral("id"), QStringLiteral("a@s")}}});
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+        QTRY_VERIFY(ctrl.chatTyping(QStringLiteral("a@s")));
+        QVERIFY(!ctrl.chatTyping(QStringLiteral("b@s")));
+
+        QSignalSpy typingSpy(&ctrl, &ProtocolController::typingChanged);
+        daemon.pushRemove(QStringLiteral("typing"), QStringLiteral("a@s")); // stopped typing
+        QTRY_VERIFY(!ctrl.chatTyping(QStringLiteral("a@s")));
+        QVERIFY(typingSpy.count() > 0);
+
+        daemon.pushUpsert(QStringLiteral("typing"), QJsonObject{{QStringLiteral("id"), QStringLiteral("b@s")}},
+                          QStringLiteral("0")); // someone else starts
+        QTRY_VERIFY(ctrl.chatTyping(QStringLiteral("b@s")));
+    }
+
+    // The history-sync strip derives visible/percent/title/detail from the `sync`
+    // object view; complete and on-demand states hide it.
+    void historySyncStripDerives()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+        daemon.setItem(QStringLiteral("sync"), QJsonObject{
+                                                   {QStringLiteral("id"), QStringLiteral("self")},
+                                                   {QStringLiteral("type"), QStringLiteral("recent")},
+                                                   {QStringLiteral("phase"), QStringLiteral("processing")},
+                                                   {QStringLiteral("progress_percent"), 40},
+                                                   {QStringLiteral("chunk_order"), 2},
+                                                   {QStringLiteral("is_complete"), false},
+                                               });
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+        QTRY_VERIFY(ctrl.historySyncVisible());
+        QCOMPARE(ctrl.historySyncPercent(), 40);
+        QCOMPARE(ctrl.historySyncTitle(), QStringLiteral("Recent history sync"));
+        QVERIFY(ctrl.historySyncDetail().contains(QStringLiteral("Chunk 2")));
+
+        // Complete hides the strip.
+        daemon.setItem(QStringLiteral("sync"), QJsonObject{{QStringLiteral("id"), QStringLiteral("self")},
+                                                           {QStringLiteral("phase"), QStringLiteral("complete")},
+                                                           {QStringLiteral("progress_percent"), 100},
+                                                           {QStringLiteral("is_complete"), true}});
+        QTRY_VERIFY(!ctrl.historySyncVisible());
+
+        // On-demand (per-chat) history never drives the strip, even mid-progress.
+        daemon.setItem(QStringLiteral("sync"), QJsonObject{{QStringLiteral("id"), QStringLiteral("self")},
+                                                           {QStringLiteral("type"), QStringLiteral("on_demand")},
+                                                           {QStringLiteral("phase"), QStringLiteral("processing")},
+                                                           {QStringLiteral("progress_percent"), 50},
+                                                           {QStringLiteral("is_complete"), false}});
+        // Give the update a chance to land, then assert it stayed hidden.
+        QTest::qWait(50);
+        QVERIFY(!ctrl.historySyncVisible());
     }
 
 private:
