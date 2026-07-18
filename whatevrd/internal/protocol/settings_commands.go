@@ -13,7 +13,7 @@ type privacySetParams struct {
 	Value    json.RawMessage `json:"value"`
 }
 
-func (h commandHandlers) privacySet(_ *conn, req request) (any, *Error) {
+func (h commandHandlers) privacySet(ctx context.Context, _ *conn, req request) (any, *Error) {
 	if err := h.requireActions(); err != nil {
 		return nil, err
 	}
@@ -50,7 +50,7 @@ func (h commandHandlers) privacySet(_ *conn, req request) (any, *Error) {
 		}
 	}
 
-	_, err := h.actions.SetPrivacySetting(context.Background(), category, audience, readReceipts)
+	_, err := h.actions.SetPrivacySetting(ctx, category, audience, readReceipts)
 	return nil, mapCommandError(err)
 }
 
@@ -133,7 +133,7 @@ type selfSetAboutParams struct {
 	Text *string `json:"text"`
 }
 
-func (h commandHandlers) selfSetAbout(_ *conn, req request) (any, *Error) {
+func (h commandHandlers) selfSetAbout(ctx context.Context, _ *conn, req request) (any, *Error) {
 	if err := h.requireActions(); err != nil {
 		return nil, err
 	}
@@ -144,7 +144,7 @@ func (h commandHandlers) selfSetAbout(_ *conn, req request) (any, *Error) {
 	if p.Text == nil {
 		return nil, errorf(CodeInvalidParams, "text is required")
 	}
-	return nil, mapCommandError(h.actions.SetProfileStatus(context.Background(), *p.Text))
+	return nil, mapCommandError(h.actions.SetProfileStatus(ctx, *p.Text))
 }
 
 type contactBlockParams struct {
@@ -152,7 +152,7 @@ type contactBlockParams struct {
 	Blocked *bool  `json:"blocked"`
 }
 
-func (h commandHandlers) contactBlock(_ *conn, req request) (any, *Error) {
+func (h commandHandlers) contactBlock(ctx context.Context, _ *conn, req request) (any, *Error) {
 	if err := h.requireActions(); err != nil {
 		return nil, err
 	}
@@ -173,6 +173,6 @@ func (h commandHandlers) contactBlock(_ *conn, req request) (any, *Error) {
 	if p.Blocked == nil {
 		return nil, errorf(CodeInvalidParams, "blocked is required")
 	}
-	_, err := h.actions.UpdateBlocklist(context.Background(), jid, *p.Blocked)
+	_, err := h.actions.UpdateBlocklist(ctx, jid, *p.Blocked)
 	return nil, mapCommandError(err)
 }
