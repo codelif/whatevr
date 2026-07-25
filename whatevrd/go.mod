@@ -7,7 +7,7 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.47
 	github.com/nyaruka/phonenumbers v1.8.0
 	go.mau.fi/whatsmeow v0.0.0-20260622185415-5f04eac6dbbb
-	google.golang.org/grpc v1.82.0
+	google.golang.org/grpc v1.82.1
 	google.golang.org/protobuf v1.36.11
 )
 
