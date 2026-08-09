@@ -119,6 +119,29 @@ QString syncTypeLabel(const QString &type)
     }
     return i18nc("@label", "Syncing history");
 }
+
+// One-line preview of a daemon `messages`-shaped row, for the pinned banner.
+// Known kinds get the localized placeholder the gRPC banner used; anything else
+// falls back to the row's mandatory `fallback` string (rule 5), which the daemon
+// guarantees is human-readable for kinds this frontend does not implement.
+QString messageRowPreview(const QVariantMap &item)
+{
+    if (item.value(QStringLiteral("revoked")).toBool()) {
+        return i18nc("@item:intext pinned-message preview", "This message was deleted");
+    }
+    const QString text = item.value(QStringLiteral("text")).toString();
+    if (!text.isEmpty()) {
+        return text;
+    }
+    const QString kind = item.value(QStringLiteral("kind")).toString();
+    if (kind == QLatin1String("image")) {
+        return i18nc("@item:intext media placeholder", "Photo");
+    }
+    if (kind == QLatin1String("sticker")) {
+        return i18nc("@item:intext media placeholder", "Sticker");
+    }
+    return item.value(QStringLiteral("fallback")).toString();
+}
 } // namespace
 
 void ProtocolController::setInstance(ProtocolController *instance)
@@ -245,6 +268,25 @@ ProtocolController::ProtocolController(QString socketPath, QObject *parent)
     connect(m_receiptsModel, &CollectionViewModel::modelReset, this, bumpReceipts);
     connect(m_receiptsModel, &CollectionViewModel::readyChanged, this, bumpReceipts);
 
+    // Pinned banner (D4b): the displayed chat's pins. The banner reads rows by
+    // index, so every shape change (fill, pin, unpin, expiry) is one signal.
+    m_pinnedModel = new CollectionViewModel(this);
+    connect(m_pinnedModel, &CollectionViewModel::countChanged, this, &ProtocolController::pinnedMessagesChanged);
+    connect(m_pinnedModel, &CollectionViewModel::dataChanged, this, &ProtocolController::pinnedMessagesChanged);
+    connect(m_pinnedModel, &CollectionViewModel::modelReset, this, &ProtocolController::pinnedMessagesChanged);
+    connect(m_pinnedModel, &CollectionViewModel::readyChanged, this, &ProtocolController::pinnedMessagesChanged);
+
+    // Forward picker (D4b): its own `chats` collection, read through
+    // forwardChatTargets() with a revision tick like the receipts roster.
+    m_forwardTargetsModel = new CollectionViewModel(this);
+    const auto bumpForwardTargets = [this] {
+        ++m_forwardTargetsRevision;
+        Q_EMIT forwardTargetsChanged();
+    };
+    connect(m_forwardTargetsModel, &CollectionViewModel::countChanged, this, bumpForwardTargets);
+    connect(m_forwardTargetsModel, &CollectionViewModel::dataChanged, this, bumpForwardTargets);
+    connect(m_forwardTargetsModel, &CollectionViewModel::modelReset, this, bumpForwardTargets);
+
     m_startupGraceTimer = new QTimer(this);
     m_startupGraceTimer->setSingleShot(true);
     m_startupGraceTimer->setInterval(kStartupGraceMs);
@@ -316,6 +358,8 @@ ProtocolController::~ProtocolController()
     delete m_messagesSub;
     delete m_presenceSub;
     delete m_receiptsSub;
+    delete m_pinnedSub;
+    delete m_forwardTargetsSub;
     m_connectionSub = nullptr;
     m_loginSub = nullptr;
     m_chatsSub = nullptr;
@@ -325,6 +369,8 @@ ProtocolController::~ProtocolController()
     m_messagesSub = nullptr;
     m_presenceSub = nullptr;
     m_receiptsSub = nullptr;
+    m_pinnedSub = nullptr;
+    m_forwardTargetsSub = nullptr;
     if (m_client) {
         m_client->stop();
     }
@@ -572,6 +618,7 @@ void ProtocolController::setSelectedChat(const QString &chatId, const QString &a
     }
     sendSessionUpdate();
     updatePresenceSubscription();
+    updatePinnedSubscription();
 
     if (chatId.isEmpty()) {
         delete m_messagesSub;
@@ -959,6 +1006,8 @@ void ProtocolController::setConversationVisible(bool visible)
     // hidden conversation drops it (and with it the upstream WhatsApp presence
     // demand), a shown one re-establishes it alongside the messages window.
     updatePresenceSubscription();
+    // The pinned banner is part of that same conversation view.
+    updatePinnedSubscription();
     if (!visible) {
         m_phoneHistoryRequesting = false;
         m_phoneHistoryTimer->stop();
@@ -1279,6 +1328,227 @@ void ProtocolController::setSelectedChatComposing(bool composing)
     m_localComposingChatId = composing ? m_selectedChatId : QString();
     m_client->request(QStringLiteral("chat.typing"),
                       {{QStringLiteral("chat_id"), m_selectedChatId}, {QStringLiteral("composing"), composing}});
+}
+
+// --- message actions (D4b) --------------------------------------------------
+
+void ProtocolController::sendMessageCommand(const QString &method, const QJsonObject &params, const QString &failureText)
+{
+    m_client->request(method, params, [this, failureText](const QJsonObject &, const ProtocolError &error) {
+        if (!error.isError()) {
+            return;
+        }
+        Q_EMIT messageActionFailed(error.message.isEmpty() ? failureText : error.message);
+    });
+}
+
+void ProtocolController::sendReaction(const QString &messageId, const QString &emoji)
+{
+    if (messageId.isEmpty()) {
+        return;
+    }
+    // Reacting means the user has seen the message, so the unread divider goes
+    // (mirrors AppController::sendReaction).
+    dismissUnreadAnchor();
+    sendMessageCommand(QStringLiteral("message.react"),
+                       {{QStringLiteral("message_id"), messageId}, {QStringLiteral("emoji"), emoji}},
+                       i18nc("@info", "Unable to react to the message"));
+}
+
+void ProtocolController::editMessage(const QString &messageId, const QString &newText)
+{
+    const QString trimmed = newText.trimmed();
+    if (messageId.isEmpty() || trimmed.isEmpty()) {
+        return;
+    }
+    sendMessageCommand(QStringLiteral("message.edit"),
+                       {{QStringLiteral("message_id"), messageId}, {QStringLiteral("text"), trimmed}},
+                       i18nc("@info", "Unable to edit the message"));
+}
+
+void ProtocolController::revokeMessage(const QString &messageId)
+{
+    if (messageId.isEmpty()) {
+        return;
+    }
+    sendMessageCommand(QStringLiteral("message.revoke"), {{QStringLiteral("message_id"), messageId}},
+                       i18nc("@info", "Unable to delete the message for everyone"));
+}
+
+void ProtocolController::deleteMessageForMe(const QString &messageId)
+{
+    if (messageId.isEmpty()) {
+        return;
+    }
+    sendMessageCommand(QStringLiteral("message.delete"), {{QStringLiteral("message_id"), messageId}},
+                       i18nc("@info", "Unable to delete the message"));
+}
+
+void ProtocolController::setMessageStarred(const QString &messageId, bool starred)
+{
+    if (messageId.isEmpty()) {
+        return;
+    }
+    sendMessageCommand(QStringLiteral("message.star"),
+                       {{QStringLiteral("message_id"), messageId}, {QStringLiteral("starred"), starred}},
+                       i18nc("@info", "Unable to star the message"));
+}
+
+void ProtocolController::pinMessage(const QString &messageId, int durationSecs)
+{
+    if (messageId.isEmpty() || durationSecs <= 0) {
+        return;
+    }
+    sendMessageCommand(QStringLiteral("message.pin"),
+                       {{QStringLiteral("message_id"), messageId},
+                        {QStringLiteral("pinned"), true},
+                        {QStringLiteral("duration_secs"), durationSecs}},
+                       i18nc("@info", "Unable to pin the message"));
+}
+
+void ProtocolController::unpinMessage(const QString &messageId)
+{
+    if (messageId.isEmpty()) {
+        return;
+    }
+    sendMessageCommand(QStringLiteral("message.pin"),
+                       {{QStringLiteral("message_id"), messageId}, {QStringLiteral("pinned"), false}},
+                       i18nc("@info", "Unable to unpin the message"));
+}
+
+void ProtocolController::forwardMessage(const QString &messageId, const QStringList &chatIds)
+{
+    if (messageId.isEmpty() || chatIds.isEmpty()) {
+        return;
+    }
+
+    // The picker forwards every selected message in one synchronous loop, so an
+    // idle in-flight count marks the start of a batch.
+    if (m_forwardInFlight == 0) {
+        m_forwardBatchChatCount = static_cast<int>(chatIds.size());
+        m_forwardBatchFailed = false;
+    }
+    ++m_forwardInFlight;
+
+    m_client->request(QStringLiteral("message.forward"),
+                      {{QStringLiteral("message_id"), messageId},
+                       {QStringLiteral("chat_ids"), QJsonArray::fromStringList(chatIds)}},
+                      [this](const QJsonObject &, const ProtocolError &error) {
+        m_forwardInFlight = qMax(0, m_forwardInFlight - 1);
+        if (error.isError()) {
+            if (!m_forwardBatchFailed) {
+                m_forwardBatchFailed = true;
+                Q_EMIT messageActionFailed(error.message.isEmpty()
+                                               ? i18nc("@info", "Unable to forward the message")
+                                               : error.message);
+            }
+        }
+        // Report success once, after the last message in the batch settles.
+        if (m_forwardInFlight == 0 && !m_forwardBatchFailed) {
+            Q_EMIT messageForwarded(m_forwardBatchChatCount);
+        }
+    });
+}
+
+bool ProtocolController::canEditAt(qint64 timestampUnix) const
+{
+    // Mirrors whatsmeow.EditWindow (20 minutes); the daemon is authoritative and
+    // answers `expired` if this is optimistic.
+    static constexpr qint64 kEditWindowSeconds = 20 * 60;
+    if (timestampUnix <= 0) {
+        return false;
+    }
+    return QDateTime::currentSecsSinceEpoch() - timestampUnix <= kEditWindowSeconds;
+}
+
+// --- pinned banner (D4b) ----------------------------------------------------
+
+void ProtocolController::updatePinnedSubscription()
+{
+    const QString target = m_conversationVisible ? m_selectedChatId : QString();
+    if (target == m_pinnedChatId) {
+        return;
+    }
+    m_pinnedChatId = target;
+    delete m_pinnedSub;
+    m_pinnedSub = nullptr;
+    m_pinnedModel->onReset();
+    if (!target.isEmpty()) {
+        m_pinnedSub = m_client->subscribe(QStringLiteral("pinned"),
+                                          {{QStringLiteral("chat_id"), target}}, m_pinnedModel);
+    }
+    Q_EMIT pinnedMessagesChanged();
+}
+
+bool ProtocolController::pinnedMessagesReady() const
+{
+    // Nothing subscribed means nothing to wait for, so the conversation can
+    // collapse the banner slot instead of reserving space for it.
+    return m_pinnedSub == nullptr || m_pinnedModel->isReady();
+}
+
+int ProtocolController::pinnedMessagesCount() const
+{
+    return m_pinnedModel->count();
+}
+
+QVariantMap ProtocolController::pinnedMessageAt(int index) const
+{
+    if (index < 0 || index >= m_pinnedModel->count()) {
+        return {};
+    }
+    const QVariantMap item = m_pinnedModel
+                                 ->data(m_pinnedModel->index(index, 0), CollectionViewModel::ItemRole)
+                                 .toMap();
+    const bool outgoing = item.value(QStringLiteral("direction")).toString() == QLatin1String("outgoing");
+    const QString senderName = outgoing
+        ? i18nc("@item:intext message sender, the local user", "You")
+        : item.value(QStringLiteral("sender")).toMap().value(QStringLiteral("name")).toString();
+    return {
+        {QStringLiteral("messageId"), item.value(QStringLiteral("id")).toString()},
+        {QStringLiteral("senderName"), senderName},
+        {QStringLiteral("preview"), messageRowPreview(item)},
+    };
+}
+
+// --- forward picker (D4b) ---------------------------------------------------
+
+void ProtocolController::openForwardTargets()
+{
+    if (m_forwardTargetsSub) {
+        return;
+    }
+    // Its own subscription rather than the sidebar's: the picker offers every
+    // chat, not whatever the chat-list filter happens to be showing.
+    m_forwardTargetsSub = m_client->subscribe(
+        QStringLiteral("chats"),
+        {{QStringLiteral("filter"), QStringLiteral("all")}, {QStringLiteral("archived"), false}},
+        m_forwardTargetsModel);
+}
+
+void ProtocolController::closeForwardTargets()
+{
+    delete m_forwardTargetsSub;
+    m_forwardTargetsSub = nullptr;
+    m_forwardTargetsModel->onReset();
+}
+
+QVariantList ProtocolController::forwardChatTargets(const QString &query) const
+{
+    const QString needle = query.trimmed();
+    QVariantList rows;
+    rows.reserve(m_forwardTargetsModel->count());
+    for (int row = 0; row < m_forwardTargetsModel->count(); ++row) {
+        const QVariantMap item = m_forwardTargetsModel
+                                     ->data(m_forwardTargetsModel->index(row, 0), CollectionViewModel::ItemRole)
+                                     .toMap();
+        if (!needle.isEmpty()
+            && !item.value(QStringLiteral("name")).toString().contains(needle, Qt::CaseInsensitive)) {
+            continue;
+        }
+        rows.append(item);
+    }
+    return rows;
 }
 
 // --- history-sync strip (D2b2) --------------------------------------------

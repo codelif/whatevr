@@ -52,11 +52,11 @@ Kirigami.Page {
     property bool pinnedLayoutSettled: false
     readonly property bool pinnedSlotReserved: Whatevr.ProtocolController.hasSelectedChat
                                                && root.messagesCurrent
-                                               && (!Whatevr.AppController.pinnedMessagesReady
+                                               && (!Whatevr.ProtocolController.pinnedMessagesReady
                                                    || pinnedBanner.count > 0)
     readonly property bool pinnedLayoutReady: !Whatevr.ProtocolController.hasSelectedChat
                                                || (root.pinnedLayoutChatId === Whatevr.ProtocolController.selectedChatId
-                                                  && Whatevr.AppController.pinnedMessagesReady
+                                                  && Whatevr.ProtocolController.pinnedMessagesReady
                                                   && root.pinnedLayoutSettled)
 
     onMessagesCurrentChanged: requestPinnedLayoutSettle()
@@ -68,7 +68,7 @@ Kirigami.Page {
         pinnedLayoutSettleTimer.stop()
         if (Whatevr.ProtocolController.hasSelectedChat
                 && root.messagesCurrent
-                && Whatevr.AppController.pinnedMessagesReady) {
+                && Whatevr.ProtocolController.pinnedMessagesReady) {
             pinnedLayoutSettleTimer.start()
         }
     }
@@ -88,7 +88,7 @@ Kirigami.Page {
 
         if (!root.pinnedLayoutSettled
                 && root.messagesCurrent
-                && Whatevr.AppController.pinnedMessagesReady
+                && Whatevr.ProtocolController.pinnedMessagesReady
                 && !pinnedLayoutSettleTimer.running) {
             pinnedLayoutSettleTimer.start()
         }
@@ -286,10 +286,10 @@ Kirigami.Page {
     }
 
     Connections {
-        target: Whatevr.AppController
+        target: Whatevr.ProtocolController
 
-        function onPinnedMessagesReadyChanged() {
-            if (Whatevr.AppController.pinnedMessagesReady) {
+        function onPinnedMessagesChanged() {
+            if (Whatevr.ProtocolController.pinnedMessagesReady) {
                 root.requestPinnedLayoutSettle()
             } else if (root.pinnedLayoutChatId !== Whatevr.ProtocolController.selectedChatId
                        || !root.pinnedLayoutSettled) {
@@ -306,7 +306,7 @@ Kirigami.Page {
         interval: 0
         onTriggered: root.pinnedLayoutSettled = Whatevr.ProtocolController.hasSelectedChat
                                                 && root.messagesCurrent
-                                                && Whatevr.AppController.pinnedMessagesReady
+                                                && Whatevr.ProtocolController.pinnedMessagesReady
                                                  && root.pinnedLayoutChatId === Whatevr.ProtocolController.selectedChatId
     }
 
@@ -655,7 +655,7 @@ Kirigami.Page {
 
                 anchors.fill: parent
                 visible: Whatevr.ProtocolController.hasSelectedChat
-                         && Whatevr.AppController.pinnedMessagesReady
+                         && Whatevr.ProtocolController.pinnedMessagesReady
                          && root.messagesCurrent
                          && count > 0
                 onMessageActivated: messageId => messageView.jumpToReplyTarget(messageId)
@@ -823,7 +823,7 @@ Kirigami.Page {
             onComposingChanged: composing => Whatevr.ProtocolController.setSelectedChatComposing(composing)
             onClearReplyRequested: root.clearReplyTarget()
             onReplyConsumed: root.clearReplyTarget()
-            onEditRequested: (messageId, text) => Whatevr.AppController.editMessage(messageId, text)
+            onEditRequested: (messageId, text) => Whatevr.ProtocolController.editMessage(messageId, text)
             onClearEditRequested: root.clearEditTarget()
             onEditConsumed: root.clearEditTarget()
         }
