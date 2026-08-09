@@ -110,7 +110,7 @@ Status: `todo` | `doing` | `done` | `blocked` | `needs-decision`
 | D4a | Port the composer's own send paths: `send.text`, `send.media` (image attach + clipboard/drag-drop paste), `chat.typing` composing indicator | done | `ProtocolController` gained `composerEnabled`/`sendInFlight`/`composerErrorText` plus `sendText`/`sendMedia`/`sendClipboardImage`/`setSelectedChatComposing` (protocolcontroller.{h,cpp}); `ConversationPane.qml`'s composer signal handlers and `MessageComposer.qml`'s clipboard-paste call repointed from `AppController` to `ProtocolController`. A send never applies the command result locally — the daemon delivers the sent message through the ordinary `messages` view upsert (rule 2), so there is no `applyMessageEvent`-equivalent; a send while an unread anchor is showing dismisses that divider (the user has now seen past it), mirroring `AppController::dismissUnreadAnchor`. `setSelectedChatComposing` keeps the gRPC version's per-chat dedupe (a "stop" only sends for the chat a "start" actually went to). Mentions/emoji picker/group-info-driven `@`-autocomplete and drafts stay on `AppController` (unchanged — mentions need `group_members`, not yet subscribed by `ProtocolController`; drafts are frontend-only state rule 1 already allows reading cross-stack, same as D2b1). `just build`, all three Qt suites (`tst_protocolcontroller` 29, `tst_protocolcore` 16, `tst_protocolmessagemodel` 7), `go test -tags sqlite_fts5 ./...`, and `scripts/conformance` pass; `send.text`/`send.media`/`chat.typing` hand-exercised over a raw socket against a throwaway daemon (params accepted, reached `not_logged_in` rather than `invalid_params` — confirms the wire shape matches the daemon's C2 handlers) plus a headless app launch (no QML errors). No PROTOCOL.md change. **Live-account send/receive not verified** — same environment gap as D3c (no logged-in WhatsApp session available here); see D-phase notes. |
 | D4b | Port message actions: react/edit/revoke/delete/star/pin/forward (context menu, `ReactionDetailsDialog`, `PinnedMessagesBanner`) | done | `ProtocolController` gained the seven `message.*` commands (`sendReaction`/`editMessage`/`revokeMessage`/`deleteMessageForMe`/`setMessageStarred`/`pinMessage`/`unpinMessage`/`forwardMessage`) plus `canEditAt`, all **ack-only**: the gRPC path's optimistic apply-and-rollback (`applyOptimisticEdit`/`Reaction`/`Star`, the pin's cached-message round-trip) is **deleted**, since the reaction pill, star, pin, edited body and revoke tombstone all arrive back as ordinary `messages`/`pinned` upserts (rule 2) — the same simplification D4a got for sends. Failures surface through ported `messageActionFailed`/`messageForwarded` signals (`MessageView`'s `Connections` repointed); a forward batch still reports once for the whole multi-message selection. `PinnedMessagesBanner` now reads the per-chat **`pinned` view** (subscribed/dropped with the displayed conversation, like D3c's `presence`) through `pinnedMessagesCount`/`pinnedMessageAt(i)`/`pinnedMessagesReady` — `PinnedMessagesModel`, its insertion-position ordering and `AppController::loadPinnedMessages` are off the render path. `ForwardChatPickerDialog` holds its **own dialog-scoped `chats` subscription** (`filter:"all"`, `archived:false`) read via `forwardChatTargets(query)` + `forwardTargetsRevision`; this **deleted the last `ChatListFilterModel` proxy from the UI** (the search box is now presentation-side filtering over rows it already has, per PROTOCOL's `group_members` precedent). Net frontend deletion of ordering/caching logic. `just build`, all three Qt suites (`tst_protocolcontroller` 32, `tst_protocolcore` 16, `tst_protocolmessagemodel` 7), `go test -tags sqlite_fts5 ./...`, `scripts/conformance` and `qmllint` (six warnings **removed**, none added) pass; the seven commands + the `pinned` subscribe hand-exercised over a raw socket against a throwaway daemon, plus an offscreen app launch. No PROTOCOL.md change. **Live-account check not performed** — same environment gap as D3c/D4a; **and** the picker now lists active chats only (see Decision log). |
 | D4c | Port `media.download` + the `transfers` progress view + the message image viewer (`ChatBubble` download UI, `ProfilePictureViewer` reuse) | done | `ProtocolController` gained `downloadMessageMedia` (ack-only `media.download`) and a session-long **global `transfers`** subscription, handed to `ProtocolMessageModel::setTransfersSource`. The timeline's two download roles (`mediaDownloading`/`mediaDownloadProgress`, stubbed `false`/`-1` since D3a) now **read through** to that view by message id — a keyed lookup at render time, no copy, no cache, the same compose-two-views shape as D2b2's typing-in-chat-rows and D3c's typing-over-presence; `direction` discriminates so a future upload row cannot light a download spinner. `ChatBubble`'s three `AppController.downloadMessageMedia` call sites (auto-download-on-viewport + the two manual buttons) repointed; the gRPC `m_mediaDownloadingMessageIds`/`m_mediaDownloadReplies` optimistic set is off the render path. Durable failure was already right: `media.download_error` rides the message row (B7b) and the bubble renders it. **The image viewer needed no work** — `ConversationPane`'s `ProfilePictureViewer` lightbox has been fed by the protocol model's `media.path` since D3b. `just build`, all three Qt suites (`tst_protocolcontroller` 33, `tst_protocolcore` 16, `tst_protocolmessagemodel` 8), `go test -tags sqlite_fts5 ./...`, `scripts/conformance` and `qmllint` (clean) pass; `transfers` + `media.download` hand-exercised over a raw socket against a throwaway daemon. No PROTOCOL.md change. **Live-account check not performed** — same environment gap as D3c/D4a/D4b; **and** two reads stay on `AppController` by design (see Decision log). |
-| D5 | Port info dialogs (contact/group/members), starred/pinned pages, unified + in-chat search | todo | |
+| D5 | Port info dialogs (contact/group/members), starred/pinned pages, unified + in-chat search | done | `ProtocolController` gained four dialog/page-scoped surfaces and their views. **Info card**: `openContactCard`/`openGroupCard`/`closeInfoCard` hold the `contact` **or** `group` object view (one `ObjectViewModel`, whichever the dialog asked for) plus `group_members` and — for a contact — `blocklist`; `ContactInfoDialog` renders the daemon item directly, so its snapshot/restore card cache, its member `ListModel` + `applyMemberFilter` rebuild, its hand-patched avatar merging and its blocklist snapshot are **deleted** (net −180 QML lines): two-phase enrichment is just a second upsert, back-navigation is a re-subscribe, blocked-ness is membership in `blocklist`, member search is presentation-side filtering (`groupMembers(query)` + revision tick). `contact.block`, `media.fetch_profile_picture` (→ `profilePictureReady`) and `chat.ensure_direct` (→ select + `openChatRequested`) ported with it. **Starred page**: `StarredMessagesPage` owns a windowed `starred` subscription for exactly as long as it is on screen (`openStarredMessages`/`closeStarredMessages`, `loadMoreStarredMessages` = `extend older` at the list end) and binds the generic collection, deriving row strings through one pure `messageRowDisplay(item)` helper (shared `util/messagerow` `messageRowPreview`, so `fallback` still covers unknown kinds). **Search**: unified chat-list search and in-chat search both run the daemon *queries* (`search.chats`/`search.messages`/`contacts.check_phone`) into a new `ProtocolSearchModel` (`models/protocolsearchmodel.*`, same roles as the frozen `SearchResultsModel` so `SearchResultDelegate` was a one-line repoint); a generation counter drops superseded replies, the in-chat match cursor stays frontend state and a chat switch ends the search. **Also ported the D4a leftover it unblocked**: the composer's `@`-mention roster is now a `group_members` subscription on the *displayed* conversation (`chatMembers(query)`), deleting MessageComposer's per-chat member cache and its `openGroupInfo` fetch path. **The row's "pinned page" was already done** — whatkevr has no separate pinned page; the `pinned` view landed with D4b's banner. `just build`, all three Qt suites (`tst_protocolcontroller` 40, `tst_protocolcore` 16, `tst_protocolmessagemodel` 8), `go test -tags sqlite_fts5 ./...`, `scripts/conformance` and a qmllint before/after diff (164 warnings before, 164 after — none added) pass; the three queries, the four views and the three commands hand-exercised over a raw socket against a throwaway daemon, plus an offscreen app launch. No PROTOCOL.md change. **Live-account check not performed** — same environment gap as D3c/D4a/D4b/D4c. |
 | D6 | Port settings pages (privacy/prefs/blocklist/profile) + sticker/emoji pickers, incl. `send.sticker` (moved here from D4, see decision log) | todo | |
 | D7 | Remove all gRPC client code + qt6-grpc from whatkevr; whatkevr runs 100% on the new protocol | todo | |
 
@@ -126,6 +126,34 @@ Status: `todo` | `doing` | `done` | `blocked` | `needs-decision`
 _None._
 
 ## D-phase notes
+
+- 2026-08-10 — **D5 live verification gap (environment, unchanged since D3c) —
+  and what it leaves untested.** Still no logged-in WhatsApp session here.
+  Verified instead against a throwaway `whatevrd` (isolated `XDG_*`, short
+  socket path) over a raw socket, with the exact params `ProtocolController`
+  sends: `search.chats` / `search.messages` (global **and** `chat_id`-scoped
+  with `limit:100`) answered `{"chats":[]}` / `{"messages":[],"has_more":false}`;
+  `contacts.check_phone` reached the network layer (`not_connected`, not
+  `invalid_params` — the shape is right); `subscribe starred` global and
+  chat-scoped both `ready`+`exhausted`, `extend older` accepted and
+  `extend newer` correctly refused; `contact`, `group`, `group_members` and
+  `blocklist` all subscribed, with the `contact` card arriving as a **phase-one**
+  local fill (`jid`+`phone`+`push_name`, no `about`) — exactly the two-phase
+  shape the dialog now renders without merging; `chat.ensure_direct` returned a
+  real `chat_id`; `contact.block` and `media.fetch_profile_picture` reached
+  their handlers (`not_connected`), while every malformed variant
+  (`contact` with no jid, `contact.block` with no `blocked`,
+  `media.fetch_profile_picture` / `chat.ensure_direct` with no jid) came back
+  `invalid_params`. Plus the client-side half in `tst_protocolcontroller`
+  (fake daemon: two-phase contact upsert, blocklist membership flip, roster
+  join/leave, windowed starred extend, query sections, match-cursor wrap) and
+  an offscreen `whatkevr` launch. **What that leaves genuinely unverified is
+  the second phase actually arriving**: a real contact's network `about` and a
+  real group's live subject/roles/owner only land once a session exists, so
+  whoever has one next should open a group card and watch the roles fill in,
+  and check the `@`-mention picker in a group with a cold roster (phase one can
+  legitimately be empty — the picker then shows only "Everyone" until the live
+  roster upserts).
 
 - 2026-08-10 — **D4c live verification gap (environment, unchanged since D3c) —
   and the one thing it actually leaves untested.** Still no logged-in WhatsApp
@@ -237,6 +265,56 @@ _None._
   no GUI/gRPC) and drive the real client over a real Unix socket.
 
 ## Decision log
+
+- 2026-08-10 — D5 implementation readings (no PROTOCOL.md change; flag if you
+  disagree): (1) **Queries are the one place frontend-held result state is
+  right, and the model says so.** `search.chats` / `search.messages` /
+  `contacts.check_phone` are one-shot request/response, and PROTOCOL.md's
+  Queries section explicitly allows the frontend to render and throw their
+  results away — so unlike every other surface in this phase they land in a
+  plain `QAbstractListModel` (`ProtocolSearchModel`) rather than a view sink.
+  It keeps each result set in its **own section** in the daemon's own order and
+  never sorts or merges across them; the phone-number row is a third section,
+  not a row spliced into the chat list. The guard the async path needs is a
+  **generation counter**, not a cancel: the protocol client always answers, so
+  a superseded reply is dropped on arrival (the gRPC path compared reply
+  pointers for the same reason). (2) **The info dialog stopped being a cache.**
+  The gRPC dialog fetched a card, snapshotted every field so member drill-in
+  could restore it, rebuilt a member `ListModel` on every keystroke, hand-patched
+  member avatars out of a `senderAvatarUpdated` signal, and kept a blocklist
+  snapshot refreshed on open. All of that is deleted: the card is the `contact`
+  or `group` object view, back-navigation is a re-subscribe (the daemon still
+  holds the card, so it is instant *and* current), an avatar refresh or a
+  network `about` is an ordinary upsert, and blocked-ness is **membership in the
+  `blocklist` view** — the same compose-two-views shape as D2b2's typing-in-chat
+  -rows and D4c's transfers-in-bubbles. This is the biggest net deletion of
+  frontend state in the D phase so far. (3) **`group` + `group_members` is the
+  Granularity rule paying off in the UI.** A join/leave/promotion moves one row
+  instead of rewriting the card, and the dialog subscribes both because it
+  renders both — exactly what PROTOCOL.md's canonical split describes.
+  (4) **The starred page is windowed, and that is a behaviour change for the
+  better.** The gRPC page called `ListStarredMessages` once and rendered the
+  whole result; the view is windowed, so the page subscribes `limit:50` and
+  extends `older` at the end of the list — and stars made on another device now
+  arrive live instead of needing a reopen. (5) **`media.fetch_profile_picture`
+  returns a path in a command response**, which looks like a rule-2 exception
+  but is not: rule 4 makes media a file path and PROTOCOL.md specifies
+  `{path}` for this command, exactly as it does for the `search.*` result
+  envelopes. Nothing renderable is *derived* from it — the viewer opens the
+  file. (6) **The composer's `@`-mention roster was ported here too**, closing
+  the D4a leftover that pointed at this step: it is a `group_members`
+  subscription on the *displayed* conversation (the D3c presence / D4b pinned
+  lifetime rule), so a hidden or 1:1 conversation holds no roster. It is a
+  *second* `group_members` subscription when the group's info dialog is also
+  open — deliberate, since the two have different lifetimes, and B5b already
+  recorded that a duplicate `GetGroupInfo` is harmless. Without this, mention
+  autocomplete would have been the one composer surface stranded on gRPC with
+  no step owning it before D7's delete. (7) **"Starred/pinned pages" in the row
+  was one page, not two.** whatkevr has no pinned page; its pinned surface is
+  the conversation banner, which D4b already moved onto the `pinned` view.
+  (8) `SearchResultsModel`, `StarredMessagesModel`, `PinnedMessagesModel` and
+  the AppController methods behind them are now off the render path entirely
+  and are left in the tree for the D7/E1 delete, like `ChatListFilterModel`.
 
 - 2026-08-10 — D4c implementation readings (no PROTOCOL.md change; flag if you
   disagree): (1) **The bubble composes two views; neither is copied into the

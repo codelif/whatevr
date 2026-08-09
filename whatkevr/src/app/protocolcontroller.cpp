@@ -24,9 +24,11 @@
 #include <utility>
 
 #include "collectionviewmodel.h"
+#include "messagerow.h"
 #include "objectviewmodel.h"
 #include "protocolclient.h"
 #include "protocolmessagemodel.h"
+#include "protocolsearchmodel.h"
 #include "richtext.h"
 
 using whatevr::proto::CollectionViewModel;
@@ -47,6 +49,13 @@ constexpr int kStartupGraceMs = 1000;
 constexpr int kMessagePageSize = 80;
 constexpr int kMarkReadDebounceMs = 120;
 constexpr int kPhoneHistoryTimeoutMs = 45'000;
+constexpr int kSearchDebounceMs = 180;
+// Starred rows are a windowed view like any other collection; the page extends
+// as it scrolls instead of asking the daemon for every star at once.
+constexpr int kStarredPageSize = 50;
+// In-chat search asks for one generous page of matches, as the gRPC path did —
+// the match cursor walks that list, it is not a scrollable surface.
+constexpr int kChatSearchLimit = 100;
 
 // Renders the QR countdown text, mirroring AppController::formatQrExpiry so the
 // login page reads identically on either stack during the migration.
@@ -120,27 +129,36 @@ QString syncTypeLabel(const QString &type)
     return i18nc("@label", "Syncing history");
 }
 
-// One-line preview of a daemon `messages`-shaped row, for the pinned banner.
-// Known kinds get the localized placeholder the gRPC banner used; anything else
-// falls back to the row's mandatory `fallback` string (rule 5), which the daemon
-// guarantees is human-readable for kinds this frontend does not implement.
-QString messageRowPreview(const QVariantMap &item)
+// Whether a search query is a phone number worth a `contacts.check_phone`
+// lookup, so a plain name search never hits the network. Mirrors
+// AppController::looksLikePhoneNumber.
+bool looksLikePhoneNumber(const QString &query)
 {
-    if (item.value(QStringLiteral("revoked")).toBool()) {
-        return i18nc("@item:intext pinned-message preview", "This message was deleted");
+    QString digits;
+    for (int i = 0; i < query.size(); ++i) {
+        const QChar c = query.at(i);
+        if (c.isDigit()) {
+            digits.append(c);
+        } else if (c == QLatin1Char('+') && i == 0) {
+            continue;
+        } else if (c == QLatin1Char(' ') || c == QLatin1Char('-') || c == QLatin1Char('(')
+                   || c == QLatin1Char(')') || c == QLatin1Char('.')) {
+            continue;
+        } else {
+            return false;
+        }
     }
-    const QString text = item.value(QStringLiteral("text")).toString();
-    if (!text.isEmpty()) {
-        return text;
+    return digits.size() >= 7 && digits.size() <= 15;
+}
+
+// The sender label of a daemon message row, with outgoing messages rendered as
+// "You" (the row carries the real sender either way).
+QString messageRowSenderName(const QVariantMap &item)
+{
+    if (item.value(QStringLiteral("direction")).toString() == QLatin1String("outgoing")) {
+        return i18nc("@item:intext message sender, the local user", "You");
     }
-    const QString kind = item.value(QStringLiteral("kind")).toString();
-    if (kind == QLatin1String("image")) {
-        return i18nc("@item:intext media placeholder", "Photo");
-    }
-    if (kind == QLatin1String("sticker")) {
-        return i18nc("@item:intext media placeholder", "Sticker");
-    }
-    return item.value(QStringLiteral("fallback")).toString();
+    return item.value(QStringLiteral("sender")).toMap().value(QStringLiteral("name")).toString();
 }
 } // namespace
 
@@ -292,6 +310,49 @@ ProtocolController::ProtocolController(QString socketPath, QObject *parent)
     connect(m_forwardTargetsModel, &CollectionViewModel::dataChanged, this, bumpForwardTargets);
     connect(m_forwardTargetsModel, &CollectionViewModel::modelReset, this, bumpForwardTargets);
 
+    // Starred page (D5): a windowed `starred` collection the page binds
+    // directly; loading/exhausted drive its spinner and scroll-extend.
+    m_starredModel = new CollectionViewModel(this);
+    connect(m_starredModel, &CollectionViewModel::countChanged, this, &ProtocolController::starredMessagesChanged);
+    connect(m_starredModel, &CollectionViewModel::readyChanged, this, &ProtocolController::starredMessagesChanged);
+    connect(m_starredModel, &CollectionViewModel::modelReset, this, &ProtocolController::starredMessagesChanged);
+
+    // Info card (D5): one object view (either `contact` or `group`, whichever
+    // the open dialog asked for) plus the group's member roster. Two-phase
+    // enrichment arrives as ordinary upserts on both.
+    m_infoCardModel = new ObjectViewModel(this);
+    connect(m_infoCardModel, &ObjectViewModel::valueChanged, this, &ProtocolController::infoCardChanged);
+    connect(m_infoCardModel, &ObjectViewModel::readyChanged, this, &ProtocolController::infoCardChanged);
+
+    m_groupMembersModel = new CollectionViewModel(this);
+    const auto bumpGroupMembers = [this] {
+        ++m_groupMembersRevision;
+        Q_EMIT groupMembersChanged();
+    };
+    connect(m_groupMembersModel, &CollectionViewModel::countChanged, this, bumpGroupMembers);
+    connect(m_groupMembersModel, &CollectionViewModel::dataChanged, this, bumpGroupMembers);
+    connect(m_groupMembersModel, &CollectionViewModel::modelReset, this, bumpGroupMembers);
+
+    // The displayed conversation's own roster, for the composer's `@`-mention
+    // picker. Same view, different lifetime: this one follows the conversation.
+    m_chatMembersModel = new CollectionViewModel(this);
+    const auto bumpChatMembers = [this] {
+        ++m_chatMembersRevision;
+        Q_EMIT chatMembersChanged();
+    };
+    connect(m_chatMembersModel, &CollectionViewModel::countChanged, this, bumpChatMembers);
+    connect(m_chatMembersModel, &CollectionViewModel::dataChanged, this, bumpChatMembers);
+    connect(m_chatMembersModel, &CollectionViewModel::modelReset, this, bumpChatMembers);
+
+    // Blocked state is membership in the `blocklist` view, composed into the
+    // contact card at render time (the D2b2 typing-in-a-chat-row shape) rather
+    // than copied into card state.
+    m_blocklistModel = new CollectionViewModel(this);
+    connect(m_blocklistModel, &CollectionViewModel::countChanged, this, &ProtocolController::infoCardChanged);
+    connect(m_blocklistModel, &CollectionViewModel::modelReset, this, &ProtocolController::infoCardChanged);
+
+    m_searchResultsModel = new ProtocolSearchModel(this);
+
     m_startupGraceTimer = new QTimer(this);
     m_startupGraceTimer->setSingleShot(true);
     m_startupGraceTimer->setInterval(kStartupGraceMs);
@@ -342,6 +403,18 @@ ProtocolController::ProtocolController(QString socketPath, QObject *parent)
         }
     });
 
+    // Search debounce (D5): same 180 ms window AppController used, so typing
+    // feels identical on either stack while both are in the tree.
+    m_searchDebounceTimer = new QTimer(this);
+    m_searchDebounceTimer->setSingleShot(true);
+    m_searchDebounceTimer->setInterval(kSearchDebounceMs);
+    connect(m_searchDebounceTimer, &QTimer::timeout, this, &ProtocolController::runSearch);
+
+    m_chatSearchDebounceTimer = new QTimer(this);
+    m_chatSearchDebounceTimer->setSingleShot(true);
+    m_chatSearchDebounceTimer->setInterval(kSearchDebounceMs);
+    connect(m_chatSearchDebounceTimer, &QTimer::timeout, this, &ProtocolController::runChatSearch);
+
     if (auto *app = qobject_cast<QGuiApplication *>(QCoreApplication::instance())) {
         connect(app, &QGuiApplication::applicationStateChanged, this, [this] {
             sendSessionUpdate();
@@ -366,6 +439,16 @@ ProtocolController::~ProtocolController()
     delete m_pinnedSub;
     delete m_forwardTargetsSub;
     delete m_transfersSub;
+    delete m_starredSub;
+    delete m_infoCardSub;
+    delete m_groupMembersSub;
+    delete m_chatMembersSub;
+    delete m_blocklistSub;
+    m_chatMembersSub = nullptr;
+    m_starredSub = nullptr;
+    m_infoCardSub = nullptr;
+    m_groupMembersSub = nullptr;
+    m_blocklistSub = nullptr;
     m_connectionSub = nullptr;
     m_loginSub = nullptr;
     m_chatsSub = nullptr;
@@ -618,6 +701,8 @@ void ProtocolController::setSelectedChat(const QString &chatId, const QString &a
         m_pendingReadWatermark.clear();
         m_lastReadWatermark.clear();
         m_readTimer->stop();
+        // The in-chat search is scoped to one conversation; switching ends it.
+        closeChatSearch();
     }
     m_phoneHistoryRequesting = false;
     m_phoneHistoryTimer->stop();
@@ -629,6 +714,7 @@ void ProtocolController::setSelectedChat(const QString &chatId, const QString &a
     sendSessionUpdate();
     updatePresenceSubscription();
     updatePinnedSubscription();
+    updateChatMembersSubscription();
 
     if (chatId.isEmpty()) {
         delete m_messagesSub;
@@ -1016,8 +1102,10 @@ void ProtocolController::setConversationVisible(bool visible)
     // hidden conversation drops it (and with it the upstream WhatsApp presence
     // demand), a shown one re-establishes it alongside the messages window.
     updatePresenceSubscription();
-    // The pinned banner is part of that same conversation view.
+    // The pinned banner and the composer's mention roster are part of that same
+    // conversation view.
     updatePinnedSubscription();
+    updateChatMembersSubscription();
     if (!visible) {
         m_phoneHistoryRequesting = false;
         m_phoneHistoryTimer->stop();
@@ -1526,14 +1614,10 @@ QVariantMap ProtocolController::pinnedMessageAt(int index) const
     const QVariantMap item = m_pinnedModel
                                  ->data(m_pinnedModel->index(index, 0), CollectionViewModel::ItemRole)
                                  .toMap();
-    const bool outgoing = item.value(QStringLiteral("direction")).toString() == QLatin1String("outgoing");
-    const QString senderName = outgoing
-        ? i18nc("@item:intext message sender, the local user", "You")
-        : item.value(QStringLiteral("sender")).toMap().value(QStringLiteral("name")).toString();
     return {
         {QStringLiteral("messageId"), item.value(QStringLiteral("id")).toString()},
-        {QStringLiteral("senderName"), senderName},
-        {QStringLiteral("preview"), messageRowPreview(item)},
+        {QStringLiteral("senderName"), messageRowSenderName(item)},
+        {QStringLiteral("preview"), whatevr::util::messageRowPreview(item)},
     };
 }
 
@@ -1575,6 +1659,515 @@ QVariantList ProtocolController::forwardChatTargets(const QString &query) const
         rows.append(item);
     }
     return rows;
+}
+
+// --- unified search (D5) ----------------------------------------------------
+
+QAbstractItemModel *ProtocolController::searchResultsModel() const
+{
+    return m_searchResultsModel;
+}
+
+void ProtocolController::setSearchQuery(const QString &query)
+{
+    if (m_searchQuery == query) {
+        return;
+    }
+    m_searchQuery = query;
+    Q_EMIT searchChanged();
+
+    if (query.trimmed().isEmpty()) {
+        // Abandon whatever is in flight: bumping the generation makes every
+        // pending reply a no-op, since the protocol client always answers.
+        ++m_searchGeneration;
+        m_searchPending = 0;
+        m_searchDebounceTimer->stop();
+        m_searchResultsModel->clear();
+        if (m_searchBusy) {
+            m_searchBusy = false;
+            Q_EMIT searchChanged();
+        }
+        return;
+    }
+    m_searchDebounceTimer->start();
+}
+
+void ProtocolController::clearSearch()
+{
+    setSearchQuery(QString());
+}
+
+void ProtocolController::runSearch()
+{
+    const QString query = m_searchQuery.trimmed();
+    if (query.isEmpty()) {
+        m_searchResultsModel->clear();
+        return;
+    }
+
+    const int generation = ++m_searchGeneration;
+    m_searchPending = 2;
+    m_searchBusy = true;
+    Q_EMIT searchChanged();
+
+    // Chat-name and message-text matches are two independent queries; each
+    // keeps the daemon's own order in its own section (no merging).
+    const auto halfLanded = [this, generation] {
+        if (generation != m_searchGeneration) {
+            return;
+        }
+        m_searchPending = qMax(0, m_searchPending - 1);
+        if (m_searchPending == 0 && m_searchBusy) {
+            m_searchBusy = false;
+            Q_EMIT searchChanged();
+        }
+    };
+
+    m_client->request(QStringLiteral("search.chats"), {{QStringLiteral("query"), query}},
+                      [this, generation, halfLanded](const QJsonObject &result, const ProtocolError &error) {
+        if (generation != m_searchGeneration) {
+            return; // a newer query owns the model
+        }
+        if (!error.isError()) {
+            m_searchResultsModel->setChats(result.value(QStringLiteral("chats")).toArray());
+        }
+        halfLanded();
+    });
+
+    m_client->request(QStringLiteral("search.messages"), {{QStringLiteral("query"), query}},
+                      [this, generation, halfLanded](const QJsonObject &result, const ProtocolError &error) {
+        if (generation != m_searchGeneration) {
+            return;
+        }
+        if (!error.isError()) {
+            m_searchResultsModel->setMessages(result.value(QStringLiteral("messages")).toArray());
+        }
+        halfLanded();
+    });
+
+    // The phone lookup is a fast secondary query and does not gate the spinner.
+    if (!looksLikePhoneNumber(query)) {
+        m_searchResultsModel->clearNumber();
+        return;
+    }
+    m_client->request(QStringLiteral("contacts.check_phone"), {{QStringLiteral("phone"), query}},
+                      [this, generation](const QJsonObject &result, const ProtocolError &error) {
+        if (generation != m_searchGeneration) {
+            return;
+        }
+        if (error.isError()) {
+            m_searchResultsModel->clearNumber();
+            return;
+        }
+        m_searchResultsModel->setNumber(result);
+    });
+}
+
+// --- in-chat search (D5) ----------------------------------------------------
+
+QString ProtocolController::chatSearchActiveMessageId() const
+{
+    if (m_chatSearchIndex < 0 || m_chatSearchIndex >= m_chatSearchMatchIds.size()) {
+        return {};
+    }
+    return m_chatSearchMatchIds.at(m_chatSearchIndex);
+}
+
+void ProtocolController::openChatSearch()
+{
+    if (m_selectedChatId.isEmpty() || m_chatSearchActive) {
+        return;
+    }
+    m_chatSearchActive = true;
+    Q_EMIT chatSearchChanged();
+}
+
+void ProtocolController::closeChatSearch()
+{
+    if (!m_chatSearchActive && m_chatSearchQuery.isEmpty() && m_chatSearchMatchIds.isEmpty()) {
+        return;
+    }
+    resetChatSearch();
+    m_chatSearchActive = false;
+    Q_EMIT chatSearchChanged();
+}
+
+void ProtocolController::resetChatSearch()
+{
+    ++m_chatSearchGeneration;
+    m_chatSearchDebounceTimer->stop();
+    m_chatSearchQuery.clear();
+    m_chatSearchMatchIds.clear();
+    m_chatSearchIndex = -1;
+}
+
+void ProtocolController::setChatSearchQuery(const QString &query)
+{
+    if (m_chatSearchQuery == query) {
+        return;
+    }
+    m_chatSearchQuery = query;
+    Q_EMIT chatSearchChanged();
+
+    if (query.trimmed().isEmpty()) {
+        ++m_chatSearchGeneration;
+        m_chatSearchDebounceTimer->stop();
+        m_chatSearchMatchIds.clear();
+        m_chatSearchIndex = -1;
+        Q_EMIT chatSearchChanged();
+        return;
+    }
+    m_chatSearchDebounceTimer->start();
+}
+
+void ProtocolController::runChatSearch()
+{
+    const QString query = m_chatSearchQuery.trimmed();
+    const QString chatId = m_selectedChatId;
+    if (query.isEmpty() || chatId.isEmpty()) {
+        m_chatSearchMatchIds.clear();
+        m_chatSearchIndex = -1;
+        Q_EMIT chatSearchChanged();
+        return;
+    }
+
+    const int generation = ++m_chatSearchGeneration;
+    m_client->request(QStringLiteral("search.messages"),
+                      {{QStringLiteral("query"), query},
+                       {QStringLiteral("chat_id"), chatId},
+                       {QStringLiteral("limit"), kChatSearchLimit}},
+                      [this, generation, chatId](const QJsonObject &result, const ProtocolError &error) {
+        // Drop a reply to a superseded query, or one for a chat the user has
+        // already left.
+        if (generation != m_chatSearchGeneration || error.isError() || chatId != m_selectedChatId) {
+            return;
+        }
+        m_chatSearchMatchIds.clear();
+        const QJsonArray messages = result.value(QStringLiteral("messages")).toArray();
+        for (const auto &value : messages) {
+            m_chatSearchMatchIds.append(value.toObject().value(QStringLiteral("id")).toString());
+        }
+        m_chatSearchIndex = m_chatSearchMatchIds.isEmpty() ? -1 : 0;
+        // The conversation scrolls to chatSearchActiveMessageId; the bubble
+        // highlights off chatSearchQuery.
+        Q_EMIT chatSearchChanged();
+    });
+}
+
+void ProtocolController::chatSearchNext()
+{
+    if (m_chatSearchMatchIds.isEmpty()) {
+        return;
+    }
+    m_chatSearchIndex = (m_chatSearchIndex + 1) % m_chatSearchMatchIds.size();
+    Q_EMIT chatSearchChanged();
+}
+
+void ProtocolController::chatSearchPrevious()
+{
+    if (m_chatSearchMatchIds.isEmpty()) {
+        return;
+    }
+    m_chatSearchIndex =
+        (m_chatSearchIndex - 1 + m_chatSearchMatchIds.size()) % m_chatSearchMatchIds.size();
+    Q_EMIT chatSearchChanged();
+}
+
+// --- starred page (D5) ------------------------------------------------------
+
+QAbstractItemModel *ProtocolController::starredMessagesModel() const
+{
+    return m_starredModel;
+}
+
+bool ProtocolController::starredMessagesLoading() const
+{
+    return m_starredSub != nullptr && !m_starredModel->isReady();
+}
+
+bool ProtocolController::starredMessagesExhausted() const
+{
+    return m_starredSub == nullptr || m_starredModel->isExhausted();
+}
+
+void ProtocolController::openStarredMessages(const QString &chatId)
+{
+    delete m_starredSub;
+    m_starredSub = nullptr;
+    m_starredModel->onReset();
+    m_starredChatId = chatId;
+
+    QJsonObject params{{QStringLiteral("limit"), kStarredPageSize}};
+    if (!chatId.isEmpty()) {
+        params.insert(QStringLiteral("chat_id"), chatId);
+    }
+    m_starredSub = m_client->subscribe(QStringLiteral("starred"), params, m_starredModel);
+    Q_EMIT starredMessagesChanged();
+}
+
+void ProtocolController::closeStarredMessages()
+{
+    if (!m_starredSub) {
+        return;
+    }
+    delete m_starredSub;
+    m_starredSub = nullptr;
+    m_starredChatId.clear();
+    m_starredModel->onReset();
+    Q_EMIT starredMessagesChanged();
+}
+
+void ProtocolController::loadMoreStarredMessages()
+{
+    // A live-edge window only ever grows away from the edge (PROTOCOL.md
+    // "Windows"), so the page's scroll-extend is always `older`.
+    if (!m_starredSub || m_starredModel->isExhausted() || !m_starredModel->isReady()) {
+        return;
+    }
+    m_starredSub->extend(kStarredPageSize, QStringLiteral("older"));
+}
+
+QVariantMap ProtocolController::messageRowDisplay(const QVariantMap &item) const
+{
+    if (item.isEmpty()) {
+        return {};
+    }
+    const qint64 timestamp = item.value(QStringLiteral("timestamp")).toLongLong();
+    return {
+        {QStringLiteral("messageId"), item.value(QStringLiteral("id")).toString()},
+        {QStringLiteral("chatId"), item.value(QStringLiteral("chat_id")).toString()},
+        {QStringLiteral("chatName"), item.value(QStringLiteral("chat_name")).toString()},
+        {QStringLiteral("senderName"), messageRowSenderName(item)},
+        {QStringLiteral("preview"), whatevr::util::messageRowPreview(item)},
+        {QStringLiteral("timeText"), timestamp > 0
+             ? QLocale().toString(QDateTime::fromSecsSinceEpoch(timestamp), QLocale::ShortFormat)
+             : QString()},
+        {QStringLiteral("isOutgoing"),
+         item.value(QStringLiteral("direction")).toString() == QLatin1String("outgoing")},
+    };
+}
+
+// --- contact / group info card (D5) -----------------------------------------
+
+QVariantMap ProtocolController::infoCard() const
+{
+    return m_infoCardModel->value();
+}
+
+bool ProtocolController::infoCardLoading() const
+{
+    return !m_infoCardKind.isEmpty() && m_infoCardError.isEmpty() && !m_infoCardModel->isPresent();
+}
+
+bool ProtocolController::infoCardBlocked() const
+{
+    if (m_infoCardKind != QLatin1String("contact")) {
+        return false;
+    }
+    // The blocklist is keyed by jid; a contact card whose subject is in the view
+    // is blocked. Membership, not a copied flag.
+    return !m_blocklistModel->itemById(m_infoCardSubject).isEmpty();
+}
+
+int ProtocolController::groupMemberCount() const
+{
+    return m_groupMembersModel->count();
+}
+
+QVariantList ProtocolController::groupMembers(const QString &query) const
+{
+    return filterMemberRows(m_groupMembersModel, query);
+}
+
+QVariantList ProtocolController::chatMembers(const QString &query) const
+{
+    return filterMemberRows(m_chatMembersModel, query);
+}
+
+QVariantList ProtocolController::filterMemberRows(const CollectionViewModel *model, const QString &query)
+{
+    const QString needle = query.trimmed();
+    QVariantList rows;
+    rows.reserve(model->count());
+    for (int row = 0; row < model->count(); ++row) {
+        const QVariantMap item =
+            model->data(model->index(row, 0), CollectionViewModel::ItemRole).toMap();
+        if (!needle.isEmpty()
+            && !item.value(QStringLiteral("display_name")).toString().contains(needle, Qt::CaseInsensitive)
+            && !item.value(QStringLiteral("phone")).toString().contains(needle, Qt::CaseInsensitive)) {
+            continue;
+        }
+        rows.append(item);
+    }
+    return rows;
+}
+
+void ProtocolController::updateChatMembersSubscription()
+{
+    // Only a group conversation has a roster, and only a visible one needs it.
+    const bool wanted = m_conversationVisible && m_selectedChatId.endsWith(QLatin1String("@g.us"));
+    const QString target = wanted ? m_selectedChatId : QString();
+    if (target == m_chatMembersChatId) {
+        return;
+    }
+    m_chatMembersChatId = target;
+    delete m_chatMembersSub;
+    m_chatMembersSub = nullptr;
+    m_chatMembersModel->onReset();
+    if (!target.isEmpty()) {
+        m_chatMembersSub = m_client->subscribe(QStringLiteral("group_members"),
+                                               {{QStringLiteral("chat_id"), target}}, m_chatMembersModel);
+    }
+    ++m_chatMembersRevision;
+    Q_EMIT chatMembersChanged();
+}
+
+void ProtocolController::openContactCard(const QString &jid)
+{
+    closeInfoCard();
+    if (jid.trimmed().isEmpty()) {
+        return;
+    }
+    m_infoCardKind = QStringLiteral("contact");
+    m_infoCardSubject = jid;
+    m_infoCardSub = m_client->subscribe(QStringLiteral("contact"),
+                                        {{QStringLiteral("jid"), jid}}, m_infoCardModel);
+    connect(m_infoCardSub, &Subscription::failed, this,
+            [this, jid](const QString &code, const QString &message) {
+                if (m_infoCardSubject != jid) {
+                    return; // a later card owns the view now
+                }
+                if (code == QLatin1String("io") && m_infoCardSub) {
+                    return; // live subscriptions auto-resubscribe after reconnect
+                }
+                m_infoCardError = message.isEmpty()
+                    ? i18nc("@info", "Unable to load contact info")
+                    : message;
+                Q_EMIT infoCardChanged();
+            });
+    // Block state for the card's action button. Held only while a contact card
+    // is open, like the picker's `chats` subscription.
+    m_blocklistSub = m_client->subscribe(QStringLiteral("blocklist"), {}, m_blocklistModel);
+    Q_EMIT infoCardChanged();
+    Q_EMIT groupMembersChanged();
+}
+
+void ProtocolController::openGroupCard(const QString &chatId)
+{
+    closeInfoCard();
+    if (chatId.trimmed().isEmpty()) {
+        return;
+    }
+    m_infoCardKind = QStringLiteral("group");
+    m_infoCardSubject = chatId;
+    // Two views, one dialog: PROTOCOL.md splits the group card from its roster
+    // so a member join is one upsert instead of a whole card rewrite.
+    m_infoCardSub = m_client->subscribe(QStringLiteral("group"),
+                                        {{QStringLiteral("chat_id"), chatId}}, m_infoCardModel);
+    connect(m_infoCardSub, &Subscription::failed, this,
+            [this, chatId](const QString &code, const QString &message) {
+                if (m_infoCardSubject != chatId) {
+                    return;
+                }
+                if (code == QLatin1String("io") && m_infoCardSub) {
+                    return;
+                }
+                m_infoCardError = message.isEmpty()
+                    ? i18nc("@info", "Unable to load group info")
+                    : message;
+                Q_EMIT infoCardChanged();
+            });
+    m_groupMembersSub = m_client->subscribe(QStringLiteral("group_members"),
+                                            {{QStringLiteral("chat_id"), chatId}}, m_groupMembersModel);
+    Q_EMIT infoCardChanged();
+    Q_EMIT groupMembersChanged();
+}
+
+void ProtocolController::closeInfoCard()
+{
+    if (m_infoCardKind.isEmpty() && !m_infoCardSub) {
+        return;
+    }
+    delete m_infoCardSub;
+    delete m_groupMembersSub;
+    delete m_blocklistSub;
+    m_infoCardSub = nullptr;
+    m_groupMembersSub = nullptr;
+    m_blocklistSub = nullptr;
+    m_infoCardKind.clear();
+    m_infoCardSubject.clear();
+    m_infoCardError.clear();
+    m_infoCardModel->onReset();
+    m_groupMembersModel->onReset();
+    m_blocklistModel->onReset();
+    Q_EMIT infoCardChanged();
+    Q_EMIT groupMembersChanged();
+}
+
+void ProtocolController::setContactBlocked(const QString &jid, bool blocked)
+{
+    if (jid.trimmed().isEmpty()) {
+        return;
+    }
+    // Ack only: the new block state arrives back through the `blocklist` view.
+    m_client->request(QStringLiteral("contact.block"),
+                      {{QStringLiteral("jid"), jid}, {QStringLiteral("blocked"), blocked}},
+                      [this, jid](const QJsonObject &, const ProtocolError &error) {
+        if (!error.isError() || m_infoCardSubject != jid) {
+            return;
+        }
+        m_infoCardError = error.message.isEmpty()
+            ? i18nc("@info", "Updating the blocklist failed")
+            : error.message;
+        Q_EMIT infoCardChanged();
+    });
+}
+
+void ProtocolController::viewProfilePicture(const QString &jid)
+{
+    if (jid.trimmed().isEmpty()) {
+        return;
+    }
+    m_client->request(QStringLiteral("media.fetch_profile_picture"), {{QStringLiteral("jid"), jid}},
+                      [this, jid](const QJsonObject &result, const ProtocolError &error) {
+        if (error.isError()) {
+            Q_EMIT profilePictureFailed(jid, error.message.isEmpty()
+                                                 ? i18nc("@info", "Unable to load profile picture")
+                                                 : error.message);
+            return;
+        }
+        const QString path = result.value(QStringLiteral("path")).toString();
+        if (path.isEmpty()) {
+            Q_EMIT profilePictureFailed(jid, i18nc("@info", "No profile picture available"));
+            return;
+        }
+        Q_EMIT profilePictureReady(jid, path);
+    });
+}
+
+void ProtocolController::startDirectChat(const QString &jid)
+{
+    if (jid.trimmed().isEmpty()) {
+        return;
+    }
+    m_client->request(QStringLiteral("chat.ensure_direct"), {{QStringLiteral("jid"), jid}},
+                      [this](const QJsonObject &result, const ProtocolError &error) {
+        if (error.isError()) {
+            Q_EMIT messageActionFailed(error.message.isEmpty() ? i18nc("@info", "Unable to start chat")
+                                                               : error.message);
+            return;
+        }
+        const QString chatId = result.value(QStringLiteral("chat_id")).toString();
+        if (chatId.isEmpty()) {
+            Q_EMIT messageActionFailed(i18nc("@info", "Unable to start chat"));
+            return;
+        }
+        // The row itself arrives through the `chats` view; all this does is
+        // select it and drive column navigation the way a deep link does.
+        clearSearch();
+        selectChat(chatId);
+        Q_EMIT openChatRequested(chatId);
+    });
 }
 
 // --- history-sync strip (D2b2) --------------------------------------------

@@ -24,7 +24,7 @@ Kirigami.Page {
 
     function hideSearch() {
         searchBarVisible = false
-        Whatevr.AppController.clearSearch()
+        Whatevr.ProtocolController.clearSearch()
     }
 
     // Two-letter initials from a display name, for avatar fallbacks (the daemon
@@ -140,7 +140,7 @@ Kirigami.Page {
             Layout.bottomMargin: Kirigami.Units.smallSpacing
             placeholderText: Whatevr.I18n.i18nc("@info:placeholder", "Search chats and messages")
             // Debounced daemon-side search; the model fills as results arrive.
-            onTextChanged: Whatevr.AppController.setSearchQuery(text)
+            onTextChanged: Whatevr.ProtocolController.setSearchQuery(text)
 
             onVisibleChanged: {
                 if (visible) {
@@ -162,12 +162,12 @@ Kirigami.Page {
             }
 
             Connections {
-                target: Whatevr.AppController
+                target: Whatevr.ProtocolController
                 // Keep the field in sync when the search is cleared elsewhere
                 // (e.g. after opening a result).
                 function onSearchChanged() {
-                    if (Whatevr.AppController.searchQuery !== searchField.text) {
-                        searchField.text = Whatevr.AppController.searchQuery
+                    if (Whatevr.ProtocolController.searchQuery !== searchField.text) {
+                        searchField.text = Whatevr.ProtocolController.searchQuery
                     }
                 }
             }
@@ -182,7 +182,7 @@ Kirigami.Page {
             ListView {
                 id: chatList
 
-                visible: !Whatevr.AppController.searchActive
+                visible: !Whatevr.ProtocolController.searchActive
 
                 property string contextChatId: ""
                 property bool contextChatPinned: false
@@ -474,8 +474,8 @@ Kirigami.Page {
 
                 anchors.fill: parent
                 clip: true
-                visible: Whatevr.AppController.searchActive
-                model: Whatevr.AppController.searchResultsModel
+                visible: Whatevr.ProtocolController.searchActive
+                model: Whatevr.ProtocolController.searchResultsModel
                 currentIndex: -1
                 boundsBehavior: Flickable.StopAtBounds
                 reuseItems: true
@@ -528,14 +528,16 @@ Kirigami.Page {
                         root.chatSelected(cId)
                     }
                     onNumberActivated: jidArg => {
-                        Whatevr.AppController.startDirectChat(jidArg)
+                        // `chat.ensure_direct`: the daemon creates (or finds) the
+                        // chat and its row arrives through the `chats` view.
+                        Whatevr.ProtocolController.startDirectChat(jidArg)
                         root.hideSearch()
                     }
                 }
 
                 BusyIndicator {
                     anchors.centerIn: parent
-                    running: Whatevr.AppController.searchBusy && searchList.count === 0
+                    running: Whatevr.ProtocolController.searchBusy && searchList.count === 0
                     visible: running
                 }
 
@@ -543,7 +545,7 @@ Kirigami.Page {
                     anchors.centerIn: parent
                     width: Math.min(parent.width - Kirigami.Units.largeSpacing * 4,
                                     Kirigami.Units.gridUnit * 16)
-                    visible: !Whatevr.AppController.searchBusy && searchList.count === 0
+                    visible: !Whatevr.ProtocolController.searchBusy && searchList.count === 0
                     icon.name: "search-symbolic"
                     text: Whatevr.I18n.i18nc("@info", "No results")
                     explanation: Whatevr.I18n.i18nc("@info", "No chats or messages match your search.")

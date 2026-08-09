@@ -48,13 +48,15 @@ Frame {
         suggestionHoverBasePos = undefined
     }
 
-    // @-mention authoring. Members are cached per chat and filtered in-memory;
-    // pendingMentions records the {jid, displayName} pairs inserted so submit can
-    // rewrite each "@DisplayName" run to the on-wire "@<userpart>" + JID list.
-    readonly property bool isGroupChat: Whatevr.AppController.selectedChatId.endsWith("@g.us")
-    property var mentionMembers: []
-    property string mentionMembersChatId: ""
-    property string mentionLoadingChatId: ""
+    // @-mention authoring. The roster is the daemon's `group_members` view for
+    // the displayed conversation, read through at render time (the revision tick
+    // makes that read reactive); pendingMentions records the {jid, displayName}
+    // pairs inserted so submit can rewrite each "@DisplayName" run to the
+    // on-wire "@<userpart>" + JID list.
+    readonly property bool isGroupChat: Whatevr.ProtocolController.selectedChatId.endsWith("@g.us")
+    readonly property var mentionMembers: Whatevr.ProtocolController.chatMembersRevision >= 0
+                                          ? Whatevr.ProtocolController.chatMembers("")
+                                          : []
     property var pendingMentions: []
 
     signal sendTextRequested(string text, string replyToMessageId, var mentionedJids)
@@ -247,17 +249,6 @@ Frame {
         return { start: at, query: token }
     }
 
-    // Fetch the current group's members for the @-picker when the cache is stale.
-    // openGroupInfo is async; groupInfoReceived (below) repopulates and re-runs.
-    function ensureMentionMembers() {
-        const chatId = Whatevr.AppController.selectedChatId
-        if (root.mentionMembersChatId === chatId || root.mentionLoadingChatId === chatId) {
-            return
-        }
-        root.mentionLoadingChatId = chatId
-        Whatevr.AppController.openGroupInfo(chatId)
-    }
-
     function mentionCandidates(query) {
         const q = query.trim().toLowerCase()
         const results = []
@@ -266,10 +257,10 @@ Frame {
             results.push({ jid: "", displayName: "all", label: "Everyone", avatar: "", isAll: true })
         }
         for (const member of root.mentionMembers) {
-            const name = member.displayName || member.phoneNumber || member.jid
+            const name = member.display_name || member.phone || member.jid
             if (q.length === 0 || name.toLowerCase().indexOf(q) >= 0) {
                 results.push({ jid: member.jid, displayName: name, label: name,
-                               avatar: member.avatarLocalPath || "", isAll: false })
+                               avatar: member.avatar_path || "", isAll: false })
             }
             if (results.length >= 40) {
                 break
@@ -279,7 +270,6 @@ Frame {
     }
 
     function updateMentionSuggestions(match) {
-        root.ensureMentionMembers()
         const results = root.mentionCandidates(match.query)
         if (results.length === 0) {
             root.hideSuggestions()
@@ -821,48 +811,21 @@ Frame {
         }
     }
 
-    // Caches group members for the @-mention picker. Fired by ensureMentionMembers()
-    // and also whenever the shared group-info dialog refreshes; we keep only the
-    // currently selected chat's roster and re-run the open picker against it.
+    // The @-mention roster is a live view, so there is nothing to fetch or
+    // cache: the daemon's first (stored-participant) fill and its later live
+    // enrichment both arrive as ordinary upserts. All that is left is re-running
+    // an open picker against the new roster, and forgetting the mentions typed
+    // into the previous chat.
     Connections {
-        target: Whatevr.AppController
+        target: Whatevr.ProtocolController
 
-        function onGroupInfoReceived(info) {
-            if (info.chatId !== Whatevr.AppController.selectedChatId) {
-                return
-            }
-            root.mentionMembers = info.members || []
-            root.mentionMembersChatId = info.chatId
-            if (root.mentionLoadingChatId === info.chatId) {
-                root.mentionLoadingChatId = ""
-            }
-            if (root.isGroupChat && input.activeFocus) {
-                root.updateSuggestions()
-            }
-        }
-
-        // The instant groupInfoReceived carries only stored participants, which
-        // can be empty on a cold roster (then the @-picker shows just "Everyone").
-        // The live roster streams in afterwards via this event; merge it in.
-        function onGroupInfoUpdated(info) {
-            if (info.chatId !== Whatevr.AppController.selectedChatId
-                    || !info.members || info.members.length === 0) {
-                return
-            }
-            root.mentionMembers = info.members
-            root.mentionMembersChatId = info.chatId
-            if (root.mentionLoadingChatId === info.chatId) {
-                root.mentionLoadingChatId = ""
-            }
+        function onChatMembersChanged() {
             if (root.isGroupChat && input.activeFocus) {
                 root.updateSuggestions()
             }
         }
 
         function onSelectionChanged() {
-            root.mentionMembers = []
-            root.mentionMembersChatId = ""
-            root.mentionLoadingChatId = ""
             root.pendingMentions = []
         }
     }

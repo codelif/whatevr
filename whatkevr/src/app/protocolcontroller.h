@@ -25,6 +25,7 @@ class Subscription;
 } // namespace whatevr::proto
 
 class ProtocolMessageModel;
+class ProtocolSearchModel;
 
 // The whatevr-protocol counterpart of AppController's connection lifecycle: it
 // owns the ProtocolClient (the single socket to the daemon's PROTOCOL.md
@@ -154,6 +155,51 @@ class ProtocolController final : public QObject
     // the revision tick makes those reads re-evaluate.
     Q_PROPERTY(int forwardTargetsRevision READ forwardTargetsRevision NOTIFY forwardTargetsChanged FINAL)
 
+    // Unified chat-list search (D5): the `search.chats` / `search.messages` /
+    // `contacts.check_phone` *queries*. Queries are one-shot and their results
+    // are explicitly frontend-transient (PROTOCOL.md "Queries"), so unlike a
+    // view they land in a plain presentation model the frontend throws away.
+    Q_PROPERTY(QAbstractItemModel *searchResultsModel READ searchResultsModel CONSTANT FINAL)
+    Q_PROPERTY(QString searchQuery READ searchQuery NOTIFY searchChanged FINAL)
+    Q_PROPERTY(bool searchActive READ searchActive NOTIFY searchChanged FINAL)
+    Q_PROPERTY(bool searchBusy READ searchBusy NOTIFY searchChanged FINAL)
+
+    // In-chat search (D5): the same `search.messages` query scoped to the
+    // selected chat, plus the frontend's own match cursor (which match is
+    // focused is presentation state, rule 1).
+    Q_PROPERTY(bool chatSearchActive READ chatSearchActive NOTIFY chatSearchChanged FINAL)
+    Q_PROPERTY(QString chatSearchQuery READ chatSearchQuery NOTIFY chatSearchChanged FINAL)
+    Q_PROPERTY(int chatSearchMatchCount READ chatSearchMatchCount NOTIFY chatSearchChanged FINAL)
+    Q_PROPERTY(int chatSearchCurrentIndex READ chatSearchCurrentIndex NOTIFY chatSearchChanged FINAL)
+    Q_PROPERTY(QString chatSearchActiveMessageId READ chatSearchActiveMessageId NOTIFY chatSearchChanged FINAL)
+
+    // Starred-messages page (D5): the `starred` view, subscribed for exactly as
+    // long as the page is on screen. Windowed like any collection — the page
+    // extends `older` as it scrolls instead of loading every star at once.
+    Q_PROPERTY(QAbstractItemModel *starredMessagesModel READ starredMessagesModel CONSTANT FINAL)
+    Q_PROPERTY(bool starredMessagesLoading READ starredMessagesLoading NOTIFY starredMessagesChanged FINAL)
+    Q_PROPERTY(bool starredMessagesExhausted READ starredMessagesExhausted NOTIFY starredMessagesChanged FINAL)
+
+    // Contact/group info card (D5): the `contact` object view, or the `group`
+    // object view plus its `group_members` roster, subscribed for the lifetime
+    // of the dialog. Two-phase enrichment (a contact's about text, a group's
+    // live subject/roles) arrives as ordinary upserts, so the dialog holds no
+    // card state and needs no merge step. `infoCardBlocked` composes the
+    // `blocklist` view the same way the chat rows compose `typing`.
+    Q_PROPERTY(QString infoCardKind READ infoCardKind NOTIFY infoCardChanged FINAL)
+    Q_PROPERTY(QString infoCardSubject READ infoCardSubject NOTIFY infoCardChanged FINAL)
+    Q_PROPERTY(QVariantMap infoCard READ infoCard NOTIFY infoCardChanged FINAL)
+    Q_PROPERTY(bool infoCardLoading READ infoCardLoading NOTIFY infoCardChanged FINAL)
+    Q_PROPERTY(QString infoCardError READ infoCardError NOTIFY infoCardChanged FINAL)
+    Q_PROPERTY(bool infoCardBlocked READ infoCardBlocked NOTIFY infoCardChanged FINAL)
+    Q_PROPERTY(int groupMemberCount READ groupMemberCount NOTIFY groupMembersChanged FINAL)
+    Q_PROPERTY(int groupMembersRevision READ groupMembersRevision NOTIFY groupMembersChanged FINAL)
+
+    // The displayed group conversation's own `group_members` roster, for the
+    // composer's `@`-mention picker (the D4a leftover this step's view unblocks).
+    // Subscribed alongside the messages window, like `presence` and `pinned`.
+    Q_PROPERTY(int chatMembersRevision READ chatMembersRevision NOTIFY chatMembersChanged FINAL)
+
 public:
     static void setInstance(ProtocolController *instance);
     static ProtocolController *create(QQmlEngine *qmlEngine, QJSEngine *jsEngine);
@@ -264,6 +310,70 @@ public:
     Q_INVOKABLE void openForwardTargets();
     Q_INVOKABLE void closeForwardTargets();
 
+    // --- unified search (D5) ---
+    [[nodiscard]] QAbstractItemModel *searchResultsModel() const;
+    [[nodiscard]] QString searchQuery() const { return m_searchQuery; }
+    [[nodiscard]] bool searchActive() const { return !m_searchQuery.trimmed().isEmpty(); }
+    [[nodiscard]] bool searchBusy() const { return m_searchBusy; }
+    Q_INVOKABLE void setSearchQuery(const QString &query);
+    Q_INVOKABLE void clearSearch();
+
+    // --- in-chat search (D5) ---
+    [[nodiscard]] bool chatSearchActive() const { return m_chatSearchActive; }
+    [[nodiscard]] QString chatSearchQuery() const { return m_chatSearchQuery; }
+    [[nodiscard]] int chatSearchMatchCount() const { return static_cast<int>(m_chatSearchMatchIds.size()); }
+    // 1-based for display ("3 of 12"); 0 while there is no focused match.
+    [[nodiscard]] int chatSearchCurrentIndex() const { return m_chatSearchIndex < 0 ? 0 : m_chatSearchIndex + 1; }
+    [[nodiscard]] QString chatSearchActiveMessageId() const;
+    Q_INVOKABLE void openChatSearch();
+    Q_INVOKABLE void closeChatSearch();
+    Q_INVOKABLE void setChatSearchQuery(const QString &query);
+    Q_INVOKABLE void chatSearchNext();
+    Q_INVOKABLE void chatSearchPrevious();
+
+    // --- starred page (D5) ---
+    [[nodiscard]] QAbstractItemModel *starredMessagesModel() const;
+    [[nodiscard]] bool starredMessagesLoading() const;
+    [[nodiscard]] bool starredMessagesExhausted() const;
+    // Subscribe/drop the `starred` view; chatId empty spans every chat. The
+    // page's lifetime is the subscription's lifetime.
+    Q_INVOKABLE void openStarredMessages(const QString &chatId);
+    Q_INVOKABLE void closeStarredMessages();
+    Q_INVOKABLE void loadMoreStarredMessages();
+    // Display fields (`messageId`, `chatId`, `chatName`, `senderName`,
+    // `preview`, `timeText`, `isOutgoing`) derived from one daemon message-row
+    // item. A pure function of its argument, so a delegate can call it on the
+    // row it already holds and it re-evaluates when that row upserts.
+    [[nodiscard]] Q_INVOKABLE QVariantMap messageRowDisplay(const QVariantMap &item) const;
+
+    // --- contact / group info card (D5) ---
+    [[nodiscard]] QString infoCardKind() const { return m_infoCardKind; }
+    // The jid (contact) or chat_id (group) the open card is showing.
+    [[nodiscard]] QString infoCardSubject() const { return m_infoCardSubject; }
+    [[nodiscard]] QVariantMap infoCard() const;
+    [[nodiscard]] bool infoCardLoading() const;
+    [[nodiscard]] QString infoCardError() const { return m_infoCardError; }
+    [[nodiscard]] bool infoCardBlocked() const;
+    [[nodiscard]] int groupMemberCount() const;
+    [[nodiscard]] int groupMembersRevision() const { return m_groupMembersRevision; }
+    // Members whose name or phone matches `query` (empty matches all), in the
+    // daemon's roster order — PROTOCOL.md names member search as
+    // presentation-side filtering over rows the frontend already has.
+    [[nodiscard]] Q_INVOKABLE QVariantList groupMembers(const QString &query) const;
+    [[nodiscard]] int chatMembersRevision() const { return m_chatMembersRevision; }
+    // The same filtering over the conversation's roster, for the mention picker.
+    [[nodiscard]] Q_INVOKABLE QVariantList chatMembers(const QString &query) const;
+    Q_INVOKABLE void openContactCard(const QString &jid);
+    Q_INVOKABLE void openGroupCard(const QString &chatId);
+    Q_INVOKABLE void closeInfoCard();
+    Q_INVOKABLE void setContactBlocked(const QString &jid, bool blocked);
+    // `media.fetch_profile_picture`; the full-resolution path comes back through
+    // profilePictureReady for the avatar viewer.
+    Q_INVOKABLE void viewProfilePicture(const QString &jid);
+    // `chat.ensure_direct`, then select the (possibly brand-new) chat and ask
+    // the shell to surface it — the row itself appears in the `chats` view.
+    Q_INVOKABLE void startDirectChat(const QString &jid);
+
     // Composer send paths (D4a): map straight to `send.text`/`send.media`; the
     // daemon acks with an id only, the rendered message arrives via the
     // `messages` view. mentionedJids/replyToMessageId/caption may be empty.
@@ -353,6 +463,15 @@ Q_SIGNALS:
     void composerChanged();
     void pinnedMessagesChanged();
     void forwardTargetsChanged();
+    void searchChanged();
+    void chatSearchChanged();
+    void starredMessagesChanged();
+    void infoCardChanged();
+    void groupMembersChanged();
+    void chatMembersChanged();
+    // `media.fetch_profile_picture` outcomes for the avatar viewer.
+    void profilePictureReady(const QString &jid, const QString &localPath);
+    void profilePictureFailed(const QString &jid, const QString &errorText);
     // A `message.*` command was rejected; the timeline shows the text as a
     // transient notification (the daemon's message, or a generic fallback).
     void messageActionFailed(const QString &errorText);
@@ -419,8 +538,24 @@ private:
     // showing, so a hidden conversation holds no pinned subscription.
     void updatePinnedSubscription();
 
+    // Same again, for the composer's mention roster: a `group_members`
+    // subscription on the displayed conversation, and only when it is a group.
+    void updateChatMembersSubscription();
+
+    // Name/phone filtering over a `group_members` model, keeping the daemon's
+    // roster order. Shared by the info dialog and the mention picker.
+    [[nodiscard]] static QVariantList filterMemberRows(const whatevr::proto::CollectionViewModel *model,
+                                                       const QString &query);
+
     // Issues a `message.*` command whose only interesting outcome is failure.
     void sendMessageCommand(const QString &method, const QJsonObject &params, const QString &failureText);
+
+    // Fire the unified-search queries for the current query string. A
+    // generation counter drops replies to superseded queries — the client
+    // always answers, so the guard is on this side.
+    void runSearch();
+    void runChatSearch();
+    void resetChatSearch();
 
     QString m_socketPath;
     whatevr::proto::ProtocolClient *m_client = nullptr;
@@ -436,7 +571,13 @@ private:
     whatevr::proto::CollectionViewModel *m_pinnedModel = nullptr;
     whatevr::proto::CollectionViewModel *m_forwardTargetsModel = nullptr;
     whatevr::proto::CollectionViewModel *m_transfersModel = nullptr;
+    whatevr::proto::CollectionViewModel *m_starredModel = nullptr;
+    whatevr::proto::CollectionViewModel *m_groupMembersModel = nullptr;
+    whatevr::proto::CollectionViewModel *m_chatMembersModel = nullptr;
+    whatevr::proto::CollectionViewModel *m_blocklistModel = nullptr;
+    whatevr::proto::ObjectViewModel *m_infoCardModel = nullptr;
     ProtocolMessageModel *m_messagePresentationModel = nullptr;
+    ProtocolSearchModel *m_searchResultsModel = nullptr;
     whatevr::proto::Subscription *m_connectionSub = nullptr;
     whatevr::proto::Subscription *m_loginSub = nullptr;
     whatevr::proto::Subscription *m_chatsSub = nullptr;
@@ -449,6 +590,11 @@ private:
     whatevr::proto::Subscription *m_pinnedSub = nullptr;
     whatevr::proto::Subscription *m_forwardTargetsSub = nullptr;
     whatevr::proto::Subscription *m_transfersSub = nullptr;
+    whatevr::proto::Subscription *m_starredSub = nullptr;
+    whatevr::proto::Subscription *m_infoCardSub = nullptr;
+    whatevr::proto::Subscription *m_groupMembersSub = nullptr;
+    whatevr::proto::Subscription *m_chatMembersSub = nullptr;
+    whatevr::proto::Subscription *m_blocklistSub = nullptr;
     int m_chatFilter = 0; // 0 = all, 1 = direct, 2 = groups
     int m_typingRevision = 0;
 
@@ -518,9 +664,42 @@ private:
     int m_forwardBatchChatCount = 0;
     bool m_forwardBatchFailed = false;
 
+    // Unified search (D5). The generation counter is bumped per query so a
+    // late reply to a superseded query is dropped instead of overwriting the
+    // model; `m_searchPending` counts the two half-queries still in flight.
+    QString m_searchQuery;
+    bool m_searchBusy = false;
+    int m_searchGeneration = 0;
+    int m_searchPending = 0;
+
+    // In-chat search (D5). The match list is a query result (transient); the
+    // cursor into it is presentation state.
+    bool m_chatSearchActive = false;
+    QString m_chatSearchQuery;
+    QStringList m_chatSearchMatchIds;
+    int m_chatSearchIndex = -1;
+    int m_chatSearchGeneration = 0;
+
+    // The chat the open starred page is scoped to, "" for every chat; only
+    // meaningful while m_starredSub is live.
+    QString m_starredChatId;
+
+    // Info card (D5): "contact" or "group" while a card is open, else empty.
+    QString m_infoCardKind;
+    QString m_infoCardSubject;
+    QString m_infoCardError;
+    int m_groupMembersRevision = 0;
+
+    // The chat the conversation-scoped `group_members` roster covers (empty
+    // when the conversation is hidden or is not a group).
+    QString m_chatMembersChatId;
+    int m_chatMembersRevision = 0;
+
     QTimer *m_startupGraceTimer = nullptr;
     QTimer *m_qrTimer = nullptr;
     QTimer *m_readTimer = nullptr;
     QTimer *m_phoneHistoryTimer = nullptr;
     QTimer *m_phoneHistorySettleTimer = nullptr;
+    QTimer *m_searchDebounceTimer = nullptr;
+    QTimer *m_chatSearchDebounceTimer = nullptr;
 };

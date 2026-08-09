@@ -58,7 +58,9 @@ qt_add_executable(tst_protocolcontroller
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/protocol/objectviewmodel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/protocol/collectionviewmodel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/models/protocolmessagemodel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/models/protocolsearchmodel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/util/messagemarkup.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/util/messagerow.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/util/richtext.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/util/tlds.cpp
 )

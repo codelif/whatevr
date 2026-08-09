@@ -27,6 +27,8 @@ qt_add_executable(whatkevr
     models/starredmessagesmodel.h
     models/pinnedmessagesmodel.cpp
     models/pinnedmessagesmodel.h
+    models/protocolsearchmodel.cpp
+    models/protocolsearchmodel.h
     models/searchresultsmodel.cpp
     models/searchresultsmodel.h
     models/stickermodel.cpp
@@ -43,6 +45,8 @@ qt_add_executable(whatkevr
     ui/rlottiestickeritem.h
     util/messagemarkup.cpp
     util/messagemarkup.h
+    util/messagerow.cpp
+    util/messagerow.h
     util/richtext.cpp
     util/richtext.h
     util/tlds.cpp

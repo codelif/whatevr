@@ -417,12 +417,12 @@ Kirigami.Page {
             displayHint: Kirigami.DisplayHint.IconOnly
             visible: Whatevr.ProtocolController.hasSelectedChat
             checkable: true
-            checked: Whatevr.AppController.chatSearchActive
+            checked: Whatevr.ProtocolController.chatSearchActive
             onTriggered: {
-                if (Whatevr.AppController.chatSearchActive) {
-                    Whatevr.AppController.closeChatSearch()
+                if (Whatevr.ProtocolController.chatSearchActive) {
+                    Whatevr.ProtocolController.closeChatSearch()
                 } else {
-                    Whatevr.AppController.openChatSearch()
+                    Whatevr.ProtocolController.openChatSearch()
                 }
             }
         },
@@ -432,7 +432,6 @@ Kirigami.Page {
             displayHint: Kirigami.DisplayHint.AlwaysHide
             visible: Whatevr.ProtocolController.hasSelectedChat
             onTriggered: {
-                Whatevr.AppController.loadStarredMessages(Whatevr.ProtocolController.selectedChatId)
                 applicationWindow().pageStack.layers.push(Qt.resolvedUrl("StarredMessagesPage.qml"), {
                     chatId: Whatevr.ProtocolController.selectedChatId,
                     headerTitle: Whatevr.I18n.i18nc("@title starred messages in one chat",
@@ -535,14 +534,14 @@ Kirigami.Page {
     ]
 
     // The focused in-chat search match: MessageView owns the scroll + reply
-    // glow, so the jump is driven from here whenever AppController changes which
-    // match is active (search start, next, previous).
+    // glow, so the jump is driven from here whenever the controller changes
+    // which match is active (search start, next, previous).
     property string lastChatSearchJumpId: ""
 
     Connections {
-        target: Whatevr.AppController
+        target: Whatevr.ProtocolController
         function onChatSearchChanged() {
-            const id = Whatevr.AppController.chatSearchActiveMessageId
+            const id = Whatevr.ProtocolController.chatSearchActiveMessageId
             if (id.length === 0) {
                 root.lastChatSearchJumpId = ""
             } else if (id !== root.lastChatSearchJumpId) {
@@ -557,12 +556,12 @@ Kirigami.Page {
         spacing: 0
 
         // In-chat search strip: matches navigation with a live n/m counter.
-        // Driven entirely by AppController's chat-search state.
+        // Driven entirely by the protocol controller's chat-search state.
         Control {
             id: chatSearchBar
 
             Layout.fillWidth: true
-            visible: Whatevr.AppController.chatSearchActive
+            visible: Whatevr.ProtocolController.chatSearchActive
             padding: Kirigami.Units.smallSpacing
             Kirigami.Theme.colorSet: Kirigami.Theme.Window
             Kirigami.Theme.inherit: false
@@ -592,19 +591,19 @@ Kirigami.Page {
 
                     Layout.fillWidth: true
                     placeholderText: Whatevr.I18n.i18nc("@info:placeholder", "Search in this conversation")
-                    onTextChanged: Whatevr.AppController.setChatSearchQuery(text)
-                    Keys.onReturnPressed: Whatevr.AppController.chatSearchNext()
-                    Keys.onEnterPressed: Whatevr.AppController.chatSearchNext()
-                    Keys.onEscapePressed: Whatevr.AppController.closeChatSearch()
+                    onTextChanged: Whatevr.ProtocolController.setChatSearchQuery(text)
+                    Keys.onReturnPressed: Whatevr.ProtocolController.chatSearchNext()
+                    Keys.onEnterPressed: Whatevr.ProtocolController.chatSearchNext()
+                    Keys.onEscapePressed: Whatevr.ProtocolController.closeChatSearch()
                 }
 
                 Label {
-                    visible: Whatevr.AppController.chatSearchQuery.length > 0
-                    text: Whatevr.AppController.chatSearchMatchCount > 0
+                    visible: Whatevr.ProtocolController.chatSearchQuery.length > 0
+                    text: Whatevr.ProtocolController.chatSearchMatchCount > 0
                           ? Whatevr.I18n.i18nc("@info:status search match position, e.g. 2 of 9",
                                                "%1 of %2",
-                                               Whatevr.AppController.chatSearchCurrentIndex,
-                                               Whatevr.AppController.chatSearchMatchCount)
+                                               Whatevr.ProtocolController.chatSearchCurrentIndex,
+                                               Whatevr.ProtocolController.chatSearchMatchCount)
                           : Whatevr.I18n.i18nc("@info:status no search matches", "No matches")
                     color: Kirigami.Theme.disabledTextColor
                     font: Kirigami.Theme.smallFont
@@ -612,22 +611,22 @@ Kirigami.Page {
 
                 ToolButton {
                     icon.name: "go-up-symbolic"
-                    enabled: Whatevr.AppController.chatSearchMatchCount > 0
+                    enabled: Whatevr.ProtocolController.chatSearchMatchCount > 0
                     display: AbstractButton.IconOnly
                     text: Whatevr.I18n.i18nc("@action:button newer search match", "Previous match")
                     ToolTip.visible: hovered
                     ToolTip.text: text
-                    onClicked: Whatevr.AppController.chatSearchPrevious()
+                    onClicked: Whatevr.ProtocolController.chatSearchPrevious()
                 }
 
                 ToolButton {
                     icon.name: "go-down-symbolic"
-                    enabled: Whatevr.AppController.chatSearchMatchCount > 0
+                    enabled: Whatevr.ProtocolController.chatSearchMatchCount > 0
                     display: AbstractButton.IconOnly
                     text: Whatevr.I18n.i18nc("@action:button older search match", "Next match")
                     ToolTip.visible: hovered
                     ToolTip.text: text
-                    onClicked: Whatevr.AppController.chatSearchNext()
+                    onClicked: Whatevr.ProtocolController.chatSearchNext()
                 }
 
                 ToolButton {
@@ -636,7 +635,7 @@ Kirigami.Page {
                     text: Whatevr.I18n.i18nc("@action:button close in-chat search", "Close search")
                     ToolTip.visible: hovered
                     ToolTip.text: text
-                    onClicked: Whatevr.AppController.closeChatSearch()
+                    onClicked: Whatevr.ProtocolController.closeChatSearch()
                 }
             }
         }
