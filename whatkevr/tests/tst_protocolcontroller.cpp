@@ -43,6 +43,7 @@ public:
             connect(m_conn, &QLocalSocket::readyRead, this, &FakeDaemon::onReadyRead);
             connect(m_conn, &QLocalSocket::disconnected, this, [this] {
                 m_subByView.clear();
+                m_viewBySub.clear();
                 m_conn = nullptr;
             });
         });
@@ -145,6 +146,11 @@ public:
     QJsonObject lastMarkReadParams;
     int messagesSubscribeCount = 0;
     int extendCount = 0;
+    // Subscribe params / counts for every view, and the views whose
+    // subscriptions were torn down, so lifetime-scoped views can be asserted.
+    QHash<QString, QJsonObject> lastParamsByView;
+    QHash<QString, int> subscribeCountByView;
+    QStringList unsubscribedViews;
 
 Q_SIGNALS:
     void reconnectRequested();
@@ -154,6 +160,8 @@ Q_SIGNALS:
     void extended();
     void sessionUpdated();
     void markReadReceived();
+    void viewSubscribed(const QString &view);
+    void viewUnsubscribed(const QString &view);
 
 private:
     void onReadyRead()
@@ -185,6 +193,15 @@ private:
             const QString view = params.value(QStringLiteral("view")).toString();
             const int sub = ++m_subCount;
             m_subByView.insert(view, sub);
+            m_viewBySub.insert(sub, view);
+            lastParamsByView.insert(view, params);
+            subscribeCountByView[view] = subscribeCountByView.value(view) + 1;
+            if (view == QLatin1String("receipts")
+                && params.value(QStringLiteral("message_id")).toString() == QLatin1String("missing")) {
+                error(id, QStringLiteral("not_found"), QStringLiteral("no message \"missing\""));
+                Q_EMIT viewSubscribed(view);
+                return;
+            }
             if (view == QLatin1String("messages")
                 && params.value(QStringLiteral("anchor")).toString() == QLatin1String("not-found")) {
                 error(id, QStringLiteral("not_found"), QStringLiteral("message not found"));
@@ -235,6 +252,7 @@ private:
                 ++messagesSubscribeCount;
                 Q_EMIT messagesSubscribed();
             }
+            Q_EMIT viewSubscribed(view);
         } else if (method == QLatin1String("extend")) {
             lastExtendParams = params;
             ++extendCount;
@@ -252,7 +270,16 @@ private:
             }
             Q_EMIT extended();
         } else if (method == QLatin1String("unsubscribe")) {
+            const int sub = params.value(QStringLiteral("sub")).toInt();
+            const QString view = m_viewBySub.take(sub);
+            if (m_subByView.value(view, -1) == sub) {
+                m_subByView.remove(view);
+            }
             reply(id, QJsonObject{});
+            if (!view.isEmpty()) {
+                unsubscribedViews.append(view);
+                Q_EMIT viewUnsubscribed(view);
+            }
         } else if (method == QLatin1String("session.update")) {
             lastSessionParams = params;
             reply(id, QJsonObject{});
@@ -328,6 +355,7 @@ private:
     QByteArray m_buf;
     int m_subCount = 0;
     QHash<QString, int> m_subByView;
+    QHash<int, QString> m_viewBySub;
     QHash<QString, QJsonObject> m_items;
     QHash<QString, QList<QJsonObject>> m_collections;
     QList<QJsonObject> m_chatsActive;
@@ -993,6 +1021,147 @@ private Q_SLOTS:
         QTRY_COMPARE(daemon.extendCount, 2);
         QTRY_VERIFY(!ctrl.olderMessagesFailed());
         QVERIFY(!ctrl.canLoadOlderMessages()); // successful retry reached exhaustion
+    }
+
+    // The header text composes the per-chat `presence` view (availability/last
+    // seen) with the global `typing` view, and the subscription follows exactly
+    // what the conversation is showing.
+    void presenceHeaderFollowsConversation()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+        daemon.setActiveChats({chatRow(QStringLiteral("a@s"), QStringLiteral("Alice"), QStringLiteral("1-000"))});
+        daemon.setMessages({messageRow(QStringLiteral("m1"), QStringLiteral("0001"))});
+        const qint64 lastSeen = QDateTime::currentSecsSinceEpoch() - 600;
+        daemon.setCollection(QStringLiteral("presence"),
+                             {QJsonObject{{QStringLiteral("id"), QStringLiteral("a@s")},
+                                          {QStringLiteral("availability"), QStringLiteral("offline")},
+                                          {QStringLiteral("last_seen_unix"), lastSeen}}});
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+        QTRY_VERIFY(!ctrl.chatsLoading());
+        QVERIFY(ctrl.selectedChatPresenceText().isEmpty()); // nothing selected yet
+
+        ctrl.setConversationVisible(true);
+        ctrl.selectChat(QStringLiteral("a@s"));
+        QTRY_COMPARE(daemon.subscribeCountByView.value(QStringLiteral("presence")), 1);
+        QCOMPARE(daemon.lastParamsByView.value(QStringLiteral("presence"))
+                     .value(QStringLiteral("chat_id")).toString(),
+                 QStringLiteral("a@s"));
+        QTRY_VERIFY(ctrl.selectedChatPresenceText().startsWith(QStringLiteral("last seen")));
+
+        // Availability flips live.
+        daemon.pushUpsert(QStringLiteral("presence"),
+                          QJsonObject{{QStringLiteral("id"), QStringLiteral("a@s")},
+                                      {QStringLiteral("availability"), QStringLiteral("online")}},
+                          QStringLiteral("a@s"));
+        QTRY_COMPARE(ctrl.selectedChatPresenceText(), QStringLiteral("online"));
+
+        // Typing (the global view) wins over availability.
+        daemon.pushUpsert(QStringLiteral("typing"),
+                          QJsonObject{{QStringLiteral("id"), QStringLiteral("a@s")}}, QStringLiteral("a@s"));
+        QTRY_COMPARE(ctrl.selectedChatPresenceText(), QStringLiteral("typing..."));
+        daemon.pushRemove(QStringLiteral("typing"), QStringLiteral("a@s"));
+        QTRY_COMPARE(ctrl.selectedChatPresenceText(), QStringLiteral("online"));
+
+        // Hiding the conversation drops the subscription (and the upstream
+        // presence demand with it); showing it again re-subscribes.
+        ctrl.setConversationVisible(false);
+        QTRY_VERIFY(daemon.unsubscribedViews.contains(QStringLiteral("presence")));
+        QVERIFY(ctrl.selectedChatPresenceText().isEmpty());
+
+        ctrl.setConversationVisible(true);
+        QTRY_COMPARE(daemon.subscribeCountByView.value(QStringLiteral("presence")), 2);
+    }
+
+    // The info dialog subscribes `receipts` for one message while it is open:
+    // group rows land as a live roster and the subscription dies with the dialog.
+    void messageReceiptsAreScopedToTheOpenDialog()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+        daemon.setActiveChats({chatRow(QStringLiteral("g@g"), QStringLiteral("Group"), QStringLiteral("1-000"),
+                                       QJsonObject{{QStringLiteral("is_group"), true}})});
+        daemon.setMessages({messageRow(QStringLiteral("m1"), QStringLiteral("0001"))});
+        daemon.setCollection(QStringLiteral("receipts"),
+                             {QJsonObject{{QStringLiteral("id"), QStringLiteral("x@s")},
+                                          {QStringLiteral("name"), QStringLiteral("Xena")},
+                                          {QStringLiteral("delivered_ts_unix"), 1'700'000'100},
+                                          {QStringLiteral("read_ts_unix"), 1'700'000'200}},
+                              QJsonObject{{QStringLiteral("id"), QStringLiteral("y@s")},
+                                          {QStringLiteral("name"), QStringLiteral("Yuri")},
+                                          {QStringLiteral("delivered_ts_unix"), 1'700'000'100}}});
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+        QTRY_VERIFY(!ctrl.chatsLoading());
+        ctrl.setConversationVisible(true);
+        ctrl.selectChat(QStringLiteral("g@g"));
+        QTRY_COMPARE(ctrl.displayedMessagesChatId(), QStringLiteral("g@g"));
+
+        ctrl.openMessageReceipts(QStringLiteral("m1"));
+        QVERIFY(ctrl.messageReceiptsLoading());
+        QTRY_VERIFY(!ctrl.messageReceiptsLoading());
+        QCOMPARE(daemon.lastParamsByView.value(QStringLiteral("receipts"))
+                     .value(QStringLiteral("message_id")).toString(),
+                 QStringLiteral("m1"));
+        QVERIFY(ctrl.messageReceiptsIsGroup());
+        QCOMPARE(ctrl.messageReceipts().size(), 2);
+        // The sent time comes from the message row, not from a receipt.
+        QCOMPARE(ctrl.messageReceiptsSentTimestamp(), Q_INT64_C(1'700'000'000));
+        QVERIFY(ctrl.directMessageReceipt().isEmpty());
+
+        // A member reading the message re-upserts their row while the dialog is open.
+        QSignalSpy receiptsSpy(&ctrl, &ProtocolController::messageReceiptsChanged);
+        daemon.pushUpsert(QStringLiteral("receipts"),
+                          QJsonObject{{QStringLiteral("id"), QStringLiteral("y@s")},
+                                      {QStringLiteral("name"), QStringLiteral("Yuri")},
+                                      {QStringLiteral("delivered_ts_unix"), 1'700'000'100},
+                                      {QStringLiteral("read_ts_unix"), 1'700'000'300}},
+                          QStringLiteral("0001"));
+        QTRY_VERIFY(receiptsSpy.count() > 0);
+        QTRY_COMPARE(ctrl.messageReceipts().at(1).toMap()
+                         .value(QStringLiteral("read_ts_unix")).toLongLong(),
+                     Q_INT64_C(1'700'000'300));
+
+        ctrl.closeMessageReceipts();
+        QCOMPARE(ctrl.messageReceipts().size(), 0);
+        QVERIFY(!ctrl.messageReceiptsLoading());
+        QTRY_VERIFY(daemon.unsubscribedViews.contains(QStringLiteral("receipts")));
+    }
+
+    // A direct chat's receipts arrive as the daemon's single aggregate row, and a
+    // rejected subscribe surfaces as the dialog's error text.
+    void directReceiptsAggregateAndSubscribeErrorSurface()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+        daemon.setActiveChats({chatRow(QStringLiteral("a@s"), QStringLiteral("Alice"), QStringLiteral("1-000"))});
+        daemon.setMessages({messageRow(QStringLiteral("m1"), QStringLiteral("0001"))});
+        daemon.setCollection(QStringLiteral("receipts"),
+                             {QJsonObject{{QStringLiteral("id"), QStringLiteral("peer")},
+                                          {QStringLiteral("delivered_ts_unix"), 1'700'000'100},
+                                          {QStringLiteral("read_ts_unix"), 1'700'000'200}}});
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+        QTRY_VERIFY(!ctrl.chatsLoading());
+        ctrl.setConversationVisible(true);
+        ctrl.selectChat(QStringLiteral("a@s"));
+        QTRY_COMPARE(ctrl.displayedMessagesChatId(), QStringLiteral("a@s"));
+
+        ctrl.openMessageReceipts(QStringLiteral("m1"));
+        QTRY_VERIFY(!ctrl.messageReceiptsLoading());
+        QVERIFY(!ctrl.messageReceiptsIsGroup());
+        QCOMPARE(ctrl.directMessageReceipt().value(QStringLiteral("read_ts_unix")).toLongLong(),
+                 Q_INT64_C(1'700'000'200));
+
+        // An unknown message is rejected at subscribe; the dialog shows why.
+        ctrl.openMessageReceipts(QStringLiteral("missing"));
+        QTRY_VERIFY(!ctrl.messageReceiptsError().isEmpty());
+        QVERIFY(!ctrl.messageReceiptsLoading()); // an error ends the wait
+        QCOMPARE(ctrl.messageReceipts().size(), 0);
     }
 
 private:

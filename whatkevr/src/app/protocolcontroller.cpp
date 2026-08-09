@@ -6,6 +6,7 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QLocale>
 #include <QPointer>
 #include <QProcess>
 #include <QQmlEngine>
@@ -56,6 +57,29 @@ QString formatQrExpiry(qint64 expiresAtUnix)
     }
     const qint64 minutes = (secondsLeft + 59) / 60;
     return i18ncp("@info countdown", "Expires in %1 minute", "Expires in %1 minutes", minutes);
+}
+
+// Renders a contact's last-seen time, mirroring AppController::formatLastSeen so
+// the conversation header reads identically on either stack.
+QString formatLastSeen(qint64 lastSeenUnix)
+{
+    if (lastSeenUnix <= 0) {
+        return {};
+    }
+    const QDateTime lastSeen = QDateTime::fromSecsSinceEpoch(lastSeenUnix).toLocalTime();
+    if (!lastSeen.isValid()) {
+        return {};
+    }
+    const QDate today = QDate::currentDate();
+    if (lastSeen.date() == today) {
+        return i18nc("@info chat presence", "last seen today at %1",
+                     QLocale().toString(lastSeen.time(), QLocale::ShortFormat));
+    }
+    if (lastSeen.date() == today.addDays(-1)) {
+        return i18nc("@info chat presence", "last seen yesterday at %1",
+                     QLocale().toString(lastSeen.time(), QLocale::ShortFormat));
+    }
+    return i18nc("@info chat presence", "last seen %1", QLocale().toString(lastSeen, QLocale::ShortFormat));
 }
 
 // Human label for a history-sync type (the `sync` view's `type` string). Mirrors
@@ -164,6 +188,9 @@ ProtocolController::ProtocolController(QString socketPath, QObject *parent)
     const auto bumpTyping = [this] {
         ++m_typingRevision;
         Q_EMIT typingChanged();
+        // The conversation header composes typing over availability, so a typing
+        // change is also a presence change for the selected chat.
+        Q_EMIT presenceChanged();
     };
     connect(m_typingModel, &CollectionViewModel::countChanged, this, bumpTyping);
     connect(m_typingModel, &CollectionViewModel::modelReset, this, bumpTyping);
@@ -191,6 +218,25 @@ ProtocolController::ProtocolController(QString socketPath, QObject *parent)
             m_phoneHistorySettleTimer->start();
         }
     });
+
+    // Conversation-header presence (D3c): one item for the selected chat's
+    // counterpart while a conversation is on screen.
+    m_presenceModel = new CollectionViewModel(this);
+    connect(m_presenceModel, &CollectionViewModel::countChanged, this, &ProtocolController::presenceChanged);
+    connect(m_presenceModel, &CollectionViewModel::dataChanged, this, &ProtocolController::presenceChanged);
+    connect(m_presenceModel, &CollectionViewModel::modelReset, this, &ProtocolController::presenceChanged);
+
+    // Message-info dialog receipts (D3c): a participant roster the dialog reads
+    // through messageReceipts(); a revision tick makes those reads re-evaluate.
+    m_receiptsModel = new CollectionViewModel(this);
+    const auto bumpReceipts = [this] {
+        ++m_receiptsRevision;
+        Q_EMIT messageReceiptsChanged();
+    };
+    connect(m_receiptsModel, &CollectionViewModel::countChanged, this, bumpReceipts);
+    connect(m_receiptsModel, &CollectionViewModel::dataChanged, this, bumpReceipts);
+    connect(m_receiptsModel, &CollectionViewModel::modelReset, this, bumpReceipts);
+    connect(m_receiptsModel, &CollectionViewModel::readyChanged, this, bumpReceipts);
 
     m_startupGraceTimer = new QTimer(this);
     m_startupGraceTimer->setSingleShot(true);
@@ -261,6 +307,8 @@ ProtocolController::~ProtocolController()
     delete m_typingSub;
     delete m_syncSub;
     delete m_messagesSub;
+    delete m_presenceSub;
+    delete m_receiptsSub;
     m_connectionSub = nullptr;
     m_loginSub = nullptr;
     m_chatsSub = nullptr;
@@ -268,6 +316,8 @@ ProtocolController::~ProtocolController()
     m_typingSub = nullptr;
     m_syncSub = nullptr;
     m_messagesSub = nullptr;
+    m_presenceSub = nullptr;
+    m_receiptsSub = nullptr;
     if (m_client) {
         m_client->stop();
     }
@@ -514,6 +564,7 @@ void ProtocolController::setSelectedChat(const QString &chatId, const QString &a
         Q_EMIT this->selectionChanged();
     }
     sendSessionUpdate();
+    updatePresenceSubscription();
 
     if (chatId.isEmpty()) {
         delete m_messagesSub;
@@ -897,6 +948,10 @@ void ProtocolController::setConversationVisible(bool visible)
         return;
     }
     m_conversationVisible = visible;
+    // Presence is subscribed for exactly what the conversation is showing: a
+    // hidden conversation drops it (and with it the upstream WhatsApp presence
+    // demand), a shown one re-establishes it alongside the messages window.
+    updatePresenceSubscription();
     if (!visible) {
         m_phoneHistoryRequesting = false;
         m_phoneHistoryTimer->stop();
@@ -927,6 +982,124 @@ void ProtocolController::sendSessionUpdate()
     m_client->request(QStringLiteral("session.update"),
                       {{QStringLiteral("focused"), focused},
                        {QStringLiteral("active_chat_id"), m_conversationVisible ? m_selectedChatId : QString()}});
+}
+
+// --- conversation header presence (D3c) ------------------------------------
+
+void ProtocolController::updatePresenceSubscription()
+{
+    const QString target = m_conversationVisible ? m_selectedChatId : QString();
+    if (target == m_presenceChatId) {
+        return;
+    }
+    m_presenceChatId = target;
+    delete m_presenceSub;
+    m_presenceSub = nullptr;
+    m_presenceModel->onReset();
+    if (!target.isEmpty()) {
+        m_presenceSub = m_client->subscribe(QStringLiteral("presence"),
+                                            {{QStringLiteral("chat_id"), target}}, m_presenceModel);
+    }
+    Q_EMIT presenceChanged();
+}
+
+QString ProtocolController::selectedChatPresenceText() const
+{
+    if (m_selectedChatId.isEmpty()) {
+        return {};
+    }
+    // Typing wins over availability, exactly as the gRPC header did. Composing
+    // arrives unsolicited on the global `typing` view; availability only on the
+    // per-chat `presence` view we subscribed for this chat.
+    if (chatTyping(m_selectedChatId)) {
+        return i18nc("@info chat presence", "typing...");
+    }
+    const QVariantMap item = m_presenceModel->itemById(m_selectedChatId);
+    if (item.isEmpty()) {
+        return {};
+    }
+    if (item.value(QStringLiteral("availability")).toString() == QLatin1String("online")) {
+        return i18nc("@info chat presence", "online");
+    }
+    return formatLastSeen(item.value(QStringLiteral("last_seen_unix")).toLongLong());
+}
+
+// --- message info receipts (D3c) -------------------------------------------
+
+void ProtocolController::openMessageReceipts(const QString &messageId)
+{
+    delete m_receiptsSub;
+    m_receiptsSub = nullptr;
+    m_receiptsModel->onReset();
+    m_receiptsMessageId = messageId;
+    m_receiptsError.clear();
+    Q_EMIT messageReceiptsChanged();
+    if (messageId.isEmpty()) {
+        return;
+    }
+
+    m_receiptsSub = m_client->subscribe(QStringLiteral("receipts"),
+                                        {{QStringLiteral("message_id"), messageId}}, m_receiptsModel);
+    connect(m_receiptsSub, &Subscription::failed, this,
+            [this, messageId](const QString &code, const QString &message) {
+                if (m_receiptsMessageId != messageId) {
+                    return; // a later dialog owns the view now
+                }
+                if (code == QLatin1String("io") && m_receiptsSub) {
+                    return; // live subscriptions auto-resubscribe after reconnect
+                }
+                m_receiptsError = message;
+                Q_EMIT messageReceiptsChanged();
+            });
+}
+
+void ProtocolController::closeMessageReceipts()
+{
+    if (m_receiptsMessageId.isEmpty() && !m_receiptsSub) {
+        return;
+    }
+    delete m_receiptsSub;
+    m_receiptsSub = nullptr;
+    m_receiptsMessageId.clear();
+    m_receiptsError.clear();
+    m_receiptsModel->onReset();
+    Q_EMIT messageReceiptsChanged();
+}
+
+bool ProtocolController::messageReceiptsLoading() const
+{
+    return !m_receiptsMessageId.isEmpty() && m_receiptsError.isEmpty() && !m_receiptsModel->isReady();
+}
+
+bool ProtocolController::messageReceiptsIsGroup() const
+{
+    // Group-ness is the daemon's `chats` row flag; the dialog only ever opens on
+    // a message of the selected chat.
+    return selectedChatItem().value(QStringLiteral("is_group")).toBool();
+}
+
+qint64 ProtocolController::messageReceiptsSentTimestamp() const
+{
+    // The send time belongs to the message, not to a receipt; read it live off
+    // the timeline row rather than copying it into dialog state.
+    return m_messagesModel->itemById(m_receiptsMessageId).value(QStringLiteral("timestamp")).toLongLong();
+}
+
+QVariantList ProtocolController::messageReceipts() const
+{
+    QVariantList rows;
+    rows.reserve(m_receiptsModel->count());
+    for (int row = 0; row < m_receiptsModel->count(); ++row) {
+        rows.append(m_receiptsModel->data(m_receiptsModel->index(row, 0), CollectionViewModel::ItemRole));
+    }
+    return rows;
+}
+
+QVariantMap ProtocolController::directMessageReceipt() const
+{
+    // The daemon keys a direct chat's single aggregate row under this sentinel
+    // (GetMessageInfo carries no jid for a 1:1 recipient).
+    return m_receiptsModel->itemById(QStringLiteral("peer"));
 }
 
 // --- history-sync strip (D2b2) --------------------------------------------

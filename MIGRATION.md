@@ -106,7 +106,7 @@ Status: `todo` | `doing` | `done` | `blocked` | `needs-decision`
 | D2b2 | Port archived chats section (second `chats` subscription) + `typing` overlay + `sync` history strip | done | `ProtocolController` grew `archivedChatsModel` (a second `chats` sub, `archived:true`, same filter, re-subscribed with the active list) + `archivedCount`; a `typing` collection with `chatTyping(chatId)` + a `typingRevision` tick; and a `sync` object view feeding derived `historySyncVisible/Percent/Title/Detail` (names mirror `AppController`). `ChatListPane.qml`: the inline row became a shared `chatRowDelegate` `Component` used by both the active `ListView` and a collapsible **`footer`** (header + `Repeater` over `archivedChatsModel`) — the old `section.property="chatSection"` machinery is gone; `ChatListDelegate` width gained a `parent.width` fallback for the footer. `isTyping` binds `chatTyping(chatId)` keyed on `typingRevision`; `HistorySyncStrip` + placeholder repointed to `ProtocolController.historySync*`. Sync display policy is simplified vs the gRPC cursor (renders the single current `sync` item; drops cross-event type-dedup) — see Decision log. `tst_protocolcontroller` +3 (archived separate model, typing live start/stop, sync derivation incl. complete/on-demand hiding); `just build` + all whatkevr tests (13) + conformance pass; hand-verified over socat (archived count, `typing` ready, `sync` item) and a headless app launch (no QML errors). No PROTOCOL.md change. **D2b complete.** |
 | D3a | Protocol message presentation model over the generic daemon-sorted collection; expose every `ready` completion for directional pagination; no UI wiring | done | New `ProtocolMessageModel` mirrors `CollectionViewModel` rows unchanged (ascending daemon `sort`) and maps whole message items into the timeline's presentation roles/helpers, including unknown-kind `fallback`, nested sender/media/reply/reactions, ascending day/sender grouping, markup/layout memoization, snapshots/copy/selection helpers. `CollectionViewModel::readyReceived` exposes every `ready`; its move mutation now obeys Qt's begin/end contract. New model/core tests include `QAbstractItemModelTester`; no UI wiring or PROTOCOL.md change. |
 | D3b | Port conversation selection + timeline: `messages` latest/unread/message-id anchors, directional extend, jump navigation, read watermark, session/open-chat routing | done | `ProtocolController` now owns selected-chat `messages` subscriptions (latest/unread/message-id), independent directional pagination/exhaustion, jump/re-anchor, exact read watermarks, visible-session updates, and `open_chat`; `MessageView.qml`/`RowScrollBar.qml` render the ascending daemon-sorted model and preserve prepend viewport anchors. Protocol core hardens delayed subscribe/extend replies and exposes extend failures. Controller/core/model tests cover anchors, resets, jumps, pagination, phone-history, session/read routing; `just build`, all Qt tests, conformance, live raw-socket exercise, and offscreen launch pass. No PROTOCOL.md change. |
-| D3c | Port conversation chrome: selected-chat `presence` header + dialog-scoped live `receipts` view | todo | |
+| D3c | Port conversation chrome: selected-chat `presence` header + dialog-scoped live `receipts` view | done | `ProtocolController` grew a `presence` subscription scoped to the *displayed* conversation (subscribed/dropped alongside the messages window, so the upstream WA presence demand tracks what is on screen) and `selectedChatPresenceText`, which composes the global `typing` view over the per-chat availability/last-seen (typing wins, then `online`, then a mirrored `formatLastSeen`); `ConversationPane`'s header subtext repointed to it. `MessageInfoDialog` now lives entirely on the `receipts` view: `openMessageReceipts`/`closeMessageReceipts` make the dialog's lifetime the subscription's lifetime, rows come from a `CollectionViewModel` read through `messageReceipts()` + `messageReceiptsRevision`, direct chats read the daemon's `"peer"` aggregate via `directMessageReceipt()`, `is_group` comes from the `chats` row and the Sent time from the `messages` row (no dialog-side copies) — the gRPC `requestMessageInfo` round-trip, its manual avatar patching, and its `info` snapshot are gone. `tst_protocolcontroller` +3 (presence fill/live flip/typing precedence/visibility scoping, group receipt roster live-update + dialog-scoped unsubscribe, direct aggregate + `not_found` error); the fake daemon gained per-view subscribe params/counts and unsubscribe tracking. `just build`, all 26+16+7 Qt tests, `go test -tags sqlite_fts5 ./...`, `scripts/conformance` and `qmllint` (no new warnings) pass; `presence`/`receipts` hand-exercised over a raw socket. **Live-account check not performed** — see the D-phase note. No PROTOCOL.md change. |
 | D4 | Port composer + all send paths, media download/`transfers` progress, image viewer | todo | |
 | D5 | Port info dialogs (contact/group/members), starred/pinned pages, unified + in-chat search | todo | |
 | D6 | Port settings pages (privacy/prefs/blocklist/profile) + sticker/emoji pickers | todo | |
@@ -124,6 +124,23 @@ Status: `todo` | `doing` | `done` | `blocked` | `needs-decision`
 _None._
 
 ## D-phase notes
+
+- 2026-08-09 — **D3c live verification gap (environment, not code).** The
+  hand-verification against a live daemon could not be done: the installed
+  `/usr/bin/whatevrd` refuses to start against the current data dir (`database
+  schema version 6 is newer than supported version 5` — the dev build has
+  migrated it), and the dev build, started against the real data dir, found the
+  WhatsApp session already unlinked: it archived the store as
+  `whatevrd-before-logout-*.db` and came up `need_login`. Re-pairing needs the
+  user's phone, so the conversation header/receipts dialog were verified against
+  a throwaway daemon over a raw socket plus the Qt tests (real client, real
+  socket, fake daemon) instead. One observation worth a later look, unrelated to
+  D3c: while that logged-out daemon was starting, store-backed subscribes
+  (`connection`, `chats`) took >30s to answer while store-free ones (`typing`,
+  `presence`, `receipts`) replied immediately (`protocol: list chats for view:
+  context canceled` in the log when the probe gave up). Possibly just startup
+  contention behind the logout wipe; if it reproduces on a healthy daemon it is
+  a real Phase-B/store issue.
 
 - 2026-07-18 — D2a implementation readings (no PROTOCOL.md change; flag if you
   disagree): (1) **Coexistence is two live connections.** With a monolithic
@@ -172,6 +189,36 @@ _None._
   no GUI/gRPC) and drive the real client over a real Unix socket.
 
 ## Decision log
+
+- 2026-08-09 — D3c implementation readings (no PROTOCOL.md change; flag if you
+  disagree): (1) **Presence is subscribed for what the conversation shows, not
+  for what is selected.** The `presence` sub follows the same visibility gate as
+  the messages window (`setConversationVisible`), because subscribing is what
+  drives the upstream WhatsApp presence request — a conversation that is off
+  screen should not be asking WhatsApp for availability. Selection alone (which
+  survives the status page as presentation state) does not. (2) **The header
+  composes two views; it does not ask the daemon for a composed string.**
+  `typing` is global and unsolicited, `presence` is per-chat and demand-driven —
+  PROTOCOL keeps them separate for exactly that reason — so the header reads
+  membership in `typing` first and falls back to availability/last-seen. The
+  wording (`typing...`, `online`, `last seen …`) is C++-side and mirrors
+  `AppController` verbatim so either stack reads identically mid-migration.
+  (3) **The receipts dialog holds no receipt state.** The gRPC dialog fetched an
+  `info` snapshot once and then hand-patched member avatars out of a
+  `senderAvatarUpdated` signal; that whole mechanism is deleted. The daemon
+  re-derives `GetMessageInfo` on every relevant event, so a member reading the
+  message — or their avatar refreshing — is an ordinary upsert. The dialog's
+  read/delivered sections are presentation-side filtering of rows it already has
+  (like `group_members` search), and each section keeps the daemon's order.
+  (4) **Fields the `receipts` view legitimately lacks are read from the views
+  that own them**, not cached at open: `is_group` from the `chats` row, the Sent
+  time from the `messages` row. If the timeline row ever leaves the window the
+  Sent time renders "—" rather than going stale. (5) The dialog reaches its rows
+  through an invokable plus a `messageReceiptsRevision` tick (the `typing`
+  pattern) rather than a QSortFilterProxy pair — no frontend sorting machinery.
+  (6) A rejected subscribe (`not_found` for an unknown message) becomes the
+  dialog's error text; an `io` failure is ignored because the client
+  auto-resubscribes after reconnect, matching the messages subscription.
 
 - 2026-07-19 — D3b implementation readings (no PROTOCOL.md change): (1) The
   conversation now renders `ProtocolMessageModel` in ascending daemon `sort`
