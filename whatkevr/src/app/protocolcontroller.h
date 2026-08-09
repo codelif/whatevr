@@ -116,6 +116,21 @@ class ProtocolController final : public QObject
     Q_PROPERTY(int unreadAnchorCount READ unreadAnchorCount NOTIFY unreadAnchorChanged FINAL)
     Q_PROPERTY(bool unreadAnchorResolving READ unreadAnchorResolving NOTIFY unreadAnchorChanged FINAL)
 
+    // Conversation-header presence (D3c): the selected chat's `presence` view
+    // (availability/last seen) composed with the global `typing` view. Subscribing
+    // is what asks WhatsApp for availability, so the subscription follows exactly
+    // what the conversation is showing.
+    Q_PROPERTY(QString selectedChatPresenceText READ selectedChatPresenceText NOTIFY presenceChanged FINAL)
+
+    // Message-info dialog (D3c): the per-message `receipts` view, subscribed only
+    // while the dialog is open. Rows are the daemon's participant items; the
+    // dialog groups them for display and holds no receipt state of its own.
+    Q_PROPERTY(bool messageReceiptsLoading READ messageReceiptsLoading NOTIFY messageReceiptsChanged FINAL)
+    Q_PROPERTY(QString messageReceiptsError READ messageReceiptsError NOTIFY messageReceiptsChanged FINAL)
+    Q_PROPERTY(bool messageReceiptsIsGroup READ messageReceiptsIsGroup NOTIFY messageReceiptsChanged FINAL)
+    Q_PROPERTY(qint64 messageReceiptsSentTimestamp READ messageReceiptsSentTimestamp NOTIFY messageReceiptsChanged FINAL)
+    Q_PROPERTY(int messageReceiptsRevision READ messageReceiptsRevision NOTIFY messageReceiptsChanged FINAL)
+
 public:
     static void setInstance(ProtocolController *instance);
     static ProtocolController *create(QQmlEngine *qmlEngine, QJSEngine *jsEngine);
@@ -193,6 +208,20 @@ public:
     [[nodiscard]] int unreadAnchorCount() const { return m_unreadAnchorCount; }
     [[nodiscard]] bool unreadAnchorResolving() const { return m_unreadAnchorResolving; }
 
+    [[nodiscard]] QString selectedChatPresenceText() const;
+
+    [[nodiscard]] bool messageReceiptsLoading() const;
+    [[nodiscard]] QString messageReceiptsError() const { return m_receiptsError; }
+    [[nodiscard]] bool messageReceiptsIsGroup() const;
+    [[nodiscard]] qint64 messageReceiptsSentTimestamp() const;
+    [[nodiscard]] int messageReceiptsRevision() const { return m_receiptsRevision; }
+    // Every participant row of the open dialog's message, in daemon `sort` order.
+    // The dialog splits them into its read/delivered sections; it never reorders.
+    [[nodiscard]] Q_INVOKABLE QVariantList messageReceipts() const;
+    // A direct chat's single aggregate row (the daemon's sentinel-keyed item), or
+    // an empty map before delivery begins.
+    [[nodiscard]] Q_INVOKABLE QVariantMap directMessageReceipt() const;
+
     Q_INVOKABLE void startDaemon();
     Q_INVOKABLE void triggerPrimaryAction();
     Q_INVOKABLE void copyToClipboard(const QString &text);
@@ -214,6 +243,12 @@ public:
     Q_INVOKABLE void markSelectedChatViewed(const QString &upToMessageId);
     Q_INVOKABLE void setConversationVisible(bool visible);
 
+    // Subscribe/drop the `receipts` view for one message: the dialog's lifetime is
+    // the subscription's lifetime, which is also what tells the daemon the info
+    // dialog is on screen.
+    Q_INVOKABLE void openMessageReceipts(const QString &messageId);
+    Q_INVOKABLE void closeMessageReceipts();
+
     // The daemon's protocol socket, `$XDG_RUNTIME_DIR/whatevr/whatevrd.sock`
     // (distinct from the gRPC socket under whatevrd/). Empty if XDG_RUNTIME_DIR
     // is unset.
@@ -229,6 +264,8 @@ Q_SIGNALS:
     void selectionChanged();
     void messagesChanged();
     void unreadAnchorChanged();
+    void presenceChanged();
+    void messageReceiptsChanged();
     void messageJumpReady(const QString &messageId);
     void messageJumpUnavailable(const QString &messageId);
     void openChatRequested(const QString &chatId);
@@ -277,6 +314,10 @@ private:
     void extendMessages(const QString &direction, bool force = false);
     void sendSessionUpdate();
 
+    // (Re)point the `presence` subscription at whatever chat the conversation is
+    // currently showing, or drop it when nothing is.
+    void updatePresenceSubscription();
+
     QString m_socketPath;
     whatevr::proto::ProtocolClient *m_client = nullptr;
     whatevr::proto::ObjectViewModel *m_connectionModel = nullptr;
@@ -286,6 +327,8 @@ private:
     whatevr::proto::CollectionViewModel *m_typingModel = nullptr;
     whatevr::proto::ObjectViewModel *m_syncModel = nullptr;
     whatevr::proto::CollectionViewModel *m_messagesModel = nullptr;
+    whatevr::proto::CollectionViewModel *m_presenceModel = nullptr;
+    whatevr::proto::CollectionViewModel *m_receiptsModel = nullptr;
     ProtocolMessageModel *m_messagePresentationModel = nullptr;
     whatevr::proto::Subscription *m_connectionSub = nullptr;
     whatevr::proto::Subscription *m_loginSub = nullptr;
@@ -294,6 +337,8 @@ private:
     whatevr::proto::Subscription *m_typingSub = nullptr;
     whatevr::proto::Subscription *m_syncSub = nullptr;
     whatevr::proto::Subscription *m_messagesSub = nullptr;
+    whatevr::proto::Subscription *m_presenceSub = nullptr;
+    whatevr::proto::Subscription *m_receiptsSub = nullptr;
     int m_chatFilter = 0; // 0 = all, 1 = direct, 2 = groups
     int m_typingRevision = 0;
 
@@ -330,6 +375,13 @@ private:
     bool m_conversationVisible = false;
     int m_messagesGeneration = 0;
     int m_phoneHistoryGeneration = 0;
+
+    // The chat the `presence` subscription currently covers (empty when none).
+    QString m_presenceChatId;
+    // The message the open info dialog is watching (empty when it is closed).
+    QString m_receiptsMessageId;
+    QString m_receiptsError;
+    int m_receiptsRevision = 0;
 
     bool m_clientReady = false;
     bool m_startupGrace = true;

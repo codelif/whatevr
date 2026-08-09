@@ -7,15 +7,14 @@ import org.kde.kirigami as Kirigami
 import Whatevr as Whatevr
 
 // Delivery/read details for one of our own messages: sent/delivered/read rows
-// for direct chats, per-member sections (Read by / Delivered to / Pending) for
-// groups. Data arrives asynchronously via AppController.requestMessageInfo.
+// for direct chats, per-member sections (Read by / Delivered to) for groups.
+// Rows come from the daemon's `receipts` view, subscribed for exactly as long as
+// this dialog is open, and update live while it is (a member reading the message
+// re-upserts their row). The dialog keeps no receipt state of its own.
 CenteredDialog {
     id: root
 
     property string messageId: ""
-    property var info: null
-    property bool loading: false
-    property string errorText: ""
 
     // Always-active highlight so the read ticks stay vivid when the window is
     // unfocused (Kirigami.Theme.highlightColor greys out on focus loss).
@@ -24,11 +23,19 @@ CenteredDialog {
         colorGroup: SystemPalette.Active
     }
 
-    readonly property bool infoValid: info !== null
-    readonly property bool isGroup: infoValid && Boolean(info.isGroup)
-    readonly property var receipts: infoValid && info.receipts ? info.receipts : []
-    readonly property var readBy: receipts.filter(r => Number(r.readTsUnix) > 0)
-    readonly property var deliveredTo: receipts.filter(r => Number(r.readTsUnix) <= 0 && Number(r.deliveredTsUnix) > 0)
+    readonly property bool loading: Whatevr.ProtocolController.messageReceiptsLoading
+    readonly property string errorText: Whatevr.ProtocolController.messageReceiptsError
+    readonly property bool isGroup: Whatevr.ProtocolController.messageReceiptsIsGroup
+    // A bare invokable call is not reactive; keying it on the revision counter
+    // re-evaluates these on every view change.
+    readonly property var receipts: Whatevr.ProtocolController.messageReceiptsRevision >= 0
+                                    ? Whatevr.ProtocolController.messageReceipts() : []
+    readonly property var directReceipt: Whatevr.ProtocolController.messageReceiptsRevision >= 0
+                                         ? Whatevr.ProtocolController.directMessageReceipt() : ({})
+    // Presentation-only grouping of rows the frontend already has; the daemon
+    // owns their order (rule 3), which each section preserves.
+    readonly property var readBy: receipts.filter(r => Number(r.read_ts_unix) > 0)
+    readonly property var deliveredTo: receipts.filter(r => Number(r.read_ts_unix) <= 0 && Number(r.delivered_ts_unix) > 0)
 
     title: Whatevr.I18n.i18nc("@title:dialog delivery details of a message", "Message Info")
     standardButtons: Kirigami.Dialog.Close
@@ -38,11 +45,13 @@ CenteredDialog {
 
     function openFor(id) {
         messageId = id
-        info = null
-        errorText = ""
-        loading = true
-        Whatevr.AppController.requestMessageInfo(id)
+        Whatevr.ProtocolController.openMessageReceipts(id)
         open()
+    }
+
+    onClosed: {
+        messageId = ""
+        Whatevr.ProtocolController.closeMessageReceipts()
     }
 
     function formatTimestamp(ts) {
@@ -72,56 +81,6 @@ CenteredDialog {
             }
         }
         return initials.length > 0 ? initials : "?"
-    }
-
-    function updateReceiptAvatar(senderId, avatarLocalPath) {
-        if (!infoValid || !info.receipts || senderId.length === 0) {
-            return
-        }
-
-        let changed = false
-        const nextReceipts = []
-        for (const receipt of info.receipts) {
-            if (String(receipt.jid || "") === senderId
-                    && String(receipt.avatarLocalPath || "") !== avatarLocalPath) {
-                const nextReceipt = Object.assign({}, receipt)
-                nextReceipt.avatarLocalPath = avatarLocalPath
-                nextReceipts.push(nextReceipt)
-                changed = true
-            } else {
-                nextReceipts.push(receipt)
-            }
-        }
-
-        if (changed) {
-            const nextInfo = Object.assign({}, info)
-            nextInfo.receipts = nextReceipts
-            info = nextInfo
-        }
-    }
-
-    Connections {
-        target: Whatevr.AppController
-
-        function onMessageInfoReceived(id, receivedInfo) {
-            if (id !== root.messageId) {
-                return
-            }
-            root.info = receivedInfo
-            root.loading = false
-        }
-
-        function onMessageInfoFailed(id, error) {
-            if (id !== root.messageId) {
-                return
-            }
-            root.loading = false
-            root.errorText = error
-        }
-
-        function onSenderAvatarUpdated(senderId, avatarLocalPath) {
-            root.updateReceiptAvatar(senderId, avatarLocalPath)
-        }
     }
 
     // Sent shows a single tick, delivered/read show overlapping double ticks,
@@ -210,14 +169,14 @@ CenteredDialog {
         AvatarImage {
             Layout.preferredWidth: Kirigami.Units.gridUnit * 1.5
             Layout.preferredHeight: Kirigami.Units.gridUnit * 1.5
-            avatarLocalPath: String(participantRow.receipt.avatarLocalPath || "")
-            initials: root.initialsFor(participantRow.receipt.displayName || participantRow.receipt.jid)
+            avatarLocalPath: String(participantRow.receipt.avatar_path || "")
+            initials: root.initialsFor(participantRow.receipt.name || participantRow.receipt.id)
         }
 
         Label {
             text: {
-                const name = String(participantRow.receipt.displayName || "").trim()
-                return name.length > 0 ? name : String(participantRow.receipt.jid).split("@")[0]
+                const name = String(participantRow.receipt.name || "").trim()
+                return name.length > 0 ? name : String(participantRow.receipt.id).split("@")[0]
             }
             elide: Text.ElideRight
             Layout.fillWidth: true
@@ -281,27 +240,27 @@ CenteredDialog {
         }
 
         StatusRow {
-            visible: root.infoValid
+            visible: !root.loading && root.errorText.length === 0
             iconName: "qrc:/data/icons/checkmark-bold.svg"
             label: Whatevr.I18n.i18nc("@label time the message was sent", "Sent")
-            value: root.infoValid ? root.formatTimestamp(root.info.sentTsUnix) : "—"
+            value: root.formatTimestamp(Whatevr.ProtocolController.messageReceiptsSentTimestamp)
         }
 
         StatusRow {
-            visible: root.infoValid && !root.isGroup
+            visible: !root.loading && root.errorText.length === 0 && !root.isGroup
             iconName: "qrc:/data/icons/checkmark-bold.svg"
             doubleTick: true
             label: Whatevr.I18n.i18nc("@label time the message was delivered", "Delivered")
-            value: root.infoValid ? root.formatTimestamp(root.info.deliveredTsUnix) : "—"
+            value: root.formatTimestamp(root.directReceipt.delivered_ts_unix)
         }
 
         StatusRow {
-            visible: root.infoValid && !root.isGroup
+            visible: !root.loading && root.errorText.length === 0 && !root.isGroup
             iconName: "qrc:/data/icons/checkmark-bold.svg"
             doubleTick: true
             iconColor: activePalette.highlight
             label: Whatevr.I18n.i18nc("@label time the message was read", "Read")
-            value: root.infoValid ? root.formatTimestamp(root.info.readTsUnix) : "—"
+            value: root.formatTimestamp(root.directReceipt.read_ts_unix)
         }
 
         // Group sections: read / delivered member lists.
@@ -318,7 +277,7 @@ CenteredDialog {
             delegate: ParticipantRow {
                 required property var modelData
                 receipt: modelData
-                timestampKey: "readTsUnix"
+                timestampKey: "read_ts_unix"
             }
         }
 
@@ -334,7 +293,7 @@ CenteredDialog {
             delegate: ParticipantRow {
                 required property var modelData
                 receipt: modelData
-                timestampKey: "deliveredTsUnix"
+                timestampKey: "delivered_ts_unix"
             }
         }
 

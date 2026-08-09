@@ -315,7 +315,7 @@ Kirigami.Page {
 
         readonly property bool selectionActive: messageView.selectionActive
         readonly property bool hasPresenceText: Whatevr.ProtocolController.hasSelectedChat
-                                                && Whatevr.AppController.selectedChatPresenceText.length > 0
+                                                && Whatevr.ProtocolController.selectedChatPresenceText.length > 0
         readonly property real avatarSize: Kirigami.Units.gridUnit * 1.8
         readonly property real subtextPixelSize: Math.max(8, Math.round(Kirigami.Theme.smallFont.pixelSize * 0.82))
 
@@ -396,7 +396,7 @@ Kirigami.Page {
                 anchors.top: titleLabel.bottom
                 anchors.topMargin: Kirigami.Units.smallSpacing / 3
                 visible: Whatevr.ProtocolController.hasSelectedChat
-                text: headerTitle.hasPresenceText ? Whatevr.AppController.selectedChatPresenceText : " "
+                text: headerTitle.hasPresenceText ? Whatevr.ProtocolController.selectedChatPresenceText : " "
                 elide: Text.ElideRight
                 opacity: headerTitle.hasPresenceText ? 1 : 0
                 color: Kirigami.Theme.disabledTextColor
