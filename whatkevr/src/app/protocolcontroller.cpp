@@ -233,6 +233,11 @@ ProtocolController::ProtocolController(QString socketPath, QObject *parent)
 
     m_messagesModel = new CollectionViewModel(this);
     m_messagePresentationModel = new ProtocolMessageModel(m_messagesModel, this);
+    // Media transfers (D4c): the global `transfers` view is what makes a
+    // downloading bubble show progress. The timeline model reads it through by
+    // message id at render time — the two views are never merged into one row.
+    m_transfersModel = new CollectionViewModel(this);
+    m_messagePresentationModel->setTransfersSource(m_transfersModel);
     connect(m_messagesModel, &CollectionViewModel::readyReceived, this, &ProtocolController::onMessagesReady);
     connect(m_messagesModel, &QAbstractItemModel::modelReset, this, &ProtocolController::onMessagesReset);
     connect(m_messagesModel, &CollectionViewModel::countChanged, this, [this] {
@@ -360,6 +365,7 @@ ProtocolController::~ProtocolController()
     delete m_receiptsSub;
     delete m_pinnedSub;
     delete m_forwardTargetsSub;
+    delete m_transfersSub;
     m_connectionSub = nullptr;
     m_loginSub = nullptr;
     m_chatsSub = nullptr;
@@ -371,6 +377,7 @@ ProtocolController::~ProtocolController()
     m_receiptsSub = nullptr;
     m_pinnedSub = nullptr;
     m_forwardTargetsSub = nullptr;
+    m_transfersSub = nullptr;
     if (m_client) {
         m_client->stop();
     }
@@ -408,10 +415,13 @@ void ProtocolController::start()
     m_connectionSub = m_client->subscribe(QStringLiteral("connection"), {}, m_connectionModel);
     m_loginSub = m_client->subscribe(QStringLiteral("login"), {}, m_loginModel);
     subscribeChats();
-    // The typing and sync views are global (unfiltered) and observed for the
-    // whole session, like connection/login.
+    // The typing, sync and transfers views are global (unfiltered) and observed
+    // for the whole session, like connection/login. `transfers` carries only
+    // downloads that are running right now, so it is empty almost always and
+    // costs nothing to hold open.
     m_typingSub = m_client->subscribe(QStringLiteral("typing"), {}, m_typingModel);
     m_syncSub = m_client->subscribe(QStringLiteral("sync"), {}, m_syncModel);
+    m_transfersSub = m_client->subscribe(QStringLiteral("transfers"), {}, m_transfersModel);
     m_client->start();
 }
 
@@ -1414,6 +1424,22 @@ void ProtocolController::unpinMessage(const QString &messageId)
     sendMessageCommand(QStringLiteral("message.pin"),
                        {{QStringLiteral("message_id"), messageId}, {QStringLiteral("pinned"), false}},
                        i18nc("@info", "Unable to unpin the message"));
+}
+
+// --- media download (D4c) ---------------------------------------------------
+
+void ProtocolController::downloadMessageMedia(const QString &messageId)
+{
+    if (messageId.isEmpty()) {
+        return;
+    }
+    // The command's own reply only reports that the daemon could not *start*
+    // the download; anything that goes wrong during it lands on the message row
+    // as `media.download_error`, which the bubble already renders, so this must
+    // not also raise a transient error for the same failure.
+    sendMessageCommand(QStringLiteral("media.download"),
+                       {{QStringLiteral("message_id"), messageId}},
+                       i18nc("@info", "Unable to download the attachment"));
 }
 
 void ProtocolController::forwardMessage(const QString &messageId, const QStringList &chatIds)

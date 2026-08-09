@@ -132,6 +132,59 @@ int ProtocolMessageModel::rowCount(const QModelIndex &parent) const
     return parent.isValid() || !m_source ? 0 : m_source->rowCount();
 }
 
+void ProtocolMessageModel::setTransfersSource(whatevr::proto::CollectionViewModel *transfers)
+{
+    if (m_transfers == transfers) {
+        return;
+    }
+    if (m_transfers) {
+        disconnect(m_transfers, nullptr, this, nullptr);
+    }
+    m_transfers = transfers;
+    if (m_transfers) {
+        // `transfers` holds only what is downloading right now — usually nothing,
+        // at most a handful of rows — and the daemon throttles progress to ~7/s
+        // per transfer, so any change re-reads the two download roles across the
+        // timeline instead of mapping transfer rows back to timeline rows. A
+        // dataChanged only wakes the delegates actually on screen.
+        const auto invalidate = [this] { invalidateTransferRoles(); };
+        connect(m_transfers, &QAbstractItemModel::rowsInserted, this, invalidate);
+        connect(m_transfers, &QAbstractItemModel::rowsRemoved, this, invalidate);
+        connect(m_transfers, &QAbstractItemModel::dataChanged, this, invalidate);
+        connect(m_transfers, &QAbstractItemModel::modelReset, this, invalidate);
+        // The source is held by pointer, not owned: if it outlives its owner the
+        // rows just stop reporting downloads.
+        connect(m_transfers, &QObject::destroyed, this, [this] { m_transfers = nullptr; });
+    }
+    invalidateTransferRoles();
+}
+
+QVariantMap ProtocolMessageModel::transfer(const QVariantMap &item) const
+{
+    if (!m_transfers) {
+        return {};
+    }
+    // The `transfers` view is keyed by message id (PROTOCOL.md), so the join is
+    // a plain lookup — no frontend index to keep in sync. Only inbound rows
+    // count: these roles are the bubble's *download* state, and the view's
+    // `direction` is what tells the two apart.
+    const QVariantMap active = m_transfers->itemById(item.value(QStringLiteral("id")).toString());
+    if (active.value(QStringLiteral("direction")).toString() != QLatin1String("download")) {
+        return {};
+    }
+    return active;
+}
+
+void ProtocolMessageModel::invalidateTransferRoles()
+{
+    const int rows = rowCount();
+    if (rows == 0) {
+        return;
+    }
+    Q_EMIT dataChanged(index(0, 0), index(rows - 1, 0),
+                       {MediaDownloadingRole, MediaDownloadProgressRole});
+}
+
 QVariantMap ProtocolMessageModel::wireItem(int row) const
 {
     if (!m_source || row < 0 || row >= m_source->rowCount()) {
@@ -244,7 +297,7 @@ QVariant ProtocolMessageModel::data(const QModelIndex &index, int role) const
     case GroupEndRole:
         return endsSenderGroup(index.row());
     case MediaDownloadingRole:
-        return false;
+        return !transfer(item).isEmpty();
     case MediaDownloadErrorRole:
         return mediaData.value(QStringLiteral("download_error"));
     case ReplyToMessageIdRole:
@@ -287,8 +340,18 @@ QVariant ProtocolMessageModel::data(const QModelIndex &index, int role) const
         return item.value(QStringLiteral("pinned_until"));
     case ReactionsRole:
         return reactions(item);
-    case MediaDownloadProgressRole:
-        return -1.0;
+    case MediaDownloadProgressRole: {
+        // -1 means "downloading, size unknown" to the bubble (it shows an
+        // indeterminate spinner instead of the progress ring), which is also
+        // what a message with no active transfer reports.
+        const QVariantMap active = transfer(item);
+        const qulonglong total = active.value(QStringLiteral("total_bytes")).toULongLong();
+        if (active.isEmpty() || total == 0) {
+            return -1.0;
+        }
+        const qulonglong received = active.value(QStringLiteral("received_bytes")).toULongLong();
+        return std::min(1.0, static_cast<double>(received) / static_cast<double>(total));
+    }
     default:
         return {};
     }

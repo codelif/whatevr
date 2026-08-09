@@ -246,7 +246,7 @@ Item {
         if (!autoDownloadWanted || mediaDownloading || mediaDownloadError.length > 0)
             return;
         autoDownloadTriggered = true;
-        Whatevr.AppController.downloadMessageMedia(messageId);
+        Whatevr.ProtocolController.downloadMessageMedia(messageId);
     }
 
     onActiveInViewportChanged: maybeAutoDownloadMedia()
@@ -1060,7 +1060,7 @@ Item {
                             text: Whatevr.I18n.i18nc("@action:button", "Load image")
                             enabled: root.messageId.length > 0
                             onClicked: {
-                                Whatevr.AppController.downloadMessageMedia(root.messageId)
+                                Whatevr.ProtocolController.downloadMessageMedia(root.messageId)
                                 root.conversationFocusRequested()
                             }
                         }
@@ -1667,7 +1667,7 @@ Item {
                     text: Whatevr.I18n.i18nc("@action:button", "Load sticker")
                     enabled: root.messageId.length > 0
                     onClicked: {
-                        Whatevr.AppController.downloadMessageMedia(root.messageId)
+                        Whatevr.ProtocolController.downloadMessageMedia(root.messageId)
                         root.conversationFocusRequested()
                     }
                 }

@@ -87,6 +87,14 @@ public:
     [[nodiscard]] QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
     [[nodiscard]] QHash<int, QByteArray> roleNames() const override;
 
+    // Compose the global `transfers` view (D4c) into the two download roles.
+    // The two views stay separate on the wire — `messages` owns the durable
+    // media state (`path`, `download_error`), `transfers` owns the in-progress
+    // bytes — and this adapter reads the second one through by message id at
+    // render time; it copies and caches nothing. Optional: with no transfers
+    // source the rows simply report "not downloading".
+    void setTransfersSource(whatevr::proto::CollectionViewModel *transfers);
+
     [[nodiscard]] Q_INVOKABLE int indexOf(const QString &messageId) const;
     [[nodiscard]] Q_INVOKABLE QString messageIdAt(int row) const;
     [[nodiscard]] Q_INVOKABLE QString dateTextForRow(int row) const;
@@ -113,6 +121,9 @@ private:
     };
 
     [[nodiscard]] QVariantMap wireItem(int row) const;
+    // The active `transfers` row for this message, or an empty map when nothing
+    // is downloading it.
+    [[nodiscard]] QVariantMap transfer(const QVariantMap &item) const;
     [[nodiscard]] static QString displayText(const QVariantMap &item);
     [[nodiscard]] static QVariantMap sender(const QVariantMap &item);
     [[nodiscard]] static QVariantMap media(const QVariantMap &item);
@@ -137,8 +148,10 @@ private:
     void remeasure(TextPresentation &presentation) const;
     void invalidateRows(int first, int last);
     void emitAllRolesChanged(int first, int last);
+    void invalidateTransferRoles();
 
     whatevr::proto::CollectionViewModel *m_source;
+    whatevr::proto::CollectionViewModel *m_transfers = nullptr;
     mutable QHash<QString, TextPresentation> m_textById;
     QFont m_bodyFont;
     QFontMetricsF m_bodyMetrics;

@@ -283,6 +283,14 @@ public:
     // revoke tombstone all arrive back as ordinary `messages`/`pinned` view
     // upserts (rule 2), so nothing is applied locally and there is no
     // optimistic update to roll back on failure.
+    // Media download (D4c): `media.download` acks immediately and the daemon
+    // runs the transfer in the background. Live progress arrives through the
+    // global `transfers` view (composed into the timeline's download roles),
+    // the finished file as a `messages` upsert carrying `media.path`, and a
+    // failure as the same row's durable `media.download_error` — so this call
+    // keeps no per-message state and there is nothing to roll back.
+    Q_INVOKABLE void downloadMessageMedia(const QString &messageId);
+
     Q_INVOKABLE void sendReaction(const QString &messageId, const QString &emoji);
     Q_INVOKABLE void editMessage(const QString &messageId, const QString &newText);
     Q_INVOKABLE void revokeMessage(const QString &messageId);
@@ -427,6 +435,7 @@ private:
     whatevr::proto::CollectionViewModel *m_receiptsModel = nullptr;
     whatevr::proto::CollectionViewModel *m_pinnedModel = nullptr;
     whatevr::proto::CollectionViewModel *m_forwardTargetsModel = nullptr;
+    whatevr::proto::CollectionViewModel *m_transfersModel = nullptr;
     ProtocolMessageModel *m_messagePresentationModel = nullptr;
     whatevr::proto::Subscription *m_connectionSub = nullptr;
     whatevr::proto::Subscription *m_loginSub = nullptr;
@@ -439,6 +448,7 @@ private:
     whatevr::proto::Subscription *m_receiptsSub = nullptr;
     whatevr::proto::Subscription *m_pinnedSub = nullptr;
     whatevr::proto::Subscription *m_forwardTargetsSub = nullptr;
+    whatevr::proto::Subscription *m_transfersSub = nullptr;
     int m_chatFilter = 0; // 0 = all, 1 = direct, 2 = groups
     int m_typingRevision = 0;
 
