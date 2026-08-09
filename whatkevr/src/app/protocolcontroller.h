@@ -3,6 +3,7 @@
 #include <QAbstractItemModel>
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <QVariantMap>
 #include <qqmlintegration.h>
 
@@ -131,6 +132,14 @@ class ProtocolController final : public QObject
     Q_PROPERTY(qint64 messageReceiptsSentTimestamp READ messageReceiptsSentTimestamp NOTIFY messageReceiptsChanged FINAL)
     Q_PROPERTY(int messageReceiptsRevision READ messageReceiptsRevision NOTIFY messageReceiptsChanged FINAL)
 
+    // Composer + send paths (D4a): `send.text`/`send.media` acks and the
+    // in-flight/error state MessageComposer binds to. Sent messages are never
+    // applied locally — they arrive back through the `messages` view upsert
+    // like any other message.
+    Q_PROPERTY(bool composerEnabled READ composerEnabled NOTIFY composerChanged FINAL)
+    Q_PROPERTY(bool sendInFlight READ sendInFlight NOTIFY composerChanged FINAL)
+    Q_PROPERTY(QString composerErrorText READ composerErrorText NOTIFY composerChanged FINAL)
+
 public:
     static void setInstance(ProtocolController *instance);
     static ProtocolController *create(QQmlEngine *qmlEngine, QJSEngine *jsEngine);
@@ -222,6 +231,24 @@ public:
     // an empty map before delivery begins.
     [[nodiscard]] Q_INVOKABLE QVariantMap directMessageReceipt() const;
 
+    [[nodiscard]] bool composerEnabled() const;
+    [[nodiscard]] bool sendInFlight() const { return m_sendInFlight; }
+    [[nodiscard]] QString composerErrorText() const { return m_composerErrorText; }
+
+    // Composer send paths (D4a): map straight to `send.text`/`send.media`; the
+    // daemon acks with an id only, the rendered message arrives via the
+    // `messages` view. mentionedJids/replyToMessageId/caption may be empty.
+    Q_INVOKABLE void sendText(const QString &text, const QString &replyToMessageId, const QStringList &mentionedJids);
+    Q_INVOKABLE void sendMedia(const QString &fileUrl, const QString &caption, const QString &replyToMessageId);
+    // Sends whatever image the clipboard currently holds (pasted bitmap or a
+    // local image file URL), same as sendMedia. Returns false when the
+    // clipboard had nothing sendable, so the caller can fall back to a normal
+    // paste-as-text.
+    Q_INVOKABLE bool sendClipboardImage(const QString &caption, const QString &replyToMessageId);
+    // Maps to `chat.typing`; the composer calls this on every start/stop and
+    // periodically while composing (WhatsApp's composing indicator has a TTL).
+    Q_INVOKABLE void setSelectedChatComposing(bool composing);
+
     Q_INVOKABLE void startDaemon();
     Q_INVOKABLE void triggerPrimaryAction();
     Q_INVOKABLE void copyToClipboard(const QString &text);
@@ -266,6 +293,7 @@ Q_SIGNALS:
     void unreadAnchorChanged();
     void presenceChanged();
     void messageReceiptsChanged();
+    void composerChanged();
     void messageJumpReady(const QString &messageId);
     void messageJumpUnavailable(const QString &messageId);
     void openChatRequested(const QString &chatId);
@@ -313,6 +341,10 @@ private:
     void onMessagesReset();
     void extendMessages(const QString &direction, bool force = false);
     void sendSessionUpdate();
+
+    // Clears the unread-anchor divider (a send implies the user has seen
+    // everything up to it) — mirrors AppController::dismissUnreadAnchor.
+    void dismissUnreadAnchor();
 
     // (Re)point the `presence` subscription at whatever chat the conversation is
     // currently showing, or drop it when nothing is.
@@ -388,6 +420,14 @@ private:
     bool m_reconnectInFlight = false;
     QString m_bannerText;
     QString m_actionError;
+
+    // Composer send state (D4a).
+    bool m_sendInFlight = false;
+    QString m_composerErrorText;
+    // The chat a local "composing" was last sent true for, so a stop is only
+    // sent to the chat that actually owns the composing state (mirrors
+    // AppController::m_localComposingChatId).
+    QString m_localComposingChatId;
 
     QTimer *m_startupGraceTimer = nullptr;
     QTimer *m_qrTimer = nullptr;

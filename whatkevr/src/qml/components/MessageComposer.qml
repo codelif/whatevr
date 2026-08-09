@@ -758,7 +758,7 @@ Frame {
                         }
 
                         if (event.matches(StandardKey.Paste) && !root.editing) {
-                            if (Whatevr.AppController.sendClipboardImage(root.inputPlainText(), root.replyToMessageId)) {
+                            if (Whatevr.ProtocolController.sendClipboardImage(root.inputPlainText(), root.replyToMessageId)) {
                                 event.accepted = true
                                 root.setComposing(false)
                                 root.replyConsumed()
