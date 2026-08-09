@@ -320,6 +320,11 @@ private:
                 reply(id, QJsonObject{});
             }
             Q_EMIT commandReceived();
+        } else if (method.startsWith(QLatin1String("media."))) {
+            lastCommandMethod = method;
+            lastCommandParams = params;
+            reply(id, QJsonObject{});
+            Q_EMIT commandReceived();
         } else if (method == QLatin1String("daemon.reconnect")) {
             ++reconnectCount;
             reply(id, QJsonObject{});
@@ -1436,6 +1441,59 @@ private Q_SLOTS:
         QCOMPARE(ctrl.pinnedMessagesCount(), 0);
         QVERIFY(ctrl.pinnedMessagesReady());
         QTRY_VERIFY(daemon.unsubscribedViews.contains(QStringLiteral("pinned")));
+    }
+
+    // D4c: `media.download` is a bare ack and the progress a downloading bubble
+    // shows comes from the global `transfers` view, read through the timeline's
+    // download roles. Nothing about a download is stored frontend-side.
+    void mediaDownloadRidesTheTransfersView()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+        daemon.setActiveChats({chatRow(QStringLiteral("a@s"), QStringLiteral("Alice"), QStringLiteral("1-000"))});
+        daemon.setMessages({messageRow(QStringLiteral("m1"), QStringLiteral("0001"))});
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+        QTRY_VERIFY(!ctrl.chatsLoading());
+        // Global and session-long, like typing/sync — it carries only what is
+        // downloading right now.
+        QTRY_COMPARE(daemon.subscribeCountByView.value(QStringLiteral("transfers")), 1);
+
+        ctrl.setConversationVisible(true);
+        ctrl.selectChat(QStringLiteral("a@s"));
+        QAbstractItemModel *timeline = ctrl.messageListModel();
+        QTRY_COMPARE(timeline->rowCount(), 1);
+        const auto downloading = [timeline] {
+            return timeline->data(timeline->index(0, 0), ProtocolMessageModel::MediaDownloadingRole).toBool();
+        };
+        const auto progress = [timeline] {
+            return timeline->data(timeline->index(0, 0), ProtocolMessageModel::MediaDownloadProgressRole).toDouble();
+        };
+        QVERIFY(!downloading());
+
+        ctrl.downloadMessageMedia(QStringLiteral("m1"));
+        QTRY_COMPARE(daemon.lastCommandMethod, QStringLiteral("media.download"));
+        QCOMPARE(daemon.lastCommandParams.value(QStringLiteral("message_id")).toString(),
+                 QStringLiteral("m1"));
+        // The ack alone changes nothing on screen: the bubble only starts
+        // spinning once the daemon publishes the transfer.
+        QVERIFY(!downloading());
+
+        daemon.pushUpsert(QStringLiteral("transfers"), QJsonObject{
+                              {QStringLiteral("id"), QStringLiteral("m1")},
+                              {QStringLiteral("message_id"), QStringLiteral("m1")},
+                              {QStringLiteral("direction"), QStringLiteral("download")},
+                              {QStringLiteral("received_bytes"), 256},
+                              {QStringLiteral("total_bytes"), 1024},
+                          }, QStringLiteral("m1"));
+        QTRY_VERIFY(downloading());
+        QCOMPARE(progress(), 0.25);
+
+        // Terminal: the row is removed and the outcome arrives on the message.
+        daemon.pushRemove(QStringLiteral("transfers"), QStringLiteral("m1"));
+        QTRY_VERIFY(!downloading());
+        QCOMPARE(progress(), -1.0);
     }
 
     // The forward picker holds its own `chats` subscription for exactly as long

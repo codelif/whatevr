@@ -109,7 +109,7 @@ Status: `todo` | `doing` | `done` | `blocked` | `needs-decision`
 | D3c | Port conversation chrome: selected-chat `presence` header + dialog-scoped live `receipts` view | done | `ProtocolController` grew a `presence` subscription scoped to the *displayed* conversation (subscribed/dropped alongside the messages window, so the upstream WA presence demand tracks what is on screen) and `selectedChatPresenceText`, which composes the global `typing` view over the per-chat availability/last-seen (typing wins, then `online`, then a mirrored `formatLastSeen`); `ConversationPane`'s header subtext repointed to it. `MessageInfoDialog` now lives entirely on the `receipts` view: `openMessageReceipts`/`closeMessageReceipts` make the dialog's lifetime the subscription's lifetime, rows come from a `CollectionViewModel` read through `messageReceipts()` + `messageReceiptsRevision`, direct chats read the daemon's `"peer"` aggregate via `directMessageReceipt()`, `is_group` comes from the `chats` row and the Sent time from the `messages` row (no dialog-side copies) — the gRPC `requestMessageInfo` round-trip, its manual avatar patching, and its `info` snapshot are gone. `tst_protocolcontroller` +3 (presence fill/live flip/typing precedence/visibility scoping, group receipt roster live-update + dialog-scoped unsubscribe, direct aggregate + `not_found` error); the fake daemon gained per-view subscribe params/counts and unsubscribe tracking. `just build`, all 26+16+7 Qt tests, `go test -tags sqlite_fts5 ./...`, `scripts/conformance` and `qmllint` (no new warnings) pass; `presence`/`receipts` hand-exercised over a raw socket. **Live-account check not performed** — see the D-phase note. No PROTOCOL.md change. |
 | D4a | Port the composer's own send paths: `send.text`, `send.media` (image attach + clipboard/drag-drop paste), `chat.typing` composing indicator | done | `ProtocolController` gained `composerEnabled`/`sendInFlight`/`composerErrorText` plus `sendText`/`sendMedia`/`sendClipboardImage`/`setSelectedChatComposing` (protocolcontroller.{h,cpp}); `ConversationPane.qml`'s composer signal handlers and `MessageComposer.qml`'s clipboard-paste call repointed from `AppController` to `ProtocolController`. A send never applies the command result locally — the daemon delivers the sent message through the ordinary `messages` view upsert (rule 2), so there is no `applyMessageEvent`-equivalent; a send while an unread anchor is showing dismisses that divider (the user has now seen past it), mirroring `AppController::dismissUnreadAnchor`. `setSelectedChatComposing` keeps the gRPC version's per-chat dedupe (a "stop" only sends for the chat a "start" actually went to). Mentions/emoji picker/group-info-driven `@`-autocomplete and drafts stay on `AppController` (unchanged — mentions need `group_members`, not yet subscribed by `ProtocolController`; drafts are frontend-only state rule 1 already allows reading cross-stack, same as D2b1). `just build`, all three Qt suites (`tst_protocolcontroller` 29, `tst_protocolcore` 16, `tst_protocolmessagemodel` 7), `go test -tags sqlite_fts5 ./...`, and `scripts/conformance` pass; `send.text`/`send.media`/`chat.typing` hand-exercised over a raw socket against a throwaway daemon (params accepted, reached `not_logged_in` rather than `invalid_params` — confirms the wire shape matches the daemon's C2 handlers) plus a headless app launch (no QML errors). No PROTOCOL.md change. **Live-account send/receive not verified** — same environment gap as D3c (no logged-in WhatsApp session available here); see D-phase notes. |
 | D4b | Port message actions: react/edit/revoke/delete/star/pin/forward (context menu, `ReactionDetailsDialog`, `PinnedMessagesBanner`) | done | `ProtocolController` gained the seven `message.*` commands (`sendReaction`/`editMessage`/`revokeMessage`/`deleteMessageForMe`/`setMessageStarred`/`pinMessage`/`unpinMessage`/`forwardMessage`) plus `canEditAt`, all **ack-only**: the gRPC path's optimistic apply-and-rollback (`applyOptimisticEdit`/`Reaction`/`Star`, the pin's cached-message round-trip) is **deleted**, since the reaction pill, star, pin, edited body and revoke tombstone all arrive back as ordinary `messages`/`pinned` upserts (rule 2) — the same simplification D4a got for sends. Failures surface through ported `messageActionFailed`/`messageForwarded` signals (`MessageView`'s `Connections` repointed); a forward batch still reports once for the whole multi-message selection. `PinnedMessagesBanner` now reads the per-chat **`pinned` view** (subscribed/dropped with the displayed conversation, like D3c's `presence`) through `pinnedMessagesCount`/`pinnedMessageAt(i)`/`pinnedMessagesReady` — `PinnedMessagesModel`, its insertion-position ordering and `AppController::loadPinnedMessages` are off the render path. `ForwardChatPickerDialog` holds its **own dialog-scoped `chats` subscription** (`filter:"all"`, `archived:false`) read via `forwardChatTargets(query)` + `forwardTargetsRevision`; this **deleted the last `ChatListFilterModel` proxy from the UI** (the search box is now presentation-side filtering over rows it already has, per PROTOCOL's `group_members` precedent). Net frontend deletion of ordering/caching logic. `just build`, all three Qt suites (`tst_protocolcontroller` 32, `tst_protocolcore` 16, `tst_protocolmessagemodel` 7), `go test -tags sqlite_fts5 ./...`, `scripts/conformance` and `qmllint` (six warnings **removed**, none added) pass; the seven commands + the `pinned` subscribe hand-exercised over a raw socket against a throwaway daemon, plus an offscreen app launch. No PROTOCOL.md change. **Live-account check not performed** — same environment gap as D3c/D4a; **and** the picker now lists active chats only (see Decision log). |
-| D4c | Port `media.download` + the `transfers` progress view + the message image viewer (`ChatBubble` download UI, `ProfilePictureViewer` reuse) | todo | |
+| D4c | Port `media.download` + the `transfers` progress view + the message image viewer (`ChatBubble` download UI, `ProfilePictureViewer` reuse) | done | `ProtocolController` gained `downloadMessageMedia` (ack-only `media.download`) and a session-long **global `transfers`** subscription, handed to `ProtocolMessageModel::setTransfersSource`. The timeline's two download roles (`mediaDownloading`/`mediaDownloadProgress`, stubbed `false`/`-1` since D3a) now **read through** to that view by message id — a keyed lookup at render time, no copy, no cache, the same compose-two-views shape as D2b2's typing-in-chat-rows and D3c's typing-over-presence; `direction` discriminates so a future upload row cannot light a download spinner. `ChatBubble`'s three `AppController.downloadMessageMedia` call sites (auto-download-on-viewport + the two manual buttons) repointed; the gRPC `m_mediaDownloadingMessageIds`/`m_mediaDownloadReplies` optimistic set is off the render path. Durable failure was already right: `media.download_error` rides the message row (B7b) and the bubble renders it. **The image viewer needed no work** — `ConversationPane`'s `ProfilePictureViewer` lightbox has been fed by the protocol model's `media.path` since D3b. `just build`, all three Qt suites (`tst_protocolcontroller` 33, `tst_protocolcore` 16, `tst_protocolmessagemodel` 8), `go test -tags sqlite_fts5 ./...`, `scripts/conformance` and `qmllint` (clean) pass; `transfers` + `media.download` hand-exercised over a raw socket against a throwaway daemon. No PROTOCOL.md change. **Live-account check not performed** — same environment gap as D3c/D4a/D4b; **and** two reads stay on `AppController` by design (see Decision log). |
 | D5 | Port info dialogs (contact/group/members), starred/pinned pages, unified + in-chat search | todo | |
 | D6 | Port settings pages (privacy/prefs/blocklist/profile) + sticker/emoji pickers, incl. `send.sticker` (moved here from D4, see decision log) | todo | |
 | D7 | Remove all gRPC client code + qt6-grpc from whatkevr; whatkevr runs 100% on the new protocol | todo | |
@@ -126,6 +126,26 @@ Status: `todo` | `doing` | `done` | `blocked` | `needs-decision`
 _None._
 
 ## D-phase notes
+
+- 2026-08-10 — **D4c live verification gap (environment, unchanged since D3c) —
+  and the one thing it actually leaves untested.** Still no logged-in WhatsApp
+  session here, so no real byte-streaming download was watched end to end.
+  Verified instead: a throwaway `whatevrd` against isolated `XDG_*` dirs, hand
+  -exercised over a raw socket — `subscribe {"view":"transfers"}` →
+  `{"sub":1}` then `ready`/`exhausted` (empty, as it should be with nothing
+  downloading), `media.download` with the exact params `ProtocolController`
+  sends → `{}` (the ack-then-lifecycle contract: it acks even for an id absent
+  from that empty store, because the transfer runs in the background), a
+  deliberately malformed `media.download` → `invalid_params`, and
+  `extend direction:"newer"` on the transfers window correctly refused. Plus the
+  client-side half against a fake daemon in `tst_protocolcontroller`
+  (subscribe → transfer upsert → 25% → remove) and `tst_protocolmessagemodel`,
+  the Qt/Go/conformance suites, a clean `qmllint`, and an offscreen `whatkevr`
+  launch. **What that leaves genuinely unverified is the progress ring's feel**
+  — the daemon throttles progress to one event per 150 ms per transfer
+  (`mediaProgressReportInterval`), and whether that reads as smooth in the
+  bubble is a thing you have to watch. Whoever has a session next: download a
+  large photo/video and look at the ring, not just the end state.
 
 - 2026-08-10 — **D4b live verification gap (environment, unchanged from D4a).**
   Still no logged-in WhatsApp session here, so no real react/edit/revoke/pin/
@@ -217,6 +237,42 @@ _None._
   no GUI/gRPC) and drive the real client over a real Unix socket.
 
 ## Decision log
+
+- 2026-08-10 — D4c implementation readings (no PROTOCOL.md change; flag if you
+  disagree): (1) **The bubble composes two views; neither is copied into the
+  other.** A downloading bubble needs the message row (kind, thumbnail, durable
+  `media.download_error`) *and* the `transfers` row (bytes so far), and PROTOCOL
+  keeps them apart on purpose — one is slow-changing durable state, the other is
+  fast-changing work-in-progress, the *Granularity* split. `ProtocolMessageModel`
+  therefore reads `transfers` through by message id when a role is asked for and
+  stores nothing; the daemon keys that view by `message_id`, which is what makes
+  the join a lookup rather than a merge. Precedent: D2b2's `chatTyping(chatId)`
+  and D3c's typing-over-presence header. (2) **No optimistic "downloading"
+  flag** — the D4b doctrine again. The gRPC controller inserted the id into
+  `m_mediaDownloadingMessageIds` on click so the spinner appeared instantly; the
+  protocol version waits for the daemon, which publishes the transfer *before*
+  the network leg starts (`PublishMediaDownloadChanged(..., true, ...)` is the
+  first thing `DownloadMessageMedia` does), so the spinner still comes up within
+  one local round trip and there is no client state that can disagree with the
+  daemon. (3) **Progress invalidation is coarse on purpose.** Any change to
+  `transfers` re-reads the two download roles across the whole timeline rather
+  than mapping transfer rows back to timeline rows: the view is empty almost
+  always, holds a handful of rows at worst, the daemon throttles to ~7 events/s
+  per transfer, and a `dataChanged` only wakes delegates that are on screen. The
+  bookkeeping to be precise would cost more than it saves. (4) **The image
+  viewer was already ported.** D4c's row names it, but `ConversationPane`'s
+  `ProfilePictureViewer` lightbox has been opening off the protocol model's
+  `media.path` since D3b — nothing to do, so nothing was done. (5) **Two reads
+  deliberately left on `AppController`, both for their owning step.** The
+  auto-download *preferences* (`prefs.autoDownloadPhotos`…) come from the
+  `preferences` view, which is D6's; porting the read now would mean two
+  spellings of those keys in the tree until D6 flips the settings pages. And
+  `media.fetch_profile_picture` has exactly one caller, `ContactInfoDialog`, so
+  it ports with D5's info dialogs — wiring it here would be an unused invokable,
+  the same call D2b1 made about `chat.ensure_direct`. The download path itself
+  is fully protocol-driven either way. (6) `saveMediaAs` and
+  `copyImageToClipboard` stay on `AppController`: local file utilities with no
+  daemon command behind them (as noted in D4b).
 
 - 2026-08-10 — D4b implementation readings (no PROTOCOL.md change; **one
   behaviour narrowing needs your call**): (1) **No optimistic updates, and that
