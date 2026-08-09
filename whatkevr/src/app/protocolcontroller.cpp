@@ -6,13 +6,18 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QImage>
+#include <QJsonArray>
 #include <QLocale>
+#include <QMimeData>
 #include <QPointer>
 #include <QProcess>
 #include <QQmlEngine>
 #include <QStandardPaths>
 #include <QStringList>
 #include <QTimer>
+#include <QUrl>
+#include <QUuid>
 
 #include <KLocalizedString>
 
@@ -22,12 +27,14 @@
 #include "objectviewmodel.h"
 #include "protocolclient.h"
 #include "protocolmessagemodel.h"
+#include "richtext.h"
 
 using whatevr::proto::CollectionViewModel;
 using whatevr::proto::ObjectViewModel;
 using whatevr::proto::ProtocolClient;
 using whatevr::proto::ProtocolError;
 using whatevr::proto::Subscription;
+using whatevr::util::plainTextFromQtRichText;
 
 namespace
 {
@@ -1100,6 +1107,178 @@ QVariantMap ProtocolController::directMessageReceipt() const
     // The daemon keys a direct chat's single aggregate row under this sentinel
     // (GetMessageInfo carries no jid for a 1:1 recipient).
     return m_receiptsModel->itemById(QStringLiteral("peer"));
+}
+
+// --- composer + send paths (D4a) -------------------------------------------
+
+bool ProtocolController::composerEnabled() const
+{
+    return hasSelectedChat() && m_clientReady;
+}
+
+void ProtocolController::dismissUnreadAnchor()
+{
+    const bool changed = !m_unreadAnchorMessageId.isEmpty() || m_unreadAnchorCount != 0 || m_unreadAnchorResolving;
+    m_unreadAnchorMessageId.clear();
+    m_unreadAnchorCount = 0;
+    m_unreadAnchorResolving = false;
+    if (changed) {
+        Q_EMIT unreadAnchorChanged();
+    }
+}
+
+void ProtocolController::sendText(const QString &text, const QString &replyToMessageId, const QStringList &mentionedJids)
+{
+    const QString trimmed = plainTextFromQtRichText(text).trimmed();
+    if (m_selectedChatId.isEmpty() || trimmed.isEmpty() || m_sendInFlight) {
+        return;
+    }
+
+    setSelectedChatComposing(false);
+    dismissUnreadAnchor();
+
+    QJsonObject params{{QStringLiteral("chat_id"), m_selectedChatId}, {QStringLiteral("text"), trimmed}};
+    if (const QString reply = replyToMessageId.trimmed(); !reply.isEmpty()) {
+        params.insert(QStringLiteral("reply_to"), reply);
+    }
+    if (!mentionedJids.isEmpty()) {
+        params.insert(QStringLiteral("mentions"), QJsonArray::fromStringList(mentionedJids));
+    }
+
+    m_sendInFlight = true;
+    m_composerErrorText.clear();
+    Q_EMIT composerChanged();
+
+    m_client->request(QStringLiteral("send.text"), params, [this](const QJsonObject &, const ProtocolError &error) {
+        m_sendInFlight = false;
+        m_composerErrorText = error.isError()
+            ? (error.message.isEmpty() ? i18nc("@info", "Unable to send message") : error.message)
+            : QString();
+        Q_EMIT composerChanged();
+    });
+}
+
+void ProtocolController::sendMedia(const QString &fileUrl, const QString &caption, const QString &replyToMessageId)
+{
+    if (m_selectedChatId.isEmpty() || fileUrl.isEmpty() || m_sendInFlight) {
+        return;
+    }
+
+    const QUrl url(fileUrl);
+    const QString filePath = url.isLocalFile() ? url.toLocalFile() : fileUrl;
+    if (filePath.isEmpty()) {
+        return;
+    }
+
+    setSelectedChatComposing(false);
+    dismissUnreadAnchor();
+
+    QJsonObject params{{QStringLiteral("chat_id"), m_selectedChatId},
+                       {QStringLiteral("path"), filePath},
+                       {QStringLiteral("caption"), plainTextFromQtRichText(caption).trimmed()}};
+    if (const QString reply = replyToMessageId.trimmed(); !reply.isEmpty()) {
+        params.insert(QStringLiteral("reply_to"), reply);
+    }
+
+    m_sendInFlight = true;
+    m_composerErrorText.clear();
+    Q_EMIT composerChanged();
+
+    m_client->request(QStringLiteral("send.media"), params, [this](const QJsonObject &, const ProtocolError &error) {
+        m_sendInFlight = false;
+        m_composerErrorText = error.isError()
+            ? (error.message.isEmpty() ? i18nc("@info", "Unable to send image") : error.message)
+            : QString();
+        Q_EMIT composerChanged();
+    });
+}
+
+bool ProtocolController::sendClipboardImage(const QString &caption, const QString &replyToMessageId)
+{
+    if (m_selectedChatId.isEmpty() || m_sendInFlight) {
+        return false;
+    }
+
+    const QClipboard *clipboard = QGuiApplication::clipboard();
+    if (!clipboard) {
+        return false;
+    }
+    const QMimeData *mimeData = clipboard->mimeData();
+    if (!mimeData) {
+        return false;
+    }
+
+    if (mimeData->hasImage()) {
+        const QImage image = qvariant_cast<QImage>(mimeData->imageData());
+        if (image.isNull()) {
+            return false;
+        }
+
+        QString cacheRoot = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
+        if (cacheRoot.isEmpty()) {
+            cacheRoot = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
+        }
+        if (cacheRoot.isEmpty()) {
+            m_composerErrorText = i18nc("@info", "Unable to paste image");
+            Q_EMIT composerChanged();
+            return true;
+        }
+
+        QDir cacheDir(cacheRoot);
+        if (!cacheDir.mkpath(QStringLiteral("clipboard"))) {
+            m_composerErrorText = i18nc("@info", "Unable to paste image");
+            Q_EMIT composerChanged();
+            return true;
+        }
+
+        const QString fileName = QStringLiteral("pasted-%1-%2.png")
+            .arg(QDateTime::currentMSecsSinceEpoch())
+            .arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
+        const QString filePath = cacheDir.filePath(QStringLiteral("clipboard/%1").arg(fileName));
+        if (!image.save(filePath, "PNG")) {
+            m_composerErrorText = i18nc("@info", "Unable to paste image");
+            Q_EMIT composerChanged();
+            return true;
+        }
+
+        sendMedia(filePath, caption, replyToMessageId);
+        return true;
+    }
+
+    if (mimeData->hasUrls()) {
+        for (const QUrl &url : mimeData->urls()) {
+            if (!url.isLocalFile()) {
+                continue;
+            }
+            const QString filePath = url.toLocalFile();
+            const QString suffix = QFileInfo(filePath).suffix().toLower();
+            if (suffix == QLatin1String("png") || suffix == QLatin1String("jpg")
+                || suffix == QLatin1String("jpeg") || suffix == QLatin1String("webp")) {
+                sendMedia(filePath, caption, replyToMessageId);
+                return true;
+            }
+            if (suffix == QLatin1String("gif")) {
+                m_composerErrorText = i18nc("@info", "GIFs can't be sent yet — WhatsApp treats them as short videos");
+                Q_EMIT composerChanged();
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+void ProtocolController::setSelectedChatComposing(bool composing)
+{
+    if (m_selectedChatId.isEmpty()) {
+        return;
+    }
+    if (!composing && m_localComposingChatId != m_selectedChatId) {
+        return;
+    }
+    m_localComposingChatId = composing ? m_selectedChatId : QString();
+    m_client->request(QStringLiteral("chat.typing"),
+                      {{QStringLiteral("chat_id"), m_selectedChatId}, {QStringLiteral("composing"), composing}});
 }
 
 // --- history-sync strip (D2b2) --------------------------------------------

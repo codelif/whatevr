@@ -807,9 +807,9 @@ Kirigami.Page {
 
             Layout.fillWidth: true
             visible: Whatevr.ProtocolController.hasSelectedChat
-            enabledForChat: Whatevr.AppController.composerEnabled
-            sending: Whatevr.AppController.sendInFlight
-            errorText: Whatevr.AppController.composerErrorText
+            enabledForChat: Whatevr.ProtocolController.composerEnabled
+            sending: Whatevr.ProtocolController.sendInFlight
+            errorText: Whatevr.ProtocolController.composerErrorText
             replyToMessageId: root.replyToMessageId
             replyToSenderName: root.replyToSenderName
             replyToText: root.replyToText
@@ -818,9 +818,9 @@ Kirigami.Page {
             replyToOutgoing: root.replyToOutgoing
             editingMessageId: root.editingMessageId
             editingOriginalText: root.editingOriginalText
-            onSendTextRequested: (text, replyToMessageId, mentionedJids) => Whatevr.AppController.sendText(text, replyToMessageId, mentionedJids)
-            onSendImageRequested: (fileUrl, caption, replyToMessageId) => Whatevr.AppController.sendImage(fileUrl, caption, replyToMessageId)
-            onComposingChanged: composing => Whatevr.AppController.setSelectedChatComposing(composing)
+            onSendTextRequested: (text, replyToMessageId, mentionedJids) => Whatevr.ProtocolController.sendText(text, replyToMessageId, mentionedJids)
+            onSendImageRequested: (fileUrl, caption, replyToMessageId) => Whatevr.ProtocolController.sendMedia(fileUrl, caption, replyToMessageId)
+            onComposingChanged: composing => Whatevr.ProtocolController.setSelectedChatComposing(composing)
             onClearReplyRequested: root.clearReplyTarget()
             onReplyConsumed: root.clearReplyTarget()
             onEditRequested: (messageId, text) => Whatevr.AppController.editMessage(messageId, text)

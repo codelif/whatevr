@@ -6,6 +6,7 @@
 
 #include <QCoreApplication>
 #include <QDateTime>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLocalServer>
@@ -78,6 +79,7 @@ public:
     void setHoldMessagesReady(bool hold) { m_holdMessagesReady = hold; }
     void setHoldExtendReady(bool hold) { m_holdExtendReady = hold; }
     void setRejectNextExtend(bool reject) { m_rejectNextExtend = reject; }
+    void setRejectNextSend(bool reject) { m_rejectNextSend = reject; }
 
     void sendOpenChat(const QString &chatId)
     {
@@ -293,6 +295,15 @@ private:
             lastCommandParams = params;
             reply(id, QJsonObject{{QStringLiteral("requested"), true}});
             Q_EMIT commandReceived();
+        } else if (method == QLatin1String("send.text") || method == QLatin1String("send.media")) {
+            lastCommandMethod = method;
+            lastCommandParams = params;
+            if (std::exchange(m_rejectNextSend, false)) {
+                error(id, QStringLiteral("rejected"), QStringLiteral("send rejected"));
+            } else {
+                reply(id, QJsonObject{{QStringLiteral("message_id"), QStringLiteral("sent-1")}});
+            }
+            Q_EMIT commandReceived();
         } else if (method == QLatin1String("daemon.reconnect")) {
             ++reconnectCount;
             reply(id, QJsonObject{});
@@ -369,6 +380,7 @@ private:
     bool m_heldExtendExhausted = false;
     int m_heldExtendSub = -1;
     bool m_rejectNextExtend = false;
+    bool m_rejectNextSend = false;
 };
 
 QJsonObject chatRow(const QString &id, const QString &name, const QString &sort,
@@ -1162,6 +1174,114 @@ private Q_SLOTS:
         QTRY_VERIFY(!ctrl.messageReceiptsError().isEmpty());
         QVERIFY(!ctrl.messageReceiptsLoading()); // an error ends the wait
         QCOMPARE(ctrl.messageReceipts().size(), 0);
+    }
+
+    // sendText maps straight to `send.text` (chat_id/text/reply_to/mentions);
+    // the sent message is never applied locally (no message.* result reading —
+    // it would arrive back through the `messages` view), and a send with an
+    // unread anchor showing dismisses that divider (the user has now seen
+    // everything up to it).
+    void sendTextMapsToDaemonAndClearsUnreadAnchor()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+        daemon.setActiveChats({chatRow(QStringLiteral("a@s"), QStringLiteral("Alice"), QStringLiteral("1-000"),
+                                       QJsonObject{{QStringLiteral("unread"), 2}})});
+        daemon.setUnreadAnchorId(QStringLiteral("m1"));
+        daemon.setMessages({messageRow(QStringLiteral("m2"), QStringLiteral("0002")),
+                            messageRow(QStringLiteral("m1"), QStringLiteral("0001"))});
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+        QTRY_VERIFY(!ctrl.chatsLoading());
+        QVERIFY(!ctrl.composerEnabled()); // no chat selected yet
+        ctrl.setConversationVisible(true);
+        ctrl.selectChat(QStringLiteral("a@s"));
+        QTRY_COMPARE(ctrl.unreadAnchorMessageId(), QStringLiteral("m1"));
+        QVERIFY(ctrl.composerEnabled());
+
+        QSignalSpy commandSpy(&daemon, &FakeDaemon::commandReceived);
+        QSignalSpy composerSpy(&ctrl, &ProtocolController::composerChanged);
+        ctrl.sendText(QStringLiteral("  hello  "), QStringLiteral("m1"), {QStringLiteral("x@s")});
+        QVERIFY(ctrl.sendInFlight());
+        QVERIFY(commandSpy.wait());
+        QCOMPARE(daemon.lastCommandMethod, QStringLiteral("send.text"));
+        QCOMPARE(daemon.lastCommandParams.value(QStringLiteral("chat_id")).toString(), QStringLiteral("a@s"));
+        QCOMPARE(daemon.lastCommandParams.value(QStringLiteral("text")).toString(), QStringLiteral("hello"));
+        QCOMPARE(daemon.lastCommandParams.value(QStringLiteral("reply_to")).toString(), QStringLiteral("m1"));
+        QCOMPARE(daemon.lastCommandParams.value(QStringLiteral("mentions")).toArray().size(), 1);
+
+        QTRY_VERIFY(!ctrl.sendInFlight());
+        QVERIFY(ctrl.composerErrorText().isEmpty());
+        QVERIFY(composerSpy.count() > 0);
+        // The unread divider is gone: the user just sent past it.
+        QVERIFY(ctrl.unreadAnchorMessageId().isEmpty());
+        QCOMPARE(ctrl.unreadAnchorCount(), 0);
+    }
+
+    // sendMedia resolves a file:// URL to a local path and maps to `send.media`;
+    // a rejected send surfaces through composerErrorText, not a thrown/ignored
+    // failure.
+    void sendMediaMapsToDaemonAndSurfacesFailure()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+        daemon.setActiveChats({chatRow(QStringLiteral("a@s"), QStringLiteral("Alice"), QStringLiteral("1-000"))});
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+        QTRY_VERIFY(!ctrl.chatsLoading());
+        ctrl.selectChat(QStringLiteral("a@s"));
+
+        QSignalSpy commandSpy(&daemon, &FakeDaemon::commandReceived);
+        ctrl.sendMedia(QStringLiteral("file:///tmp/photo.jpg"), QStringLiteral("caption"), QString());
+        QVERIFY(commandSpy.wait());
+        QCOMPARE(daemon.lastCommandMethod, QStringLiteral("send.media"));
+        QCOMPARE(daemon.lastCommandParams.value(QStringLiteral("path")).toString(), QStringLiteral("/tmp/photo.jpg"));
+        QCOMPARE(daemon.lastCommandParams.value(QStringLiteral("caption")).toString(), QStringLiteral("caption"));
+        QVERIFY(!daemon.lastCommandParams.contains(QStringLiteral("reply_to")));
+        QTRY_VERIFY(!ctrl.sendInFlight());
+        QVERIFY(ctrl.composerErrorText().isEmpty());
+
+        daemon.setRejectNextSend(true);
+        commandSpy.clear();
+        ctrl.sendMedia(QStringLiteral("/tmp/other.png"), QString(), QString());
+        QVERIFY(commandSpy.wait());
+        QTRY_VERIFY(!ctrl.composerErrorText().isEmpty());
+        QVERIFY(!ctrl.sendInFlight());
+    }
+
+    // The composing indicator maps to `chat.typing`; a stop is only sent for
+    // the chat a start was actually sent for (mirrors AppController's dedupe —
+    // an unpaired stop for a chat that was never told "composing" is a no-op).
+    void composingIndicatorMapsToChatTypingWithDedupe()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+        daemon.setActiveChats({chatRow(QStringLiteral("a@s"), QStringLiteral("Alice"), QStringLiteral("1-000"))});
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+        QTRY_VERIFY(!ctrl.chatsLoading());
+        ctrl.selectChat(QStringLiteral("a@s"));
+
+        // No prior "true" for this chat: a bare "false" is a no-op.
+        ctrl.setSelectedChatComposing(false);
+        QTest::qWait(50);
+        QVERIFY(daemon.lastCommandMethod.isEmpty());
+
+        QSignalSpy commandSpy(&daemon, &FakeDaemon::commandReceived);
+        ctrl.setSelectedChatComposing(true);
+        QVERIFY(commandSpy.wait());
+        QCOMPARE(daemon.lastCommandMethod, QStringLiteral("chat.typing"));
+        QCOMPARE(daemon.lastCommandParams.value(QStringLiteral("chat_id")).toString(), QStringLiteral("a@s"));
+        QCOMPARE(daemon.lastCommandParams.value(QStringLiteral("composing")).toBool(), true);
+
+        commandSpy.clear();
+        ctrl.setSelectedChatComposing(false);
+        QVERIFY(commandSpy.wait());
+        QCOMPARE(daemon.lastCommandMethod, QStringLiteral("chat.typing"));
+        QCOMPARE(daemon.lastCommandParams.value(QStringLiteral("composing")).toBool(), false);
     }
 
 private:

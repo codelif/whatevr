@@ -107,9 +107,11 @@ Status: `todo` | `doing` | `done` | `blocked` | `needs-decision`
 | D3a | Protocol message presentation model over the generic daemon-sorted collection; expose every `ready` completion for directional pagination; no UI wiring | done | New `ProtocolMessageModel` mirrors `CollectionViewModel` rows unchanged (ascending daemon `sort`) and maps whole message items into the timeline's presentation roles/helpers, including unknown-kind `fallback`, nested sender/media/reply/reactions, ascending day/sender grouping, markup/layout memoization, snapshots/copy/selection helpers. `CollectionViewModel::readyReceived` exposes every `ready`; its move mutation now obeys Qt's begin/end contract. New model/core tests include `QAbstractItemModelTester`; no UI wiring or PROTOCOL.md change. |
 | D3b | Port conversation selection + timeline: `messages` latest/unread/message-id anchors, directional extend, jump navigation, read watermark, session/open-chat routing | done | `ProtocolController` now owns selected-chat `messages` subscriptions (latest/unread/message-id), independent directional pagination/exhaustion, jump/re-anchor, exact read watermarks, visible-session updates, and `open_chat`; `MessageView.qml`/`RowScrollBar.qml` render the ascending daemon-sorted model and preserve prepend viewport anchors. Protocol core hardens delayed subscribe/extend replies and exposes extend failures. Controller/core/model tests cover anchors, resets, jumps, pagination, phone-history, session/read routing; `just build`, all Qt tests, conformance, live raw-socket exercise, and offscreen launch pass. No PROTOCOL.md change. |
 | D3c | Port conversation chrome: selected-chat `presence` header + dialog-scoped live `receipts` view | done | `ProtocolController` grew a `presence` subscription scoped to the *displayed* conversation (subscribed/dropped alongside the messages window, so the upstream WA presence demand tracks what is on screen) and `selectedChatPresenceText`, which composes the global `typing` view over the per-chat availability/last-seen (typing wins, then `online`, then a mirrored `formatLastSeen`); `ConversationPane`'s header subtext repointed to it. `MessageInfoDialog` now lives entirely on the `receipts` view: `openMessageReceipts`/`closeMessageReceipts` make the dialog's lifetime the subscription's lifetime, rows come from a `CollectionViewModel` read through `messageReceipts()` + `messageReceiptsRevision`, direct chats read the daemon's `"peer"` aggregate via `directMessageReceipt()`, `is_group` comes from the `chats` row and the Sent time from the `messages` row (no dialog-side copies) — the gRPC `requestMessageInfo` round-trip, its manual avatar patching, and its `info` snapshot are gone. `tst_protocolcontroller` +3 (presence fill/live flip/typing precedence/visibility scoping, group receipt roster live-update + dialog-scoped unsubscribe, direct aggregate + `not_found` error); the fake daemon gained per-view subscribe params/counts and unsubscribe tracking. `just build`, all 26+16+7 Qt tests, `go test -tags sqlite_fts5 ./...`, `scripts/conformance` and `qmllint` (no new warnings) pass; `presence`/`receipts` hand-exercised over a raw socket. **Live-account check not performed** — see the D-phase note. No PROTOCOL.md change. |
-| D4 | Port composer + all send paths, media download/`transfers` progress, image viewer | todo | |
+| D4a | Port the composer's own send paths: `send.text`, `send.media` (image attach + clipboard/drag-drop paste), `chat.typing` composing indicator | done | `ProtocolController` gained `composerEnabled`/`sendInFlight`/`composerErrorText` plus `sendText`/`sendMedia`/`sendClipboardImage`/`setSelectedChatComposing` (protocolcontroller.{h,cpp}); `ConversationPane.qml`'s composer signal handlers and `MessageComposer.qml`'s clipboard-paste call repointed from `AppController` to `ProtocolController`. A send never applies the command result locally — the daemon delivers the sent message through the ordinary `messages` view upsert (rule 2), so there is no `applyMessageEvent`-equivalent; a send while an unread anchor is showing dismisses that divider (the user has now seen past it), mirroring `AppController::dismissUnreadAnchor`. `setSelectedChatComposing` keeps the gRPC version's per-chat dedupe (a "stop" only sends for the chat a "start" actually went to). Mentions/emoji picker/group-info-driven `@`-autocomplete and drafts stay on `AppController` (unchanged — mentions need `group_members`, not yet subscribed by `ProtocolController`; drafts are frontend-only state rule 1 already allows reading cross-stack, same as D2b1). `just build`, all three Qt suites (`tst_protocolcontroller` 29, `tst_protocolcore` 16, `tst_protocolmessagemodel` 7), `go test -tags sqlite_fts5 ./...`, and `scripts/conformance` pass; `send.text`/`send.media`/`chat.typing` hand-exercised over a raw socket against a throwaway daemon (params accepted, reached `not_logged_in` rather than `invalid_params` — confirms the wire shape matches the daemon's C2 handlers) plus a headless app launch (no QML errors). No PROTOCOL.md change. **Live-account send/receive not verified** — same environment gap as D3c (no logged-in WhatsApp session available here); see D-phase notes. |
+| D4b | Port message actions: react/edit/revoke/delete/star/pin/forward (context menu, `ReactionDetailsDialog`, `PinnedMessagesBanner`) | todo | |
+| D4c | Port `media.download` + the `transfers` progress view + the message image viewer (`ChatBubble` download UI, `ProfilePictureViewer` reuse) | todo | |
 | D5 | Port info dialogs (contact/group/members), starred/pinned pages, unified + in-chat search | todo | |
-| D6 | Port settings pages (privacy/prefs/blocklist/profile) + sticker/emoji pickers | todo | |
+| D6 | Port settings pages (privacy/prefs/blocklist/profile) + sticker/emoji pickers, incl. `send.sticker` (moved here from D4, see decision log) | todo | |
 | D7 | Remove all gRPC client code + qt6-grpc from whatkevr; whatkevr runs 100% on the new protocol | todo | |
 
 ### Phase E — teardown & flagship polish
@@ -124,6 +126,18 @@ Status: `todo` | `doing` | `done` | `blocked` | `needs-decision`
 _None._
 
 ## D-phase notes
+
+- 2026-08-10 — **D4a live verification gap (environment, same as D3c).** No
+  logged-in WhatsApp session is available in this environment (see the D3c
+  entry below for why), so an actual send/receive round-trip through the
+  ported composer could not be exercised. Verified instead: a throwaway
+  `whatevrd` against isolated `XDG_*` dirs, hand-exercised over a raw socket
+  with the exact `send.text`/`send.media`/`chat.typing` params
+  `ProtocolController` now sends — all three reached the daemon's C2 handlers
+  (`not_logged_in`, not `invalid_params`, confirming the wire shape is
+  correct) — plus a headless `whatkevr` launch against that daemon (no QML
+  errors) and the full Qt/Go/conformance suites. Whoever picks up D4b/D4c or
+  revisits this should do a real send once a session is available.
 
 - 2026-08-09 — **D3c live verification gap (environment, not code).** The
   hand-verification against a live daemon could not be done: the installed
@@ -189,6 +203,45 @@ _None._
   no GUI/gRPC) and drive the real client over a real Unix socket.
 
 ## Decision log
+
+- 2026-08-10 — **D4 split into D4a (composer send paths, done)/D4b (message
+  actions)/D4c (media download + transfers + image viewer)** (implementation
+  judgement; flag if you disagree). D4 as written bundled four materially
+  different UI surfaces — the composer's own text/image send paths, the
+  message-bubble context menu's react/edit/revoke/delete/star/pin/forward,
+  media download progress plus a real `transfers` view (the gRPC path had no
+  progress at all, so this is new UI, not a straight port), and the
+  full-screen image viewer — spanning roughly 7300 QML lines and ~1600 C++
+  lines across nine files (survey in-session, not separately recorded). Same
+  reasoning as the D2/D3 splits: doing it as one step would make regressions
+  in any one surface hard to isolate, and each has its own command shape and
+  verification story. **Sticker sending moved to D6, not a D4 sub-step**: the
+  survey's first pass grouped `send.sticker` into D4a alongside text/media
+  because MessageComposer.qml exposes it as a peer send path, but sending is
+  actually issued by `StickerController` (picker/download/favorite state,
+  ~800 combined lines), which is entirely D6 territory ("sticker/emoji
+  pickers") and shares none of D4a's composer plumbing — MessageComposer's own
+  signal contract is only `sendTextRequested`/`sendImageRequested`, no sticker
+  signal. D6's row amended to say so explicitly. D4a readings (no PROTOCOL.md
+  change): (1) unlike gRPC's `sendText`/`sendImage`, which read the command
+  response and called `applyMessageEvent` to insert the sent message locally,
+  the protocol versions read only the error out of the response — the sent
+  message arrives through the ordinary `messages` view upsert like any other
+  message (rule 2: command responses carry ids/errors, never render data).
+  This is a simplification the port gets for free, not a design choice made
+  here. (2) A send while an unread anchor is showing clears it (the user has
+  now seen past it) — ported from `AppController::dismissUnreadAnchor`,
+  called at the same call sites. (3) The composing-indicator dedupe (a "stop"
+  only sends for the chat a "start" was actually sent for) is ported
+  verbatim from `AppController::setChatComposing`'s `m_localComposingChatId`
+  tracking. (4) Mentions/`@`-autocomplete, the emoji picker, and drafts stay
+  on `AppController` for now: mentions need the `group_members` view, which
+  `ProtocolController` does not yet subscribe (that lands with D5's info
+  dialogs); the emoji picker is pure frontend state with no daemon surface;
+  drafts are frontend-only state rule 1 already allows, and D2b1 already
+  established the pattern of reading them cross-stack until their owning
+  surface (the composer) ports — which is now, but moving them was not
+  required by this step's scope, so they were left as they were.
 
 - 2026-08-09 — D3c implementation readings (no PROTOCOL.md change; flag if you
   disagree): (1) **Presence is subscribed for what the conversation shows, not
