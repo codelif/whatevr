@@ -29,7 +29,7 @@ ItemDelegate {
 
     readonly property bool isMessage: kind === "message"
     readonly property bool isNumber: kind === "number"
-    readonly property string query: Whatevr.AppController.searchQuery
+    readonly property string query: Whatevr.ProtocolController.searchQuery
     readonly property color highlightBg: Kirigami.Theme.highlightColor
     readonly property color highlightFg: Kirigami.Theme.highlightedTextColor
 

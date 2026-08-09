@@ -113,7 +113,8 @@ Item {
             icon.height: root.railIconSize
             text: Whatevr.I18n.i18nc("@action:button open the starred-messages view", "Starred messages")
             onClicked: {
-                Whatevr.AppController.loadStarredMessages("")
+                // The page owns its own `starred` subscription for as long as
+                // it is on screen; pushing it is all this has to do.
                 applicationWindow().pageStack.layers.push(Qt.resolvedUrl("StarredMessagesPage.qml"), {
                     chatId: "",
                     headerTitle: Whatevr.I18n.i18nc("@title", "Starred messages")

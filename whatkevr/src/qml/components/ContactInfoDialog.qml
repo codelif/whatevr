@@ -13,40 +13,46 @@ import Whatevr as Whatevr
 // member drills into their card in place (with a back button); tapping the big
 // avatar opens a full-screen viewer.
 //
-// The card is shown immediately from whatever the daemon returns locally, then
-// the network-fetched bits (a contact's status text; a group's live
-// subject/description/roles) stream in via contactInfoUpdated/groupInfoUpdated
-// and are merged in place, so opening never blocks on a round-trip.
+// The dialog holds no card state: it is a window onto the daemon's `contact` /
+// `group` object views plus the `group_members` roster, subscribed for exactly
+// as long as it is open. The card renders from whatever the daemon has locally
+// and the network-fetched bits (a contact's about text, a group's live
+// subject/description/roles) arrive later as ordinary upserts, so opening never
+// blocks on a round-trip and nothing here has to merge two phases together.
 CenteredDialog {
     id: root
 
-    // Exactly one of these identifies the current subject.
-    property string targetJid: ""
-    property string targetChatId: ""
-    property bool isGroup: false
-
-    property string subjectKey: isGroup ? targetChatId : targetJid
-    property bool loading: true
-    property string errorText: ""
+    readonly property string cardKind: Whatevr.ProtocolController.infoCardKind
+    readonly property bool isGroup: cardKind === "group"
+    // The daemon's item for the open card, verbatim (empty until it lands).
+    readonly property var card: Whatevr.ProtocolController.infoCard
+    // The subject of the open card: a contact jid, or a group chat id.
+    readonly property string subjectKey: Whatevr.ProtocolController.infoCardSubject
+    readonly property string targetJid: isGroup ? "" : subjectKey
+    readonly property bool loading: Whatevr.ProtocolController.infoCardLoading
+    readonly property string errorText: Whatevr.ProtocolController.infoCardError
 
     // Contact fields.
-    property string phoneNumber: ""
-    property string savedName: ""
-    property string pushName: ""
-    property string businessName: ""
-    property string avatarLocalPath: ""
-    property bool isBusiness: false
-    property string statusText: ""
+    readonly property string phoneNumber: root.isGroup ? "" : String(root.card.phone ?? "")
+    readonly property string savedName: root.isGroup ? "" : String(root.card.saved_name ?? "")
+    readonly property string pushName: root.isGroup ? "" : String(root.card.push_name ?? "")
+    readonly property string businessName: root.isGroup ? "" : String(root.card.business_name ?? "")
+    readonly property bool isBusiness: root.isGroup ? false : Boolean(root.card.is_business ?? false)
+    readonly property string statusText: root.isGroup ? "" : String(root.card.about ?? "")
+    readonly property string avatarLocalPath: String(root.card.avatar_path ?? "")
 
     // Group fields.
-    property string subject: ""
-    property string description: ""
-    property int memberCount: 0
-    property var allMembers: []
+    readonly property string subject: root.isGroup ? String(root.card.subject ?? "") : ""
+    readonly property string description: root.isGroup ? String(root.card.description ?? "") : ""
+    // The roster is authoritative once it has filled; until then the card's own
+    // count (which the daemon computes) keeps the header honest.
+    readonly property int memberCount: Whatevr.ProtocolController.groupMemberCount > 0
+                                       ? Whatevr.ProtocolController.groupMemberCount
+                                       : Number(root.card.member_count ?? 0)
 
     // Back-navigation stack of prior subjects (group → member drill-in). Each
-    // entry is a full snapshot of the card state so going back is instant and
-    // needs no re-fetch.
+    // entry only names a subject — going back re-subscribes, and the daemon
+    // still holds the card, so there is nothing to snapshot.
     property var history: []
 
     readonly property real windowHeight: parent ? parent.height : Kirigami.Units.gridUnit * 40
@@ -83,15 +89,11 @@ CenteredDialog {
         return pushName
     }
     readonly property bool canMessage: !isGroup && targetJid.length > 0
-                                       && targetJid !== Whatevr.AppController.selectedChatId
-    // Block state comes from the last-fetched blocklist snapshot; openFor()
-    // refreshes it and onBlockedContactsChanged keeps it live.
-    property bool contactBlocked: false
+                                       && targetJid !== Whatevr.ProtocolController.selectedChatId
+    // Blocked state is membership in the daemon's `blocklist` view, composed in
+    // by the controller — no local snapshot to refresh.
+    readonly property bool contactBlocked: Whatevr.ProtocolController.infoCardBlocked
     readonly property bool canBlock: !isGroup && targetJid.length > 0
-
-    function updateBlockedState() {
-        root.contactBlocked = Whatevr.AppController.isContactBlocked(root.targetJid)
-    }
 
     title: isGroup
            ? Whatevr.I18n.i18nc("@title group info dialog", "Group info")
@@ -109,80 +111,24 @@ CenteredDialog {
     function openFor(params) {
         root.history = []
         loadSubject(params)
-        Whatevr.AppController.refreshBlocklist()
         open()
     }
 
-    // (Re)load the card for a subject, resetting all fields and kicking off the
-    // daemon fetch. Shared by openFor and the in-place member drill-in.
+    // Point the dialog's subscriptions at a subject. Shared by openFor and the
+    // in-place member drill-in; each call replaces the previous card.
     function loadSubject(params) {
-        root.isGroup = Boolean(params.isGroup)
-        root.targetJid = String(params.targetJid || "")
-        root.targetChatId = String(params.targetChatId || "")
-        root.loading = true
-        root.errorText = ""
-        root.phoneNumber = ""
-        root.savedName = ""
-        root.pushName = ""
-        root.businessName = ""
-        root.avatarLocalPath = ""
-        root.isBusiness = false
-        root.statusText = ""
-        root.subject = ""
-        root.description = ""
-        root.memberCount = 0
-        root.allMembers = []
-        memberModel.clear()
         memberSearch.text = ""
-
-        if (root.isGroup) {
-            Whatevr.AppController.openGroupInfo(root.targetChatId)
+        if (Boolean(params.isGroup)) {
+            Whatevr.ProtocolController.openGroupCard(String(params.targetChatId || ""))
         } else {
-            Whatevr.AppController.openContactInfo(root.targetJid)
-        }
-        updateBlockedState()
-    }
-
-    function snapshot() {
-        return {
-            isGroup: root.isGroup,
-            targetJid: root.targetJid,
-            targetChatId: root.targetChatId,
-            loading: root.loading,
-            errorText: root.errorText,
-            phoneNumber: root.phoneNumber,
-            savedName: root.savedName,
-            pushName: root.pushName,
-            businessName: root.businessName,
-            avatarLocalPath: root.avatarLocalPath,
-            isBusiness: root.isBusiness,
-            statusText: root.statusText,
-            subject: root.subject,
-            description: root.description,
-            memberCount: root.memberCount,
-            allMembers: root.allMembers,
+            Whatevr.ProtocolController.openContactCard(String(params.targetJid || ""))
         }
     }
 
-    function restore(s) {
-        root.isGroup = s.isGroup
-        root.targetJid = s.targetJid
-        root.targetChatId = s.targetChatId
-        root.loading = s.loading
-        root.errorText = s.errorText
-        root.phoneNumber = s.phoneNumber
-        root.savedName = s.savedName
-        root.pushName = s.pushName
-        root.businessName = s.businessName
-        root.avatarLocalPath = s.avatarLocalPath
-        root.isBusiness = s.isBusiness
-        root.statusText = s.statusText
-        root.subject = s.subject
-        root.description = s.description
-        root.memberCount = s.memberCount
-        root.allMembers = s.allMembers
-        memberSearch.text = ""
-        root.applyMemberFilter("")
+    // The card's subscriptions live exactly as long as the dialog is open.
+    onClosed: {
+        root.history = []
+        Whatevr.ProtocolController.closeInfoCard()
     }
 
     function openMember(jid) {
@@ -190,7 +136,8 @@ CenteredDialog {
             return
         }
         const stack = root.history.slice()
-        stack.push(root.snapshot())
+        stack.push({ isGroup: root.isGroup, targetChatId: root.isGroup ? root.subjectKey : "",
+                     targetJid: root.isGroup ? "" : root.subjectKey })
         root.history = stack
         loadSubject({ isGroup: false, targetJid: jid })
     }
@@ -202,7 +149,7 @@ CenteredDialog {
         const stack = root.history.slice()
         const prev = stack.pop()
         root.history = stack
-        restore(prev)
+        loadSubject(prev)
     }
 
     function initialsForName(name) {
@@ -219,144 +166,19 @@ CenteredDialog {
         return initials.length > 0 ? initials : "?"
     }
 
-    function applyMemberFilter(text) {
-        const needle = text.trim().toLowerCase()
-        // Collect the matching members first, then swap the model in one
-        // clear+refill. (A ListView absorbs a model reset cleanly; the old
-        // Repeater-in-a-Column did not, which is what produced the
-        // "DelegateModel::cancel: index out range" warnings.)
-        const wanted = []
-        for (const member of root.allMembers) {
-            if (needle.length === 0
-                    || String(member.displayName).toLowerCase().includes(needle)
-                    || String(member.phoneNumber).toLowerCase().includes(needle)) {
-                wanted.push(member)
-            }
-        }
-        memberModel.clear()
-        for (const member of wanted) {
-            memberModel.append(member)
-        }
-    }
-
-    ListModel {
-        id: memberModel
-    }
+    // Member rows matching the search box, in the daemon's roster order.
+    // PROTOCOL.md calls member search presentation-side filtering over rows the
+    // frontend already has; the revision tick makes the read reactive.
+    readonly property var members: Whatevr.ProtocolController.groupMembersRevision >= 0
+                                   ? Whatevr.ProtocolController.groupMembers(memberSearch.text)
+                                   : []
 
     Connections {
-        target: Whatevr.AppController
-
-        function onContactInfoReceived(info) {
-            // The daemon may answer with the canonical phone JID rather than the
-            // JID we requested (an @lid mention resolves to @s.whatsapp.net), so
-            // match on either and then adopt the canonical JID — later avatar /
-            // status updates are published against it.
-            if (root.isGroup
-                    || (info.jid !== root.targetJid && info.requestedJid !== root.targetJid)) {
-                return
-            }
-            root.targetJid = info.jid
-            root.phoneNumber = info.phoneNumber
-            root.savedName = info.savedName
-            root.pushName = info.pushName
-            root.businessName = info.businessName
-            root.avatarLocalPath = info.avatarLocalPath
-            root.isBusiness = info.isBusiness
-            root.statusText = info.statusText
-            root.loading = false
-            root.updateBlockedState()
-        }
-
-        function onContactInfoFailed(jid, errorText) {
-            if (root.isGroup || jid !== root.targetJid) {
-                return
-            }
-            root.errorText = errorText
-            root.loading = false
-        }
-
-        function onGroupInfoReceived(info) {
-            if (!root.isGroup || info.chatId !== root.targetChatId) {
-                return
-            }
-            root.subject = info.subject
-            root.description = info.description
-            root.avatarLocalPath = info.avatarLocalPath
-            root.allMembers = info.members
-            root.memberCount = info.members.length
-            root.applyMemberFilter(memberSearch.text)
-            root.loading = false
-        }
-
-        function onGroupInfoFailed(chatId, errorText) {
-            if (!root.isGroup || chatId !== root.targetChatId) {
-                return
-            }
-            root.errorText = errorText
-            root.loading = false
-        }
-
-        // Late-arriving "about" text for the contact currently shown.
-        function onContactInfoUpdated(jid, statusText) {
-            if (!root.isGroup && jid === root.targetJid) {
-                root.statusText = statusText
-            }
-        }
-
-        // Live group fields land after the stored card; merge subject /
-        // description / roles / creation time without disturbing the avatar.
-        function onGroupInfoUpdated(info) {
-            if (!root.isGroup || info.chatId !== root.targetChatId) {
-                return
-            }
-            if (info.subject.length > 0) {
-                root.subject = info.subject
-            }
-            root.description = info.description
-            if (info.members.length > 0) {
-                root.allMembers = info.members
-                root.memberCount = info.members.length
-                root.applyMemberFilter(memberSearch.text)
-            }
-        }
-
-        // Avatars stream in asynchronously; patch the header and member rows in
-        // place as they land.
-        function onSenderAvatarUpdated(senderId, avatarLocalPath) {
-            if (!root.isGroup && senderId === root.targetJid) {
-                root.avatarLocalPath = avatarLocalPath
-            }
-            for (let i = 0; i < memberModel.count; ++i) {
-                if (memberModel.get(i).jid === senderId) {
-                    memberModel.setProperty(i, "avatarLocalPath", avatarLocalPath)
-                }
-            }
-            const updated = root.allMembers.slice()
-            for (let j = 0; j < updated.length; ++j) {
-                if (updated[j].jid === senderId) {
-                    updated[j].avatarLocalPath = avatarLocalPath
-                }
-            }
-            root.allMembers = updated
-        }
+        target: Whatevr.ProtocolController
 
         function onProfilePictureReady(jid, localPath) {
-            if (jid === root.subjectKey || jid === root.targetJid) {
+            if (jid === root.subjectKey) {
                 pictureViewer.showImage(localPath)
-            }
-        }
-
-        function onBlockedContactsChanged() {
-            root.updateBlockedState()
-        }
-
-        // Block/unblock failures land here; only surface them while this card
-        // is the visible settings-action initiator.
-        function onSettingsActionFailed(message) {
-            if (root.visible) {
-                root.errorText = message.length > 0
-                    ? message
-                    : Whatevr.I18n.i18nc("@info", "Updating the blocklist failed")
             }
         }
     }
@@ -383,7 +205,7 @@ CenteredDialog {
                 text: Whatevr.I18n.i18nc("@action:button confirm blocking", "Block")
                 icon.name: "im-ban-kick-user-symbolic"
                 onTriggered: {
-                    Whatevr.AppController.setContactBlocked(root.targetJid, true)
+                    Whatevr.ProtocolController.setContactBlocked(root.targetJid, true)
                     blockConfirmDialog.close()
                 }
             }
@@ -424,7 +246,7 @@ CenteredDialog {
                     anchors.fill: parent
                     enabled: !root.loading
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: Whatevr.AppController.viewProfilePicture(root.subjectKey)
+                    onClicked: Whatevr.ProtocolController.viewProfilePicture(root.subjectKey)
                 }
             }
 
@@ -521,7 +343,7 @@ CenteredDialog {
                 icon.name: "mail-message-new-symbolic"
                 text: Whatevr.I18n.i18nc("@action:button start a chat with this contact", "Message")
                 onClicked: {
-                    Whatevr.AppController.startDirectChat(root.targetJid)
+                    Whatevr.ProtocolController.startDirectChat(root.targetJid)
                     root.close()
                     applicationWindow().showConversation()
                 }
@@ -537,7 +359,7 @@ CenteredDialog {
                     if (root.contactBlocked) {
                         // Unblocking is low-stakes; act directly, like the
                         // blocked-contacts settings page does.
-                        Whatevr.AppController.setContactBlocked(root.targetJid, false)
+                        Whatevr.ProtocolController.setContactBlocked(root.targetJid, false)
                     } else {
                         blockConfirmDialog.open()
                     }
@@ -558,30 +380,32 @@ CenteredDialog {
             Layout.fillWidth: true
             visible: root.isGroup && root.memberCount > 0
             placeholderText: Whatevr.I18n.i18nc("@info:placeholder", "Search members…")
-            onTextChanged: root.applyMemberFilter(text)
         }
 
         ListView {
             id: memberList
             Layout.fillWidth: true
             Layout.preferredHeight: Math.min(contentHeight, root.memberListMax)
-            visible: root.isGroup && memberModel.count > 0
+            visible: root.isGroup && count > 0
             clip: true
-            model: memberModel
+            model: root.members
             reuseItems: true
             ScrollBar.vertical: DiscreetScrollBar {}
 
             delegate: QQC2.ItemDelegate {
                 id: memberDelegate
 
-                required property string jid
-                required property string displayName
-                required property string phoneNumber
-                required property string avatarLocalPath
-                required property bool isAdmin
+                // One daemon `group_members` row, verbatim.
+                required property var modelData
+
+                readonly property string jid: String(memberDelegate.modelData.jid ?? "")
+                readonly property string displayName: String(memberDelegate.modelData.display_name ?? "")
+                readonly property string phoneNumber: String(memberDelegate.modelData.phone ?? "")
+                readonly property string avatarLocalPath: String(memberDelegate.modelData.avatar_path ?? "")
+                readonly property string role: String(memberDelegate.modelData.role ?? "member")
 
                 width: ListView.view.width
-                onClicked: root.openMember(jid)
+                onClicked: root.openMember(memberDelegate.jid)
 
                 contentItem: RowLayout {
                     spacing: Kirigami.Units.largeSpacing
@@ -620,8 +444,10 @@ CenteredDialog {
                     }
 
                     QQC2.Label {
-                        visible: memberDelegate.isAdmin
-                        text: Whatevr.I18n.i18nc("@info group admin badge", "Admin")
+                        visible: memberDelegate.role === "admin" || memberDelegate.role === "superadmin"
+                        text: memberDelegate.role === "superadmin"
+                              ? Whatevr.I18n.i18nc("@info group owner badge", "Owner")
+                              : Whatevr.I18n.i18nc("@info group admin badge", "Admin")
                         color: Kirigami.Theme.positiveTextColor
                         font: Kirigami.Theme.smallFont
                     }

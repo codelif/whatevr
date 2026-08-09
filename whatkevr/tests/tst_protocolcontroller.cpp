@@ -135,7 +135,18 @@ public:
         }
     }
 
+    // Canned query results (D5). Queries are one-shot request/response, not
+    // views, so the fake just answers with whatever the test seeded.
+    void setSearchChats(const QJsonArray &chats) { m_searchChats = chats; }
+    void setSearchMessages(const QJsonArray &messages) { m_searchMessages = messages; }
+    void setCheckPhone(const QJsonObject &result) { m_checkPhone = result; }
+    void setEnsureDirectChatId(const QString &chatId) { m_ensureDirectChatId = chatId; }
+    void setProfilePicturePath(const QString &path) { m_profilePicturePath = path; }
+
     int reconnectCount = 0;
+    // Every query the controller issued, with its params.
+    QStringList queryMethods;
+    QHash<QString, QJsonObject> lastQueryParams;
     // Params of the most recent `chats` subscribe, and how many landed — lets a
     // test assert the filter re-subscribe without racing the reply.
     QJsonObject lastChatsParams;
@@ -165,6 +176,7 @@ Q_SIGNALS:
     void extended();
     void sessionUpdated();
     void markReadReceived();
+    void queryReceived(const QString &method);
     void viewSubscribed(const QString &view);
     void viewUnsubscribed(const QString &view);
 
@@ -323,7 +335,34 @@ private:
         } else if (method.startsWith(QLatin1String("media."))) {
             lastCommandMethod = method;
             lastCommandParams = params;
+            if (method == QLatin1String("media.fetch_profile_picture")) {
+                reply(id, QJsonObject{{QStringLiteral("path"), m_profilePicturePath}});
+            } else {
+                reply(id, QJsonObject{});
+            }
+            Q_EMIT commandReceived();
+        } else if (method == QLatin1String("search.chats") || method == QLatin1String("search.messages")
+                   || method == QLatin1String("contacts.check_phone")) {
+            queryMethods.append(method);
+            lastQueryParams.insert(method, params);
+            if (method == QLatin1String("search.chats")) {
+                reply(id, QJsonObject{{QStringLiteral("chats"), m_searchChats}});
+            } else if (method == QLatin1String("search.messages")) {
+                reply(id, QJsonObject{{QStringLiteral("messages"), m_searchMessages},
+                                      {QStringLiteral("has_more"), false}});
+            } else {
+                reply(id, m_checkPhone);
+            }
+            Q_EMIT queryReceived(method);
+        } else if (method == QLatin1String("contact.block")) {
+            lastCommandMethod = method;
+            lastCommandParams = params;
             reply(id, QJsonObject{});
+            Q_EMIT commandReceived();
+        } else if (method == QLatin1String("chat.ensure_direct")) {
+            lastCommandMethod = method;
+            lastCommandParams = params;
+            reply(id, QJsonObject{{QStringLiteral("chat_id"), m_ensureDirectChatId}});
             Q_EMIT commandReceived();
         } else if (method == QLatin1String("daemon.reconnect")) {
             ++reconnectCount;
@@ -403,6 +442,11 @@ private:
     bool m_rejectNextExtend = false;
     bool m_rejectNextSend = false;
     bool m_rejectMessageCommands = false;
+    QJsonArray m_searchChats;
+    QJsonArray m_searchMessages;
+    QJsonObject m_checkPhone;
+    QString m_ensureDirectChatId;
+    QString m_profilePicturePath;
 };
 
 QJsonObject chatRow(const QString &id, const QString &name, const QString &sort,
@@ -1552,6 +1596,355 @@ private Q_SLOTS:
         ctrl.closeForwardTargets();
         QCOMPARE(ctrl.forwardChatTargets(QString()).size(), 0);
         QTRY_VERIFY(daemon.unsubscribedViews.contains(QStringLiteral("chats")));
+    }
+
+    // D5: the chat-list search runs the daemon's *queries* (chat names, message
+    // text, and — only for a number-shaped query — a phone lookup) and renders
+    // each result set in its own section, in the daemon's order.
+    void unifiedSearchRunsDaemonQueries()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+        daemon.setSearchChats({chatRow(QStringLiteral("a@s"), QStringLiteral("Alice"), QStringLiteral("1-000"),
+                                       QJsonObject{{QStringLiteral("preview"), QStringLiteral("hi there")}})});
+        daemon.setSearchMessages({messageRow(QStringLiteral("m1"), QStringLiteral("0001"))});
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+        QTRY_VERIFY(!ctrl.chatsLoading());
+        QVERIFY(!ctrl.searchActive());
+
+        ctrl.setSearchQuery(QStringLiteral("ali"));
+        QVERIFY(ctrl.searchActive());
+        auto *model = ctrl.searchResultsModel();
+        QTRY_COMPARE(model->rowCount(), 2);
+        QTRY_VERIFY(!ctrl.searchBusy());
+        // A name search never hits the phone lookup.
+        QVERIFY(!daemon.queryMethods.contains(QStringLiteral("contacts.check_phone")));
+        QCOMPARE(daemon.lastQueryParams.value(QStringLiteral("search.chats"))
+                     .value(QStringLiteral("query")).toString(),
+                 QStringLiteral("ali"));
+
+        const auto roleValue = [model](int row, const char *role) {
+            const auto names = model->roleNames();
+            for (auto it = names.begin(); it != names.end(); ++it) {
+                if (it.value() == QByteArray(role)) {
+                    return model->data(model->index(row, 0), it.key());
+                }
+            }
+            return QVariant{};
+        };
+        QCOMPARE(roleValue(0, "kind").toString(), QStringLiteral("chat"));
+        QCOMPARE(roleValue(0, "title").toString(), QStringLiteral("Alice"));
+        QCOMPARE(roleValue(0, "subtitle").toString(), QStringLiteral("hi there"));
+        QCOMPARE(roleValue(1, "kind").toString(), QStringLiteral("message"));
+        QCOMPARE(roleValue(1, "messageId").toString(), QStringLiteral("m1"));
+        QCOMPARE(roleValue(1, "senderName").toString(), QStringLiteral("Alice"));
+
+        // A number-shaped query adds the phone row above both sections.
+        daemon.setCheckPhone(QJsonObject{{QStringLiteral("registered"), true},
+                                         {QStringLiteral("jid"), QStringLiteral("911@s")},
+                                         {QStringLiteral("display_name"), QStringLiteral("Ravi")},
+                                         {QStringLiteral("phone"), QStringLiteral("+91 98765 43210")}});
+        ctrl.setSearchQuery(QStringLiteral("+91 98765 43210"));
+        QTRY_COMPARE(model->rowCount(), 3);
+        QCOMPARE(roleValue(0, "kind").toString(), QStringLiteral("number"));
+        QCOMPARE(roleValue(0, "jid").toString(), QStringLiteral("911@s"));
+        QVERIFY(roleValue(0, "registered").toBool());
+
+        // Clearing drops every result and the busy flag with them.
+        ctrl.clearSearch();
+        QCOMPARE(model->rowCount(), 0);
+        QVERIFY(!ctrl.searchActive());
+        QVERIFY(!ctrl.searchBusy());
+    }
+
+    // D5: in-chat search is the same query scoped to the selected chat; the
+    // match cursor (presentation state) wraps in both directions, and leaving
+    // the conversation ends the search.
+    void chatSearchWalksMatchesAndEndsWithTheChat()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+        daemon.setActiveChats({chatRow(QStringLiteral("a@s"), QStringLiteral("Alice"), QStringLiteral("1-000")),
+                               chatRow(QStringLiteral("b@s"), QStringLiteral("Bob"), QStringLiteral("2-000"))});
+        daemon.setSearchMessages({messageRow(QStringLiteral("m1"), QStringLiteral("0001")),
+                                  messageRow(QStringLiteral("m2"), QStringLiteral("0002"))});
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+        QTRY_VERIFY(!ctrl.chatsLoading());
+        ctrl.setConversationVisible(true);
+        ctrl.selectChat(QStringLiteral("a@s"));
+
+        ctrl.openChatSearch();
+        QVERIFY(ctrl.chatSearchActive());
+        ctrl.setChatSearchQuery(QStringLiteral("hello"));
+        QTRY_COMPARE(ctrl.chatSearchMatchCount(), 2);
+        QCOMPARE(daemon.lastQueryParams.value(QStringLiteral("search.messages"))
+                     .value(QStringLiteral("chat_id")).toString(),
+                 QStringLiteral("a@s"));
+        QCOMPARE(ctrl.chatSearchCurrentIndex(), 1);
+        QCOMPARE(ctrl.chatSearchActiveMessageId(), QStringLiteral("m1"));
+
+        ctrl.chatSearchNext();
+        QCOMPARE(ctrl.chatSearchActiveMessageId(), QStringLiteral("m2"));
+        ctrl.chatSearchNext(); // wraps
+        QCOMPARE(ctrl.chatSearchActiveMessageId(), QStringLiteral("m1"));
+        ctrl.chatSearchPrevious(); // wraps the other way
+        QCOMPARE(ctrl.chatSearchActiveMessageId(), QStringLiteral("m2"));
+
+        // An emptied query keeps the bar open but drops the matches.
+        ctrl.setChatSearchQuery(QString());
+        QCOMPARE(ctrl.chatSearchMatchCount(), 0);
+        QVERIFY(ctrl.chatSearchActive());
+
+        ctrl.setChatSearchQuery(QStringLiteral("hello"));
+        QTRY_COMPARE(ctrl.chatSearchMatchCount(), 2);
+        // The search is scoped to one conversation; switching chats ends it.
+        ctrl.selectChat(QStringLiteral("b@s"));
+        QVERIFY(!ctrl.chatSearchActive());
+        QCOMPARE(ctrl.chatSearchMatchCount(), 0);
+        QVERIFY(ctrl.chatSearchQuery().isEmpty());
+    }
+
+    // D5: the starred page owns a windowed `starred` subscription for exactly as
+    // long as it is open, and extends it (always `older`) as the user scrolls.
+    void starredPageOwnsItsWindowedView()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+        daemon.setCollection(QStringLiteral("starred"),
+                             {messageRow(QStringLiteral("m1"), QStringLiteral("0001"))});
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+        QTRY_VERIFY(!ctrl.chatsLoading());
+        // Nothing is subscribed before the page opens.
+        QCOMPARE(ctrl.starredMessagesModel()->rowCount(), 0);
+        QVERIFY(!ctrl.starredMessagesLoading());
+
+        ctrl.openStarredMessages(QStringLiteral("a@s"));
+        QTRY_COMPARE(ctrl.starredMessagesModel()->rowCount(), 1);
+        QCOMPARE(daemon.lastParamsByView.value(QStringLiteral("starred"))
+                     .value(QStringLiteral("chat_id")).toString(),
+                 QStringLiteral("a@s"));
+        QVERIFY(!ctrl.starredMessagesLoading());
+
+        // Display strings come off the daemon row itself (no second lookup).
+        const QVariantMap item = ctrl.starredMessagesModel()
+                                     ->data(ctrl.starredMessagesModel()->index(0, 0),
+                                            CollectionViewModel::ItemRole)
+                                     .toMap();
+        const QVariantMap row = ctrl.messageRowDisplay(item);
+        QCOMPARE(row.value(QStringLiteral("messageId")).toString(), QStringLiteral("m1"));
+        QCOMPARE(row.value(QStringLiteral("senderName")).toString(), QStringLiteral("Alice"));
+        QCOMPARE(row.value(QStringLiteral("preview")).toString(), QStringLiteral("m1"));
+        QVERIFY(!row.value(QStringLiteral("timeText")).toString().isEmpty());
+
+        // Unstarring elsewhere is an ordinary remove; a new star an upsert.
+        daemon.pushUpsert(QStringLiteral("starred"), messageRow(QStringLiteral("m2"), QStringLiteral("0002")),
+                          QStringLiteral("0002"));
+        QTRY_COMPARE(ctrl.starredMessagesModel()->rowCount(), 2);
+        daemon.pushRemove(QStringLiteral("starred"), QStringLiteral("m1"));
+        QTRY_COMPARE(ctrl.starredMessagesModel()->rowCount(), 1);
+
+        const int extendsBefore = daemon.extendCount;
+        ctrl.loadMoreStarredMessages();
+        QTRY_COMPARE(daemon.extendCount, extendsBefore + 1);
+        QCOMPARE(daemon.lastExtendParams.value(QStringLiteral("direction")).toString(),
+                 QStringLiteral("older"));
+
+        ctrl.closeStarredMessages();
+        QCOMPARE(ctrl.starredMessagesModel()->rowCount(), 0);
+        QTRY_VERIFY(daemon.unsubscribedViews.contains(QStringLiteral("starred")));
+    }
+
+    // D5: the contact card is a window onto the `contact` view — the local card
+    // renders immediately, the network "about" arrives as an ordinary upsert,
+    // and blocked-ness is membership in the `blocklist` view, not card state.
+    void contactCardStreamsItsSecondPhase()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+        daemon.setItem(QStringLiteral("contact"),
+                       QJsonObject{{QStringLiteral("id"), QStringLiteral("a@s")},
+                                   {QStringLiteral("jid"), QStringLiteral("a@s")},
+                                   {QStringLiteral("phone"), QStringLiteral("+91 1")},
+                                   {QStringLiteral("saved_name"), QStringLiteral("Alice")}});
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+        QTRY_VERIFY(!ctrl.chatsLoading());
+
+        ctrl.openContactCard(QStringLiteral("a@s"));
+        QCOMPARE(ctrl.infoCardKind(), QStringLiteral("contact"));
+        QTRY_COMPARE(ctrl.infoCard().value(QStringLiteral("saved_name")).toString(), QStringLiteral("Alice"));
+        QVERIFY(!ctrl.infoCardLoading());
+        QVERIFY(ctrl.infoCardError().isEmpty());
+        QVERIFY(!ctrl.infoCardBlocked());
+
+        // Phase two: the same item upserts again carrying the about text.
+        daemon.pushUpsert(QStringLiteral("contact"),
+                          QJsonObject{{QStringLiteral("id"), QStringLiteral("a@s")},
+                                      {QStringLiteral("jid"), QStringLiteral("a@s")},
+                                      {QStringLiteral("phone"), QStringLiteral("+91 1")},
+                                      {QStringLiteral("saved_name"), QStringLiteral("Alice")},
+                                      {QStringLiteral("about"), QStringLiteral("at the beach")}},
+                          QStringLiteral("0"));
+        QTRY_COMPARE(ctrl.infoCard().value(QStringLiteral("about")).toString(), QStringLiteral("at the beach"));
+        // Phase one's fields survive: the daemon re-upserts the whole card.
+        QCOMPARE(ctrl.infoCard().value(QStringLiteral("phone")).toString(), QStringLiteral("+91 1"));
+
+        // Blocking is an ack; the state comes back through the blocklist view.
+        ctrl.setContactBlocked(QStringLiteral("a@s"), true);
+        QTRY_COMPARE(daemon.lastCommandMethod, QStringLiteral("contact.block"));
+        QCOMPARE(daemon.lastCommandParams.value(QStringLiteral("blocked")).toBool(), true);
+        daemon.pushUpsert(QStringLiteral("blocklist"),
+                          QJsonObject{{QStringLiteral("id"), QStringLiteral("a@s")},
+                                      {QStringLiteral("jid"), QStringLiteral("a@s")}},
+                          QStringLiteral("0"));
+        QTRY_VERIFY(ctrl.infoCardBlocked());
+        daemon.pushRemove(QStringLiteral("blocklist"), QStringLiteral("a@s"));
+        QTRY_VERIFY(!ctrl.infoCardBlocked());
+
+        // The avatar viewer's full-resolution fetch is a plain command.
+        daemon.setProfilePicturePath(QStringLiteral("/cache/a.jpg"));
+        QSignalSpy pictureSpy(&ctrl, &ProtocolController::profilePictureReady);
+        ctrl.viewProfilePicture(QStringLiteral("a@s"));
+        QVERIFY(pictureSpy.wait());
+        QCOMPARE(pictureSpy.first().at(1).toString(), QStringLiteral("/cache/a.jpg"));
+
+        // Closing the dialog drops both of its subscriptions.
+        ctrl.closeInfoCard();
+        QVERIFY(ctrl.infoCardKind().isEmpty());
+        QVERIFY(ctrl.infoCard().isEmpty());
+        QTRY_VERIFY(daemon.unsubscribedViews.contains(QStringLiteral("contact")));
+        QVERIFY(daemon.unsubscribedViews.contains(QStringLiteral("blocklist")));
+    }
+
+    // D5: the group card is two views — the card itself and its roster — and a
+    // join/leave/promotion is an ordinary upsert/remove on the second one.
+    // Member search filters rows the frontend already has; it never reorders.
+    void groupCardAndRosterAreSeparateViews()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+        daemon.setItem(QStringLiteral("group"),
+                       QJsonObject{{QStringLiteral("id"), QStringLiteral("g@g.us")},
+                                   {QStringLiteral("subject"), QStringLiteral("Trip")},
+                                   {QStringLiteral("member_count"), 2}});
+        daemon.setCollection(QStringLiteral("group_members"),
+                             {QJsonObject{{QStringLiteral("id"), QStringLiteral("a@s")},
+                                          {QStringLiteral("jid"), QStringLiteral("a@s")},
+                                          {QStringLiteral("display_name"), QStringLiteral("Alice")},
+                                          {QStringLiteral("role"), QStringLiteral("admin")},
+                                          {QStringLiteral("sort"), QStringLiteral("0001")}},
+                              QJsonObject{{QStringLiteral("id"), QStringLiteral("b@s")},
+                                          {QStringLiteral("jid"), QStringLiteral("b@s")},
+                                          {QStringLiteral("display_name"), QStringLiteral("Bob")},
+                                          {QStringLiteral("phone"), QStringLiteral("+91 5")},
+                                          {QStringLiteral("role"), QStringLiteral("member")},
+                                          {QStringLiteral("sort"), QStringLiteral("0002")}}});
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+        QTRY_VERIFY(!ctrl.chatsLoading());
+
+        ctrl.openGroupCard(QStringLiteral("g@g.us"));
+        QCOMPARE(ctrl.infoCardKind(), QStringLiteral("group"));
+        QTRY_COMPARE(ctrl.groupMemberCount(), 2);
+        QCOMPARE(ctrl.infoCard().value(QStringLiteral("subject")).toString(), QStringLiteral("Trip"));
+        QCOMPARE(daemon.lastParamsByView.value(QStringLiteral("group_members"))
+                     .value(QStringLiteral("chat_id")).toString(),
+                 QStringLiteral("g@g.us"));
+
+        // Roster order is the daemon's; search only narrows it.
+        QCOMPARE(ctrl.groupMembers(QString()).size(), 2);
+        QCOMPARE(ctrl.groupMembers(QString()).first().toMap()
+                     .value(QStringLiteral("display_name")).toString(),
+                 QStringLiteral("Alice"));
+        QCOMPARE(ctrl.groupMembers(QStringLiteral("bo")).size(), 1);
+        QCOMPARE(ctrl.groupMembers(QStringLiteral("+91")).size(), 1); // phone matches too
+        QCOMPARE(ctrl.groupMembers(QStringLiteral("nobody")).size(), 0);
+
+        // A join is an upsert, a departure a remove — no card rewrite.
+        daemon.pushUpsert(QStringLiteral("group_members"),
+                          QJsonObject{{QStringLiteral("id"), QStringLiteral("c@s")},
+                                      {QStringLiteral("jid"), QStringLiteral("c@s")},
+                                      {QStringLiteral("display_name"), QStringLiteral("Chandni")},
+                                      {QStringLiteral("role"), QStringLiteral("member")}},
+                          QStringLiteral("0003"));
+        QTRY_COMPARE(ctrl.groupMemberCount(), 3);
+        daemon.pushRemove(QStringLiteral("group_members"), QStringLiteral("b@s"));
+        QTRY_COMPARE(ctrl.groupMemberCount(), 2);
+
+        ctrl.closeInfoCard();
+        QCOMPARE(ctrl.groupMemberCount(), 0);
+        QTRY_VERIFY(daemon.unsubscribedViews.contains(QStringLiteral("group")));
+        QVERIFY(daemon.unsubscribedViews.contains(QStringLiteral("group_members")));
+    }
+
+    // D5: the composer's `@`-mention roster is a `group_members` subscription on
+    // the *displayed* conversation — held only while a group is on screen.
+    void mentionRosterFollowsTheDisplayedGroup()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+        daemon.setActiveChats({chatRow(QStringLiteral("g@g.us"), QStringLiteral("Trip"), QStringLiteral("1-000")),
+                               chatRow(QStringLiteral("a@s"), QStringLiteral("Alice"), QStringLiteral("2-000"))});
+        daemon.setCollection(QStringLiteral("group_members"),
+                             {QJsonObject{{QStringLiteral("id"), QStringLiteral("a@s")},
+                                          {QStringLiteral("jid"), QStringLiteral("a@s")},
+                                          {QStringLiteral("display_name"), QStringLiteral("Alice")},
+                                          {QStringLiteral("role"), QStringLiteral("member")},
+                                          {QStringLiteral("sort"), QStringLiteral("0001")}}});
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+        QTRY_VERIFY(!ctrl.chatsLoading());
+        QCOMPARE(ctrl.chatMembers(QString()).size(), 0);
+
+        ctrl.setConversationVisible(true);
+        ctrl.selectChat(QStringLiteral("g@g.us"));
+        QTRY_COMPARE(ctrl.chatMembers(QString()).size(), 1);
+        QCOMPARE(ctrl.chatMembers(QStringLiteral("ali")).size(), 1);
+
+        // A 1:1 conversation has no roster to hold.
+        ctrl.selectChat(QStringLiteral("a@s"));
+        QCOMPARE(ctrl.chatMembers(QString()).size(), 0);
+        QTRY_VERIFY(daemon.unsubscribedViews.contains(QStringLiteral("group_members")));
+
+        // Hiding the conversation drops it again.
+        ctrl.selectChat(QStringLiteral("g@g.us"));
+        QTRY_COMPARE(ctrl.chatMembers(QString()).size(), 1);
+        ctrl.setConversationVisible(false);
+        QCOMPARE(ctrl.chatMembers(QString()).size(), 0);
+    }
+
+    // D5: a phone-number hit starts a chat through `chat.ensure_direct`; the row
+    // itself arrives through the `chats` view, so all the controller does with
+    // the ack is select the chat and ask the shell to surface it.
+    void startDirectChatSelectsTheDaemonsChat()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+        daemon.setActiveChats({chatRow(QStringLiteral("911@s"), QStringLiteral("Ravi"), QStringLiteral("1-000"))});
+        daemon.setEnsureDirectChatId(QStringLiteral("911@s"));
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+        QTRY_VERIFY(!ctrl.chatsLoading());
+        ctrl.setSearchQuery(QStringLiteral("+91 98765 43210"));
+
+        QSignalSpy openSpy(&ctrl, &ProtocolController::openChatRequested);
+        ctrl.startDirectChat(QStringLiteral("911@s"));
+        QVERIFY(openSpy.wait());
+        QCOMPARE(openSpy.first().first().toString(), QStringLiteral("911@s"));
+        QCOMPARE(ctrl.selectedChatId(), QStringLiteral("911@s"));
+        QCOMPARE(daemon.lastCommandParams.value(QStringLiteral("jid")).toString(), QStringLiteral("911@s"));
+        // Opening a result dismisses the search.
+        QVERIFY(!ctrl.searchActive());
     }
 
 private:
