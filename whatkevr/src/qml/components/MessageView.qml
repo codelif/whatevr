@@ -370,7 +370,7 @@ Item {
         if (!snapshot || !snapshot.messageId || !snapshot.isOutgoing || snapshot.isRevoked) {
             return false
         }
-        if (!Whatevr.AppController.canEditAt(Number(snapshot.timestampUnix || 0))) {
+        if (!Whatevr.ProtocolController.canEditAt(Number(snapshot.timestampUnix || 0))) {
             return false
         }
         const mediaKind = String(snapshot.mediaKind || "")
@@ -458,14 +458,14 @@ Item {
             return
         }
         if (emoji.length === 0) {
-            Whatevr.AppController.sendReaction(messageId, "")
+            Whatevr.ProtocolController.sendReaction(messageId, "")
             return
         }
         const current = currentUserReaction(messageSnapshot(messageId))
         if (current === emoji) {
-            Whatevr.AppController.sendReaction(messageId, "")
+            Whatevr.ProtocolController.sendReaction(messageId, "")
         } else {
-            Whatevr.AppController.sendReaction(messageId, emoji)
+            Whatevr.ProtocolController.sendReaction(messageId, emoji)
             Whatevr.AppController.emojiModel.addRecentEmoji(emoji)
         }
     }
@@ -1612,7 +1612,7 @@ Item {
     }
 
     Connections {
-        target: Whatevr.AppController
+        target: Whatevr.ProtocolController
 
         function onMessageActionFailed(errorText) {
             root.showNotification(errorText)
@@ -1935,15 +1935,15 @@ Item {
                   ? Whatevr.I18n.i18nc("@action:inmenu", "Unstar")
                   : Whatevr.I18n.i18nc("@action:inmenu", "Star")
             visible: !messageContextMenu.ctxIsRevoked
-            onTriggered: Whatevr.AppController.setMessageStarred(messageContextMenu.ctxMessageId,
-                                                                 !messageContextMenu.ctxIsStarred)
+            onTriggered: Whatevr.ProtocolController.setMessageStarred(messageContextMenu.ctxMessageId,
+                                                                      !messageContextMenu.ctxIsStarred)
         }
 
         MenuItem {
             icon.name: "window-unpin-symbolic"
             text: Whatevr.I18n.i18nc("@action:inmenu unpin a message from the chat", "Unpin")
             visible: messageContextMenu.ctxIsPinned && !messageContextMenu.ctxIsRevoked
-            onTriggered: Whatevr.AppController.unpinMessage(messageContextMenu.ctxMessageId)
+            onTriggered: Whatevr.ProtocolController.unpinMessage(messageContextMenu.ctxMessageId)
         }
 
         Menu {
@@ -1964,15 +1964,15 @@ Item {
 
             MenuItem {
                 text: Whatevr.I18n.i18nc("@action:inmenu pin duration", "For 24 hours")
-                onTriggered: Whatevr.AppController.pinMessage(messageContextMenu.ctxMessageId, 24 * 60 * 60)
+                onTriggered: Whatevr.ProtocolController.pinMessage(messageContextMenu.ctxMessageId, 24 * 60 * 60)
             }
             MenuItem {
                 text: Whatevr.I18n.i18nc("@action:inmenu pin duration", "For 7 days")
-                onTriggered: Whatevr.AppController.pinMessage(messageContextMenu.ctxMessageId, 7 * 24 * 60 * 60)
+                onTriggered: Whatevr.ProtocolController.pinMessage(messageContextMenu.ctxMessageId, 7 * 24 * 60 * 60)
             }
             MenuItem {
                 text: Whatevr.I18n.i18nc("@action:inmenu pin duration", "For 30 days")
-                onTriggered: Whatevr.AppController.pinMessage(messageContextMenu.ctxMessageId, 30 * 24 * 60 * 60)
+                onTriggered: Whatevr.ProtocolController.pinMessage(messageContextMenu.ctxMessageId, 30 * 24 * 60 * 60)
             }
         }
 
@@ -2066,9 +2066,9 @@ Item {
                 onTriggered: {
                     for (const id of deleteConfirmDialog.messageIds) {
                         if (deleteConfirmDialog.forEveryone) {
-                            Whatevr.AppController.revokeMessage(id)
+                            Whatevr.ProtocolController.revokeMessage(id)
                         } else {
-                            Whatevr.AppController.deleteMessageForMe(id)
+                            Whatevr.ProtocolController.deleteMessageForMe(id)
                         }
                     }
                     root.clearSelection()
@@ -2087,7 +2087,7 @@ Item {
 
         onForwardConfirmed: (messageIds, chatIds) => {
             for (const messageId of messageIds) {
-                Whatevr.AppController.forwardMessage(messageId, chatIds)
+                Whatevr.ProtocolController.forwardMessage(messageId, chatIds)
             }
             root.clearSelection()
         }

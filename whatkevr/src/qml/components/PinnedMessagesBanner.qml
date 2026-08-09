@@ -12,11 +12,11 @@ import Whatevr as Whatevr
 Item {
     id: root
 
-    // Mirrors the backing model's row count so the parent can hide the banner
-    // when nothing is pinned.
-    readonly property int count: Whatevr.AppController.pinnedMessagesModel.count
+    // Mirrors the daemon `pinned` view's row count so the parent can hide the
+    // banner when nothing is pinned.
+    readonly property int count: Whatevr.ProtocolController.pinnedMessagesCount
     property int currentIndex: 0
-    // Display fields of the currently shown pin (PinnedMessagesModel::get).
+    // Display fields of the currently shown pin (ProtocolController::pinnedMessageAt).
     property var current: null
 
     signal messageActivated(string messageId)
@@ -42,25 +42,28 @@ Item {
             text: Whatevr.I18n.i18nc("@action:inmenu unpin the pinned message", "Unpin")
             onTriggered: {
                 if (root.current) {
-                    Whatevr.AppController.unpinMessage(String(root.current.messageId))
+                    Whatevr.ProtocolController.unpinMessage(String(root.current.messageId))
                 }
             }
         }
     }
 
     function refresh() {
-        const model = Whatevr.AppController.pinnedMessagesModel
-        if (model.count === 0) {
+        const total = Whatevr.ProtocolController.pinnedMessagesCount
+        if (total === 0) {
             current = null
+            // Switching chats empties the view first, so this is also where the
+            // banner rewinds to the first pin of the next chat.
+            currentIndex = 0
             return
         }
-        if (currentIndex >= model.count) {
-            currentIndex = model.count - 1
+        if (currentIndex >= total) {
+            currentIndex = total - 1
         }
         if (currentIndex < 0) {
             currentIndex = 0
         }
-        current = model.get(currentIndex)
+        current = Whatevr.ProtocolController.pinnedMessageAt(currentIndex)
     }
 
     function showNext() {
@@ -76,11 +79,11 @@ Item {
     Component.onCompleted: refresh()
 
     Connections {
-        target: Whatevr.AppController.pinnedMessagesModel
+        target: Whatevr.ProtocolController
 
-        function onCountChanged() { root.refresh() }
-        function onModelReset() { root.currentIndex = 0; root.refresh() }
-        function onDataChanged() { root.refresh() }
+        // One signal for every shape change of the `pinned` view (initial fill,
+        // pin, unpin, expiry, chat switch): re-read the current row.
+        function onPinnedMessagesChanged() { root.refresh() }
     }
 
     Rectangle {

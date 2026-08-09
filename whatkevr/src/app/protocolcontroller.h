@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QAbstractItemModel>
+#include <QJsonObject>
 #include <QObject>
 #include <QString>
 #include <QStringList>
@@ -140,6 +141,19 @@ class ProtocolController final : public QObject
     Q_PROPERTY(bool sendInFlight READ sendInFlight NOTIFY composerChanged FINAL)
     Q_PROPERTY(QString composerErrorText READ composerErrorText NOTIFY composerChanged FINAL)
 
+    // Pinned-message banner (D4b): the displayed chat's `pinned` view. The
+    // banner shows one pin at a time, so it reads rows by index rather than
+    // instantiating a delegate per row; `ready` mirrors the subscription's
+    // initial fill so the conversation can reserve the banner's height.
+    Q_PROPERTY(bool pinnedMessagesReady READ pinnedMessagesReady NOTIFY pinnedMessagesChanged FINAL)
+    Q_PROPERTY(int pinnedMessagesCount READ pinnedMessagesCount NOTIFY pinnedMessagesChanged FINAL)
+
+    // Forward picker (D4b): a `chats` subscription that lives exactly as long as
+    // the picker dialog is open. The dialog's search box filters the rows it
+    // already has (presentation-side, like the group-member and receipt lists);
+    // the revision tick makes those reads re-evaluate.
+    Q_PROPERTY(int forwardTargetsRevision READ forwardTargetsRevision NOTIFY forwardTargetsChanged FINAL)
+
 public:
     static void setInstance(ProtocolController *instance);
     static ProtocolController *create(QQmlEngine *qmlEngine, QJSEngine *jsEngine);
@@ -235,6 +249,21 @@ public:
     [[nodiscard]] bool sendInFlight() const { return m_sendInFlight; }
     [[nodiscard]] QString composerErrorText() const { return m_composerErrorText; }
 
+    [[nodiscard]] bool pinnedMessagesReady() const;
+    [[nodiscard]] int pinnedMessagesCount() const;
+    // Display fields of one pinned row (`messageId`, `senderName`, `preview`),
+    // or an empty map when the index is out of range.
+    [[nodiscard]] Q_INVOKABLE QVariantMap pinnedMessageAt(int index) const;
+
+    [[nodiscard]] int forwardTargetsRevision() const { return m_forwardTargetsRevision; }
+    // Every candidate forward target whose name matches `query` (empty matches
+    // all), in the daemon's `chats` order. Rows are the daemon items verbatim.
+    [[nodiscard]] Q_INVOKABLE QVariantList forwardChatTargets(const QString &query) const;
+    // Subscribe/drop the picker's own `chats` view; the dialog's lifetime is the
+    // subscription's lifetime (same shape as openMessageReceipts).
+    Q_INVOKABLE void openForwardTargets();
+    Q_INVOKABLE void closeForwardTargets();
+
     // Composer send paths (D4a): map straight to `send.text`/`send.media`; the
     // daemon acks with an id only, the rendered message arrives via the
     // `messages` view. mentionedJids/replyToMessageId/caption may be empty.
@@ -248,6 +277,26 @@ public:
     // Maps to `chat.typing`; the composer calls this on every start/stop and
     // periodically while composing (WhatsApp's composing indicator has a TTL).
     Q_INVOKABLE void setSelectedChatComposing(bool composing);
+
+    // Message actions (D4b): the `message.*` commands. Every one of them acks
+    // with ids/errors only — the reaction pill, star, pin, edited body and
+    // revoke tombstone all arrive back as ordinary `messages`/`pinned` view
+    // upserts (rule 2), so nothing is applied locally and there is no
+    // optimistic update to roll back on failure.
+    Q_INVOKABLE void sendReaction(const QString &messageId, const QString &emoji);
+    Q_INVOKABLE void editMessage(const QString &messageId, const QString &newText);
+    Q_INVOKABLE void revokeMessage(const QString &messageId);
+    Q_INVOKABLE void deleteMessageForMe(const QString &messageId);
+    Q_INVOKABLE void setMessageStarred(const QString &messageId, bool starred);
+    Q_INVOKABLE void pinMessage(const QString &messageId, int durationSecs);
+    Q_INVOKABLE void unpinMessage(const QString &messageId);
+    // One call per source message; a multi-select forward loops over them and
+    // the "forwarded" report fires once for the whole batch.
+    Q_INVOKABLE void forwardMessage(const QString &messageId, const QStringList &chatIds);
+    // Whether a message sent at this time is still inside WhatsApp's edit
+    // window, so the context menu can hide the entry. The daemon is
+    // authoritative and answers `expired` regardless.
+    [[nodiscard]] Q_INVOKABLE bool canEditAt(qint64 timestampUnix) const;
 
     Q_INVOKABLE void startDaemon();
     Q_INVOKABLE void triggerPrimaryAction();
@@ -294,6 +343,14 @@ Q_SIGNALS:
     void presenceChanged();
     void messageReceiptsChanged();
     void composerChanged();
+    void pinnedMessagesChanged();
+    void forwardTargetsChanged();
+    // A `message.*` command was rejected; the timeline shows the text as a
+    // transient notification (the daemon's message, or a generic fallback).
+    void messageActionFailed(const QString &errorText);
+    // A whole forward batch landed successfully, for the "Forwarded to N chats"
+    // notification.
+    void messageForwarded(int chatCount);
     void messageJumpReady(const QString &messageId);
     void messageJumpUnavailable(const QString &messageId);
     void openChatRequested(const QString &chatId);
@@ -350,6 +407,13 @@ private:
     // currently showing, or drop it when nothing is.
     void updatePresenceSubscription();
 
+    // Same, for the `pinned` banner view: it follows what the conversation is
+    // showing, so a hidden conversation holds no pinned subscription.
+    void updatePinnedSubscription();
+
+    // Issues a `message.*` command whose only interesting outcome is failure.
+    void sendMessageCommand(const QString &method, const QJsonObject &params, const QString &failureText);
+
     QString m_socketPath;
     whatevr::proto::ProtocolClient *m_client = nullptr;
     whatevr::proto::ObjectViewModel *m_connectionModel = nullptr;
@@ -361,6 +425,8 @@ private:
     whatevr::proto::CollectionViewModel *m_messagesModel = nullptr;
     whatevr::proto::CollectionViewModel *m_presenceModel = nullptr;
     whatevr::proto::CollectionViewModel *m_receiptsModel = nullptr;
+    whatevr::proto::CollectionViewModel *m_pinnedModel = nullptr;
+    whatevr::proto::CollectionViewModel *m_forwardTargetsModel = nullptr;
     ProtocolMessageModel *m_messagePresentationModel = nullptr;
     whatevr::proto::Subscription *m_connectionSub = nullptr;
     whatevr::proto::Subscription *m_loginSub = nullptr;
@@ -371,6 +437,8 @@ private:
     whatevr::proto::Subscription *m_messagesSub = nullptr;
     whatevr::proto::Subscription *m_presenceSub = nullptr;
     whatevr::proto::Subscription *m_receiptsSub = nullptr;
+    whatevr::proto::Subscription *m_pinnedSub = nullptr;
+    whatevr::proto::Subscription *m_forwardTargetsSub = nullptr;
     int m_chatFilter = 0; // 0 = all, 1 = direct, 2 = groups
     int m_typingRevision = 0;
 
@@ -410,6 +478,8 @@ private:
 
     // The chat the `presence` subscription currently covers (empty when none).
     QString m_presenceChatId;
+    // The chat the `pinned` subscription currently covers (empty when none).
+    QString m_pinnedChatId;
     // The message the open info dialog is watching (empty when it is closed).
     QString m_receiptsMessageId;
     QString m_receiptsError;
@@ -428,6 +498,15 @@ private:
     // sent to the chat that actually owns the composing state (mirrors
     // AppController::m_localComposingChatId).
     QString m_localComposingChatId;
+
+    // Forward-batch bookkeeping (D4b). A multi-select forward dispatches one
+    // `message.forward` per source message in a synchronous loop, so the batch
+    // starts when the in-flight count goes 0 -> 1 and reports once when it
+    // drains — one "Forwarded to N chats" for the whole selection.
+    int m_forwardTargetsRevision = 0;
+    int m_forwardInFlight = 0;
+    int m_forwardBatchChatCount = 0;
+    bool m_forwardBatchFailed = false;
 
     QTimer *m_startupGraceTimer = nullptr;
     QTimer *m_qrTimer = nullptr;

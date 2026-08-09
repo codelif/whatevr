@@ -39,6 +39,13 @@ CenteredDialog {
     property int selectedChatCount: 0
     property int selectionRevision: 0
     property bool searchExpanded: false
+    // Candidate targets, straight from the daemon's `chats` view in its order.
+    // The search box narrows the rows the dialog already holds — presentation-
+    // side filtering, no sorting or merging (rule 1). The revision tick is what
+    // makes this re-evaluate when the view changes.
+    readonly property var chatTargets: Whatevr.ProtocolController.forwardTargetsRevision >= 0
+                                       ? Whatevr.ProtocolController.forwardChatTargets(searchField.text)
+                                       : []
 
     signal forwardConfirmed(var messageIds, var chatIds)
 
@@ -69,7 +76,24 @@ CenteredDialog {
         searchExpanded = false
         searchField.text = ""
         chatList.positionViewAtBeginning()
+        // The picker's own `chats` subscription lives exactly as long as the
+        // dialog does; the daemon owns the rows and their order.
+        Whatevr.ProtocolController.openForwardTargets()
         open()
+    }
+
+    onClosed: Whatevr.ProtocolController.closeForwardTargets()
+
+    // Presentation-only avatar fallback: the daemon chat row carries no
+    // precomputed initials (same helper as the chat list).
+    function initialsFor(name) {
+        const parts = (name || "").trim().split(/\s+/).filter(p => p.length > 0)
+        if (parts.length === 0)
+            return "?"
+        let initials = parts[0].charAt(0)
+        if (parts.length > 1)
+            initials += parts[parts.length - 1].charAt(0)
+        return initials.toUpperCase()
     }
 
     function isChatSelected(chatId) {
@@ -86,11 +110,11 @@ CenteredDialog {
         selectedList = out
     }
 
-    function chatInfo(model) {
+    function chatInfo(chat) {
         return {
-            name: String(model.name || ""),
-            avatarLocalPath: String(model.avatarLocalPath || ""),
-            initials: String(model.initials || "?")
+            name: String(chat.name || ""),
+            avatarLocalPath: String(chat.avatar_path || ""),
+            initials: root.initialsFor(String(chat.name || ""))
         }
     }
 
@@ -177,12 +201,6 @@ CenteredDialog {
                 onClicked: root.reject()
             }
         }
-    }
-
-    Whatevr.ChatListFilterModel {
-        id: chatFilterModel
-        sourceModel: Whatevr.AppController.chatListModel
-        filterText: searchField.text
     }
 
     // Removable selection pill shown in the chip strip.
@@ -315,7 +333,7 @@ CenteredDialog {
                 anchors.fill: parent
                 Layout.preferredHeight: Math.min(contentHeight, root.listMax)
                 clip: true
-                model: chatFilterModel
+                model: root.chatTargets
                 currentIndex: -1
                 boundsBehavior: Flickable.StopAtBounds
                 flickableDirection: Flickable.VerticalFlick
@@ -328,7 +346,7 @@ CenteredDialog {
                 Label {
                     anchors.centerIn: parent
                     width: parent.width - Kirigami.Units.largeSpacing * 2
-                    visible: chatFilterModel.count === 0
+                    visible: root.chatTargets.length === 0
                     horizontalAlignment: Text.AlignHCenter
                     wrapMode: Text.WordWrap
                     color: Kirigami.Theme.disabledTextColor
@@ -340,16 +358,16 @@ CenteredDialog {
                 delegate: ItemDelegate {
                     id: chatDelegate
 
-                    required property var model
+                    required property var modelData
 
-                    readonly property string chatId: String(model.chatId || "")
+                    readonly property string chatId: String(modelData.id || "")
                     readonly property bool selected: root.selectionRevision >= 0 && root.isChatSelected(chatId)
                     readonly property bool selectable: selected || root.selectedChatCount < root.maxTargets
 
                     width: ListView.view.width
                     enabled: selectable
                     highlighted: selected
-                    onClicked: root.toggleChat(chatId, root.chatInfo(model))
+                    onClicked: root.toggleChat(chatId, root.chatInfo(modelData))
 
                     contentItem: RowLayout {
                         spacing: Kirigami.Units.smallSpacing
@@ -357,24 +375,24 @@ CenteredDialog {
                         CheckBox {
                             checked: chatDelegate.selected
                             enabled: chatDelegate.selectable
-                            onToggled: root.toggleChat(chatDelegate.chatId, root.chatInfo(chatDelegate.model))
+                            onToggled: root.toggleChat(chatDelegate.chatId, root.chatInfo(chatDelegate.modelData))
                         }
 
                         AvatarImage {
                             Layout.preferredWidth: Kirigami.Units.gridUnit * 1.65
                             Layout.preferredHeight: Kirigami.Units.gridUnit * 1.65
-                            avatarLocalPath: String(chatDelegate.model.avatarLocalPath || "")
-                            initials: String(chatDelegate.model.initials || "?")
+                            avatarLocalPath: String(chatDelegate.modelData.avatar_path || "")
+                            initials: root.initialsFor(String(chatDelegate.modelData.name || ""))
                         }
 
                         Label {
-                            text: String(chatDelegate.model.name || "")
+                            text: String(chatDelegate.modelData.name || "")
                             elide: Text.ElideRight
                             Layout.fillWidth: true
                         }
 
                         Kirigami.Icon {
-                            visible: Boolean(chatDelegate.model.isGroup)
+                            visible: Boolean(chatDelegate.modelData.is_group)
                             source: "system-users-symbolic"
                             Layout.preferredWidth: Kirigami.Units.iconSizes.small
                             Layout.preferredHeight: Kirigami.Units.iconSizes.small

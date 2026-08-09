@@ -189,7 +189,7 @@ CenteredDialog {
 
                 onClicked: {
                     if (removable) {
-                        Whatevr.AppController.sendReaction(root.messageId, "")
+                        Whatevr.ProtocolController.sendReaction(root.messageId, "")
                         root.close()
                     }
                 }

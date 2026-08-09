@@ -80,6 +80,7 @@ public:
     void setHoldExtendReady(bool hold) { m_holdExtendReady = hold; }
     void setRejectNextExtend(bool reject) { m_rejectNextExtend = reject; }
     void setRejectNextSend(bool reject) { m_rejectNextSend = reject; }
+    void setRejectMessageCommands(bool reject) { m_rejectMessageCommands = reject; }
 
     void sendOpenChat(const QString &chatId)
     {
@@ -153,6 +154,8 @@ public:
     QHash<QString, QJsonObject> lastParamsByView;
     QHash<QString, int> subscribeCountByView;
     QStringList unsubscribedViews;
+    // Every `message.*` command received, in order.
+    QStringList messageCommands;
 
 Q_SIGNALS:
     void reconnectRequested();
@@ -304,6 +307,19 @@ private:
                 reply(id, QJsonObject{{QStringLiteral("message_id"), QStringLiteral("sent-1")}});
             }
             Q_EMIT commandReceived();
+        } else if (method.startsWith(QLatin1String("message."))) {
+            lastCommandMethod = method;
+            lastCommandParams = params;
+            messageCommands.append(method);
+            if (m_rejectMessageCommands) {
+                error(id, QStringLiteral("rejected"), QStringLiteral("command rejected"));
+            } else if (method == QLatin1String("message.forward")) {
+                reply(id, QJsonObject{{QStringLiteral("message_ids"),
+                                       QJsonArray{QStringLiteral("fwd-1")}}});
+            } else {
+                reply(id, QJsonObject{});
+            }
+            Q_EMIT commandReceived();
         } else if (method == QLatin1String("daemon.reconnect")) {
             ++reconnectCount;
             reply(id, QJsonObject{});
@@ -381,6 +397,7 @@ private:
     int m_heldExtendSub = -1;
     bool m_rejectNextExtend = false;
     bool m_rejectNextSend = false;
+    bool m_rejectMessageCommands = false;
 };
 
 QJsonObject chatRow(const QString &id, const QString &name, const QString &sort,
@@ -1282,6 +1299,201 @@ private Q_SLOTS:
         QVERIFY(commandSpy.wait());
         QCOMPARE(daemon.lastCommandMethod, QStringLiteral("chat.typing"));
         QCOMPARE(daemon.lastCommandParams.value(QStringLiteral("composing")).toBool(), false);
+    }
+
+    // Every message action maps to its `message.*` command with the daemon's
+    // param names, and nothing is applied locally: the reaction/star/pin/edit
+    // all come back through the views. A rejected command surfaces as the
+    // timeline's messageActionFailed notification.
+    void messageActionsMapToDaemonCommands()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+        daemon.setActiveChats({chatRow(QStringLiteral("a@s"), QStringLiteral("Alice"), QStringLiteral("1-000"),
+                                       QJsonObject{{QStringLiteral("unread"), 2}})});
+        daemon.setUnreadAnchorId(QStringLiteral("m1"));
+        daemon.setMessages({messageRow(QStringLiteral("m2"), QStringLiteral("0002")),
+                            messageRow(QStringLiteral("m1"), QStringLiteral("0001"))});
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+        QTRY_VERIFY(!ctrl.chatsLoading());
+        ctrl.setConversationVisible(true);
+        ctrl.selectChat(QStringLiteral("a@s"));
+        QTRY_COMPARE(ctrl.unreadAnchorMessageId(), QStringLiteral("m1"));
+
+        QSignalSpy commandSpy(&daemon, &FakeDaemon::commandReceived);
+
+        ctrl.sendReaction(QStringLiteral("m1"), QStringLiteral("👍"));
+        QVERIFY(commandSpy.wait());
+        QCOMPARE(daemon.lastCommandMethod, QStringLiteral("message.react"));
+        QCOMPARE(daemon.lastCommandParams.value(QStringLiteral("message_id")).toString(), QStringLiteral("m1"));
+        QCOMPARE(daemon.lastCommandParams.value(QStringLiteral("emoji")).toString(), QStringLiteral("👍"));
+        // Reacting means the user has seen the divider they reacted past.
+        QVERIFY(ctrl.unreadAnchorMessageId().isEmpty());
+
+        commandSpy.clear();
+        ctrl.setMessageStarred(QStringLiteral("m1"), true);
+        QVERIFY(commandSpy.wait());
+        QCOMPARE(daemon.lastCommandMethod, QStringLiteral("message.star"));
+        QCOMPARE(daemon.lastCommandParams.value(QStringLiteral("starred")).toBool(), true);
+
+        commandSpy.clear();
+        ctrl.pinMessage(QStringLiteral("m1"), 24 * 60 * 60);
+        QVERIFY(commandSpy.wait());
+        QCOMPARE(daemon.lastCommandMethod, QStringLiteral("message.pin"));
+        QCOMPARE(daemon.lastCommandParams.value(QStringLiteral("pinned")).toBool(), true);
+        QCOMPARE(daemon.lastCommandParams.value(QStringLiteral("duration_secs")).toInt(), 86'400);
+
+        commandSpy.clear();
+        ctrl.unpinMessage(QStringLiteral("m1"));
+        QVERIFY(commandSpy.wait());
+        QCOMPARE(daemon.lastCommandMethod, QStringLiteral("message.pin"));
+        QCOMPARE(daemon.lastCommandParams.value(QStringLiteral("pinned")).toBool(), false);
+
+        commandSpy.clear();
+        ctrl.editMessage(QStringLiteral("m1"), QStringLiteral("  fixed  "));
+        QVERIFY(commandSpy.wait());
+        QCOMPARE(daemon.lastCommandMethod, QStringLiteral("message.edit"));
+        QCOMPARE(daemon.lastCommandParams.value(QStringLiteral("text")).toString(), QStringLiteral("fixed"));
+
+        commandSpy.clear();
+        ctrl.revokeMessage(QStringLiteral("m1"));
+        QVERIFY(commandSpy.wait());
+        QCOMPARE(daemon.lastCommandMethod, QStringLiteral("message.revoke"));
+
+        commandSpy.clear();
+        ctrl.deleteMessageForMe(QStringLiteral("m1"));
+        QVERIFY(commandSpy.wait());
+        QCOMPARE(daemon.lastCommandMethod, QStringLiteral("message.delete"));
+
+        // Empty ids and blank edits never reach the daemon.
+        const int sent = daemon.messageCommands.size();
+        ctrl.sendReaction(QString(), QStringLiteral("👍"));
+        ctrl.editMessage(QStringLiteral("m1"), QStringLiteral("   "));
+        ctrl.pinMessage(QStringLiteral("m1"), 0);
+        QTest::qWait(50);
+        QCOMPARE(daemon.messageCommands.size(), sent);
+
+        // A rejected command is reported to the timeline.
+        QSignalSpy failedSpy(&ctrl, &ProtocolController::messageActionFailed);
+        daemon.setRejectMessageCommands(true);
+        ctrl.setMessageStarred(QStringLiteral("m1"), false);
+        QVERIFY(failedSpy.wait());
+        QCOMPARE(failedSpy.first().first().toString(), QStringLiteral("command rejected"));
+
+        // The edit window is a local pre-check only; the daemon still decides.
+        QVERIFY(ctrl.canEditAt(QDateTime::currentSecsSinceEpoch() - 60));
+        QVERIFY(!ctrl.canEditAt(QDateTime::currentSecsSinceEpoch() - 3600));
+        QVERIFY(!ctrl.canEditAt(0));
+    }
+
+    // The pinned banner is the displayed conversation's `pinned` view: it
+    // subscribes with the chat, renders rows by index, tracks live pins/unpins,
+    // and is dropped when the conversation goes off screen.
+    void pinnedBannerFollowsTheConversation()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+        daemon.setActiveChats({chatRow(QStringLiteral("a@s"), QStringLiteral("Alice"), QStringLiteral("1-000"))});
+        daemon.setMessages({messageRow(QStringLiteral("m1"), QStringLiteral("0001"))});
+        daemon.setCollection(QStringLiteral("pinned"), {messageRow(QStringLiteral("m1"), QStringLiteral("0001"))});
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+        QTRY_VERIFY(!ctrl.chatsLoading());
+        // Nothing subscribed yet, so there is nothing for the banner to wait on.
+        QVERIFY(ctrl.pinnedMessagesReady());
+
+        ctrl.setConversationVisible(true);
+        ctrl.selectChat(QStringLiteral("a@s"));
+        QTRY_COMPARE(ctrl.pinnedMessagesCount(), 1);
+        QVERIFY(ctrl.pinnedMessagesReady());
+        QCOMPARE(daemon.lastParamsByView.value(QStringLiteral("pinned"))
+                     .value(QStringLiteral("chat_id")).toString(),
+                 QStringLiteral("a@s"));
+
+        const QVariantMap first = ctrl.pinnedMessageAt(0);
+        QCOMPARE(first.value(QStringLiteral("messageId")).toString(), QStringLiteral("m1"));
+        QCOMPARE(first.value(QStringLiteral("senderName")).toString(), QStringLiteral("Alice"));
+        QCOMPARE(first.value(QStringLiteral("preview")).toString(), QStringLiteral("m1"));
+        QVERIFY(ctrl.pinnedMessageAt(1).isEmpty());
+
+        // A second pin arrives as an ordinary upsert; unpinning removes it.
+        QSignalSpy pinnedSpy(&ctrl, &ProtocolController::pinnedMessagesChanged);
+        daemon.pushUpsert(QStringLiteral("pinned"), messageRow(QStringLiteral("m2"), QStringLiteral("0002")),
+                          QStringLiteral("0002"));
+        QTRY_COMPARE(ctrl.pinnedMessagesCount(), 2);
+        QVERIFY(pinnedSpy.count() > 0);
+        QCOMPARE(ctrl.pinnedMessageAt(1).value(QStringLiteral("messageId")).toString(), QStringLiteral("m2"));
+
+        daemon.pushRemove(QStringLiteral("pinned"), QStringLiteral("m1"));
+        QTRY_COMPARE(ctrl.pinnedMessagesCount(), 1);
+        QCOMPARE(ctrl.pinnedMessageAt(0).value(QStringLiteral("messageId")).toString(), QStringLiteral("m2"));
+
+        // Hiding the conversation drops the subscription with the banner.
+        ctrl.setConversationVisible(false);
+        QCOMPARE(ctrl.pinnedMessagesCount(), 0);
+        QVERIFY(ctrl.pinnedMessagesReady());
+        QTRY_VERIFY(daemon.unsubscribedViews.contains(QStringLiteral("pinned")));
+    }
+
+    // The forward picker holds its own `chats` subscription for exactly as long
+    // as it is open, filters those rows presentation-side, and reports one
+    // "forwarded" for the whole multi-message batch.
+    void forwardPickerScopesItsChatsViewAndBatchesTheReport()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+        daemon.setActiveChats({chatRow(QStringLiteral("a@s"), QStringLiteral("Alice"), QStringLiteral("1-000")),
+                               chatRow(QStringLiteral("b@s"), QStringLiteral("Bob"), QStringLiteral("2-000"))});
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+        QTRY_VERIFY(!ctrl.chatsLoading());
+        const int chatsSubsBefore = daemon.subscribeCountByView.value(QStringLiteral("chats"));
+
+        ctrl.openForwardTargets();
+        QTRY_COMPARE(daemon.subscribeCountByView.value(QStringLiteral("chats")), chatsSubsBefore + 1);
+        // Its own params: every chat, not whatever the sidebar filter shows.
+        QCOMPARE(daemon.lastParamsByView.value(QStringLiteral("chats"))
+                     .value(QStringLiteral("filter")).toString(),
+                 QStringLiteral("all"));
+        QCOMPARE(daemon.lastParamsByView.value(QStringLiteral("chats"))
+                     .value(QStringLiteral("archived")).toBool(),
+                 false);
+        QTRY_COMPARE(ctrl.forwardChatTargets(QString()).size(), 2);
+        QCOMPARE(ctrl.forwardChatTargets(QStringLiteral("bo")).size(), 1);
+        QCOMPARE(ctrl.forwardChatTargets(QStringLiteral("bo")).first().toMap()
+                     .value(QStringLiteral("id")).toString(),
+                 QStringLiteral("b@s"));
+        QCOMPARE(ctrl.forwardChatTargets(QStringLiteral("nobody")).size(), 0);
+
+        // Two source messages to two chats: one report for the batch.
+        QSignalSpy forwardedSpy(&ctrl, &ProtocolController::messageForwarded);
+        const QStringList targets{QStringLiteral("a@s"), QStringLiteral("b@s")};
+        ctrl.forwardMessage(QStringLiteral("m1"), targets);
+        ctrl.forwardMessage(QStringLiteral("m2"), targets);
+        QVERIFY(forwardedSpy.wait());
+        QCOMPARE(forwardedSpy.count(), 1);
+        QCOMPARE(forwardedSpy.first().first().toInt(), 2);
+        QCOMPARE(daemon.lastCommandMethod, QStringLiteral("message.forward"));
+        QCOMPARE(daemon.lastCommandParams.value(QStringLiteral("chat_ids")).toArray().size(), 2);
+
+        // A failing batch reports once too, as a failure rather than a success.
+        daemon.setRejectMessageCommands(true);
+        QSignalSpy failedSpy(&ctrl, &ProtocolController::messageActionFailed);
+        forwardedSpy.clear();
+        ctrl.forwardMessage(QStringLiteral("m1"), targets);
+        ctrl.forwardMessage(QStringLiteral("m2"), targets);
+        QVERIFY(failedSpy.wait());
+        QTest::qWait(50);
+        QCOMPARE(failedSpy.count(), 1);
+        QCOMPARE(forwardedSpy.count(), 0);
+
+        ctrl.closeForwardTargets();
+        QCOMPARE(ctrl.forwardChatTargets(QString()).size(), 0);
+        QTRY_VERIFY(daemon.unsubscribedViews.contains(QStringLiteral("chats")));
     }
 
 private:
