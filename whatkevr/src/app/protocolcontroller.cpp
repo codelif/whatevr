@@ -235,7 +235,10 @@ ProtocolController::ProtocolController(QString socketPath, QObject *parent)
     connect(m_archivedModel, &CollectionViewModel::countChanged, this, &ProtocolController::archivedChanged);
     connect(m_archivedModel, &CollectionViewModel::readyChanged, this, &ProtocolController::archivedChanged);
 
-    const auto selectionSourceChanged = [this] {
+    // The selected conversation has its own `chat` object view, independent of
+    // the sidebar's current filter and loaded window.
+    m_selectedChatModel = new ObjectViewModel(this);
+    connect(m_selectedChatModel, &ObjectViewModel::valueChanged, this, [this] {
         if (!m_selectedChatId.isEmpty()) {
             if (m_phoneHistoryRequesting && selectedChatHistoryExhausted()) {
                 m_phoneHistoryRequesting = false;
@@ -244,16 +247,32 @@ ProtocolController::ProtocolController(QString socketPath, QObject *parent)
                 Q_EMIT messagesChanged();
             }
             Q_EMIT selectionChanged();
+            if (m_waitingForSelectedChatItem && m_selectedChatModel->isPresent()) {
+                m_waitingForSelectedChatItem = false;
+                const QString anchor = selectedChatUnreadCount() > 0
+                    ? QStringLiteral("unread")
+                    : QStringLiteral("latest");
+                setSelectedChat(m_selectedChatId, anchor, {});
+            } else if (!m_selectedChatModel->isPresent()) {
+                const QString chatId = m_selectedChatId;
+                QTimer::singleShot(0, this, [this, chatId] {
+                    // A remove leaves the view ready; a reconnect reset turns it
+                    // unready before this queued check and must keep selection.
+                    if (m_selectedChatId == chatId && m_selectedChatModel->isReady()
+                        && !m_selectedChatModel->isPresent()) {
+                        setSelectedChat({}, {}, {});
+                    }
+                });
+            }
         }
-    };
-    connect(m_chatsModel, &QAbstractItemModel::dataChanged, this, selectionSourceChanged);
-    connect(m_chatsModel, &QAbstractItemModel::rowsInserted, this, selectionSourceChanged);
-    connect(m_chatsModel, &QAbstractItemModel::rowsRemoved, this, selectionSourceChanged);
-    connect(m_chatsModel, &QAbstractItemModel::modelReset, this, selectionSourceChanged);
-    connect(m_archivedModel, &QAbstractItemModel::dataChanged, this, selectionSourceChanged);
-    connect(m_archivedModel, &QAbstractItemModel::rowsInserted, this, selectionSourceChanged);
-    connect(m_archivedModel, &QAbstractItemModel::rowsRemoved, this, selectionSourceChanged);
-    connect(m_archivedModel, &QAbstractItemModel::modelReset, this, selectionSourceChanged);
+    });
+    connect(m_selectedChatModel, &ObjectViewModel::readyChanged, this, [this] {
+        if (m_waitingForSelectedChatItem && m_selectedChatModel->isReady()
+            && !m_selectedChatModel->isPresent()) {
+            selectedChatLookupFailed(m_selectedChatId, QStringLiteral("not_found"),
+                                     QStringLiteral("chat disappeared before its initial fill"));
+        }
+    });
 
     // Typing overlay (D2b2): the global `typing` collection. Any change (a chat
     // starting/stopping, or a reset) bumps typingRevision so per-row isTyping
@@ -620,27 +639,10 @@ void ProtocolController::subscribeChats()
     // in-flight guard and lets the next page be requested.
     connect(m_chatsModel, &CollectionViewModel::readyReceived, this, [this](bool) {
         m_chatsExtendPending = false;
-        ensureSelectedChatLoaded();
     });
     connect(m_archivedModel, &CollectionViewModel::readyReceived, this, [this](bool) {
         m_archivedExtendPending = false;
-        ensureSelectedChatLoaded();
     });
-}
-
-// A windowed chat list can be asked to open a chat it has not loaded: a search
-// hit, a notification, a whatevr:// link. That row is where the header name and
-// avatar come from (selectedChatItem), so widen the window until the daemon has
-// handed it over, one page per `ready`, stopping at exhaustion. This is window
-// management, not a frontend cache — but the honest fix is a per-chat `chat`
-// object view, which PROTOCOL.md does not have; see MIGRATION.md DN6.
-void ProtocolController::ensureSelectedChatLoaded()
-{
-    if (m_selectedChatId.isEmpty() || !selectedChatItem().isEmpty()) {
-        return;
-    }
-    loadMoreChats();
-    loadMoreArchivedChats();
 }
 
 // Both chat lists are prefix windows, so they only grow away from the top of
@@ -764,14 +766,22 @@ QAbstractItemModel *ProtocolController::messageListModel() const
 
 QVariantMap ProtocolController::selectedChatItem() const
 {
-    if (m_selectedChatId.isEmpty()) {
-        return {};
+    return m_selectedChatId.isEmpty() ? QVariantMap{} : m_selectedChatModel->value();
+}
+
+void ProtocolController::selectedChatLookupFailed(const QString &chatId, const QString &code,
+                                                  const QString &message)
+{
+    if (m_selectedChatId != chatId || (code == QLatin1String("io") && m_selectedChatSub)) {
+        return;
     }
-    QVariantMap item = m_chatsModel->itemById(m_selectedChatId);
-    if (item.isEmpty()) {
-        item = m_archivedModel->itemById(m_selectedChatId);
-    }
-    return item;
+    qWarning() << "protocol: selected chat subscribe failed:" << code << message;
+    QTimer::singleShot(0, this, [this, chatId] {
+        if (m_selectedChatId == chatId && !m_selectedChatModel->isPresent()) {
+            m_waitingForSelectedChatItem = false;
+            setSelectedChat({}, {}, {});
+        }
+    });
 }
 
 QString ProtocolController::selectedChatName() const
@@ -815,10 +825,7 @@ void ProtocolController::selectChat(const QString &chatId)
         return;
     }
 
-    m_selectedChatId = chatId;
-    const QString anchor = selectedChatUnreadCount() > 0 ? QStringLiteral("unread") : QStringLiteral("latest");
-    m_selectedChatId.clear();
-    setSelectedChat(chatId, anchor, {});
+    setSelectedChat(chatId, {}, {});
 }
 
 void ProtocolController::setSelectedChat(const QString &chatId, const QString &anchor, const QString &jumpMessageId)
@@ -832,6 +839,20 @@ void ProtocolController::setSelectedChat(const QString &chatId, const QString &a
         m_readTimer->stop();
         // The in-chat search is scoped to one conversation; switching ends it.
         closeChatSearch();
+
+        m_waitingForSelectedChatItem = false;
+        delete m_selectedChatSub;
+        m_selectedChatSub = nullptr;
+        m_selectedChatModel->onReset();
+        if (!chatId.isEmpty()) {
+            m_waitingForSelectedChatItem = anchor.isEmpty();
+            m_selectedChatSub = m_client->subscribe(
+                QStringLiteral("chat"), {{QStringLiteral("chat_id"), chatId}}, m_selectedChatModel);
+            connect(m_selectedChatSub, &Subscription::failed, this,
+                    [this, chatId](const QString &code, const QString &message) {
+                        selectedChatLookupFailed(chatId, code, message);
+                    });
+        }
     }
     m_phoneHistoryRequesting = false;
     m_phoneHistoryTimer->stop();
@@ -847,7 +868,6 @@ void ProtocolController::setSelectedChat(const QString &chatId, const QString &a
     updatePresenceSubscription();
     updatePinnedSubscription();
     updateChatMembersSubscription();
-    ensureSelectedChatLoaded();
 
     if (chatId.isEmpty()) {
         delete m_messagesSub;
@@ -862,6 +882,19 @@ void ProtocolController::setSelectedChat(const QString &chatId, const QString &a
         m_unreadAnchorResolving = false;
         m_messagesModel->onReset();
         Q_EMIT unreadAnchorChanged();
+        Q_EMIT messagesChanged();
+        return;
+    }
+
+    if (anchor.isEmpty()) {
+        delete m_messagesSub;
+        m_messagesSub = nullptr;
+        m_requestedAnchor.clear();
+        m_effectiveAnchor.clear();
+        m_pendingJumpMessageId.clear();
+        m_displayedMessagesChatId.clear();
+        m_waitingInitialMessages = true;
+        m_messagesModel->onReset();
         Q_EMIT messagesChanged();
         return;
     }
@@ -884,6 +917,9 @@ void ProtocolController::setSelectedChat(const QString &chatId, const QString &a
 
 void ProtocolController::subscribeMessages(const QString &anchor, const QString &jumpMessageId)
 {
+    // An explicit anchor (including a same-chat jump) supersedes a pending
+    // default unread/latest choice from the selected `chat` row.
+    m_waitingForSelectedChatItem = false;
     if (m_phoneHistoryRequesting) {
         m_phoneHistoryRequesting = false;
         m_phoneHistoryTimer->stop();
@@ -1254,6 +1290,9 @@ void ProtocolController::setConversationVisible(bool visible)
     }
     sendSessionUpdate();
     if (!m_selectedChatId.isEmpty()) {
+        if (m_waitingForSelectedChatItem) {
+            return;
+        }
         const QString anchor = selectedChatUnreadCount() > 0 ? QStringLiteral("unread") : QStringLiteral("latest");
         subscribeMessages(anchor);
     }
