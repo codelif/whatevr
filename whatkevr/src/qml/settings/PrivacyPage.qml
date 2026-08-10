@@ -8,23 +8,22 @@ SettingsPage {
 
     title: Whatevr.I18n.i18nc("@title settings category", "Privacy")
 
-    Component.onCompleted: Whatevr.AppController.refreshPrivacySettings()
+    Component.onCompleted: Whatevr.ProtocolController.openPrivacySettings()
+    Component.onDestruction: Whatevr.ProtocolController.closePrivacySettings()
 
-    // PrivacyAudience enum values from the proto: 1 everyone, 2 contacts,
-    // 3 contacts-except, 4 nobody, 5 match-last-seen, 6 known.
     readonly property var everyoneContactsNobody: [
-        { value: 1, text: Whatevr.I18n.i18nc("@item privacy audience", "Everyone") },
-        { value: 2, text: Whatevr.I18n.i18nc("@item privacy audience", "My contacts") },
-        { value: 3, text: Whatevr.I18n.i18nc("@item privacy audience", "My contacts except…") },
-        { value: 4, text: Whatevr.I18n.i18nc("@item privacy audience", "Nobody") }
+        { value: "all", text: Whatevr.I18n.i18nc("@item privacy audience", "Everyone") },
+        { value: "contacts", text: Whatevr.I18n.i18nc("@item privacy audience", "My contacts") },
+        { value: "contact_blacklist", text: Whatevr.I18n.i18nc("@item privacy audience", "My contacts except…") },
+        { value: "none", text: Whatevr.I18n.i18nc("@item privacy audience", "Nobody") }
     ]
     readonly property var onlineModel: [
-        { value: 1, text: Whatevr.I18n.i18nc("@item privacy audience", "Everyone") },
-        { value: 5, text: Whatevr.I18n.i18nc("@item privacy audience", "Same as last seen") }
+        { value: "all", text: Whatevr.I18n.i18nc("@item privacy audience", "Everyone") },
+        { value: "match_last_seen", text: Whatevr.I18n.i18nc("@item privacy audience", "Same as last seen") }
     ]
     readonly property var callModel: [
-        { value: 1, text: Whatevr.I18n.i18nc("@item privacy audience", "Everyone") },
-        { value: 6, text: Whatevr.I18n.i18nc("@item privacy audience", "Known contacts") }
+        { value: "all", text: Whatevr.I18n.i18nc("@item privacy audience", "Everyone") },
+        { value: "known", text: Whatevr.I18n.i18nc("@item privacy audience", "Known contacts") }
     ]
 
     FormCard.FormHeader {
@@ -35,7 +34,7 @@ SettingsPage {
         PrivacyAudienceCombo {
             objectName: "privacy.lastSeen"
             text: Whatevr.I18n.i18nc("@label:listbox", "Last seen")
-            categoryKey: "lastSeen"
+            categoryKey: "last_seen"
             audienceModel: page.everyoneContactsNobody
         }
 
@@ -53,7 +52,7 @@ SettingsPage {
         PrivacyAudienceCombo {
             objectName: "privacy.profilePhoto"
             text: Whatevr.I18n.i18nc("@label:listbox", "Profile photo")
-            categoryKey: "profilePhoto"
+            categoryKey: "profile_photo"
             audienceModel: page.everyoneContactsNobody
         }
 
@@ -77,16 +76,19 @@ SettingsPage {
             objectName: "privacy.readReceipts"
             text: Whatevr.I18n.i18nc("@option:check", "Read receipts")
             description: Whatevr.I18n.i18nc("@info", "When off, you won't send or receive read receipts. Read receipts are always sent in group chats.")
-            checked: Whatevr.AppController.privacySettings.readReceipts ?? true
-            onToggled: Whatevr.AppController.setReadReceipts(checked)
+            checked: Whatevr.ProtocolController.privacySettings.read_receipts ?? true
+            onToggled: Whatevr.ProtocolController.setReadReceipts(checked)
 
             // Toggling a switch breaks its `checked` binding, so an external
             // change (e.g. from the phone) would stop reflecting. Re-establish
             // the binding whenever the privacy settings change.
             Connections {
-                target: Whatevr.AppController
+                target: Whatevr.ProtocolController
                 function onPrivacySettingsChanged() {
-                    readReceiptsSwitch.checked = Qt.binding(() => Whatevr.AppController.privacySettings.readReceipts ?? true)
+                    readReceiptsSwitch.checked = Qt.binding(() => Whatevr.ProtocolController.privacySettings.read_receipts ?? true)
+                }
+                function onSettingsActionFailed() {
+                    readReceiptsSwitch.checked = Qt.binding(() => Whatevr.ProtocolController.privacySettings.read_receipts ?? true)
                 }
             }
         }
@@ -96,7 +98,7 @@ SettingsPage {
         PrivacyAudienceCombo {
             objectName: "privacy.groupAdd"
             text: Whatevr.I18n.i18nc("@label:listbox", "Who can add me to groups")
-            categoryKey: "groupAdd"
+            categoryKey: "group_add"
             audienceModel: page.everyoneContactsNobody
         }
 
@@ -105,7 +107,7 @@ SettingsPage {
         PrivacyAudienceCombo {
             objectName: "privacy.callAdd"
             text: Whatevr.I18n.i18nc("@label:listbox", "Who can call me")
-            categoryKey: "callAdd"
+            categoryKey: "call_add"
             audienceModel: page.callModel
         }
     }

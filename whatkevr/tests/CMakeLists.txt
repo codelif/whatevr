@@ -54,11 +54,14 @@ qt_add_executable(tst_protocolcontroller
     tst_protocolcontroller.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/app/protocolcontroller.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/app/protocolcontroller.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/app/protocolstickercontroller.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/app/protocolstickercontroller.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/protocol/protocolclient.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/protocol/objectviewmodel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/protocol/collectionviewmodel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/models/protocolmessagemodel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/models/protocolsearchmodel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/models/emojimodel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/util/messagemarkup.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/util/messagerow.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/util/richtext.cpp

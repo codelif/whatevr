@@ -10,9 +10,7 @@ SettingsPage {
 
     title: Whatevr.I18n.i18nc("@title settings category", "Profile & Account")
 
-    readonly property bool connected: Whatevr.AppController.shellVisible
-
-    Component.onCompleted: Whatevr.AppController.fetchSelfProfile()
+    readonly property bool connected: Whatevr.ProtocolController.shellVisible
 
     // Centered avatar + name header.
     FormCard.FormCard {
@@ -27,9 +25,9 @@ SettingsPage {
                     Layout.alignment: Qt.AlignHCenter
                     Layout.preferredWidth: Kirigami.Units.gridUnit * 5
                     Layout.preferredHeight: Kirigami.Units.gridUnit * 5
-                    avatarLocalPath: Whatevr.AppController.currentUserAvatarPath
+                    avatarLocalPath: Whatevr.ProtocolController.currentUserAvatarPath
                     initials: {
-                        const name = Whatevr.AppController.currentUserName.trim();
+                        const name = Whatevr.ProtocolController.currentUserName.trim();
                         return name.length > 0 ? name.charAt(0).toUpperCase() : "?";
                     }
                 }
@@ -37,14 +35,14 @@ SettingsPage {
                 Kirigami.Heading {
                     Layout.alignment: Qt.AlignHCenter
                     level: 3
-                    text: Whatevr.AppController.currentUserName
+                    text: Whatevr.ProtocolController.currentUserName
                 }
 
                 Kirigami.SelectableLabel {
                     Layout.alignment: Qt.AlignHCenter
                     visible: text.length > 0
                     opacity: 0.7
-                    text: Whatevr.AppController.currentUserJid.split("@")[0]
+                    text: Whatevr.ProtocolController.currentUserJid.split("@")[0]
                 }
             }
         }
@@ -64,7 +62,7 @@ SettingsPage {
         showCloseButton: true
 
         Connections {
-            target: Whatevr.AppController
+            target: Whatevr.ProtocolController
             function onSettingsActionFailed(message) {
                 profileErrorMessage.text = message.length > 0
                     ? message
@@ -78,8 +76,8 @@ SettingsPage {
         FormCard.FormTextDelegate {
             objectName: "profile.name"
             text: Whatevr.I18n.i18nc("@label", "Name")
-            description: Whatevr.AppController.currentUserName.length > 0
-                ? Whatevr.AppController.currentUserName
+            description: Whatevr.ProtocolController.currentUserName.length > 0
+                ? Whatevr.ProtocolController.currentUserName
                 : Whatevr.I18n.i18nc("@info", "Not set")
             // Push-name editing is not wired up yet (needs a SetPushName RPC;
             // see feature-gap.md §10), so this is informational for now.
@@ -98,23 +96,23 @@ SettingsPage {
             objectName: "profile.about"
             label: Whatevr.I18n.i18nc("@label", "About")
             placeholderText: Whatevr.I18n.i18nc("@info", "No About set")
-            text: Whatevr.AppController.currentUserStatusText
+            text: Whatevr.ProtocolController.currentUserStatusText
             maximumLength: 139
             enabled: page.connected
             onEditingFinished: {
                 const edited = text.trim();
-                if (edited.length > 0 && edited !== Whatevr.AppController.currentUserStatusText) {
-                    Whatevr.AppController.setProfileStatus(edited);
+                if (edited !== Whatevr.ProtocolController.currentUserStatusText) {
+                    Whatevr.ProtocolController.setProfileStatus(edited);
                 }
             }
 
             // Re-sync after phone-side edits: user typing breaks the property
             // binding, so follow the controller signal explicitly.
             Connections {
-                target: Whatevr.AppController
-                function onCurrentUserChanged() {
+                target: Whatevr.ProtocolController
+                function onSelfProfileChanged() {
                     if (!aboutField.activeFocus) {
-                        aboutField.text = Whatevr.AppController.currentUserStatusText;
+                        aboutField.text = Whatevr.ProtocolController.currentUserStatusText;
                     }
                 }
             }
@@ -126,7 +124,7 @@ SettingsPage {
             objectName: "profile.phone"
             text: Whatevr.I18n.i18nc("@label", "Phone number")
             description: {
-                const jid = Whatevr.AppController.currentUserJid;
+                const jid = Whatevr.ProtocolController.currentUserJid;
                 return jid.length > 0 ? "+" + jid.split("@")[0] : Whatevr.I18n.i18nc("@info", "Unknown");
             }
         }
@@ -142,7 +140,7 @@ SettingsPage {
             text: Whatevr.I18n.i18nc("@label", "Status")
             description: page.connected
                 ? Whatevr.I18n.i18nc("@info account is connected", "Connected")
-                : (Whatevr.AppController.loginRequired
+                : (Whatevr.ProtocolController.loginRequired
                     ? Whatevr.I18n.i18nc("@info account needs sign-in", "Signed out")
                     : Whatevr.I18n.i18nc("@info account not connected", "Not connected"))
 
@@ -161,7 +159,7 @@ SettingsPage {
             description: Whatevr.I18n.i18nc("@info", "Disconnect this device from your WhatsApp account.")
             icon.name: "system-log-out-symbolic"
             enabled: page.connected
-            onClicked: Whatevr.AppController.logout()
+            onClicked: Whatevr.ProtocolController.logout()
         }
     }
 }

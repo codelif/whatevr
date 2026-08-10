@@ -11,16 +11,17 @@ SettingsPage {
 
     title: Whatevr.I18n.i18nc("@title settings subpage", "Blocked contacts")
 
-    Component.onCompleted: Whatevr.AppController.refreshBlocklist()
+    Component.onCompleted: Whatevr.ProtocolController.openBlockedContacts()
+    Component.onDestruction: Whatevr.ProtocolController.closeBlockedContacts()
 
-    readonly property var contacts: Whatevr.AppController.blockedContacts
+    readonly property var contacts: Whatevr.ProtocolController.blockedContactsModel
 
     FormCard.FormCard {
         Layout.topMargin: Kirigami.Units.largeSpacing
 
         // Empty state.
         FormCard.FormTextDelegate {
-            visible: page.contacts.length === 0
+            visible: page.contacts.count === 0
             text: Whatevr.I18n.i18nc("@info", "No blocked contacts")
             description: Whatevr.I18n.i18nc("@info", "Contacts you block will appear here.")
         }
@@ -31,7 +32,7 @@ SettingsPage {
             FormCard.AbstractFormDelegate {
                 id: row
 
-                required property var modelData
+                required property var item
                 background: null
 
                 contentItem: RowLayout {
@@ -40,9 +41,9 @@ SettingsPage {
                     Whatevr.AvatarImage {
                         Layout.preferredWidth: Kirigami.Units.iconSizes.medium
                         Layout.preferredHeight: Kirigami.Units.iconSizes.medium
-                        avatarLocalPath: row.modelData.avatarLocalPath ?? ""
+                        avatarLocalPath: row.item.avatar_path ?? ""
                         initials: {
-                            const name = (row.modelData.displayName ?? "").trim();
+                            const name = (row.item.name ?? "").trim();
                             return name.length > 0 ? name.charAt(0).toUpperCase() : "?";
                         }
                     }
@@ -54,8 +55,8 @@ SettingsPage {
                             Layout.fillWidth: true
                             elide: Text.ElideRight
                             text: {
-                                const name = (row.modelData.displayName ?? "").trim();
-                                return name.length > 0 ? name : (row.modelData.phoneNumber ?? row.modelData.jid);
+                                const name = (row.item.name ?? "").trim();
+                                return name.length > 0 ? name : (row.item.phone ?? row.item.jid);
                             }
                         }
                         QQC2.Label {
@@ -64,14 +65,14 @@ SettingsPage {
                             visible: text.length > 0
                             opacity: 0.7
                             font: Kirigami.Theme.smallFont
-                            text: row.modelData.phoneNumber ?? ""
+                            text: row.item.phone ?? ""
                         }
                     }
 
                     QQC2.Button {
                         text: Whatevr.I18n.i18nc("@action:button", "Unblock")
                         icon.name: "list-remove-user-symbolic"
-                        onClicked: Whatevr.AppController.setContactBlocked(row.modelData.jid, false)
+                        onClicked: Whatevr.ProtocolController.setContactBlocked(row.item.jid, false)
                     }
                 }
             }

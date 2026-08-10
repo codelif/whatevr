@@ -189,7 +189,7 @@ Frame {
             root.hideSuggestions()
             return
         }
-        const results = Whatevr.AppController.emojiModel.searchEmoji(match.query, 40)
+        const results = Whatevr.ProtocolController.emojiModel.searchEmoji(match.query, 40)
         if (!results || results.length === 0) {
             root.hideSuggestions()
             return
@@ -357,7 +357,7 @@ Frame {
         const emoji = item.emoji
         input.remove(start, end)
         input.insert(start, emoji)
-        Whatevr.AppController.emojiModel.addRecentEmoji(emoji)
+        Whatevr.ProtocolController.emojiModel.addRecentEmoji(emoji)
         root.hideSuggestions()
     }
 
@@ -590,7 +590,7 @@ Frame {
                                 visible: !suggestionCell.isMention
                                 anchors.centerIn: parent
                                 text: suggestionCell.modelData.emoji || ""
-                                font.family: Whatevr.AppController.emojiModel.emojiFontFamily
+                                font.family: Whatevr.ProtocolController.emojiModel.emojiFontFamily
                                 font.pixelSize: Math.round(suggestionCell.height * 0.55)
                                 renderType: Text.QtRendering
                                 horizontalAlignment: Text.AlignHCenter

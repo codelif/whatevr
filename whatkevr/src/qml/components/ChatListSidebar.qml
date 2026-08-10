@@ -14,7 +14,7 @@ Item {
     // 0 = Home (all), 1 = DMs, 2 = Groups. Two-way bound to the pane.
     property int activeFilter: 0
 
-    readonly property string userName: Whatevr.AppController.currentUserName
+    readonly property string userName: Whatevr.ProtocolController.currentUserName
 
     function initialsFor(name) {
         const parts = (name || "").trim().split(/\s+/).filter(p => p.length > 0)
@@ -157,7 +157,7 @@ Item {
             onClicked: applicationWindow().openSettings("account")
 
             contentItem: AvatarImage {
-                avatarLocalPath: Whatevr.AppController.currentUserAvatarPath
+                avatarLocalPath: Whatevr.ProtocolController.currentUserAvatarPath
                 initials: root.initialsFor(root.userName)
             }
 

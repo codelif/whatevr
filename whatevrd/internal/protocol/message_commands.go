@@ -82,7 +82,7 @@ type sendStickerParams struct {
 	ReplyTo  string `json:"reply_to"`
 }
 
-func (h commandHandlers) sendSticker(_ *conn, req request) (any, *Error) {
+func (h commandHandlers) sendSticker(ctx context.Context, _ *conn, req request) (any, *Error) {
 	if err := h.requireActions(); err != nil {
 		return nil, err
 	}
@@ -96,7 +96,7 @@ func (h commandHandlers) sendSticker(_ *conn, req request) (any, *Error) {
 	if strings.TrimSpace(p.CacheKey) == "" {
 		return nil, errorf(CodeInvalidParams, "cache_key is required")
 	}
-	saved, err := h.actions.SendSticker(context.Background(), strings.TrimSpace(p.ChatID), strings.TrimSpace(p.CacheKey), strings.TrimSpace(p.ReplyTo))
+	saved, err := h.actions.SendSticker(ctx, strings.TrimSpace(p.ChatID), strings.TrimSpace(p.CacheKey), strings.TrimSpace(p.ReplyTo))
 	if perr := mapCommandError(err); perr != nil {
 		return nil, perr
 	}

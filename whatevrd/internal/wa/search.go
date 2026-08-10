@@ -19,3 +19,9 @@ func (c *Client) SearchChats(ctx context.Context, query string, limit int) ([]ap
 func (c *Client) SearchMessages(ctx context.Context, query, chatID string, limit int, beforeMessageID string) ([]appstore.MessageSearchResult, error) {
 	return c.store.SearchMessages(ctx, strings.TrimSpace(query), strings.TrimSpace(chatID), limit, strings.TrimSpace(beforeMessageID))
 }
+
+// SearchStickers serves the protocol's transient search.stickers query from the
+// daemon store. The store owns result ordering.
+func (c *Client) SearchStickers(ctx context.Context, query string, limit int) ([]appstore.Sticker, error) {
+	return c.store.SearchStickers(ctx, strings.TrimSpace(query), limit)
+}

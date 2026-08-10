@@ -108,6 +108,29 @@ func TestStickersViewFavoriteLiveUpdate(t *testing.T) {
 	c.expectUpsert(sub, "fav-b")
 }
 
+func TestFavoriteStickersViewInvalidatesOnRecencyChange(t *testing.T) {
+	socketPath, daemon, db := startChatsTestServer(t)
+	if err := db.SetStickerFavorite(context.Background(), store.Sticker{CacheKey: "fav-a", MimeType: "image/webp"}, true, time.Unix(100, 0)); err != nil {
+		t.Fatal(err)
+	}
+
+	c := dialTest(t, socketPath)
+	c.hello()
+	sub := c.subscribe(2, `{"view":"stickers","source":"favorite"}`)
+	c.expectUpsert(sub, "fav-a")
+	c.expectReady(sub, true)
+
+	if err := db.TouchRecentSticker(context.Background(), store.Sticker{CacheKey: "fav-a", MimeType: "image/webp", LastUsed: 200, RecentWeight: 3.5}); err != nil {
+		t.Fatal(err)
+	}
+	daemon.PublishStickerLibraryChanged(app.StickerSourceRecent)
+	updated := c.expectUpsert(sub, "fav-a")
+	item := updated["item"].(map[string]any)
+	if item["last_used_unix"] != float64(200) || item["weight"] != 3.5 {
+		t.Fatalf("favorite row recency after update = %v", item)
+	}
+}
+
 func TestStickersViewRequiresValidSource(t *testing.T) {
 	socketPath, _, _ := startChatsTestServer(t)
 	c := dialTest(t, socketPath)
@@ -210,6 +233,39 @@ func TestStickerPackViewAsyncFetchAndDownloadUpdate(t *testing.T) {
 	updated := c.expectUpsert(sub, "s1")
 	if got := updated["item"].(map[string]any)["local_path"]; got != "/cache/stickers/s1.webp" {
 		t.Fatalf("local_path after download = %v", got)
+	}
+}
+
+func TestStickerPackViewInvalidatesOnFavoriteAndRecencyChanges(t *testing.T) {
+	socketPath, daemon, db, _ := startStickerProtocolServer(t)
+	seedStickerPack(t, db, store.StickerPack{ID: "pack-1", Name: "Pack One", StickerCount: 1, ContentsFetchedAt: 1})
+	if err := db.UpsertPackSticker(context.Background(), store.Sticker{CacheKey: "s1", MimeType: "image/webp", PackID: "pack-1", PackOrder: 1}); err != nil {
+		t.Fatal(err)
+	}
+
+	c := dialTest(t, socketPath)
+	c.hello()
+	sub := c.subscribe(2, `{"view":"sticker_pack","pack_id":"pack-1"}`)
+	c.expectUpsert(sub, "s1")
+	c.expectReady(sub, true)
+
+	if err := db.SetStickerFavorite(context.Background(), store.Sticker{CacheKey: "s1", MimeType: "image/webp"}, true, time.Unix(10, 0)); err != nil {
+		t.Fatal(err)
+	}
+	daemon.PublishStickerLibraryChanged(app.StickerSourceFavorite)
+	favorite := c.expectUpsert(sub, "s1")
+	if !itemBool(t, favorite, "is_favorite") {
+		t.Fatalf("pack sticker is_favorite after update = false")
+	}
+
+	if err := db.TouchRecentSticker(context.Background(), store.Sticker{CacheKey: "s1", MimeType: "image/webp", LastUsed: 20, RecentWeight: 4.5}); err != nil {
+		t.Fatal(err)
+	}
+	daemon.PublishStickerLibraryChanged(app.StickerSourceRecent)
+	recent := c.expectUpsert(sub, "s1")
+	item := recent["item"].(map[string]any)
+	if item["last_used_unix"] != float64(20) || item["weight"] != 4.5 {
+		t.Fatalf("pack sticker recency after update = %v", item)
 	}
 }
 

@@ -109,10 +109,14 @@ func (fixtureCommands) DownloadSticker(_ context.Context, cacheKey string) (apps
 func (fixtureCommands) SetStickerPackInstalled(_ context.Context, packID string, installed bool) (appstore.StickerPack, error) {
 	return appstore.StickerPack{ID: packID, Installed: installed}, nil
 }
+func (fixtureCommands) RefreshStickerPacks(context.Context) error { return nil }
 func (fixtureCommands) SearchChats(context.Context, string, int) ([]appstore.Chat, error) {
 	return nil, nil
 }
 func (fixtureCommands) SearchMessages(context.Context, string, string, int, string) ([]appstore.MessageSearchResult, error) {
+	return nil, nil
+}
+func (fixtureCommands) SearchStickers(context.Context, string, int) ([]appstore.Sticker, error) {
 	return nil, nil
 }
 func (fixtureCommands) CheckPhoneOnWhatsApp(_ context.Context, phone string) (app.PhoneCheck, error) {

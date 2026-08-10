@@ -21,7 +21,7 @@ Flow {
     signal toggleRequested(string emoji)
     signal detailsRequested()
 
-    readonly property string emojiFontFamily: Whatevr.AppController.emojiModel.emojiFontFamily
+    readonly property string emojiFontFamily: Whatevr.ProtocolController.emojiModel.emojiFontFamily
 
     // Reactions aggregated per distinct emoji in first-seen order:
     // [{emoji, count, mine, names: [..]}].

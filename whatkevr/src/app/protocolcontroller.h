@@ -10,6 +10,7 @@
 
 #include <cstdint>
 
+
 QT_BEGIN_NAMESPACE
 class QQmlEngine;
 class QJSEngine;
@@ -26,6 +27,8 @@ class Subscription;
 
 class ProtocolMessageModel;
 class ProtocolSearchModel;
+class ProtocolStickerController;
+class EmojiModel;
 
 // The whatevr-protocol counterpart of AppController's connection lifecycle: it
 // owns the ProtocolClient (the single socket to the daemon's PROTOCOL.md
@@ -199,6 +202,22 @@ class ProtocolController final : public QObject
     // composer's `@`-mention picker (the D4a leftover this step's view unblocks).
     // Subscribed alongside the messages window, like `presence` and `pinned`.
     Q_PROPERTY(int chatMembersRevision READ chatMembersRevision NOTIFY chatMembersChanged FINAL)
+
+    // Settings/profile (D6). The object properties expose daemon rows verbatim;
+    // commands are ack-only and their effects return through these views.
+    Q_PROPERTY(QVariantMap privacySettings READ privacySettings NOTIFY privacySettingsChanged FINAL)
+    Q_PROPERTY(QVariantMap appPreferences READ appPreferences NOTIFY appPreferencesChanged FINAL)
+    Q_PROPERTY(QAbstractItemModel *blockedContactsModel READ blockedContactsModel CONSTANT FINAL)
+    Q_PROPERTY(QVariantMap selfProfile READ selfProfile NOTIFY selfProfileChanged FINAL)
+    Q_PROPERTY(QString currentUserName READ currentUserName NOTIFY selfProfileChanged FINAL)
+    Q_PROPERTY(QString currentUserAvatarPath READ currentUserAvatarPath NOTIFY selfProfileChanged FINAL)
+    Q_PROPERTY(QString currentUserStatusText READ currentUserStatusText NOTIFY selfProfileChanged FINAL)
+    Q_PROPERTY(QString currentUserJid READ currentUserJid NOTIFY selfProfileChanged FINAL)
+
+    // Emoji is frontend presentation state (recents/search/skin-tone helpers),
+    // not daemon state. Stickers are the protocol-backed D6 picker surface.
+    Q_PROPERTY(QAbstractItemModel *emojiModel READ emojiModel CONSTANT FINAL)
+    Q_PROPERTY(QObject *stickers READ stickers CONSTANT FINAL)
 
 public:
     static void setInstance(ProtocolController *instance);
@@ -374,6 +393,27 @@ public:
     // the shell to surface it — the row itself appears in the `chats` view.
     Q_INVOKABLE void startDirectChat(const QString &jid);
 
+    // --- settings / profile / emoji / stickers (D6) ---
+    [[nodiscard]] QVariantMap privacySettings() const;
+    [[nodiscard]] QVariantMap appPreferences() const;
+    [[nodiscard]] QAbstractItemModel *blockedContactsModel() const;
+    [[nodiscard]] QVariantMap selfProfile() const;
+    [[nodiscard]] QString currentUserName() const;
+    [[nodiscard]] QString currentUserAvatarPath() const;
+    [[nodiscard]] QString currentUserStatusText() const;
+    [[nodiscard]] QString currentUserJid() const;
+    [[nodiscard]] QAbstractItemModel *emojiModel() const;
+    [[nodiscard]] QObject *stickers() const;
+    Q_INVOKABLE void openPrivacySettings();
+    Q_INVOKABLE void closePrivacySettings();
+    Q_INVOKABLE void openBlockedContacts();
+    Q_INVOKABLE void closeBlockedContacts();
+    Q_INVOKABLE void setPrivacyAudience(const QString &category, const QString &value);
+    Q_INVOKABLE void setReadReceipts(bool enabled);
+    Q_INVOKABLE void setAppPreference(const QString &key, bool value);
+    Q_INVOKABLE void setProfileStatus(const QString &text);
+    Q_INVOKABLE void logout();
+
     // Composer send paths (D4a): map straight to `send.text`/`send.media`; the
     // daemon acks with an id only, the rendered message arrives via the
     // `messages` view. mentionedJids/replyToMessageId/caption may be empty.
@@ -469,6 +509,11 @@ Q_SIGNALS:
     void infoCardChanged();
     void groupMembersChanged();
     void chatMembersChanged();
+    void privacySettingsChanged();
+    void appPreferencesChanged();
+    void blocklistChanged();
+    void selfProfileChanged();
+    void settingsActionFailed(const QString &errorText);
     // `media.fetch_profile_picture` outcomes for the avatar viewer.
     void profilePictureReady(const QString &jid, const QString &localPath);
     void profilePictureFailed(const QString &jid, const QString &errorText);
@@ -556,6 +601,8 @@ private:
     void runSearch();
     void runChatSearch();
     void resetChatSearch();
+    void updateBlocklistSubscription();
+    void sendSettingsCommand(const QString &method, const QJsonObject &params, const QString &failureText);
 
     QString m_socketPath;
     whatevr::proto::ProtocolClient *m_client = nullptr;
@@ -576,8 +623,13 @@ private:
     whatevr::proto::CollectionViewModel *m_chatMembersModel = nullptr;
     whatevr::proto::CollectionViewModel *m_blocklistModel = nullptr;
     whatevr::proto::ObjectViewModel *m_infoCardModel = nullptr;
+    whatevr::proto::ObjectViewModel *m_privacyModel = nullptr;
+    whatevr::proto::ObjectViewModel *m_preferencesModel = nullptr;
+    whatevr::proto::ObjectViewModel *m_selfModel = nullptr;
     ProtocolMessageModel *m_messagePresentationModel = nullptr;
     ProtocolSearchModel *m_searchResultsModel = nullptr;
+    ProtocolStickerController *m_stickerController = nullptr;
+    mutable EmojiModel *m_emojiModel = nullptr;
     whatevr::proto::Subscription *m_connectionSub = nullptr;
     whatevr::proto::Subscription *m_loginSub = nullptr;
     whatevr::proto::Subscription *m_chatsSub = nullptr;
@@ -595,6 +647,9 @@ private:
     whatevr::proto::Subscription *m_groupMembersSub = nullptr;
     whatevr::proto::Subscription *m_chatMembersSub = nullptr;
     whatevr::proto::Subscription *m_blocklistSub = nullptr;
+    whatevr::proto::Subscription *m_privacySub = nullptr;
+    whatevr::proto::Subscription *m_preferencesSub = nullptr;
+    whatevr::proto::Subscription *m_selfSub = nullptr;
     int m_chatFilter = 0; // 0 = all, 1 = direct, 2 = groups
     int m_typingRevision = 0;
 
@@ -689,6 +744,8 @@ private:
     QString m_infoCardSubject;
     QString m_infoCardError;
     int m_groupMembersRevision = 0;
+    bool m_privacyPageOpen = false;
+    bool m_blocklistPageOpen = false;
 
     // The chat the conversation-scoped `group_members` roster covers (empty
     // when the conversation is hidden or is not a group).

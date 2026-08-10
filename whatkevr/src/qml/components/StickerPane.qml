@@ -22,7 +22,7 @@ Item {
     property string sendErrorText: ""
     property bool storeOpen: false
     property bool packOpenedFromStore: false
-    readonly property var stickers: Whatevr.AppController.stickers
+    readonly property var stickers: Whatevr.ProtocolController.stickers
     readonly property real cellSize: Kirigami.Units.gridUnit * 4.5
     readonly property int stickerDecodeSize: Math.round(cellSize * Math.min(2, Screen.devicePixelRatio))
     readonly property bool packView: stickers.activeSource === "pack"
@@ -210,20 +210,20 @@ Item {
                 }
 
                 Repeater {
-                    model: pane.stickers.installedPackModel
+                    model: pane.stickers.packModel
 
                     delegate: CategoryTile {
-                        required property string packId
-                        required property string name
-                        required property string trayPath
+                        required property var item
 
-                        label: name
+                        visible: item.installed ?? false
+                        width: visible ? Kirigami.Units.gridUnit * 2.2 : 0
+                        label: item.name ?? ""
                         // Pack tray art when downloaded; the glyph is the
                         // fallback until the image lands.
                         glyph: "▣"
-                        iconPath: trayPath
-                        current: !pane.storeOpen && pane.packView && pane.stickers.activePackId === packId
-                        onTapped: pane.openPack(packId, false)
+                        iconPath: item.tray_local_path ?? ""
+                        current: !pane.storeOpen && pane.packView && pane.stickers.activePackId === item.id
+                        onTapped: pane.openPack(item.id, false)
                     }
                 }
 
@@ -238,7 +238,7 @@ Item {
 
         Rectangle {
             Layout.fillWidth: true
-            height: 1
+            Layout.preferredHeight: 1
             color: Qt.alpha(Kirigami.Theme.textColor, 0.10)
         }
 
@@ -331,12 +331,13 @@ Item {
                     id: stickerTile
 
                     required property int index
-                    required property string cacheKey
-                    required property string localPath
-                    required property string mimeType
-                    required property bool animated
-                    required property string emojis
-                    required property string accessText
+                    required property var item
+                    readonly property string cacheKey: item.cache_key ?? ""
+                    readonly property string localPath: item.local_path ?? ""
+                    readonly property string mimeType: item.mime_type ?? ""
+                    readonly property bool animated: item.is_animated ?? false
+                    readonly property string emojis: (item.emojis ?? []).join(" ")
+                    readonly property string accessText: item.accessibility_text ?? ""
                     readonly property string description: accessText.length > 0
                                                           ? (emojis.length > 0 ? accessText + "  " + emojis : accessText)
                                                           : emojis
@@ -346,6 +347,15 @@ Item {
                     // only parses Lottie JSON and would render blank).
                     readonly property bool isLottie: mimeType === "application/was"
                     readonly property bool isAnimatedImage: (animated || mimeType === "image/gif") && !isLottie
+
+                    Component.onCompleted: {
+                        if (localPath.length === 0)
+                            pane.stickers.requestDownload(cacheKey)
+                    }
+                    onLocalPathChanged: {
+                        if (localPath.length === 0)
+                            pane.stickers.requestDownload(cacheKey)
+                    }
 
                     width: stickerGrid.cellWidth
                     height: stickerGrid.cellHeight
@@ -522,12 +532,13 @@ Item {
                     delegate: Item {
                         id: packRow
 
-                        required property string packId
-                        required property string name
-                        required property string publisher
-                        required property string trayPath
-                        required property bool installed
-                        required property int stickerCount
+                        required property var item
+                        readonly property string packId: item.id ?? ""
+                        readonly property string name: item.name ?? ""
+                        readonly property string publisher: item.publisher ?? ""
+                        readonly property string trayPath: item.tray_local_path ?? ""
+                        readonly property bool installed: item.installed ?? false
+                        readonly property int stickerCount: item.sticker_count ?? 0
 
                         width: packList.width
                         height: Kirigami.Units.gridUnit * 3

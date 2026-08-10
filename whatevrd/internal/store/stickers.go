@@ -473,7 +473,7 @@ func (db *DB) SearchStickers(ctx context.Context, query string, limit int) ([]St
 		   OR accessibility_text LIKE ? ESCAPE '\' COLLATE NOCASE
 		   OR (pack_id != '' AND pack_id IN (
 		         SELECT id FROM sticker_packs WHERE name LIKE ? ESCAPE '\' COLLATE NOCASE))
-		ORDER BY MAX(last_used, favorite_ts) DESC, pack_id ASC, pack_order ASC
+		ORDER BY MAX(last_used, favorite_ts) DESC, pack_id ASC, pack_order ASC, cache_key ASC
 		LIMIT ?
 	`, pattern, pattern, pattern, limit)
 }

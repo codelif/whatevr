@@ -466,7 +466,7 @@ Item {
             Whatevr.ProtocolController.sendReaction(messageId, "")
         } else {
             Whatevr.ProtocolController.sendReaction(messageId, emoji)
-            Whatevr.AppController.emojiModel.addRecentEmoji(emoji)
+            Whatevr.ProtocolController.emojiModel.addRecentEmoji(emoji)
         }
     }
 
@@ -1624,7 +1624,7 @@ Item {
     }
 
     Connections {
-        target: Whatevr.AppController.stickers
+        target: Whatevr.ProtocolController.stickers
 
         function onStickerFavoriteFailed(errorText) {
             root.showNotification(errorText)
@@ -1688,8 +1688,10 @@ Item {
 
         function openFor(snapshot, x, y) {
             ctx = snapshot
+            if (ctxIsSticker && ctxMediaCacheKey.length > 0)
+                Whatevr.ProtocolController.stickers.beginFavoriteTracking()
             ctxStickerFavorite = ctxIsSticker && ctxMediaCacheKey.length > 0
-                                 && Whatevr.AppController.stickers.isStickerFavorite(ctxMediaCacheKey)
+                                 && Whatevr.ProtocolController.stickers.isStickerFavorite(ctxMediaCacheKey)
             if (linkSubMenuItem) {
                 const show = ctxLinks.length > 1
                 linkSubMenuItem.visible = show
@@ -1708,6 +1710,8 @@ Item {
             this.y = y
             open()
         }
+
+        onClosed: Whatevr.ProtocolController.stickers.endFavoriteTracking()
 
         function linkLabel(link) {
             return link.length > 48 ? link.substring(0, 45) + "…" : link
@@ -1738,12 +1742,12 @@ Item {
         }
 
         Connections {
-            target: Whatevr.AppController.stickers
+            target: Whatevr.ProtocolController.stickers
 
             function onFavoritesChanged() {
                 if (messageContextMenu.ctxIsSticker && messageContextMenu.ctxMediaCacheKey.length > 0) {
                     messageContextMenu.ctxStickerFavorite =
-                        Whatevr.AppController.stickers.isStickerFavorite(messageContextMenu.ctxMediaCacheKey)
+                        Whatevr.ProtocolController.stickers.isStickerFavorite(messageContextMenu.ctxMediaCacheKey)
                 }
             }
         }
@@ -1920,7 +1924,7 @@ Item {
                   ? Whatevr.I18n.i18nc("@action:inmenu", "Remove from Favorite Stickers")
                   : Whatevr.I18n.i18nc("@action:inmenu", "Add to Favorite Stickers")
             visible: messageContextMenu.ctxIsSticker && messageContextMenu.ctxMediaCacheKey.length > 0
-            onTriggered: Whatevr.AppController.stickers.setStickerFavorite(messageContextMenu.ctxMediaCacheKey,
+            onTriggered: Whatevr.ProtocolController.stickers.setStickerFavorite(messageContextMenu.ctxMediaCacheKey,
                                                                            messageContextMenu.ctxMessageId,
                                                                            !messageContextMenu.ctxStickerFavorite)
         }

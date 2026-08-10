@@ -106,8 +106,10 @@ type CommandActions interface {
 	SetStickerFavorite(context.Context, string, string, bool) (appstore.Sticker, error)
 	DownloadSticker(context.Context, string) (appstore.Sticker, error)
 	SetStickerPackInstalled(context.Context, string, bool) (appstore.StickerPack, error)
+	RefreshStickerPacks(context.Context) error
 	SearchChats(context.Context, string, int) ([]appstore.Chat, error)
 	SearchMessages(context.Context, string, string, int, string) ([]appstore.MessageSearchResult, error)
+	SearchStickers(context.Context, string, int) ([]appstore.Sticker, error)
 	CheckPhoneOnWhatsApp(context.Context, string) (app.PhoneCheck, error)
 }
 
@@ -118,9 +120,8 @@ func RegisterDaemonCommands(s *Server, actions CommandActions) {
 	// Local-only commands (store enqueue, session state, transient DB queries)
 	// stay synchronous on the dispatch loop; anything that performs a WhatsApp
 	// round trip is backgrounded via backgroundNet so it cannot stall the
-	// connection. The send.* family is deliberately synchronous: it only writes
-	// the pending row and signals the async send queue — the network hop was
-	// already off-loop.
+	// connection. Text/media sends only enqueue local work and stay synchronous;
+	// sticker send may first fetch a missing sticker file, so it is backgrounded.
 	s.RegisterCommand("session.update", cmd.sessionUpdate)
 	s.RegisterCommand("daemon.reconnect", cmd.daemonReconnect)
 	s.RegisterCommand("account.logout", backgroundNet(cmd.accountLogout, false))
@@ -133,7 +134,7 @@ func RegisterDaemonCommands(s *Server, actions CommandActions) {
 	s.RegisterCommand("chat.ensure_direct", cmd.chatEnsureDirect)
 	s.RegisterCommand("send.text", cmd.sendText)
 	s.RegisterCommand("send.media", cmd.sendMedia)
-	s.RegisterCommand("send.sticker", cmd.sendSticker)
+	s.RegisterCommand("send.sticker", backgroundNet(cmd.sendSticker, false))
 	s.RegisterCommand("message.react", backgroundNet(cmd.messageReact, false))
 	s.RegisterCommand("message.edit", backgroundNet(cmd.messageEdit, false))
 	s.RegisterCommand("message.revoke", backgroundNet(cmd.messageRevoke, false))
@@ -151,8 +152,10 @@ func RegisterDaemonCommands(s *Server, actions CommandActions) {
 	s.RegisterCommand("sticker.favorite", backgroundNet(cmd.stickerFavorite, false))
 	s.RegisterCommand("sticker.download", backgroundNet(cmd.stickerDownload, false))
 	s.RegisterCommand("sticker_pack.install", cmd.stickerPackInstall)
+	s.RegisterCommand("sticker_packs.refresh", backgroundNet(cmd.stickerPacksRefresh, false))
 	s.RegisterCommand("search.chats", cmd.searchChats)
 	s.RegisterCommand("search.messages", cmd.searchMessages)
+	s.RegisterCommand("search.stickers", cmd.searchStickers)
 	s.RegisterCommand("contacts.check_phone", backgroundNet(cmd.contactsCheckPhone, true))
 }
 

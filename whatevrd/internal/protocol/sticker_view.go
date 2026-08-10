@@ -42,8 +42,6 @@ type stickersParams struct {
 	Source string `json:"source"`
 }
 
-const defaultStickerViewLimit = 200
-
 type stickerItem struct {
 	ID                string   `json:"id"`
 	CacheKey          string   `json:"cache_key"`
@@ -120,7 +118,7 @@ func (s *stickersSession) eventAffects(evt app.DaemonEvent) bool {
 func (s *stickersSession) Items(max int) []Item {
 	limit := max
 	if limit <= 0 {
-		limit = defaultStickerViewLimit
+		limit = -1 // SQLite LIMIT -1: an omitted view limit means the full collection.
 	}
 	var (
 		stickers []store.Sticker
@@ -174,11 +172,10 @@ func stickerLibraryEventMatches(viewSource, eventSource app.StickerSource) bool 
 	if eventSource == app.StickerSourceUnspecified || viewSource == app.StickerSourceAll {
 		return true
 	}
-	// A favorite toggle flips the is_favorite flag on the sticker's row in *every*
-	// source view (recent and all render it too, not just the favorite list), so a
-	// favorite-source event is cross-cutting. Items re-reads and the engine diffs
-	// away any view where nothing visible actually changed.
-	if eventSource == app.StickerSourceFavorite {
+	// Favorite and recency changes alter fields carried by every sticker row, not
+	// just membership/order in their named source. Re-read all source views and
+	// let the engine diff away rows whose rendered value did not change.
+	if eventSource == app.StickerSourceFavorite || eventSource == app.StickerSourceRecent {
 		return true
 	}
 	return viewSource == eventSource
@@ -357,7 +354,9 @@ func (s *stickerPackSession) eventAffects(evt app.DaemonEvent) bool {
 	case app.DaemonEventResync:
 		return true
 	case app.DaemonEventStickerLibraryChanged:
-		return evt.StickerSource == app.StickerSourceUnspecified || evt.StickerSource == app.StickerSourceAll
+		// Pack rows expose is_favorite and recency fields too; pack-content changes
+		// also arrive on this event with source all/unspecified.
+		return true
 	case app.DaemonEventStickerDownloadChanged:
 		return evt.StickerDownload.Sticker.PackID == s.packID
 	default:
