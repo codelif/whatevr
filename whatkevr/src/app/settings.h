@@ -93,7 +93,10 @@ public:
     static Settings *instance();
     static Settings *create(QQmlEngine *qmlEngine, QJSEngine *jsEngine);
 
-    explicit Settings(QObject *parent = nullptr);
+    // Not defaulted, for the same reason as ProtocolController's: a
+    // default-constructible QML_SINGLETON is built by the engine itself instead
+    // of through create(), which would fork this off from main()'s instance.
+    explicit Settings(QObject *parent);
     ~Settings() override;
 
     [[nodiscard]] QString colorScheme() const;

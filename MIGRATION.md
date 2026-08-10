@@ -158,7 +158,7 @@ Status: `todo` | `doing` | `done` | `blocked` | `needs-decision` |
 
 | id | report | status | notes |
 | --- | --- | --- | --- |
-| _(none yet — awaiting first testing session)_ | | | |
+| DN1 | Launching whatkevr always shows the splash spinner forever, with or without `whatevrd` running | done | Not a protocol defect — a QML singleton one. Both `ProtocolController` and `Settings` declared `explicit T(QObject *parent = nullptr)`, and `QQmlPrivate::singletonConstructionMode()` (`qqmlprivate.h`) tests `std::is_default_constructible` *before* `HasSingletonFactory`, so the engine built its own second instance and never called `create()`. QML therefore bound to a controller `main()` never `start()`s: no subscriptions, no `stateChanged`, `starting` stuck true, splash forever. Fix: drop the defaulted `parent` on both constructors so the factory path is taken (`whatkevr/src/app/protocolcontroller.h`, `app/settings.h`, `main.cpp` passing `nullptr`). Second bug found on the way and fixed with it: `filterKirigamiNullPropertyWarnings()` chained to the handler `qInstallMessageHandler()` returns, which is `nullptr` when the *default* handler was in place — every warning, QML error and `console.log` was being dropped, which is why an app hung on its own splash produced not one line of output. Verified live (first run of this client against a real `whatevrd`): no daemon → status page; daemon up → login page with a live, counting-down QR; `ctest` 4/4. |
 
 ### Phase E — teardown & flagship polish (blocked on Phase DeezNuts)
 

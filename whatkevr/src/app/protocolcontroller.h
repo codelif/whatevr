@@ -227,7 +227,12 @@ public:
     static void setInstance(ProtocolController *instance);
     static ProtocolController *create(QQmlEngine *qmlEngine, QJSEngine *jsEngine);
 
-    explicit ProtocolController(QObject *parent = nullptr);
+    // `parent` is deliberately not defaulted: QQmlPrivate picks the singleton's
+    // construction mode at compile time and prefers a default constructor over
+    // create(), so a default argument here would make the QML engine build its
+    // own second controller — one main() never start()s, leaving the shell stuck
+    // on the splash forever.
+    explicit ProtocolController(QObject *parent);
     // Test seam: connect to an explicit socket path instead of the XDG default.
     ProtocolController(QString socketPath, QObject *parent);
     ~ProtocolController() override;
