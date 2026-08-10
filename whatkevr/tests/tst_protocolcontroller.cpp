@@ -85,6 +85,14 @@ public:
     void setRejectNextSend(bool reject) { m_rejectNextSend = reject; }
     void setRejectMessageCommands(bool reject) { m_rejectMessageCommands = reject; }
 
+    // Drop the client the way a daemon exit does: the socket closes under it.
+    void dropClients()
+    {
+        if (m_conn) {
+            m_conn->disconnectFromServer();
+        }
+    }
+
     void sendOpenChat(const QString &chatId)
     {
         writeObject(QJsonObject{{QStringLiteral("event"), QStringLiteral("open_chat")},
@@ -1308,6 +1316,34 @@ private Q_SLOTS:
         // The unread divider is gone: the user just sent past it.
         QVERIFY(ctrl.unreadAnchorMessageId().isEmpty());
         QCOMPARE(ctrl.unreadAnchorCount(), 0);
+    }
+
+    // composerEnabled is notified by composerChanged, so every input it reads —
+    // the selection and the connection — has to emit that signal too. Reading
+    // the getter cannot catch this: a QML binding only re-evaluates on the
+    // notify signal, and without it the composer stayed disabled ("Select a
+    // chat to message") on a chat that was very much open.
+    void composerEnabledNotifiesOnSelectionAndConnection()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+        daemon.setActiveChats({chatRow(QStringLiteral("a@s"), QStringLiteral("Alice"), QStringLiteral("1-000"))});
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+        QTRY_VERIFY(!ctrl.chatsLoading());
+        QVERIFY(!ctrl.composerEnabled());
+
+        QSignalSpy composerSpy(&ctrl, &ProtocolController::composerChanged);
+        ctrl.selectChat(QStringLiteral("a@s"));
+        QVERIFY(ctrl.composerEnabled());
+        QVERIFY(composerSpy.count() > 0);
+
+        // Losing the daemon disables it again, and that is announced too.
+        composerSpy.clear();
+        daemon.dropClients();
+        QTRY_VERIFY(!ctrl.composerEnabled());
+        QVERIFY(composerSpy.count() > 0);
     }
 
     // sendMedia resolves a file:// URL to a local path and maps to `send.media`;

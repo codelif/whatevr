@@ -754,6 +754,9 @@ void ProtocolController::setSelectedChat(const QString &chatId, const QString &a
 
     if (selectionChanged) {
         Q_EMIT this->selectionChanged();
+        // composerEnabled reads the selection but is notified by composerChanged,
+        // so a QML binding on it only re-evaluates when this fires.
+        Q_EMIT composerChanged();
     }
     sendSessionUpdate();
     updatePresenceSubscription();
@@ -2943,6 +2946,8 @@ void ProtocolController::onClientReady()
     m_actionError.clear();
     sendSessionUpdate();
     Q_EMIT stateChanged();
+    // The composer is gated on the connection too — see setSelectedChat.
+    Q_EMIT composerChanged();
 }
 
 void ProtocolController::onClientDisconnected()
@@ -2951,6 +2956,7 @@ void ProtocolController::onClientDisconnected()
     // The client reset the object-view sinks on drop; their valueChanged already
     // fired. Recompute the gate from the new phase.
     Q_EMIT stateChanged();
+    Q_EMIT composerChanged();
 }
 
 void ProtocolController::onConnectionValueChanged()
