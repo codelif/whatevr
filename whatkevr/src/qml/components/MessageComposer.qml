@@ -762,7 +762,7 @@ Frame {
                                 && event.modifiers === Qt.NoModifier
                                 && input.cursorPosition > 0
                                 && input.selectionStart === input.selectionEnd) {
-                            const previous = Whatevr.AppController.previousGraphemeBoundary(input.text, input.cursorPosition)
+                            const previous = Whatevr.ProtocolController.previousGraphemeBoundary(input.text, input.cursorPosition)
                             input.remove(previous, input.cursorPosition)
                             event.accepted = true
                         }

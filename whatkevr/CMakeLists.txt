@@ -1,4 +1,3 @@
-# CMake 3.21 is required by Qt's Protobuf/gRPC target helpers.
 cmake_minimum_required(VERSION 3.21)
 
 if(NOT DEFINED WHATEVR_VERSION)
@@ -38,9 +37,7 @@ set(KDE_COMPILERSETTINGS_LEVEL ${KF_MIN_VERSION})
 find_package(Qt6 ${QT_MIN_VERSION} REQUIRED COMPONENTS
     Core
     Gui
-    Grpc
     Network
-    Protobuf
     Qml
     Quick
     QuickControls2

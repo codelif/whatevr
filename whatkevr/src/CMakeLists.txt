@@ -5,38 +5,18 @@ set_source_files_properties(qml/I18n.qml PROPERTIES
 qt_add_executable(whatkevr
     MANUAL_FINALIZATION
     main.cpp
-    app/appcontroller.cpp
-    app/appcontroller.h
     app/protocolcontroller.cpp
     app/protocolcontroller.h
     app/protocolstickercontroller.cpp
     app/protocolstickercontroller.h
     app/settings.cpp
     app/settings.h
-    app/stickercontroller.cpp
-    app/stickercontroller.h
-    models/chatlistmodel.cpp
-    models/chatlistmodel.h
-    models/chatlistfiltermodel.cpp
-    models/chatlistfiltermodel.h
     models/emojimodel.cpp
     models/emojimodel.h
-    models/messagelistmodel.cpp
-    models/messagelistmodel.h
     models/protocolmessagemodel.cpp
     models/protocolmessagemodel.h
-    models/starredmessagesmodel.cpp
-    models/starredmessagesmodel.h
-    models/pinnedmessagesmodel.cpp
-    models/pinnedmessagesmodel.h
     models/protocolsearchmodel.cpp
     models/protocolsearchmodel.h
-    models/searchresultsmodel.cpp
-    models/searchresultsmodel.h
-    models/stickermodel.cpp
-    models/stickermodel.h
-    models/stickerpackmodel.cpp
-    models/stickerpackmodel.h
     protocol/protocolclient.cpp
     protocol/protocolclient.h
     protocol/collectionviewmodel.cpp
@@ -53,21 +33,6 @@ qt_add_executable(whatkevr
     util/richtext.h
     util/tlds.cpp
     util/tlds.h
-)
-
-set(WHATEVR_PROTO_FILE "${PROJECT_SOURCE_DIR}/../proto/whatevr.proto")
-set(WHATEVR_PROTO_INCLUDE_DIR "${PROJECT_SOURCE_DIR}/../proto")
-
-qt_add_protobuf(whatkevr
-    GENERATE_PACKAGE_SUBFOLDERS
-    PROTO_FILES ${WHATEVR_PROTO_FILE}
-    PROTO_INCLUDES ${WHATEVR_PROTO_INCLUDE_DIR}
-)
-
-qt_add_grpc(whatkevr CLIENT
-    GENERATE_PACKAGE_SUBFOLDERS
-    PROTO_FILES ${WHATEVR_PROTO_FILE}
-    PROTO_INCLUDES ${WHATEVR_PROTO_INCLUDE_DIR}
 )
 
 set_target_properties(whatkevr PROPERTIES
@@ -182,9 +147,7 @@ qt_add_resources(whatkevr app_license
 target_link_libraries(whatkevr PRIVATE
     Qt6::Core
     Qt6::Gui
-    Qt6::Grpc
     Qt6::Network
-    Qt6::Protobuf
     Qt6::Qml
     Qt6::Quick
     Qt6::QuickControls2

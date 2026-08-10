@@ -32,7 +32,6 @@ Kirigami.ScrollablePage {
 
     function showInChat(targetChatId, messageId) {
         Whatevr.ProtocolController.showMessageInChat(targetChatId, messageId)
-        Whatevr.AppController.selectChat(targetChatId)
         applicationWindow().pageStack.layers.pop()
         applicationWindow().showConversation()
     }

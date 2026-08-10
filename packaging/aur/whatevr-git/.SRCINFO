@@ -17,7 +17,6 @@ pkgbase = whatevr-git
 	makedepends = vulkan-headers
 	depends = qt6-base
 	depends = qt6-declarative
-	depends = qt6-grpc
 	depends = qt6-shadertools
 	depends = kcoreaddons
 	depends = kdbusaddons

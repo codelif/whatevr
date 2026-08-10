@@ -11,7 +11,6 @@
 #include <KLocalizedContext>
 #include <KLocalizedString>
 
-#include "app/appcontroller.h"
 #include "app/protocolcontroller.h"
 #include "app/settings.h"
 #include "version.h"
@@ -110,18 +109,13 @@ int main(int argc, char *argv[])
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextObject(new KLocalizedContext(&engine));
 
-    // Constructed before AppController so the models it creates can read the
-    // shared Settings instance (drafts persistence, default skin tone).
+    // Constructed before the controller so the models it creates can read the
+    // shared Settings instance (default skin tone, draft persistence).
     Settings settings;
     Settings::setInstance(&settings);
 
-    AppController appController;
-    AppController::setInstance(&appController);
-
-    // The whatevr-protocol connection lifecycle (D2a onward). Runs alongside the
-    // still-gRPC AppController during the migration: it drives the status/login/
-    // splash screens and the shell-visibility gate, while AppController keeps
-    // serving the not-yet-ported chat shell until the D-phase port completes.
+    // The one controller: it owns the socket to whatevrd and every view the UI
+    // renders (PROTOCOL.md).
     ProtocolController protocolController;
     ProtocolController::setInstance(&protocolController);
 
@@ -132,9 +126,9 @@ int main(int argc, char *argv[])
     KDBusService service(KDBusService::Unique);
     QObject::connect(&service,
                      &KDBusService::activateRequested,
-                     &appController,
-                     [&appController](const QStringList &arguments, const QString &) {
-                         appController.handleCommandLine(arguments);
+                     &protocolController,
+                     [&protocolController](const QStringList &arguments, const QString &) {
+                         protocolController.handleCommandLine(arguments);
                      });
 
     QObject::connect(
@@ -163,7 +157,7 @@ int main(int argc, char *argv[])
     });
 
     // Process the URL this instance was launched with, if any.
-    appController.handleCommandLine(app.arguments());
+    protocolController.handleCommandLine(app.arguments());
 
     return app.exec();
 }

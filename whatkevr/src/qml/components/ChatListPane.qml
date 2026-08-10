@@ -125,10 +125,10 @@ Kirigami.Page {
             Layout.fillWidth: true
             Layout.leftMargin: Kirigami.Units.largeSpacing
             Layout.rightMargin: Kirigami.Units.largeSpacing
-            visible: Whatevr.AppController.bannerText.length > 0
+            visible: Whatevr.ProtocolController.bannerText.length > 0
             type: Kirigami.MessageType.Warning
             showCloseButton: false
-            text: Whatevr.AppController.bannerText
+            text: Whatevr.ProtocolController.bannerText
         }
 
         Kirigami.SearchField {
@@ -234,16 +234,12 @@ Kirigami.Page {
                                    Whatevr.ProtocolController.chatTyping(chatId))
                         // Re-read the frontend draft whenever the selection changes
                         // (leaving a chat is when its composer draft is committed).
-                        // Draft is frontend-only state, still on the gRPC
-                        // AppController until the composer port (D4).
                         hasDraft: draftText.length > 0
                         draftText: (Whatevr.ProtocolController.selectedChatId, chatId.length > 0
-                                     ? Whatevr.AppController.chatDraft(chatId) : "")
+                                     ? Whatevr.ProtocolController.chatDraft(chatId) : "")
                         current: Whatevr.ProtocolController.selectedChatId === chatId
                         onSelected: id => {
                             Whatevr.ProtocolController.selectChat(id)
-                            // The composer/pins/chrome remain on gRPC until D3c/D4.
-                            Whatevr.AppController.selectChat(id)
                             root.chatSelected(id)
                         }
                         onPinToggled: (id, pinned) => Whatevr.ProtocolController.setChatPinned(id, pinned)
@@ -517,13 +513,11 @@ Kirigami.Page {
 
                     onChatActivated: id => {
                         Whatevr.ProtocolController.selectChat(id)
-                        Whatevr.AppController.selectChat(id)
                         root.hideSearch()
                         root.chatSelected(id)
                     }
                     onMessageActivated: (cId, mId) => {
                         Whatevr.ProtocolController.showMessageInChat(cId, mId)
-                        Whatevr.AppController.selectChat(cId)
                         root.hideSearch()
                         root.chatSelected(cId)
                     }

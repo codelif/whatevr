@@ -4,6 +4,7 @@
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QImage>
@@ -14,8 +15,10 @@
 #include <QProcess>
 #include <QQmlEngine>
 #include <QSet>
+#include <QSettings>
 #include <QStandardPaths>
 #include <QStringList>
+#include <QTextBoundaryFinder>
 #include <QTimer>
 #include <QUrl>
 #include <QUuid>
@@ -26,6 +29,7 @@
 
 #include "collectionviewmodel.h"
 #include "emojimodel.h"
+#include "messagemarkup.h"
 #include "messagerow.h"
 #include "objectviewmodel.h"
 #include "protocolclient.h"
@@ -47,7 +51,7 @@ ProtocolController *s_instance = nullptr;
 
 // Cold-start grace: hold the neutral splash rather than flashing the
 // "not running" page while the daemon socket may still be appearing right
-// after launch. Matches AppController's 1s window.
+// after launch.
 constexpr int kStartupGraceMs = 1000;
 constexpr int kMessagePageSize = 80;
 constexpr int kMarkReadDebounceMs = 120;
@@ -56,9 +60,15 @@ constexpr int kSearchDebounceMs = 180;
 // Starred rows are a windowed view like any other collection; the page extends
 // as it scrolls instead of asking the daemon for every star at once.
 constexpr int kStarredPageSize = 50;
-// In-chat search asks for one generous page of matches, as the gRPC path did —
-// the match cursor walks that list, it is not a scrollable surface.
+// In-chat search asks for one generous page of matches: the match cursor walks
+// that list, it is not a scrollable surface.
 constexpr int kChatSearchLimit = 100;
+
+// Composer drafts and the preference gating their persistence. Settings owns
+// the preference key; this reads it directly, the way EmojiModel reads its own
+// QSettings-backed presentation state.
+constexpr auto kDraftsKey = "settings/drafts";
+constexpr auto kPersistDraftsKey = "settings/persistDrafts";
 
 // Renders the QR countdown text, mirroring AppController::formatQrExpiry so the
 // login page reads identically on either stack during the migration.
@@ -195,6 +205,12 @@ ProtocolController::ProtocolController(QString socketPath, QObject *parent)
     connect(m_client, &ProtocolClient::openChatRequested, this, &ProtocolController::openChatRequested);
     // Every failed connect attempt also lands here (the client funnels connect
     // errors through disconnected()); recomputing phase is idempotent.
+
+    // A deep link can arrive before the shell exists (a notification click may
+    // cold-start the app); every state change is a chance to apply it.
+    connect(this, &ProtocolController::stateChanged, this, &ProtocolController::tryApplyPendingDeepLink);
+
+    loadPersistedDrafts();
 
     m_connectionModel = new ObjectViewModel(this);
     m_loginModel = new ObjectViewModel(this);
@@ -2739,6 +2755,181 @@ void ProtocolController::copyToClipboard(const QString &text)
     if (QClipboard *clipboard = QGuiApplication::clipboard()) {
         clipboard->setText(text);
     }
+}
+
+// --- frontend-only helpers (D7) -------------------------------------------
+
+bool ProtocolController::perfLogging()
+{
+    static const bool enabled = qEnvironmentVariableIsSet("WHATKEVR_PERF");
+    return enabled;
+}
+
+void ProtocolController::setChatDraft(const QString &chatId, const QString &text)
+{
+    if (chatId.isEmpty()) {
+        return;
+    }
+    const bool had = m_drafts.contains(chatId);
+    if (text.trimmed().isEmpty()) {
+        if (!had) {
+            return;
+        }
+        m_drafts.remove(chatId);
+    } else {
+        if (had && m_drafts.value(chatId) == text) {
+            return;
+        }
+        m_drafts.insert(chatId, text);
+    }
+    savePersistedDrafts();
+}
+
+QString ProtocolController::chatDraft(const QString &chatId) const
+{
+    return m_drafts.value(chatId);
+}
+
+void ProtocolController::loadPersistedDrafts()
+{
+    if (!QSettings().value(QLatin1String(kPersistDraftsKey), true).toBool()) {
+        return;
+    }
+    const QVariantMap stored = QSettings().value(QLatin1String(kDraftsKey)).toMap();
+    for (auto it = stored.constBegin(); it != stored.constEnd(); ++it) {
+        const QString text = it.value().toString();
+        if (!text.isEmpty()) {
+            m_drafts.insert(it.key(), text);
+        }
+    }
+}
+
+void ProtocolController::savePersistedDrafts() const
+{
+    if (!QSettings().value(QLatin1String(kPersistDraftsKey), true).toBool()) {
+        return;
+    }
+    QVariantMap map;
+    for (auto it = m_drafts.constBegin(); it != m_drafts.constEnd(); ++it) {
+        map.insert(it.key(), it.value());
+    }
+    QSettings().setValue(QLatin1String(kDraftsKey), map);
+}
+
+void ProtocolController::copyImageToClipboard(const QString &localPath)
+{
+    if (localPath.isEmpty()) {
+        return;
+    }
+    const QImage image(localPath);
+    if (image.isNull()) {
+        Q_EMIT messageActionFailed(i18nc("@info", "Unable to copy the image"));
+        return;
+    }
+    if (QClipboard *clipboard = QGuiApplication::clipboard()) {
+        clipboard->setImage(image);
+    }
+}
+
+bool ProtocolController::saveMediaAs(const QString &localPath, const QUrl &destUrl)
+{
+    if (localPath.isEmpty() || !destUrl.isLocalFile()) {
+        return false;
+    }
+    const QString destination = destUrl.toLocalFile();
+    if (destination.isEmpty()) {
+        return false;
+    }
+    // The save dialog already confirmed overwriting; QFile::copy refuses to.
+    if (QFile::exists(destination) && !QFile::remove(destination)) {
+        Q_EMIT messageActionFailed(i18nc("@info", "Unable to overwrite the existing file"));
+        return false;
+    }
+    if (!QFile::copy(localPath, destination)) {
+        Q_EMIT messageActionFailed(i18nc("@info", "Unable to save the file"));
+        return false;
+    }
+    return true;
+}
+
+QString ProtocolController::toCommonMark(const QString &text) const
+{
+    return whatevr::util::whatsAppToCommonMark(text);
+}
+
+int ProtocolController::previousGraphemeBoundary(const QString &text, int cursorPosition) const
+{
+    const int position = qBound(0, cursorPosition, text.size());
+    if (position <= 0) {
+        return 0;
+    }
+
+    QTextBoundaryFinder finder(QTextBoundaryFinder::Grapheme, text);
+    finder.setPosition(position);
+    const int boundary = finder.toPreviousBoundary();
+    if (boundary >= 0 && boundary < position) {
+        return boundary;
+    }
+
+    return qMax(0, position - 1);
+}
+
+void ProtocolController::handleCommandLine(const QStringList &arguments)
+{
+    QString uri;
+    for (const QString &arg : arguments) {
+        if (arg.startsWith(QStringLiteral("whatevr:"), Qt::CaseInsensitive)) {
+            uri = arg;
+            break;
+        }
+    }
+    if (uri.isEmpty()) {
+        Q_EMIT activateWindowRequested();
+        return;
+    }
+    openChatFromUri(uri);
+}
+
+void ProtocolController::openChatFromUri(const QString &uri)
+{
+    // Expected form: whatevr://chat/<percent-encoded-chat-id> (emitted by the
+    // daemon's notification handler). A malformed link still raises the window.
+    const QUrl url(uri);
+    if (url.scheme().compare(QStringLiteral("whatevr"), Qt::CaseInsensitive) != 0
+        || url.host() != QStringLiteral("chat")) {
+        Q_EMIT activateWindowRequested();
+        return;
+    }
+
+    QString chatId = url.path(QUrl::FullyDecoded);
+    if (chatId.startsWith(QLatin1Char('/'))) {
+        chatId = chatId.mid(1);
+    }
+    if (chatId.isEmpty()) {
+        Q_EMIT activateWindowRequested();
+        return;
+    }
+
+    m_pendingDeepLinkChatId = chatId;
+    Q_EMIT activateWindowRequested();
+    tryApplyPendingDeepLink();
+}
+
+void ProtocolController::tryApplyPendingDeepLink()
+{
+    if (m_pendingDeepLinkChatId.isEmpty()) {
+        return;
+    }
+    // A chat can only be opened once the chat shell is up; otherwise keep the
+    // request pending and retry on the next state change (e.g. after the daemon
+    // connects or login completes following a cold start from a notification).
+    if (!shellVisible()) {
+        return;
+    }
+
+    const QString chatId = std::exchange(m_pendingDeepLinkChatId, {});
+    selectChat(chatId);
+    Q_EMIT openChatRequested(chatId);
 }
 
 // --- reactions to client / view changes -----------------------------------

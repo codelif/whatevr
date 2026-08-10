@@ -211,10 +211,6 @@ Kirigami.ApplicationWindow {
         navProgrammaticIndexChange = true
         pageStack.currentIndex = 1
         navProgrammaticIndexChange = false
-        // Start message/pin loading asynchronously right after the click frame;
-        // no wait-for-settle. The controller/model keep first paint atomic for
-        // unread opens and staged for no-unread hydration.
-        Qt.callLater(Whatevr.AppController.populateSelectedChat)
     }
 
     function closeConversation() {
@@ -222,7 +218,6 @@ Kirigami.ApplicationWindow {
         if (chatWideLayout && Whatevr.ProtocolController.hasSelectedChat) {
             // No slide in the wide layout; clear immediately.
             Whatevr.ProtocolController.selectChat("")
-            Whatevr.AppController.selectChat("")
         }
         if (pageStack.currentIndex > 0) {
             navProgrammaticIndexChange = true
@@ -251,18 +246,12 @@ Kirigami.ApplicationWindow {
         id: navQuietTimer
 
         interval: 150
-        onTriggered: {
-            // Lift the transition gate first: it flushes any populate/message
-            // page deferred while the slide ran, then the nav target settles.
-            Whatevr.AppController.uiTransitionActive = false
-            root.applyNavTarget()
-        }
+        onTriggered: root.applyNavTarget()
     }
 
     // Single owner of settled navigation state; only ever runs from the quiet
     // timer. Applies navTargetChatId: clears the selection once the chat list
-    // is the settled column, or ensures the conversation column is current and
-    // populates the selected chat.
+    // is the settled column, or ensures the conversation column is current.
     function applyNavTarget() {
         if (currentMode !== "chat" || pageStack.columnView.moving) {
             return
@@ -272,7 +261,6 @@ Kirigami.ApplicationWindow {
                     && pageStack.currentIndex === 0
                     && Whatevr.ProtocolController.hasSelectedChat) {
                 Whatevr.ProtocolController.selectChat("")
-                Whatevr.AppController.selectChat("")
             }
             return
         }
@@ -280,12 +268,7 @@ Kirigami.ApplicationWindow {
             navProgrammaticIndexChange = true
             pageStack.currentIndex = 1
             navProgrammaticIndexChange = false
-            if (pageStack.columnView.moving) {
-                // The re-target started another slide; populate at its settle.
-                return
-            }
         }
-        Whatevr.AppController.populateSelectedChat()
     }
 
     function rebuildPageStack() {
@@ -357,15 +340,13 @@ Kirigami.ApplicationWindow {
         target: root.pageStack.columnView
 
         function onMovingChanged() {
-            if (Whatevr.AppController.perfLogging) {
+            if (Whatevr.ProtocolController.perfLogging) {
                 console.log("[perf] slide", root.pageStack.columnView.moving ? "start" : "settle")
             }
             if (root.pageStack.columnView.moving) {
-                // Gate model work for the whole animation; a bounce within the
-                // quiet period simply re-gates and the timer re-arms at its
-                // settle edge.
+                // A bounce within the quiet period simply re-arms the timer at
+                // its settle edge.
                 navQuietTimer.stop()
-                Whatevr.AppController.uiTransitionActive = true
             } else {
                 navQuietTimer.restart()
             }
@@ -381,7 +362,7 @@ Kirigami.ApplicationWindow {
 
         visible: false
 
-        readonly property bool sliding: Whatevr.AppController.perfLogging
+        readonly property bool sliding: Whatevr.ProtocolController.perfLogging
                                         && root.pageStack.columnView.moving
         property double lastSwapMs: 0
         property double slideStartMs: 0
@@ -417,7 +398,7 @@ Kirigami.ApplicationWindow {
         rebuildPageStack()
     }
 
-    // Shell routing follows the protocol connection lifecycle (D2a): its
+    // Shell routing follows the protocol connection lifecycle: its
     // connection/login views decide splash/login/status/chat.
     Connections {
         target: Whatevr.ProtocolController
@@ -431,29 +412,14 @@ Kirigami.ApplicationWindow {
             }
         }
 
-        function onOpenChatRequested(chatId) {
-            root.activateWindow()
-            Whatevr.ProtocolController.selectChat(chatId)
-            // Keep not-yet-ported composer/chrome state aligned during D3b.
-            Whatevr.AppController.selectChat(chatId)
-            if (root.currentMode === "chat") {
-                root.showConversation(chatId)
-            } else {
-                root.pendingShowConversation = true
-            }
-        }
-    }
-
-    Connections {
-        target: Whatevr.AppController
-
         function onActivateWindowRequested() {
             root.activateWindow()
         }
 
+        // The daemon's `open_chat` (notification click, whatevr:// URL) and the
+        // local deep-link route both land here with the chat already selected.
         function onOpenChatRequested(chatId) {
             root.activateWindow()
-            // Local URI and transitional gRPC routes still enter here.
             Whatevr.ProtocolController.selectChat(chatId)
             if (root.currentMode === "chat") {
                 root.showConversation(chatId)

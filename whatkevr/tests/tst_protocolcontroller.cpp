@@ -11,7 +11,9 @@
 #include <QJsonObject>
 #include <QLocalServer>
 #include <QLocalSocket>
+#include <QSettings>
 #include <QSignalSpy>
+#include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTest>
 
@@ -2142,6 +2144,109 @@ private Q_SLOTS:
         QCOMPARE(stickers->stickerModel()->rowCount(), 0);
         QCOMPARE(stickers->packModel()->rowCount(), 0);
         QTRY_VERIFY(daemon.unsubscribedViews.contains(QStringLiteral("sticker_packs")));
+    }
+
+    // D7: a `whatevr://chat/<id>` launch argument raises the window immediately
+    // and holds the chat until the shell can show it — a notification click may
+    // cold-start the app long before the daemon reports online.
+    void deepLinkWaitsForShell()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("need_login")));
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+        QTRY_VERIFY(ctrl.loginRequired());
+
+        QSignalSpy activateSpy(&ctrl, &ProtocolController::activateWindowRequested);
+        QSignalSpy openSpy(&ctrl, &ProtocolController::openChatRequested);
+        ctrl.handleCommandLine({QStringLiteral("whatkevr"),
+                                QStringLiteral("whatevr://chat/a%40s")});
+
+        // The window comes up at once; the chat cannot be opened yet.
+        QCOMPARE(activateSpy.count(), 1);
+        QCOMPARE(openSpy.count(), 0);
+        QVERIFY(ctrl.selectedChatId().isEmpty());
+
+        // Login completes: the held link applies exactly once.
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+        QTRY_COMPARE(openSpy.count(), 1);
+        QCOMPARE(openSpy.first().first().toString(), QStringLiteral("a@s"));
+        QCOMPARE(ctrl.selectedChatId(), QStringLiteral("a@s"));
+
+        // Further state churn must not re-fire it.
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("reconnecting")));
+        QTest::qWait(50);
+        QCOMPARE(openSpy.count(), 1);
+    }
+
+    // A plain launch (no URL) only raises the window; a malformed whatevr: URL
+    // does the same rather than selecting a bogus chat.
+    void commandLineWithoutDeepLinkRaisesWindow()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+        QTRY_VERIFY(ctrl.shellVisible());
+
+        QSignalSpy activateSpy(&ctrl, &ProtocolController::activateWindowRequested);
+        QSignalSpy openSpy(&ctrl, &ProtocolController::openChatRequested);
+
+        ctrl.handleCommandLine({QStringLiteral("whatkevr")});
+        QCOMPARE(activateSpy.count(), 1);
+        QCOMPARE(openSpy.count(), 0);
+
+        ctrl.handleCommandLine({QStringLiteral("whatkevr"), QStringLiteral("whatevr://chat/")});
+        QCOMPARE(activateSpy.count(), 2);
+        QCOMPARE(openSpy.count(), 0);
+        QVERIFY(ctrl.selectedChatId().isEmpty());
+    }
+
+    // D7: composer drafts are frontend-only state (rule 1). Blank text clears a
+    // draft, and the store survives a controller restart via QSettings.
+    void chatDraftsRoundTrip()
+    {
+        QStandardPaths::setTestModeEnabled(true);
+        QSettings().remove(QStringLiteral("settings/drafts"));
+
+        {
+            ProtocolController ctrl(m_path, nullptr);
+            QVERIFY(ctrl.chatDraft(QStringLiteral("a@s")).isEmpty());
+
+            ctrl.setChatDraft(QStringLiteral("a@s"), QStringLiteral("half typed"));
+            QCOMPARE(ctrl.chatDraft(QStringLiteral("a@s")), QStringLiteral("half typed"));
+            // An empty chat id is ignored, not stored under "".
+            ctrl.setChatDraft(QString(), QStringLiteral("orphan"));
+            QVERIFY(ctrl.chatDraft(QString()).isEmpty());
+        }
+
+        {
+            ProtocolController restarted(m_path, nullptr);
+            QCOMPARE(restarted.chatDraft(QStringLiteral("a@s")), QStringLiteral("half typed"));
+            // Sending clears the composer, which clears the draft.
+            restarted.setChatDraft(QStringLiteral("a@s"), QStringLiteral("   "));
+            QVERIFY(restarted.chatDraft(QStringLiteral("a@s")).isEmpty());
+        }
+
+        ProtocolController afterClear(m_path, nullptr);
+        QVERIFY(afterClear.chatDraft(QStringLiteral("a@s")).isEmpty());
+
+        QSettings().remove(QStringLiteral("settings/drafts"));
+        QStandardPaths::setTestModeEnabled(false);
+    }
+
+    // The Backspace helper deletes whole grapheme clusters, so an emoji with a
+    // skin-tone modifier goes in one keystroke rather than leaving half of it.
+    void graphemeBoundaryWalksClusters()
+    {
+        ProtocolController ctrl(m_path, nullptr);
+        const QString text = QStringLiteral("hi ") + QString::fromUtf8("\xF0\x9F\x91\x8D\xF0\x9F\x8F\xBD");
+        QCOMPARE(ctrl.previousGraphemeBoundary(text, text.size()), 3);
+        QCOMPARE(ctrl.previousGraphemeBoundary(text, 0), 0);
+        // Out-of-range positions clamp instead of misbehaving.
+        QCOMPARE(ctrl.previousGraphemeBoundary(text, text.size() + 10), 3);
     }
 
 private:

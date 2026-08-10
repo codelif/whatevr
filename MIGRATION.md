@@ -112,7 +112,7 @@ Status: `todo` | `doing` | `done` | `blocked` | `needs-decision`
 | D4c | Port `media.download` + the `transfers` progress view + the message image viewer (`ChatBubble` download UI, `ProfilePictureViewer` reuse) | done | `ProtocolController` gained `downloadMessageMedia` (ack-only `media.download`) and a session-long **global `transfers`** subscription, handed to `ProtocolMessageModel::setTransfersSource`. The timeline's two download roles (`mediaDownloading`/`mediaDownloadProgress`, stubbed `false`/`-1` since D3a) now **read through** to that view by message id — a keyed lookup at render time, no copy, no cache, the same compose-two-views shape as D2b2's typing-in-chat-rows and D3c's typing-over-presence; `direction` discriminates so a future upload row cannot light a download spinner. `ChatBubble`'s three `AppController.downloadMessageMedia` call sites (auto-download-on-viewport + the two manual buttons) repointed; the gRPC `m_mediaDownloadingMessageIds`/`m_mediaDownloadReplies` optimistic set is off the render path. Durable failure was already right: `media.download_error` rides the message row (B7b) and the bubble renders it. **The image viewer needed no work** — `ConversationPane`'s `ProfilePictureViewer` lightbox has been fed by the protocol model's `media.path` since D3b. `just build`, all three Qt suites (`tst_protocolcontroller` 33, `tst_protocolcore` 16, `tst_protocolmessagemodel` 8), `go test -tags sqlite_fts5 ./...`, `scripts/conformance` and `qmllint` (clean) pass; `transfers` + `media.download` hand-exercised over a raw socket against a throwaway daemon. No PROTOCOL.md change. **Live-account check not performed** — same environment gap as D3c/D4a/D4b; **and** two reads stay on `AppController` by design (see Decision log). |
 | D5 | Port info dialogs (contact/group/members), starred/pinned pages, unified + in-chat search | done | `ProtocolController` gained four dialog/page-scoped surfaces and their views. **Info card**: `openContactCard`/`openGroupCard`/`closeInfoCard` hold the `contact` **or** `group` object view (one `ObjectViewModel`, whichever the dialog asked for) plus `group_members` and — for a contact — `blocklist`; `ContactInfoDialog` renders the daemon item directly, so its snapshot/restore card cache, its member `ListModel` + `applyMemberFilter` rebuild, its hand-patched avatar merging and its blocklist snapshot are **deleted** (net −180 QML lines): two-phase enrichment is just a second upsert, back-navigation is a re-subscribe, blocked-ness is membership in `blocklist`, member search is presentation-side filtering (`groupMembers(query)` + revision tick). `contact.block`, `media.fetch_profile_picture` (→ `profilePictureReady`) and `chat.ensure_direct` (→ select + `openChatRequested`) ported with it. **Starred page**: `StarredMessagesPage` owns a windowed `starred` subscription for exactly as long as it is on screen (`openStarredMessages`/`closeStarredMessages`, `loadMoreStarredMessages` = `extend older` at the list end) and binds the generic collection, deriving row strings through one pure `messageRowDisplay(item)` helper (shared `util/messagerow` `messageRowPreview`, so `fallback` still covers unknown kinds). **Search**: unified chat-list search and in-chat search both run the daemon *queries* (`search.chats`/`search.messages`/`contacts.check_phone`) into a new `ProtocolSearchModel` (`models/protocolsearchmodel.*`, same roles as the frozen `SearchResultsModel` so `SearchResultDelegate` was a one-line repoint); a generation counter drops superseded replies, the in-chat match cursor stays frontend state and a chat switch ends the search. **Also ported the D4a leftover it unblocked**: the composer's `@`-mention roster is now a `group_members` subscription on the *displayed* conversation (`chatMembers(query)`), deleting MessageComposer's per-chat member cache and its `openGroupInfo` fetch path. **The row's "pinned page" was already done** — whatkevr has no separate pinned page; the `pinned` view landed with D4b's banner. `just build`, all three Qt suites (`tst_protocolcontroller` 40, `tst_protocolcore` 16, `tst_protocolmessagemodel` 8), `go test -tags sqlite_fts5 ./...`, `scripts/conformance` and a qmllint before/after diff (164 warnings before, 164 after — none added) pass; the three queries, the four views and the three commands hand-exercised over a raw socket against a throwaway daemon, plus an offscreen app launch. No PROTOCOL.md change. **Live-account check not performed** — same environment gap as D3c/D4a/D4b/D4c. |
 | D6 | Port settings pages (privacy/prefs/blocklist/profile) + sticker/emoji pickers, incl. `send.sticker` (moved here from D4, see decision log) | done | `ProtocolController` now owns session-long `self`/`preferences`, page-scoped `privacy`, and shared contact-card/settings `blocklist` views plus ack-only settings/profile/logout commands; all active settings/sidebar/bubble bindings use daemon snake-case rows. Emoji remains frontend presentation state but moved off the gRPC controller. New `ProtocolStickerController` owns picker-scoped `stickers`/`sticker_packs`/`sticker_pack` views, transient daemon-ordered `search.stickers`, bounded download requests, favorite/install/refresh actions, and ack-only `send.sticker` (messages still arrive only through `messages`). PROTOCOL.md adds the approved search query + forced-refresh command; daemon fixes include complete sticker invalidation/unbounded omitted-limit semantics, deterministic search ties, truthful refresh errors, and backgrounded missing-file sticker sends. `just build`, all three Qt suites, full Go tests, conformance, qmllint (161 warnings, down from D5's 164), raw-socket exercise, and offscreen launch pass. No Spirit-checklist bend. |
-| D7 | Remove all gRPC client code + qt6-grpc from whatkevr; whatkevr runs 100% on the new protocol | todo | |
+| D7 | Remove all gRPC client code + qt6-grpc from whatkevr; whatkevr runs 100% on the new protocol | done | **whatkevr is now a pure protocol client.** Deleted `app/appcontroller.{h,cpp}` (5.9k lines), `app/stickercontroller.*` and the eight proto-typed models (`chatlist`, `chatlistfilter`, `messagelist`, `pinnedmessages`, `searchresults`, `starredmessages`, `sticker`, `stickerpack`) — ~10.4k lines net deletion; dropped `qt_add_protobuf`/`qt_add_grpc` and `Qt6::Grpc`/`Qt6::Protobuf` from `whatkevr/{,src/}CMakeLists.txt`, and `qt6-grpc` from the README build deps + all three AUR packages (the binary links neither library now: `ldd` is clean). `main.cpp` constructs only `ProtocolController`. The eighteen remaining `AppController.*` QML call sites fell into three buckets: **already ported** (`selectChat` mirroring in Main/ChatListPane/StarredMessagesPage, `bannerText`, `composerEnabled` — deleted as duplicates), **gRPC-only machinery with no protocol counterpart** (`populateSelectedChat`/`uiTransitionActive`, the deferred-load gate — the messages subscription already starts at `selectChat`; and `requestChatAvatar`, which PROTOCOL deliberately has no command for), and **frontend-only helpers with no daemon behind them**, which moved onto `ProtocolController` (drafts `chatDraft`/`setChatDraft`, `toCommonMark`, `previousGraphemeBoundary`, `copyImageToClipboard`, `saveMediaAs`, `perfLogging`) alongside `handleCommandLine` + a new `activateWindowRequested` signal for single-instance/deep-link routing. Drafts are a plain `QHash` over the same `settings/drafts` QSettings key (read directly, the way EmojiModel reads its own state) — the gRPC version's draft-floats-the-row-to-the-top ordering is **gone**, since the daemon owns `chats` sort. `tst_protocolcontroller` +4 (deep link held until `shellVisible` then applied once, plain/malformed command line raises only, drafts round-trip across a controller restart, grapheme-cluster Backspace); `just build`, all four Qt tests (46 controller cases), `go test -tags sqlite_fts5 ./...`, `scripts/conformance` and qmllint (161 warnings, same as D6) pass; the startup subscription set hand-exercised over a raw socket and an offscreen `whatkevr` verified to hold a live protocol session (daemon fd count) with no QML errors. No PROTOCOL.md change. **Phase D complete.** **Live-account check not performed** — same environment gap as D3c–D6; **and** two behaviour narrowings are logged below (dead-avatar re-fetch, transition gate). |
 
 ### Phase E — teardown & flagship polish
 
@@ -126,6 +126,29 @@ Status: `todo` | `doing` | `done` | `blocked` | `needs-decision`
 _None._
 
 ## D-phase notes
+
+- 2026-08-10 — **D7 verification, and the one thing it cannot cover.** No
+  logged-in WhatsApp session here (unchanged since D3c), so the ported client
+  was never driven against a real account. What *was* verified: `just build`
+  green with `Qt6::Grpc`/`Qt6::Protobuf` gone from the target, `ldd` on the
+  built binary showing neither library, the four Qt suites (46 controller
+  cases including the four new ones), the full Go suite, `scripts/conformance`,
+  and qmllint unchanged at 161 warnings. Against a throwaway `whatevrd`
+  (isolated `XDG_*`, short socket path — note the runtime dir must be `0700`
+  or Qt's `QStandardPaths::RuntimeLocation` silently falls back elsewhere and
+  the client connects to the *wrong* socket, which cost time here): the whole
+  startup subscription set (`connection`, `login`, `chats`, `typing`, `sync`,
+  `transfers`, `self`, `preferences`) hand-driven over a raw socket with
+  response→upsert→`ready` ordering intact, then an offscreen `whatkevr`
+  launched against it — no QML errors, and the daemon's open-fd count rose
+  while it ran, which is the proof it held a live protocol session on the one
+  socket. A second launch carrying `whatevr://chat/<id>` also came up clean
+  (the link stays pending against a logged-out daemon, exactly as the unit
+  test asserts). **What remains genuinely unverified is everything a session
+  gates** — the whole app now runs on one code path, so whoever has an account
+  next should simply *use it for a day*: send/receive, react/edit/pin, download
+  media, open info dialogs, change a setting, click a notification. That is the
+  real D7 acceptance test and it cannot be faked here.
 
 - 2026-08-10 — **D6 live verification gap (environment, unchanged since D3c).**
   No logged-in WhatsApp session was available, so real privacy/blocklist/about
@@ -277,6 +300,47 @@ _None._
   no GUI/gRPC) and drive the real client over a real Unix socket.
 
 ## Decision log
+
+- 2026-08-10 — D7 implementation readings (no PROTOCOL.md change; **two
+  behaviour narrowings to flag**): (1) **The end state is one controller, and
+  the frontend-only helpers live on it.** `ProtocolController` already owned
+  pure presentation state before this step (the emoji model since D6,
+  `copyToClipboard` since D2a), so the last stragglers — drafts, `toCommonMark`,
+  the grapheme-cluster Backspace helper, `copyImageToClipboard`/`saveMediaAs`,
+  `perfLogging` — went there rather than into a new "utils" singleton. None of
+  them touches the socket; splitting them out would have meant a second
+  singleton whose only unifying property is "not the daemon". A rename of the
+  class (it is now simply *the* controller) is left to E2's polish.
+  (2) **Narrowing: a dead avatar file no longer triggers a re-fetch.** The gRPC
+  delegate called `requestChatAvatar(id, force)` when the image failed to load —
+  the daemon having pruned a file behind a stale DB row. PROTOCOL deliberately
+  has no such command ("the old API needed `RequestAvatars`… they are gone");
+  fetching is demand-driven by the subscription. So the row now shows initials
+  until the daemon refreshes the path on its own. If that turns out to be
+  visible in practice the spirit-correct fix is **daemon-side** (validate the
+  cached file when a `chats` row is served, or re-fetch on prune), never a new
+  frontend command — flag it if you want that now. (3) **Narrowing: the
+  navigation transition gate is gone.** `uiTransitionActive` +
+  `populateSelectedChat` deferred gRPC model work until a column slide settled;
+  the protocol path has nothing to defer — `selectChat` subscribes `messages`
+  and the daemon streams the window — so both were deleted rather than
+  reimplemented against a controller that does not need them. Effect: the
+  subscription now starts on the click frame instead of ~150 ms later. That is
+  strictly earlier work, but it is work *during* the slide, so if a slow machine
+  ever shows a hitch the fix is to re-add a gate around the subscribe call, not
+  to resurrect the populate machinery. (4) **Drafts lost their ordering side
+  effect, deliberately.** `ChatListModel` stamped a draft with "now" so the chat
+  floated to the top of its section. The daemon owns `chats` sort, so the
+  protocol version stores text only — a draft marks a row, it never moves it.
+  The persisted key (`settings/drafts`) and the "Save unsent drafts" preference
+  are unchanged, so existing drafts survive the upgrade. (5) **`qt6-grpc` left
+  the packaging with the code.** It was only ever whatkevr's dependency (the
+  daemon vendors its own gRPC), so leaving it in the README/AUR `depends` after
+  this step would be false; the daemon's `go.mod`/`proto/`/justfile entries stay
+  for E1. (6) **The daemon still fans notification `open_chat` to both the gRPC
+  session bus and the protocol server** (C3's transitional behaviour). Nothing
+  listens on the gRPC side any more, so it is dead weight rather than a
+  duplicate — left for E1's teardown, which deletes that server outright.
 
 - 2026-08-10 — D6 pre-implementation decisions (approved by Harsh): (1) keep
   D6 as one step rather than splitting settings/emoji/stickers; if it proves
