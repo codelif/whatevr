@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"log"
+	"reflect"
 	"sync"
+	"time"
 )
 
 // eventEnvelope is the daemon→frontend event shape on the wire for events that
@@ -51,10 +53,22 @@ type frameSink interface {
 }
 
 // sentItem records the version of an item the client last received, for
-// change detection during recompute.
+// change detection during recompute. value is the unmarshalled source of body,
+// kept so an unchanged item can be recognised without re-marshalling it.
 type sentItem struct {
 	sort string
 	body []byte
+	// value is the Item.Data body was produced from.
+	value any
+}
+
+// same reports whether data would marshal to the same body. View items are
+// plain structs holding scalars, slices and pointers to more of the same, so a
+// deep comparison is both correct and far cheaper than marshalling: it
+// allocates nothing and stops at the first difference. `==` is not an option —
+// items carrying slices (reactions, mentions) would panic.
+func (s sentItem) same(data any) bool {
+	return s.value != nil && reflect.DeepEqual(s.value, data)
 }
 
 // subscription keeps one client's copy of one view window correct: it
@@ -199,7 +213,9 @@ func (s *subscription) run() {
 // difference against what the client holds. Fetching one item beyond the
 // window tells us whether there is anything left to extend into.
 func (s *subscription) recompute(window int) (exhausted, reset bool) {
+	start := time.Now()
 	var items []Item
+	defer func() { logRecompute(s.id, len(items), start) }()
 	if s.dir != nil {
 		// The session owns its window: Items(0) is the whole current window and
 		// exhaustion is per the frontier last extended. No prefix trim.
@@ -224,13 +240,24 @@ func (s *subscription) recompute(window int) (exhausted, reset bool) {
 			log.Printf("protocol: view session yielded duplicate item id %q (sub %d)", it.ID, s.id)
 			continue
 		}
+		// Most recomputes change nothing: an unrelated avatar landing re-reads
+		// the whole window only to find every row identical. Marshalling each
+		// one just to byte-compare it made that no-op cost proportional to the
+		// window (a 1024-member roster re-marshalled per avatar event), so skip
+		// the marshal entirely when the source value is unchanged.
+		prev, hadPrev := s.sent[it.ID]
+		if hadPrev && prev.sort == it.Sort && prev.same(it.Data) {
+			next[it.ID] = prev
+			continue
+		}
 		body, err := json.Marshal(it.Data)
 		if err != nil {
 			log.Printf("protocol: marshal view item %q (sub %d): %v", it.ID, s.id, err)
 			continue
 		}
-		next[it.ID] = sentItem{sort: it.Sort, body: body}
-		if prev, ok := s.sent[it.ID]; ok && prev.sort == it.Sort && bytes.Equal(prev.body, body) {
+		cur := sentItem{sort: it.Sort, body: body, value: it.Data}
+		next[it.ID] = cur
+		if hadPrev && prev.sort == it.Sort && bytes.Equal(prev.body, body) {
 			continue
 		}
 		if s.emitUpsert(it.ID, it.Sort, body) {

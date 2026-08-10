@@ -21,6 +21,11 @@ const (
 	// and reset fallback handle merely slow consumers before this bites.
 	writeTimeout = 30 * time.Second
 
+	// writeBufferBytes sizes the outbound buffer. Large enough that a typical
+	// view fill (an 80-message window is ~47 KB) leaves the write loop in one
+	// or two syscalls, small enough to stay negligible per connection.
+	writeBufferBytes = 64 * 1024
+
 	// helloTimeout bounds the pre-hello handshake: an accepted peer that never
 	// completes hello must not pin a goroutine/fd indefinitely. It is cleared
 	// once hello succeeds — post-hello a frontend legitimately idles for as long
@@ -60,11 +65,14 @@ type conn struct {
 	sessionActiveChatID string
 	sessionUpdatedAt    time.Time
 
-	// subMu guards the subscription registry; nextSub only moves on the
-	// dispatch goroutine.
-	subMu   sync.Mutex
-	subs    map[int64]*subscription
-	nextSub int64
+	// subMu guards the subscription registry and nextSub. Both are touched
+	// from the per-subscribe goroutines as well as the dispatch loop, so id
+	// allocation order across concurrent subscribes is unspecified — ids are
+	// opaque handles, nothing depends on it.
+	subMu      sync.Mutex
+	subs       map[int64]*subscription
+	nextSub    int64
+	subsClosed bool
 }
 
 func newConn(srv *Server, nc net.Conn) *conn {
@@ -130,10 +138,28 @@ func (c *conn) reportReadError(err error) {
 	}
 }
 
+// writeLoop drains the outbound queue through a buffered writer, flushing only
+// when the queue runs dry (or the buffer fills). A view fill is a burst of one
+// frame per item; writing each one straight to the socket meant a syscall per
+// item and, on the frontend side, a separate readyRead — so an 80-message chat
+// window arrived as 80 wakeups, each applied to the GUI thread on its own. One
+// flush per burst delivers it as one or two reads instead, which is what lets
+// the frontend coalesce the fill into a single model transaction.
 func (c *conn) writeLoop() {
+	w := bufio.NewWriterSize(c.nc, writeBufferBytes)
 	for {
 		frame, ok := c.q.pop()
 		if !ok {
+			// Queue empty: everything buffered is the whole burst, so push it
+			// out before parking. Nothing may sit in the buffer across a wait —
+			// the peer would stall waiting for a frame we are holding.
+			if w.Buffered() > 0 {
+				_ = c.nc.SetWriteDeadline(time.Now().Add(writeTimeout))
+				if err := w.Flush(); err != nil {
+					c.close()
+					return
+				}
+			}
 			select {
 			case <-c.q.signal:
 				continue
@@ -142,11 +168,17 @@ func (c *conn) writeLoop() {
 			}
 		}
 		_ = c.nc.SetWriteDeadline(time.Now().Add(writeTimeout))
-		if _, err := c.nc.Write(append(frame.line, '\n')); err != nil {
+		if _, err := w.Write(frame.line); err != nil {
+			c.close()
+			return
+		}
+		if err := w.WriteByte('\n'); err != nil {
 			c.close()
 			return
 		}
 		if frame.closeAfter {
+			// The terminal frame must reach the peer before the socket goes.
+			_ = w.Flush()
 			c.close()
 			return
 		}
@@ -168,6 +200,7 @@ func (c *conn) close() {
 			subs = append(subs, sub)
 		}
 		c.subs = map[int64]*subscription{}
+		c.subsClosed = true
 		c.subMu.Unlock()
 		for _, sub := range subs {
 			sub.close()
@@ -194,11 +227,19 @@ func (c *conn) nextSubID() int64 {
 	return c.nextSub
 }
 
-func (c *conn) registerSub(sub *subscription) {
+// registerSub admits a subscription; it reports false when the connection
+// already closed (close() emptied the registry), in which case the caller owns
+// releasing the session — nothing else holds a reference to it.
+func (c *conn) registerSub(sub *subscription) bool {
 	c.subMu.Lock()
+	if c.subsClosed {
+		c.subMu.Unlock()
+		return false
+	}
 	c.subs[sub.id] = sub
 	c.subMu.Unlock()
 	c.q.addSub(sub.id)
+	return true
 }
 
 func (c *conn) subscription(id int64) (*subscription, bool) {

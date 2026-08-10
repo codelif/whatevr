@@ -222,6 +222,12 @@ Frame {
         if (root.isGroupChat) {
             const mentionMatch = root.activeMentionQuery()
             if (mentionMatch) {
+                // The roster is not subscribed on chat open — a large group is
+                // expensive for the daemon to resolve and nothing showed it
+                // until now. Asking here means the first `@` may render only
+                // "Everyone"; the members arrive moments later as upserts and
+                // onChatMembersChanged re-runs this.
+                Whatevr.ProtocolController.ensureChatMembers()
                 root.updateMentionSuggestions(mentionMatch)
                 return
             }

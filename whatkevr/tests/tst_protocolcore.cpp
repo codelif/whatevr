@@ -344,6 +344,8 @@ private Q_SLOTS:
         connect(&model, &QAbstractItemModel::rowsRemoved, this, audit);
         connect(&model, &QAbstractItemModel::rowsMoved, this, audit);
 
+        // Driven without a batch bracket, so each call applies on the spot and
+        // emits its own row signals — the case this audits.
         model.onUpsert(QStringLiteral("b"), item(QStringLiteral("2"), QStringLiteral("Bob")));
         model.onUpsert(QStringLiteral("a"), item(QStringLiteral("1"), QStringLiteral("Ann")));
         model.onUpsert(QStringLiteral("c"), item(QStringLiteral("3"), QStringLiteral("Cid")));
@@ -357,6 +359,144 @@ private Q_SLOTS:
         QCOMPARE(mismatches, QStringList());
         QCOMPARE(model.count(), 0);
         QCOMPARE(model.itemById(QStringLiteral("1")), QVariantMap());
+    }
+
+    // A fill arrives as one upsert per item. Applying each on arrival cost a
+    // model transaction — and a QML layout pass — per message, which is what
+    // made opening a chat stall. Everything delivered in one drain must land as
+    // a single contiguous insert.
+    void batchedFillIsOneInsert()
+    {
+        CollectionViewModel model;
+        QList<QPair<int, int>> inserts;
+        connect(&model, &QAbstractItemModel::rowsInserted, this,
+                [&](const QModelIndex &, int first, int last) { inserts.append({first, last}); });
+
+        // Delivered out of order, as the daemon may emit them.
+        model.onBatchBegin();
+        model.onUpsert(QStringLiteral("c"), item(QStringLiteral("3"), QStringLiteral("Cy")));
+        model.onUpsert(QStringLiteral("a"), item(QStringLiteral("1"), QStringLiteral("Ann")));
+        model.onUpsert(QStringLiteral("d"), item(QStringLiteral("4"), QStringLiteral("Dee")));
+        model.onUpsert(QStringLiteral("b"), item(QStringLiteral("2"), QStringLiteral("Bob")));
+        QCOMPARE(inserts.size(), 0); // nothing applied until the batch closes
+        model.onBatchEnd();
+
+        QCOMPARE(inserts.size(), 1);
+        QCOMPARE(inserts.first(), qMakePair(0, 3));
+        QCOMPARE(model.count(), 4);
+        QCOMPARE(rowName(model, 0), QStringLiteral("Ann"));
+        QCOMPARE(rowName(model, 3), QStringLiteral("Dee"));
+    }
+
+    // Scrolling up pages older history in. Those rows land ahead of everything
+    // already held, and must stay one insert so the view can keep its viewport
+    // anchored instead of rebuilding.
+    void batchedPrependIsOneInsert()
+    {
+        CollectionViewModel model;
+        model.onBatchBegin();
+        model.onUpsert(QStringLiteral("m"), item(QStringLiteral("5"), QStringLiteral("Mid")));
+        model.onUpsert(QStringLiteral("n"), item(QStringLiteral("6"), QStringLiteral("New")));
+        model.onBatchEnd();
+        QCOMPARE(model.count(), 2);
+
+        QList<QPair<int, int>> inserts;
+        connect(&model, &QAbstractItemModel::rowsInserted, this,
+                [&](const QModelIndex &, int first, int last) { inserts.append({first, last}); });
+
+        model.onBatchBegin();
+        model.onUpsert(QStringLiteral("b"), item(QStringLiteral("2"), QStringLiteral("Bob")));
+        model.onUpsert(QStringLiteral("a"), item(QStringLiteral("1"), QStringLiteral("Ann")));
+        model.onUpsert(QStringLiteral("c"), item(QStringLiteral("3"), QStringLiteral("Cy")));
+        model.onBatchEnd();
+
+        QCOMPARE(inserts.size(), 1);
+        QCOMPARE(inserts.first(), qMakePair(0, 2));
+        QCOMPARE(model.count(), 5);
+        QCOMPARE(rowName(model, 0), QStringLiteral("Ann"));
+        QCOMPARE(rowName(model, 3), QStringLiteral("Mid"));
+        QCOMPARE(model.indexOfId(QStringLiteral("6")), 4);
+    }
+
+    // Rows that interleave with what is already held cannot be one run; the
+    // model must still place every one of them correctly.
+    void batchedInterleavedInsertsStaySorted()
+    {
+        CollectionViewModel model;
+        model.onBatchBegin();
+        model.onUpsert(QStringLiteral("b"), item(QStringLiteral("2"), QStringLiteral("Bob")));
+        model.onUpsert(QStringLiteral("d"), item(QStringLiteral("4"), QStringLiteral("Dee")));
+        model.onBatchEnd();
+
+        model.onBatchBegin();
+        model.onUpsert(QStringLiteral("e"), item(QStringLiteral("5"), QStringLiteral("Eve")));
+        model.onUpsert(QStringLiteral("a"), item(QStringLiteral("1"), QStringLiteral("Ann")));
+        model.onUpsert(QStringLiteral("c"), item(QStringLiteral("3"), QStringLiteral("Cy")));
+        model.onBatchEnd();
+
+        QCOMPARE(model.count(), 5);
+        QCOMPARE(rowName(model, 0), QStringLiteral("Ann"));
+        QCOMPARE(rowName(model, 1), QStringLiteral("Bob"));
+        QCOMPARE(rowName(model, 2), QStringLiteral("Cy"));
+        QCOMPARE(rowName(model, 3), QStringLiteral("Dee"));
+        QCOMPARE(rowName(model, 4), QStringLiteral("Eve"));
+        for (int row = 0; row < model.rowCount(); ++row) {
+            const QString id = model.data(model.index(row), CollectionViewModel::IdRole).toString();
+            QCOMPARE(model.indexOfId(id), row);
+        }
+    }
+
+    // A remove and a re-upsert of the same id inside one batch must resolve to
+    // whichever came last on the wire.
+    void batchedRemoveThenUpsertKeepsTheRow()
+    {
+        CollectionViewModel model;
+        model.onBatchBegin();
+        model.onUpsert(QStringLiteral("a"), item(QStringLiteral("1"), QStringLiteral("Ann")));
+        model.onBatchEnd();
+
+        model.onBatchBegin();
+        model.onRemove(QStringLiteral("1"));
+        model.onUpsert(QStringLiteral("a"), item(QStringLiteral("1"), QStringLiteral("Annie")));
+        model.onBatchEnd();
+        QCOMPARE(model.count(), 1);
+        QCOMPARE(rowName(model, 0), QStringLiteral("Annie"));
+
+        model.onBatchBegin();
+        model.onUpsert(QStringLiteral("a"), item(QStringLiteral("1"), QStringLiteral("Ann")));
+        model.onRemove(QStringLiteral("1"));
+        model.onBatchEnd();
+        QCOMPARE(model.count(), 0);
+    }
+
+    // `ready` closes a fill, so anything still buffered has to be in the model
+    // before it is announced — a handler reacting to readyReceived reads the
+    // rows straight away.
+    void readyFlushesPendingRows()
+    {
+        CollectionViewModel model;
+        int countAtReady = -1;
+        connect(&model, &CollectionViewModel::readyReceived, this,
+                [&](bool) { countAtReady = model.count(); });
+
+        model.onBatchBegin();
+        model.onUpsert(QStringLiteral("a"), item(QStringLiteral("1"), QStringLiteral("Ann")));
+        model.onUpsert(QStringLiteral("b"), item(QStringLiteral("2"), QStringLiteral("Bob")));
+        model.onReady(true, true);
+
+        QCOMPARE(countAtReady, 2);
+        QVERIFY(model.isReady());
+    }
+
+    // A reset discards the copy being rebuilt; rows buffered for it must go too.
+    void resetDropsBufferedRows()
+    {
+        CollectionViewModel model;
+        model.onBatchBegin();
+        model.onUpsert(QStringLiteral("a"), item(QStringLiteral("1"), QStringLiteral("Ann")));
+        model.onReset();
+        model.onBatchEnd();
+        QCOMPARE(model.count(), 0);
     }
 
     void readyWithoutFlagIsNotExhausted()

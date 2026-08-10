@@ -148,7 +148,32 @@ private:
     void remeasure(TextPresentation &presentation) const;
     void invalidateRows(int first, int last);
     void emitAllRolesChanged(int first, int last);
+    // Only the roles a row's *neighbours* can change: whether it opens or
+    // closes a sender run, and whether it carries a date separator. Inserting
+    // or removing a row cannot affect anything else about the rows beside it.
+    void emitNeighbourRolesChanged(int first, int last);
     void invalidateTransferRoles();
+    void invalidateRowCache() const;
+
+    // Decoded view of one row. QML reads a row's ~45 roles back to back, and
+    // each read used to re-decode the item map plus its nested sender, media
+    // and reply maps — so materialising one delegate cost ~180 map decodes.
+    // Access is row-major, so caching the last row alone captures nearly all
+    // of it. Nested maps stay lazy: roles that never touch them do not pay.
+    struct RowCache {
+        int row = -1;
+        QVariantMap item;
+        QVariantMap sender;
+        QVariantMap media;
+        QVariantMap reply;
+        bool senderLoaded = false;
+        bool mediaLoaded = false;
+        bool replyLoaded = false;
+    };
+    [[nodiscard]] const RowCache &rowCache(int row) const;
+    [[nodiscard]] const QVariantMap &cachedSender(const RowCache &cache) const;
+    [[nodiscard]] const QVariantMap &cachedMedia(const RowCache &cache) const;
+    [[nodiscard]] const QVariantMap &cachedReply(const RowCache &cache) const;
 
     whatevr::proto::CollectionViewModel *m_source;
     whatevr::proto::CollectionViewModel *m_transfers = nullptr;
@@ -157,4 +182,8 @@ private:
     QFontMetricsF m_bodyMetrics;
     mutable QHash<int, QString> m_dateTextByDay;
     mutable QDate m_dateTextDay;
+    mutable RowCache m_rowCache;
+    // Message ids that had an active download at the last transfers change, so
+    // rows that stop transferring are refreshed alongside rows that start.
+    QStringList m_transferRowIds;
 };

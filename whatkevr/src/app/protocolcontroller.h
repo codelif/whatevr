@@ -299,6 +299,10 @@ public:
     [[nodiscard]] QString selectedChatAvatarLocalPath() const;
     [[nodiscard]] bool hasSelectedChat() const { return !m_selectedChatId.isEmpty(); }
     [[nodiscard]] int selectedChatUnreadCount() const;
+    // The chat's row as the loaded chat-list windows already hold it, or an
+    // empty map when it is outside both. Lets an open pick its message anchor
+    // without a round trip to the `chat` view.
+    [[nodiscard]] QVariantMap knownChatRow(const QString &chatId) const;
     [[nodiscard]] bool selectedChatHistoryExhausted() const;
     [[nodiscard]] bool messagesLoading() const;
     [[nodiscard]] bool olderMessagesLoading() const { return m_olderMessagesLoading; }
@@ -402,6 +406,11 @@ public:
     [[nodiscard]] int chatMembersRevision() const { return m_chatMembersRevision; }
     // The same filtering over the conversation's roster, for the mention picker.
     [[nodiscard]] Q_INVOKABLE QVariantList chatMembers(const QString &query) const;
+    // Subscribes the conversation's roster if it is not already live. The
+    // mention picker calls this when the user opens an `@` token: resolving a
+    // group's members is the most expensive thing the daemon does for a chat,
+    // and nothing on screen at open needs it.
+    Q_INVOKABLE void ensureChatMembers();
     Q_INVOKABLE void openContactCard(const QString &jid);
     Q_INVOKABLE void openGroupCard(const QString &chatId);
     Q_INVOKABLE void closeInfoCard();
@@ -650,7 +659,8 @@ private:
     void updatePinnedSubscription();
 
     // Same again, for the composer's mention roster: a `group_members`
-    // subscription on the displayed conversation, and only when it is a group.
+    // subscription on the displayed conversation, and only when it is a group
+    // *and* something has asked for the roster (see ensureChatMembers).
     void updateChatMembersSubscription();
 
     // Name/phone filtering over a `group_members` model, keeping the daemon's
@@ -830,6 +840,8 @@ private:
     // when the conversation is hidden or is not a group).
     QString m_chatMembersChatId;
     int m_chatMembersRevision = 0;
+    // Set once the mention picker asks for the roster; cleared on chat change.
+    bool m_chatMembersWanted = false;
 
     QTimer *m_startupGraceTimer = nullptr;
     QTimer *m_qrTimer = nullptr;

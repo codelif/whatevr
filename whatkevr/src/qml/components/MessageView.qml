@@ -553,6 +553,30 @@ Item {
         atNewest = true
     }
 
+    // Coalesces the settle-window re-pin to at most one per event-loop turn.
+    // positionViewAtEnd() forces a synchronous layout of the whole materialised
+    // band, so calling it once per content-height revision was the dominant
+    // cost of the frames after a chat opened.
+    property bool bottomRepinQueued: false
+    function queueBottomRepin() {
+        if (bottomRepinQueued) {
+            return
+        }
+        bottomRepinQueued = true
+        Qt.callLater(applyBottomRepin)
+    }
+
+    function applyBottomRepin() {
+        bottomRepinQueued = false
+        if (!followNewest || programmaticScroll || pendingJumpMessageId.length > 0
+                || list.count === 0) {
+            return
+        }
+        programmaticScroll = true
+        list.positionViewAtEnd()
+        Qt.callLater(() => { root.programmaticScroll = false })
+    }
+
     // Gap between the bottom of the content and the bottom of the viewport.
     // Zero (or negative, mid-overshoot) means parked at the newest message.
     function distanceFromBottom() {
@@ -1070,11 +1094,15 @@ Item {
         onHeightChanged: {
             if (root.followNewest && !root.programmaticScroll
                     && root.pendingJumpMessageId.length === 0) {
-                // Re-pin synchronously first so no drifted intermediate frame is
+                // Re-pin synchronously so no drifted intermediate frame is
                 // painted (the late pinned-banner pop-in on first open would
                 // otherwise flash the viewport off the bottom); the deferred
                 // scrollToNewest then settles followNewest/atNewest state.
-                if (list.count > 0) {
+                // Viewport-height changes are isolated events, not the burst
+                // that contentHeight sees, so this one stays inline — except
+                // while the chat is opening, where its own positioning runs
+                // straight after and this would only add a forced layout.
+                if (list.count > 0 && !root.openingChat) {
                     root.programmaticScroll = true
                     list.positionViewAtEnd()
                     Qt.callLater(() => { root.programmaticScroll = false })
@@ -1162,12 +1190,14 @@ Item {
             default: return Math.round(Kirigami.Units.smallSpacing / 2)  // Standard
             }
         }
-        // Deep cache: cache-buffer delegates are incubated asynchronously, so
-        // every row prepared here is one fewer synchronous creation while the
-        // user is scrolling (those are what stall frames). Cached text rows
-        // are now a Text node plus a few rectangles; the bound cost left in
-        // the band is thumbnail decodes, capped per image.
-        cacheBuffer: Math.max(height * 4, Kirigami.Units.gridUnit * 120)
+        // Cache-buffer delegates are incubated asynchronously, so every row
+        // prepared here is one fewer synchronous creation while the user is
+        // scrolling (those are what stall frames). Two viewports each way, not
+        // four: every row in the band is a live delegate that re-evaluates its
+        // bindings on a model change, and a chat open pays for all of them at
+        // once. Cached text rows are a Text node plus a few rectangles; the
+        // bound cost left in the band is thumbnail decodes, capped per image.
+        cacheBuffer: Math.max(height * 2, Kirigami.Units.gridUnit * 60)
         reuseItems: true
 
         // True while flinging faster than ~1.25 viewport-heights per second.
@@ -1361,26 +1391,38 @@ Item {
             if (rowScrollBar.dragging) {
                 noteThumbDrag()
             }
-            root.updateScrollState()
+            // While the chat is still opening the viewport is not the user's
+            // yet — the open positions it itself — and updateScrollState()
+            // costs two indexAt() probes plus an itemAtIndex(), each forcing a
+            // layout pass. Nothing reads the result until the open finishes.
+            if (!root.openingChat) {
+                root.updateScrollState()
+            }
             root.noteScroll()
         }
         onContentHeightChanged: {
             // During the post-open settle window, content-height revisions
             // (late row parses, thumbnails resolving intrinsic size) would
             // otherwise leave a bottom-opened chat parked a few pixels up.
-            // Re-pin synchronously so no drifted frame is painted. Guarded on
-            // followNewest so unread-anchor opens are never touched, and the
-            // window ends at the first real user scroll.
+            // Re-pin so no drifted frame is painted. Guarded on followNewest so
+            // unread-anchor opens are never touched, and the window ends at the
+            // first real user scroll.
+            //
+            // Coalesced through the event queue rather than run inline: rows
+            // settle their heights in bursts, and positionViewAtEnd() forces a
+            // full layout every time it is called. One re-pin per frame is
+            // indistinguishable on screen and turns a burst of forced layouts
+            // into a single one.
             if (bottomSettleTimer.running
                     && root.followNewest
                     && !root.programmaticScroll
                     && root.pendingJumpMessageId.length === 0
                     && list.count > 0) {
-                root.programmaticScroll = true
-                list.positionViewAtEnd()
-                Qt.callLater(() => { root.programmaticScroll = false })
+                root.queueBottomRepin()
             }
-            root.updateScrollState()
+            if (!root.openingChat) {
+                root.updateScrollState()
+            }
         }
         onMovementEnded: root.updateScrollState()
 

@@ -51,13 +51,18 @@ public:
 
     [[nodiscard]] bool isReady() const { return m_ready; }
     [[nodiscard]] bool isExhausted() const { return m_exhausted; }
-    [[nodiscard]] int count() const { return static_cast<int>(m_items.size()); }
+    // Like itemById/indexOfId, this settles any batch still open in the current
+    // socket drain so every reader sees the same list. Outside a drain the
+    // buffer is always empty, so the check costs nothing.
+    [[nodiscard]] int count() const;
 
     // ViewSink
     void onUpsert(const QString &sort, const QJsonObject &item) override;
     void onRemove(const QString &id) override;
     void onReady(bool exhausted, bool hasExhausted) override;
     void onReset() override;
+    void onBatchBegin() override;
+    void onBatchEnd() override;
 
 Q_SIGNALS:
     void readyChanged();
@@ -79,10 +84,32 @@ private:
     [[nodiscard]] int lowerBound(const Item &item) const;
     void rebuildIndex(int fromRow);
 
+    // Applies everything buffered since the last boundary. Splits the pending
+    // work into removes, in-place replacements, moves, and new rows, and emits
+    // one insert transaction per contiguous run of destination rows — so a
+    // fill, a prepended history page, and an appended one are each a single
+    // model change instead of one per item.
+    void flushBatch();
+    // Applies one upsert immediately (the pre-batching path); flushBatch uses
+    // it for the handful of shapes that cannot be coalesced.
+    void applyUpsert(Item next);
+    void insertSortedRun(QList<Item> fresh);
+
     QList<Item> m_items;
     QHash<QString, int> m_indexById;
     bool m_ready = false;
     bool m_exhausted = false;
+
+    // Events buffered between batch boundaries. pendingOrder preserves arrival
+    // order so a remove followed by a re-upsert of the same id resolves the way
+    // the wire meant it to. Only ever non-empty while m_batching.
+    struct PendingOp {
+        bool remove = false;
+        Item item;
+    };
+    QHash<QString, PendingOp> m_pending;
+    QList<QString> m_pendingOrder;
+    bool m_batching = false;
 };
 
 } // namespace whatevr::proto
