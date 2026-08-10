@@ -303,6 +303,47 @@ func TestHandleEditMessageUpdatesBody(t *testing.T) {
 	}
 }
 
+// Newer WhatsApp clients seal an edit in a SecretEncryptedMessage instead of
+// sending a bare protocol message. Such an event must never reach the ingest
+// path — before it was recognised the edit was silently dropped, leaving the
+// message showing its pre-edit body with no edited mark. Opening the envelope
+// needs the target message's secret (so it is exercised live), but the routing
+// either side of it is not: an unopenable edit is still swallowed, and an
+// envelope carrying some other secret type is not an edit at all.
+func TestSecretEncryptedEditIsRoutedAsAnEdit(t *testing.T) {
+	c, _ := newReceiptTestClient(t)
+	ctx := context.Background()
+
+	chatJID, err := types.ParseJID("group@g.us")
+	if err != nil {
+		t.Fatalf("parse jid: %v", err)
+	}
+	sealed := func(encType waE2E.SecretEncryptedMessage_SecretEncType) *events.Message {
+		return &events.Message{
+			Info: types.MessageInfo{
+				MessageSource: types.MessageSource{Chat: chatJID},
+				ID:            "edit-1",
+			},
+			Message: &waE2E.Message{
+				SecretEncryptedMessage: &waE2E.SecretEncryptedMessage{
+					TargetMessageKey: &waCommon.MessageKey{
+						RemoteJID: proto.String("group@g.us"),
+						ID:        proto.String("msg-1"),
+					},
+					SecretEncType: encType.Enum(),
+				},
+			},
+		}
+	}
+
+	if !c.handleEditMessage(ctx, sealed(waE2E.SecretEncryptedMessage_MESSAGE_EDIT), false) {
+		t.Fatal("a sealed edit must be intercepted even when it cannot be opened")
+	}
+	if c.handleEditMessage(ctx, sealed(waE2E.SecretEncryptedMessage_POLL_EDIT), false) {
+		t.Fatal("a sealed poll edit must not be treated as a message edit")
+	}
+}
+
 func TestEditMessageRejectsIneligibleMessages(t *testing.T) {
 	ctx := context.Background()
 

@@ -429,36 +429,77 @@ func (c *Client) handleRevokeMessage(ctx context.Context, evt *events.Message, o
 	return true
 }
 
-// handleEditMessage intercepts "edit message" protocol messages and replaces
-// the referenced message's body/caption in place instead of ingesting the
-// protocol message as a new chat message. Returns true when the event was an
-// edit. The new content carries the original message id in its protocol key,
-// exactly as revokes do.
+// editPayload reports whether evt is a message edit and, if so, yields the id
+// of the message being edited plus its replacement content. WhatsApp sends
+// edits in two shapes: a bare MESSAGE_EDIT protocol message, and — what newer
+// clients actually send — the same payload sealed in a SecretEncryptedMessage
+// under the *target* message's secret, which whatsmeow hands over still
+// encrypted. The content is nil for an edit we could not open; callers must
+// still swallow such an event rather than ingest it as a chat message.
+func (c *Client) editPayload(ctx context.Context, evt *events.Message) (string, *waE2E.Message, bool) {
+	if enc := evt.Message.GetSecretEncryptedMessage(); enc != nil {
+		if enc.GetSecretEncType() != waE2E.SecretEncryptedMessage_MESSAGE_EDIT {
+			return "", nil, false
+		}
+		// The envelope names its target directly; the plaintext may name it
+		// again in a protocol key, which wins when present.
+		targetID := strings.TrimSpace(enc.GetTargetMessageKey().GetID())
+		client := c.currentClient()
+		if client == nil {
+			return targetID, nil, true
+		}
+		decrypted, err := client.DecryptSecretEncryptedMessage(ctx, evt)
+		if err != nil {
+			c.log.Warnf("Failed to decrypt edit of message %s: %v", targetID, err)
+			return targetID, nil, true
+		}
+		if protocol := decrypted.GetProtocolMessage(); protocol.GetType() == waE2E.ProtocolMessage_MESSAGE_EDIT {
+			if id := strings.TrimSpace(protocol.GetKey().GetID()); id != "" {
+				targetID = id
+			}
+			return targetID, protocol.GetEditedMessage(), true
+		}
+		return targetID, decrypted, true
+	}
+
+	protocol := evt.Message.GetProtocolMessage()
+	if protocol == nil || protocol.GetKey() == nil {
+		return "", nil, false
+	}
+	if protocol.GetType() != waE2E.ProtocolMessage_MESSAGE_EDIT {
+		return "", nil, false
+	}
+	return strings.TrimSpace(protocol.GetKey().GetID()), protocol.GetEditedMessage(), true
+}
+
+// handleEditMessage intercepts "edit message" events and replaces the
+// referenced message's body/caption in place instead of ingesting the edit as a
+// new chat message. Returns true when the event was an edit. The new content
+// carries the original message id, exactly as revokes do.
 func (c *Client) handleEditMessage(ctx context.Context, evt *events.Message, offlineSync bool) bool {
 	if evt == nil || evt.Message == nil {
 		return false
 	}
-	protocol := evt.Message.GetProtocolMessage()
-	if protocol == nil || protocol.GetKey() == nil {
+	targetID, content, isEdit := c.editPayload(ctx, evt)
+	if !isEdit {
 		return false
 	}
-	if protocol.GetType() != waE2E.ProtocolMessage_MESSAGE_EDIT {
-		return false
+	if content == nil {
+		return true
 	}
 
 	chatID, _ := c.internalMessageIDFromInfo(ctx, evt.Info)
-	targetID := strings.TrimSpace(protocol.GetKey().GetID())
 	if chatID == "" || targetID == "" {
 		return true
 	}
 
 	// quotedReplyPreview yields the body for a text message or the caption for a
 	// media message, which is exactly the field an edit replaces.
-	newText, _, _ := quotedReplyPreview(protocol.GetEditedMessage())
+	newText, _, _ := quotedReplyPreview(content)
 
 	// An edit re-states its mentions; pass a non-nil (possibly empty) slice so a
 	// mention added or removed in the edit is reflected, never stale.
-	mentions := c.mentionsFromMessage(ctx, protocol.GetEditedMessage())
+	mentions := c.mentionsFromMessage(ctx, content)
 	if mentions == nil {
 		mentions = []appstore.MessageMention{}
 	}
