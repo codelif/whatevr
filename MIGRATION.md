@@ -11,8 +11,16 @@ there is no step N+1.
 
 **Strategy:** strangler fig. The new socket server is built *alongside* the
 existing gRPC stack; whatkevr keeps working on gRPC until Phase D ports it
-page by page; teardown (Phase E) deletes the old stack. At no point is the
-app broken for daily use.
+page by page; **Phase DeezNuts** then shakes the ported client out in real
+daily use; teardown (Phase E) deletes the old stack. At no point is the app
+broken for daily use.
+
+**Phase DeezNuts gates the teardown.** Phase D is done, so the frontend now
+runs purely on the protocol — but nothing about it has been exercised against
+a live WhatsApp account (see the D-phase notes: no session was available in
+any D session). Deleting the gRPC stack is the one irreversible move in this
+plan, and doing it while the replacement is unproven would leave no fallback.
+So Phase E does not start until Harsh closes Phase DeezNuts.
 
 This file is the **only** progress tracker. Every work session updates it in
 the same commit as the code it describes. If this file and reality disagree,
@@ -26,6 +34,10 @@ One session = one step. Each session (see `.claude/commands/migrate.md`):
    previous session's notes, open blockers/decisions.
 2. If the next step is `blocked` or `needs-decision`, resolve that first
    (ask the user); otherwise take the **first step not marked `done`**.
+   **While Phase DeezNuts is open, "first step not marked `done`" means the
+   first open row in *its* table** — Phase E steps are not eligible, however
+   inviting they look. If that table is empty, there is no step to take: say
+   so and stop.
 3. If the step is too big for one session (and really make sure it needs 
    another session, don't split willy nilly), **split it in the table** 
    (e.g. B3 → B3a/B3b) instead of pushing through — then do the first half.
@@ -114,16 +126,53 @@ Status: `todo` | `doing` | `done` | `blocked` | `needs-decision`
 | D6 | Port settings pages (privacy/prefs/blocklist/profile) + sticker/emoji pickers, incl. `send.sticker` (moved here from D4, see decision log) | done | `ProtocolController` now owns session-long `self`/`preferences`, page-scoped `privacy`, and shared contact-card/settings `blocklist` views plus ack-only settings/profile/logout commands; all active settings/sidebar/bubble bindings use daemon snake-case rows. Emoji remains frontend presentation state but moved off the gRPC controller. New `ProtocolStickerController` owns picker-scoped `stickers`/`sticker_packs`/`sticker_pack` views, transient daemon-ordered `search.stickers`, bounded download requests, favorite/install/refresh actions, and ack-only `send.sticker` (messages still arrive only through `messages`). PROTOCOL.md adds the approved search query + forced-refresh command; daemon fixes include complete sticker invalidation/unbounded omitted-limit semantics, deterministic search ties, truthful refresh errors, and backgrounded missing-file sticker sends. `just build`, all three Qt suites, full Go tests, conformance, qmllint (161 warnings, down from D5's 164), raw-socket exercise, and offscreen launch pass. No Spirit-checklist bend. |
 | D7 | Remove all gRPC client code + qt6-grpc from whatkevr; whatkevr runs 100% on the new protocol | done | **whatkevr is now a pure protocol client.** Deleted `app/appcontroller.{h,cpp}` (5.9k lines), `app/stickercontroller.*` and the eight proto-typed models (`chatlist`, `chatlistfilter`, `messagelist`, `pinnedmessages`, `searchresults`, `starredmessages`, `sticker`, `stickerpack`) — ~10.4k lines net deletion; dropped `qt_add_protobuf`/`qt_add_grpc` and `Qt6::Grpc`/`Qt6::Protobuf` from `whatkevr/{,src/}CMakeLists.txt`, and `qt6-grpc` from the README build deps + all three AUR packages (the binary links neither library now: `ldd` is clean). `main.cpp` constructs only `ProtocolController`. The eighteen remaining `AppController.*` QML call sites fell into three buckets: **already ported** (`selectChat` mirroring in Main/ChatListPane/StarredMessagesPage, `bannerText`, `composerEnabled` — deleted as duplicates), **gRPC-only machinery with no protocol counterpart** (`populateSelectedChat`/`uiTransitionActive`, the deferred-load gate — the messages subscription already starts at `selectChat`; and `requestChatAvatar`, which PROTOCOL deliberately has no command for), and **frontend-only helpers with no daemon behind them**, which moved onto `ProtocolController` (drafts `chatDraft`/`setChatDraft`, `toCommonMark`, `previousGraphemeBoundary`, `copyImageToClipboard`, `saveMediaAs`, `perfLogging`) alongside `handleCommandLine` + a new `activateWindowRequested` signal for single-instance/deep-link routing. Drafts are a plain `QHash` over the same `settings/drafts` QSettings key (read directly, the way EmojiModel reads its own state) — the gRPC version's draft-floats-the-row-to-the-top ordering is **gone**, since the daemon owns `chats` sort. `tst_protocolcontroller` +4 (deep link held until `shellVisible` then applied once, plain/malformed command line raises only, drafts round-trip across a controller restart, grapheme-cluster Backspace); `just build`, all four Qt tests (46 controller cases), `go test -tags sqlite_fts5 ./...`, `scripts/conformance` and qmllint (161 warnings, same as D6) pass; the startup subscription set hand-exercised over a raw socket and an offscreen `whatkevr` verified to hold a live protocol session (daemon fd count) with no QML errors. No PROTOCOL.md change. **Phase D complete.** **Live-account check not performed** — same environment gap as D3c–D6; **and** two behaviour narrowings are logged below (dead-avatar re-fetch, transition gate). |
 
-### Phase E — teardown & flagship polish
+### Phase DeezNuts — field testing (status: **open**, indefinite)
+
+Harsh uses whatkevr as his daily WhatsApp client and reports whatever is
+broken, half-working, or worse than the gRPC build was. Each report becomes a
+row below and is fixed one per session, exactly like a migration step. The
+phase has no step count and no end date: it closes when Harsh says it closes,
+and Phase E stays untouchable until then.
+
+**Why a phase and not a checklist:** the whole D phase was verified against
+fake daemons, raw sockets and offscreen launches, because no logged-in
+WhatsApp session was ever available (D3c through D7 all say so). Everything
+that only appears with a real account — history sync, media round trips,
+group rosters, notifications, presence, receipts, reconnects — is still
+unproven. That is not a small residue; it is most of the app.
+
+**Reporting.** A report can be as loose as "the chat list flickers when I
+archive something". The session that picks it up is responsible for turning
+it into a specific defect first (reproduce, or say plainly that it could not
+be reproduced) and only then fixing it.
+
+**Where fixes go.** The daemon owns state, so most fixes belong on the daemon
+side of the socket — resist fixing a frontend symptom with frontend state.
+If a fix would need sorting, merging, dedup or caching in whatkevr, that is
+the signal the daemon or PROTOCOL.md is wrong; raise it rather than write it.
+A report that reveals PROTOCOL.md itself is wrong follows the usual rule:
+`needs-decision`, Decision log, sign-off.
+
+Status: `todo` | `doing` | `done` | `blocked` | `needs-decision` |
+`wontfix` (agreed not a defect) | `deferred` (real, but post-migration)
+
+| id | report | status | notes |
+| --- | --- | --- | --- |
+| _(none yet — awaiting first testing session)_ | | | |
+
+### Phase E — teardown & flagship polish (blocked on Phase DeezNuts)
 
 | id | step | status | notes |
 | --- | --- | --- | --- |
-| E1 | Delete daemon gRPC server + `proto/`; purge protobuf/grpc from go.mod, CMake, justfile, packaging, README dependency lists | todo | |
+| E1 | Delete daemon gRPC server + `proto/`; purge protobuf/grpc from go.mod, CMake, justfile, packaging, README dependency lists | blocked | Blocked on Phase DeezNuts closing. The frozen gRPC stack is the only fallback if field testing turns up something the protocol path cannot do yet; deleting it is irreversible, so it waits. |
 | E2 | **Final audit + release polish:** full PROTOCOL.md vs implementation pass; promote PROTOCOL.md DRAFT → v1 stable; rewrite README around the daemon/protocol as the flagship feature (30-line-frontend pitch, `examples/` front and center) | todo | |
 
 ## Blockers
 
-_None._
+- **Phase E is blocked on Phase DeezNuts** (2026-08-10). Field testing of the
+  fully-ported client is open-ended and Harsh closes it; until then the frozen
+  gRPC stack stays in the tree as the fallback. Not a defect — a deliberate
+  hold on the one irreversible step.
 
 ## D-phase notes
 
