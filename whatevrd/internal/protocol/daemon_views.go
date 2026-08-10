@@ -54,6 +54,7 @@ func RegisterDaemonViews(s *Server, daemon *app.Daemon, store DaemonStore, actio
 	s.RegisterView("sync", syncView{daemon: daemon})
 	s.RegisterView("login", loginView{daemon: daemon})
 	s.RegisterView("chats", chatsView{daemon: daemon, lister: store})
+	s.RegisterView("chat", chatView{daemon: daemon, lister: store})
 	s.RegisterView("messages", messagesView{daemon: daemon, lister: store})
 	s.RegisterView("typing", typingView{daemon: daemon, resolver: store})
 	s.RegisterView("presence", presenceView{daemon: daemon, actions: actions})

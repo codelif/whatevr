@@ -27,6 +27,10 @@ func (f *fakePendingCounter) ListChatsForView(context.Context, store.ChatListFil
 	return nil, nil
 }
 
+func (f *fakePendingCounter) GetChatForView(context.Context, string) (store.Chat, error) {
+	return store.Chat{}, nil
+}
+
 func (f *fakePendingCounter) ListMessages(context.Context, string, int, string) ([]store.Message, error) {
 	return nil, nil
 }

@@ -80,6 +80,7 @@ public:
     void setInitialMessagesExhausted(bool exhausted) { m_initialMessagesExhausted = exhausted; }
     void setNextExtendExhausted(bool exhausted) { m_nextExtendExhausted = exhausted; }
     void setHoldMessagesReady(bool hold) { m_holdMessagesReady = hold; }
+    void setHoldChatReady(bool hold) { m_holdChatReady = hold; }
     void setHoldExtendReady(bool hold) { m_holdExtendReady = hold; }
     void setRejectNextExtend(bool reject) { m_rejectNextExtend = reject; }
     void setRejectNextSend(bool reject) { m_rejectNextSend = reject; }
@@ -151,6 +152,15 @@ public:
             writeObject(QJsonObject{{QStringLiteral("sub"), sub},
                                     {QStringLiteral("event"), QStringLiteral("remove")},
                                     {QStringLiteral("id"), id}});
+        }
+    }
+    void readyThenSetItem(const QString &view, const QJsonObject &item)
+    {
+        m_items.insert(view, item);
+        const int sub = m_subByView.value(view, -1);
+        if (sub >= 0) {
+            sendReady(sub);
+            sendUpsert(sub, item);
         }
     }
 
@@ -256,6 +266,20 @@ private:
             reply(id, result);
             if (m_items.contains(view)) {
                 sendUpsert(sub, m_items.value(view));
+            } else if (view == QLatin1String("chat")) {
+                const QString chatId = params.value(QStringLiteral("chat_id")).toString();
+                const auto sendMatchingChat = [this, sub, &chatId](const QList<QJsonObject> &rows) {
+                    for (const QJsonObject &row : rows) {
+                        if (row.value(QStringLiteral("id")).toString() == chatId) {
+                            sendUpsert(sub, row);
+                            return true;
+                        }
+                    }
+                    return false;
+                };
+                if (!sendMatchingChat(m_chatsActive)) {
+                    sendMatchingChat(m_chatsArchived);
+                }
             }
             QList<QJsonObject> rows;
             bool hasRows = false;
@@ -281,7 +305,8 @@ private:
                     sendUpsert(sub, row, sort);
                 }
             }
-            if (view != QLatin1String("messages") || !m_holdMessagesReady) {
+            if ((view != QLatin1String("messages") || !m_holdMessagesReady)
+                && (view != QLatin1String("chat") || !m_holdChatReady)) {
                 sendReady(sub, view == QLatin1String("messages"), m_initialMessagesExhausted);
             }
             if (view == QLatin1String("chats")) {
@@ -480,6 +505,7 @@ private:
     bool m_initialMessagesExhausted = false;
     bool m_nextExtendExhausted = false;
     bool m_holdMessagesReady = false;
+    bool m_holdChatReady = false;
     bool m_holdExtendReady = false;
     bool m_heldExtendExhausted = false;
     int m_activeChatsSub = -1;
@@ -769,16 +795,22 @@ private Q_SLOTS:
         QCOMPARE(daemon.extendCount, settled);
     }
 
-    // DN6 follow-on: windowing the list means a chat can be opened before its
-    // row has been loaded (search hit, notification, whatevr:// link). The
-    // window is widened until the daemon hands the row over, so the header
-    // stops showing a bare jid.
-    void selectingAnUnloadedChatWidensTheWindow()
+    // DN7: selection has its own `chat` object view, so an off-window chat gets
+    // its full row without widening either sidebar collection. The row must land
+    // before the controller chooses the default messages anchor.
+    void selectingAnUnloadedChatUsesObjectView()
     {
         FakeDaemon daemon(m_path);
         daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
         daemon.setActiveChats(
             {chatRow(QStringLiteral("a@s"), QStringLiteral("Alice"), QStringLiteral("1-000"))});
+        daemon.setItem(QStringLiteral("chat"),
+                       chatRow(QStringLiteral("deep@g.us"), QStringLiteral("Deep Chat"), QStringLiteral("0"),
+                               QJsonObject{{QStringLiteral("unread"), 3},
+                                           {QStringLiteral("avatar_path"), QStringLiteral("/deep.jpg")},
+                                           {QStringLiteral("history_exhausted"), true},
+                                           {QStringLiteral("is_group"), true}}));
+        daemon.setUnreadAnchorId(QStringLiteral("u1"));
 
         ProtocolController ctrl(m_path, nullptr);
         ctrl.start();
@@ -787,16 +819,98 @@ private Q_SLOTS:
         QVERIFY(model);
         QTRY_COMPARE(model->count(), 1);
 
-        // "deep@s" is past the loaded window: the name falls back to the jid.
-        ctrl.selectChat(QStringLiteral("deep@s"));
-        QCOMPARE(ctrl.selectedChatName(), QStringLiteral("deep"));
-        QTRY_VERIFY(daemon.extendCount >= 1);
-
-        // The daemon answers the widened window with the missing row; the header
-        // picks it up without the frontend having cached anything.
-        daemon.pushActiveChat(chatRow(QStringLiteral("deep@s"), QStringLiteral("Deep Chat"),
-                                      QStringLiteral("9-000")));
+        ctrl.setConversationVisible(true);
+        ctrl.selectChat(QStringLiteral("deep@g.us"));
+        QTRY_COMPARE(daemon.subscribeCountByView.value(QStringLiteral("chat")), 1);
+        QCOMPARE(daemon.lastParamsByView.value(QStringLiteral("chat")).value(QStringLiteral("chat_id")).toString(),
+                 QStringLiteral("deep@g.us"));
         QTRY_COMPARE(ctrl.selectedChatName(), QStringLiteral("Deep Chat"));
+        QCOMPARE(ctrl.selectedChatAvatarLocalPath(), QStringLiteral("/deep.jpg"));
+        QCOMPARE(ctrl.selectedChatUnreadCount(), 3);
+        QVERIFY(ctrl.selectedChatHistoryExhausted());
+        QTRY_COMPARE(daemon.messagesSubscribeCount, 1);
+        QCOMPARE(daemon.lastMessagesParams.value(QStringLiteral("anchor")).toString(), QStringLiteral("unread"));
+        QCOMPARE(daemon.extendCount, 0);
+
+        daemon.setItem(QStringLiteral("chat"),
+                       chatRow(QStringLiteral("deep@g.us"), QStringLiteral("Renamed"), QStringLiteral("0"),
+                               QJsonObject{{QStringLiteral("unread"), 2}}));
+        QTRY_COMPARE(ctrl.selectedChatName(), QStringLiteral("Renamed"));
+
+        daemon.pushRemove(QStringLiteral("chat"), QStringLiteral("deep@g.us"));
+        QTRY_VERIFY(!ctrl.hasSelectedChat());
+        QTRY_VERIFY(daemon.unsubscribedViews.contains(QStringLiteral("chat")));
+    }
+
+    // A successful subscription whose row vanished before the initial fill
+    // completes must not leave the conversation spinner latched forever.
+    void selectedChatEmptyReadyClearsStaleSelection()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+        QTRY_VERIFY(ctrl.shellVisible());
+        ctrl.setConversationVisible(true);
+        ctrl.selectChat(QStringLiteral("gone@s"));
+
+        QTRY_COMPARE(daemon.subscribeCountByView.value(QStringLiteral("chat")), 1);
+        QTRY_VERIFY(!ctrl.hasSelectedChat());
+        QVERIFY(!ctrl.messagesLoading());
+        QCOMPARE(daemon.messagesSubscribeCount, 0);
+    }
+
+    // If a row is recreated immediately after an empty initial completion, its
+    // live upsert still resolves the pending default anchor instead of racing the
+    // stale-selection cleanup.
+    void selectedChatCanAppearAfterEmptyReady()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+        daemon.setHoldChatReady(true);
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+        QTRY_VERIFY(ctrl.shellVisible());
+        ctrl.setConversationVisible(true);
+        ctrl.selectChat(QStringLiteral("late@s"));
+        QTRY_COMPARE(daemon.subscribeCountByView.value(QStringLiteral("chat")), 1);
+        daemon.readyThenSetItem(
+            QStringLiteral("chat"),
+            chatRow(QStringLiteral("late@s"), QStringLiteral("Late Chat"), QStringLiteral("0")));
+
+        QTRY_COMPARE(ctrl.selectedChatName(), QStringLiteral("Late Chat"));
+        QTRY_COMPARE(daemon.messagesSubscribeCount, 1);
+        QCOMPARE(daemon.lastMessagesParams.value(QStringLiteral("anchor")).toString(),
+                 QStringLiteral("latest"));
+        QVERIFY(ctrl.hasSelectedChat());
+    }
+
+    // A same-chat explicit jump wins even when the default unread/latest choice
+    // is still waiting for the selected chat row.
+    void explicitJumpSupersedesPendingSelectedChatLookup()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+        daemon.setMessages({messageRow(QStringLiteral("target"), QStringLiteral("0001"))});
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+        QTRY_VERIFY(ctrl.shellVisible());
+        ctrl.setConversationVisible(true);
+        ctrl.selectChat(QStringLiteral("deep@s"));
+        ctrl.showMessageInChat(QStringLiteral("deep@s"), QStringLiteral("target"));
+        daemon.setItem(QStringLiteral("chat"),
+                       chatRow(QStringLiteral("deep@s"), QStringLiteral("Deep Chat"), QStringLiteral("0"),
+                               QJsonObject{{QStringLiteral("unread"), 4}}));
+
+        QTRY_COMPARE(daemon.messagesSubscribeCount, 1);
+        QCOMPARE(daemon.lastMessagesParams.value(QStringLiteral("anchor")).toString(),
+                 QStringLiteral("target"));
+        QTRY_COMPARE(ctrl.selectedChatName(), QStringLiteral("Deep Chat"));
+        QTest::qWait(50);
+        QCOMPARE(daemon.messagesSubscribeCount, 1);
     }
 
     // A list command maps to the daemon `chat.*` command (ack only); no local
@@ -2295,6 +2409,7 @@ private Q_SLOTS:
     {
         FakeDaemon daemon(m_path);
         daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("need_login")));
+        daemon.setActiveChats({chatRow(QStringLiteral("a@s"), QStringLiteral("Alice"), QStringLiteral("1"))});
 
         ProtocolController ctrl(m_path, nullptr);
         ctrl.start();

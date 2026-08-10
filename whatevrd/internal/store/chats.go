@@ -299,6 +299,17 @@ func (db *DB) GetChat(ctx context.Context, chatID string) (Chat, error) {
 	return getChatRow(ctx, db.reader(), chatID)
 }
 
+// GetChatForView returns one chat with the same display-name normalization as
+// ListChatsForView and SearchChats. GetChat intentionally preserves the stored
+// WhatsApp push-name fallback for daemon-internal callers.
+func (db *DB) GetChatForView(ctx context.Context, chatID string) (Chat, error) {
+	chat, err := db.GetChat(ctx, chatID)
+	if err != nil {
+		return Chat{}, err
+	}
+	return normalizeListedChatName(chat), nil
+}
+
 func (db *DB) EnsureChat(ctx context.Context, chatID, name string, isGroup bool) (Chat, error) {
 	return db.EnsureChatWithNameSource(ctx, chatID, name, ChatNameSourceContact, isGroup)
 }

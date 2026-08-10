@@ -279,7 +279,6 @@ public:
     [[nodiscard]] bool chatsEmpty() const;
     [[nodiscard]] bool chatsExhausted() const;
     Q_INVOKABLE void loadMoreChats();
-    void ensureSelectedChatLoaded();
 
     [[nodiscard]] QAbstractItemModel *archivedChatsModel() const;
     [[nodiscard]] int archivedCount() const;
@@ -628,6 +627,7 @@ private:
     void recomputeHistorySync();
 
     [[nodiscard]] QVariantMap selectedChatItem() const;
+    void selectedChatLookupFailed(const QString &chatId, const QString &code, const QString &message);
     void setSelectedChat(const QString &chatId, const QString &anchor, const QString &jumpMessageId);
     void subscribeMessages(const QString &anchor, const QString &jumpMessageId = {});
     void onMessagesSubscribed(const QVariantMap &meta);
@@ -678,6 +678,7 @@ private:
     whatevr::proto::CollectionViewModel *m_archivedModel = nullptr;
     whatevr::proto::CollectionViewModel *m_typingModel = nullptr;
     whatevr::proto::ObjectViewModel *m_syncModel = nullptr;
+    whatevr::proto::ObjectViewModel *m_selectedChatModel = nullptr;
     whatevr::proto::CollectionViewModel *m_messagesModel = nullptr;
     whatevr::proto::CollectionViewModel *m_presenceModel = nullptr;
     whatevr::proto::CollectionViewModel *m_receiptsModel = nullptr;
@@ -702,6 +703,7 @@ private:
     whatevr::proto::Subscription *m_archivedSub = nullptr;
     whatevr::proto::Subscription *m_typingSub = nullptr;
     whatevr::proto::Subscription *m_syncSub = nullptr;
+    whatevr::proto::Subscription *m_selectedChatSub = nullptr;
     whatevr::proto::Subscription *m_messagesSub = nullptr;
     whatevr::proto::Subscription *m_presenceSub = nullptr;
     whatevr::proto::Subscription *m_receiptsSub = nullptr;
@@ -747,6 +749,7 @@ private:
     bool m_unreadAnchorResolving = false;
     bool m_waitingInitialMessages = false;
     bool m_refillingAfterReset = false;
+    bool m_waitingForSelectedChatItem = false;
     // One chat-list `extend` in flight at a time; cleared by the view's `ready`
     // (or by a rejected extend) so scrolling cannot pile requests up.
     bool m_chatsExtendPending = false;

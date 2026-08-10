@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -190,6 +191,81 @@ func TestChatsViewRejectsBadFilter(t *testing.T) {
 	errObj, ok := msg["error"].(map[string]any)
 	if !ok || errObj["code"] != string(CodeInvalidParams) {
 		t.Fatalf("expected invalid_params for bad filter, got %v", msg)
+	}
+}
+
+func TestChatViewMatchesChatRowAndUpdatesLive(t *testing.T) {
+	socketPath, daemon, db := startChatsTestServer(t)
+	ctx := context.Background()
+	chatID := "917060029183@s.whatsapp.net"
+	seedChat(t, db, chatID, false, time.Unix(1_700_000_000, 0))
+	if _, err := db.EnsureChatWithNameSource(ctx, chatID, "~Alice", store.ChatNameSourceWhatsApp, false); err != nil {
+		t.Fatalf("set WhatsApp fallback name: %v", err)
+	}
+	chat, _, err := db.UpdateChatArchiveState(ctx, chatID, true)
+	if err != nil {
+		t.Fatalf("archive chat: %v", err)
+	}
+
+	c := dialTest(t, socketPath)
+	c.hello()
+	listSub := c.subscribe(2, `{"view":"chats","archived":true}`)
+	listItem := c.expectUpsert(listSub, chatID)["item"].(map[string]any)
+	c.expectReady(listSub, true)
+
+	chatSub := c.subscribe(3, `{"view":"chat","chat_id":"917060029183@s.whatsapp.net"}`)
+	chatUpsert := c.expectUpsert(chatSub, chatID)
+	chatItem := chatUpsert["item"].(map[string]any)
+	if chatUpsert["sort"] != objectViewSort {
+		t.Fatalf("chat object sort = %v, want %q", chatUpsert["sort"], objectViewSort)
+	}
+	if !reflect.DeepEqual(chatItem, listItem) {
+		t.Fatalf("chat item differs from chats row:\nchat:  %v\nchats: %v", chatItem, listItem)
+	}
+	if chatItem["name"] != "+91 70600 29183" || chatItem["archived"] != true {
+		t.Fatalf("chat item missing normalized name/archive state: %v", chatItem)
+	}
+	c.expectReady(chatSub, true)
+	c.sendLine(fmt.Sprintf(`{"id":4,"method":"unsubscribe","params":{"sub":%v}}`, listSub))
+	if result, ok := c.recv()["result"].(map[string]any); !ok || len(result) != 0 {
+		t.Fatalf("unsubscribe chats result = %v, want empty result", result)
+	}
+
+	chat, _, err = db.UpdateChatPinState(ctx, chatID, true, 1)
+	if err != nil {
+		t.Fatalf("pin chat: %v", err)
+	}
+	daemon.PublishChatUpdated(toTestAppChat(chat))
+	updated := c.expectUpsert(chatSub, chatID)["item"].(map[string]any)
+	if updated["pinned"] != true {
+		t.Fatalf("live chat row did not update: %v", updated)
+	}
+
+	if _, err := db.DeleteChat(ctx, chatID); err != nil {
+		t.Fatalf("delete chat: %v", err)
+	}
+	daemon.PublishChatDeleted(chatID)
+	c.expectRemove(chatSub, chatID)
+}
+
+func TestChatViewRejectsMissingAndUnknownChat(t *testing.T) {
+	socketPath, _, _ := startChatsTestServer(t)
+	c := dialTest(t, socketPath)
+	c.hello()
+
+	for reqID, params := range []string{
+		`{"view":"chat"}`,
+		`{"view":"chat","chat_id":"missing@s.whatsapp.net"}`,
+	} {
+		c.sendLine(fmt.Sprintf(`{"id":%d,"method":"subscribe","params":%s}`, reqID+2, params))
+		msg := c.recv()
+		want := string(CodeInvalidParams)
+		if reqID == 1 {
+			want = string(CodeNotFound)
+		}
+		if got := errorCode(t, msg); got != want {
+			t.Fatalf("subscribe %s error = %q, want %q", params, got, want)
+		}
 	}
 }
 

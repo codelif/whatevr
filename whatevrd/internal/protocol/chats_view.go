@@ -2,7 +2,9 @@ package protocol
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -12,9 +14,11 @@ import (
 	"whatevrd/internal/store"
 )
 
-// ChatLister supplies the `chats` view its rows. *store.DB implements it.
+// ChatLister supplies the `chats` and `chat` views their rows. *store.DB
+// implements it.
 type ChatLister interface {
 	ListChatsForView(ctx context.Context, filter store.ChatListFilter) ([]store.Chat, error)
+	GetChatForView(ctx context.Context, chatID string) (store.Chat, error)
 }
 
 // chatSortTimeMax is larger than any real unix-seconds timestamp; subtracting
@@ -35,6 +39,50 @@ type chatsView struct {
 type chatsParams struct {
 	Filter   string `json:"filter"`
 	Archived bool   `json:"archived"`
+}
+
+type chatView struct {
+	daemon *app.Daemon
+	lister ChatLister
+}
+
+type chatParams struct {
+	ChatID string `json:"chat_id"`
+}
+
+func (v chatView) Open(params json.RawMessage, invalidate func()) (ViewSession, map[string]any, *Error) {
+	var p chatParams
+	if len(params) > 0 {
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, nil, errorf(CodeInvalidParams, "malformed chat params")
+		}
+	}
+	if p.ChatID == "" {
+		return nil, nil, errorf(CodeInvalidParams, "chat params must carry a chat_id")
+	}
+	if v.lister == nil {
+		return nil, nil, errorf(CodeInternal, "chat view unavailable")
+	}
+	ctx, cancelCtx := context.WithCancel(context.Background())
+	if _, err := v.lister.GetChatForView(ctx, p.ChatID); err != nil {
+		cancelCtx()
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil, errorf(CodeNotFound, "no chat %q", p.ChatID)
+		}
+		return nil, nil, errorf(CodeInternal, "chat lookup failed: %v", err)
+	}
+
+	events, cancel := v.daemon.SubscribeDaemonEvents()
+	s := &chatSession{
+		chatID:       p.ChatID,
+		lister:       v.lister,
+		eventsCancel: cancel,
+		ctx:          ctx,
+		cancelCtx:    cancelCtx,
+		done:         make(chan struct{}),
+	}
+	go s.run(events, invalidate)
+	return s, nil, nil
 }
 
 func (v chatsView) Open(params json.RawMessage, invalidate func()) (ViewSession, map[string]any, *Error) {
@@ -86,6 +134,16 @@ type chatsSession struct {
 	closeOnce    sync.Once
 }
 
+type chatSession struct {
+	chatID       string
+	lister       ChatLister
+	eventsCancel func()
+	ctx          context.Context
+	cancelCtx    context.CancelFunc
+	done         chan struct{}
+	closeOnce    sync.Once
+}
+
 type chatItem struct {
 	ID                   string `json:"id"`
 	Name                 string `json:"name"`
@@ -108,6 +166,19 @@ type chatItem struct {
 // row. Items always re-reads the store, so a redundant invalidate just
 // recomputes to no diff.
 func (s *chatsSession) run(events <-chan app.DaemonEvent, invalidate func()) {
+	for {
+		select {
+		case <-s.done:
+			return
+		case evt := <-events:
+			if chatEventAffectsList(evt.Kind) {
+				invalidate()
+			}
+		}
+	}
+}
+
+func (s *chatSession) run(events <-chan app.DaemonEvent, invalidate func()) {
 	for {
 		select {
 		case <-s.done:
@@ -160,6 +231,25 @@ func (s *chatsSession) Items(max int) []Item {
 }
 
 func (s *chatsSession) Close() {
+	s.closeOnce.Do(func() {
+		s.cancelCtx()
+		close(s.done)
+		s.eventsCancel()
+	})
+}
+
+func (s *chatSession) Items(_ int) []Item {
+	chat, err := s.lister.GetChatForView(s.ctx, s.chatID)
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			log.Printf("protocol: get chat for view %s: %v", s.chatID, err)
+		}
+		return nil
+	}
+	return []Item{{ID: chat.ID, Sort: objectViewSort, Data: chatItemFromStore(chat)}}
+}
+
+func (s *chatSession) Close() {
 	s.closeOnce.Do(func() {
 		s.cancelCtx()
 		close(s.done)
