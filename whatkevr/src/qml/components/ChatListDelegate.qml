@@ -138,19 +138,10 @@ ItemDelegate {
             height: width
             avatarLocalPath: root.avatarLocalPath
             initials: root.initials
-            backgroundColor: Qt.alpha(foregroundColor, root.highlighted ? 0.22 : 0.14)
-            // A path that fails to load means the daemon pruned the file
-            // behind a stale DB row; force a fresh fetch.
-            onAvatarUnavailable: Whatevr.AppController.requestChatAvatar(root.chatId, true)
-        }
-
-        // Rows only instantiate when (nearly) visible in the ListView, so
-        // this reports exactly the avatars the user can see; the controller
-        // batches and dedupes the requests.
-        Component.onCompleted: {
-            if (root.avatarLocalPath.length === 0 && root.chatId.length > 0) {
-                Whatevr.AppController.requestChatAvatar(root.chatId)
-            }
+            // Nothing to ask for when a path fails to load: avatar fetching is
+            // demand-driven by the `chats` subscription itself (PROTOCOL.md
+            // "the daemon knows what is visible"), and a refreshed path arrives
+            // as an ordinary row upsert. Until then the initials show.
         }
 
         Column {

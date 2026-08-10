@@ -65,7 +65,7 @@ CenteredDialog {
             icon.name: "edit-copy-symbolic"
             enabled: root.plainText.length > 0
             onTriggered: {
-                Whatevr.AppController.copyToClipboard(root.plainText)
+                Whatevr.ProtocolController.copyToClipboard(root.plainText)
                 applicationWindow()?.showPassiveNotification(
                     Whatevr.I18n.i18nc("@info:status", "Message copied"), "short")
             }

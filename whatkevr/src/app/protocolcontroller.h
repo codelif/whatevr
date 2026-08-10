@@ -3,8 +3,10 @@
 #include <QAbstractItemModel>
 #include <QJsonObject>
 #include <QObject>
+#include <QHash>
 #include <QString>
 #include <QStringList>
+#include <QUrl>
 #include <QVariantMap>
 #include <qqmlintegration.h>
 
@@ -30,24 +32,23 @@ class ProtocolSearchModel;
 class ProtocolStickerController;
 class EmojiModel;
 
-// The whatevr-protocol counterpart of AppController's connection lifecycle: it
-// owns the ProtocolClient (the single socket to the daemon's PROTOCOL.md
-// surface) and subscribes to the `connection` and `login` object views,
-// deriving from them every string the status/login/splash pages bind to. During
-// the D-phase migration it runs *alongside* the still-gRPC AppController — this
-// singleton drives the pre-shell screens and the shell-visibility gate, while
-// AppController keeps serving the not-yet-ported chat shell over gRPC until D7.
+// The app's single controller: it owns the ProtocolClient (the one socket to
+// the daemon's PROTOCOL.md surface), subscribes every view the UI renders, and
+// derives from those views each string, model and command the QML binds. Since
+// D7 there is no second stack — the whole frontend is `Whatevr.ProtocolController`
+// plus the generic view models it hands out.
 //
-// Ported pages bind `Whatevr.ProtocolController.<prop>` exactly as they used to
-// bind AppController; each later D-step moves one more page's bindings across
-// and subscribes its views through client() on this same connection.
+// It holds no daemon state of its own: rows arrive as keyed upserts ordered by
+// the daemon's opaque `sort`, commands return acks only, and the few members
+// that do keep state are presentation-only (selection, drafts, search cursors),
+// which rule 1 leaves to the frontend.
 class ProtocolController final : public QObject
 {
     Q_OBJECT
     QML_NAMED_ELEMENT(ProtocolController)
     QML_SINGLETON
 
-    // Shell routing (mirrors AppController's gate, now protocol-driven).
+    // Shell routing, driven by the `connection`/`login` views.
     Q_PROPERTY(bool starting READ starting NOTIFY stateChanged FINAL)
     Q_PROPERTY(bool loginRequired READ loginRequired NOTIFY stateChanged FINAL)
     Q_PROPERTY(bool shellVisible READ shellVisible NOTIFY stateChanged FINAL)
@@ -218,6 +219,9 @@ class ProtocolController final : public QObject
     // not daemon state. Stickers are the protocol-backed D6 picker surface.
     Q_PROPERTY(QAbstractItemModel *emojiModel READ emojiModel CONSTANT FINAL)
     Q_PROPERTY(QObject *stickers READ stickers CONSTANT FINAL)
+
+    // WHATKEVR_PERF=1 — frame/navigation timing diagnostics in Main.qml.
+    Q_PROPERTY(bool perfLogging READ perfLogging CONSTANT FINAL)
 
 public:
     static void setInstance(ProtocolController *instance);
@@ -483,9 +487,40 @@ public:
     Q_INVOKABLE void openMessageReceipts(const QString &messageId);
     Q_INVOKABLE void closeMessageReceipts();
 
-    // The daemon's protocol socket, `$XDG_RUNTIME_DIR/whatevr/whatevrd.sock`
-    // (distinct from the gRPC socket under whatevrd/). Empty if XDG_RUNTIME_DIR
-    // is unset.
+    // --- frontend-only helpers (D7) ---
+    //
+    // These touch no daemon surface at all: composer drafts, local file and
+    // clipboard operations, and text shaping. Rule 1 leaves presentation state
+    // to the frontend, and none of it is renderable daemon data — the daemon
+    // has no command behind any of them.
+
+    // Per-chat composer draft, persisted under the "Save unsent drafts"
+    // preference (Settings owns the `settings/persistDrafts` key; this reads it
+    // the same way EmojiModel reads its own). Empty ids and blank text clear.
+    // A draft never reorders a chat row — the daemon owns the `chats` sort.
+    Q_INVOKABLE void setChatDraft(const QString &chatId, const QString &text);
+    [[nodiscard]] Q_INVOKABLE QString chatDraft(const QString &chatId) const;
+
+    // Local media utilities behind the message context menu. Failures surface
+    // through messageActionFailed, like the `message.*` command errors.
+    Q_INVOKABLE void copyImageToClipboard(const QString &localPath);
+    Q_INVOKABLE bool saveMediaAs(const QString &localPath, const QUrl &destUrl);
+    // WhatsApp markup -> CommonMark, for "Copy as Markdown".
+    [[nodiscard]] Q_INVOKABLE QString toCommonMark(const QString &text) const;
+    // Start of the grapheme cluster before the cursor, so Backspace deletes a
+    // whole emoji (ZWJ sequences, skin tones) rather than one code unit.
+    [[nodiscard]] Q_INVOKABLE int previousGraphemeBoundary(const QString &text, int cursorPosition) const;
+
+    [[nodiscard]] static bool perfLogging();
+
+    // Single-instance entry point: the launch arguments of this process, or
+    // those forwarded by a second launch through KDBusService. A
+    // `whatevr://chat/<id>` URL selects that chat once the shell is up;
+    // anything else just raises the window.
+    void handleCommandLine(const QStringList &arguments);
+
+    // The daemon's protocol socket, `$XDG_RUNTIME_DIR/whatevr/whatevrd.sock`.
+    // Empty if XDG_RUNTIME_DIR is unset.
     [[nodiscard]] static QString daemonSocketPath();
 
 Q_SIGNALS:
@@ -526,6 +561,9 @@ Q_SIGNALS:
     void messageJumpReady(const QString &messageId);
     void messageJumpUnavailable(const QString &messageId);
     void openChatRequested(const QString &chatId);
+    // Raise and focus the window: a second launch, or a deep link arriving
+    // before the chat shell exists.
+    void activateWindowRequested();
 
 private:
     // Transport reachability, independent of the daemon-reported WhatsApp state.
@@ -550,6 +588,17 @@ private:
     void refreshQrExpiry();
     void requestReconnect();
     void launchDaemonBinary();
+
+    // Deep links: parse `whatevr://chat/<percent-encoded-id>` and hold the id
+    // until the chat shell can show it (a notification click may cold-start the
+    // app, so the request can arrive long before login completes).
+    void openChatFromUri(const QString &uri);
+    void tryApplyPendingDeepLink();
+
+    // Composer drafts, loaded once at construction and rewritten on every
+    // change (the map is a handful of short strings).
+    void loadPersistedDrafts();
+    void savePersistedDrafts() const;
 
     // (Re)subscribe the `chats` view (active + archived) for the current filter.
     // Clears the models first so a filter switch never briefly shows the old
@@ -658,6 +707,12 @@ private:
     int m_historySyncPercent = 0;
     QString m_historySyncTitle;
     QString m_historySyncDetail;
+
+    // Chat id a deep link asked for, held until shellVisible() (cleared as soon
+    // as it is applied).
+    QString m_pendingDeepLinkChatId;
+    // chat id -> composer draft text.
+    QHash<QString, QString> m_drafts;
 
     QString m_selectedChatId;
     QString m_displayedMessagesChatId;

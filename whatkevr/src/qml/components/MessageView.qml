@@ -314,10 +314,10 @@ Item {
         }
         let text = list.model.copyTextForMessages(selectedMessageIdList())
         if (asMarkdown) {
-            text = Whatevr.AppController.toCommonMark(text)
+            text = Whatevr.ProtocolController.toCommonMark(text)
         }
         if (text.length > 0) {
-            Whatevr.AppController.copyToClipboard(text)
+            Whatevr.ProtocolController.copyToClipboard(text)
             showNotification(Whatevr.I18n.i18ncp("@info:status", "Message copied", "%1 messages copied", root.selectedCount))
         }
         clearSelection()
@@ -1829,7 +1829,7 @@ Item {
             text: Whatevr.I18n.i18nc("@action:inmenu copies the whole message text", "Copy Text")
             visible: messageContextMenu.ctxHasText
             onTriggered: {
-                Whatevr.AppController.copyToClipboard(messageContextMenu.ctxText)
+                Whatevr.ProtocolController.copyToClipboard(messageContextMenu.ctxText)
                 root.showNotification(Whatevr.I18n.i18nc("@info:status", "Text copied"))
             }
         }
@@ -1839,7 +1839,7 @@ Item {
             text: Whatevr.I18n.i18nc("@action:inmenu", "Copy as Markdown")
             visible: messageContextMenu.ctxHasText && messageContextMenu.ctxHasRichText
             onTriggered: {
-                Whatevr.AppController.copyToClipboard(Whatevr.AppController.toCommonMark(messageContextMenu.ctxText))
+                Whatevr.ProtocolController.copyToClipboard(Whatevr.ProtocolController.toCommonMark(messageContextMenu.ctxText))
                 root.showNotification(Whatevr.I18n.i18nc("@info:status", "Markdown copied"))
             }
         }
@@ -1849,7 +1849,7 @@ Item {
             text: Whatevr.I18n.i18nc("@action:inmenu copies the message's only link", "Copy Link")
             visible: messageContextMenu.ctxLinks.length === 1
             onTriggered: {
-                Whatevr.AppController.copyToClipboard(String(messageContextMenu.ctxLinks[0]))
+                Whatevr.ProtocolController.copyToClipboard(String(messageContextMenu.ctxLinks[0]))
                 root.showNotification(Whatevr.I18n.i18nc("@info:status", "Link copied"))
             }
         }
@@ -1871,7 +1871,7 @@ Item {
             MenuItem {
                 text: Whatevr.I18n.i18nc("@action:inmenu", "Copy All Links")
                 onTriggered: {
-                    Whatevr.AppController.copyToClipboard(messageContextMenu.ctxLinks.join("\n"))
+                    Whatevr.ProtocolController.copyToClipboard(messageContextMenu.ctxLinks.join("\n"))
                     root.showNotification(Whatevr.I18n.i18nc("@info:status", "Links copied"))
                 }
             }
@@ -1887,7 +1887,7 @@ Item {
 
                     text: messageContextMenu.linkLabel(modelData)
                     onTriggered: {
-                        Whatevr.AppController.copyToClipboard(modelData)
+                        Whatevr.ProtocolController.copyToClipboard(modelData)
                         root.showNotification(Whatevr.I18n.i18nc("@info:status", "Link copied"))
                     }
                 }
@@ -1902,7 +1902,7 @@ Item {
             visible: (messageContextMenu.ctxIsImage || messageContextMenu.ctxIsSticker)
                      && messageContextMenu.ctxHasMediaFile
             onTriggered: {
-                Whatevr.AppController.copyImageToClipboard(messageContextMenu.ctxMediaLocalPath)
+                Whatevr.ProtocolController.copyImageToClipboard(messageContextMenu.ctxMediaLocalPath)
                 root.showNotification(Whatevr.I18n.i18nc("@info:status", "Image copied"))
             }
         }
@@ -2026,7 +2026,7 @@ Item {
         }
 
         onAccepted: {
-            if (Whatevr.AppController.saveMediaAs(sourcePath, file)) {
+            if (Whatevr.ProtocolController.saveMediaAs(sourcePath, file)) {
                 root.showNotification(Whatevr.I18n.i18nc("@info:status", "File saved"))
             }
         }

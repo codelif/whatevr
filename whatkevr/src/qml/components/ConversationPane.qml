@@ -134,7 +134,7 @@ Kirigami.Page {
     }
 
     function shouldTypeIntoComposer(event) {
-        if (!Whatevr.ProtocolController.hasSelectedChat || !composer.visible || !Whatevr.AppController.composerEnabled) {
+        if (!Whatevr.ProtocolController.hasSelectedChat || !composer.visible || !Whatevr.ProtocolController.composerEnabled) {
             return false
         }
         if (event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) {
@@ -144,7 +144,7 @@ Kirigami.Page {
     }
 
     function typeIntoComposer(text) {
-        if (!Whatevr.ProtocolController.hasSelectedChat || !composer.visible || !Whatevr.AppController.composerEnabled || text.length === 0) {
+        if (!Whatevr.ProtocolController.hasSelectedChat || !composer.visible || !Whatevr.ProtocolController.composerEnabled || text.length === 0) {
             return
         }
 
@@ -264,8 +264,8 @@ Kirigami.Page {
                 }
                 // Stash the previous chat's composer text as its draft, then load
                 // the new chat's draft. setChatDraft ignores empty ids/text.
-                Whatevr.AppController.setChatDraft(root.composerChatId, composer.inputPlainText())
-                composer.setText(Whatevr.AppController.chatDraft(newChatId))
+                Whatevr.ProtocolController.setChatDraft(root.composerChatId, composer.inputPlainText())
+                composer.setText(Whatevr.ProtocolController.chatDraft(newChatId))
                 root.composerChatId = newChatId
                 // Pull keyboard focus into the conversation when a chat opens so
                 // its key handler is live immediately — Escape closes the chat and
