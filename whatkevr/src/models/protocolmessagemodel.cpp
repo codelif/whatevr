@@ -84,46 +84,60 @@ ProtocolMessageModel::ProtocolMessageModel(whatevr::proto::CollectionViewModel *
 {
     Q_ASSERT(m_source);
 
+    // Every structural change invalidates the decoded-row cache: it is keyed by
+    // row index, which any insert/remove/move renumbers.
     connect(m_source, &QAbstractItemModel::modelAboutToBeReset, this, [this] {
         beginResetModel();
     });
     connect(m_source, &QAbstractItemModel::modelReset, this, [this] {
         m_textById.clear();
+        invalidateRowCache();
         endResetModel();
     });
     connect(m_source, &QAbstractItemModel::rowsAboutToBeInserted, this,
             [this](const QModelIndex &, int first, int last) {
+                invalidateRowCache();
                 beginInsertRows(QModelIndex(), first, last);
             });
     connect(m_source, &QAbstractItemModel::rowsInserted, this,
             [this](const QModelIndex &, int first, int last) {
                 endInsertRows();
-                emitAllRolesChanged(first - 1, last + 1);
+                // The rows either side of the run: an insert can only change
+                // whether they start/end a sender run or carry a separator.
+                emitNeighbourRolesChanged(first - 1, first - 1);
+                emitNeighbourRolesChanged(last + 1, last + 1);
             });
     connect(m_source, &QAbstractItemModel::rowsAboutToBeRemoved, this,
             [this](const QModelIndex &, int first, int last) {
                 invalidateRows(first, last);
+                invalidateRowCache();
                 beginRemoveRows(QModelIndex(), first, last);
             });
     connect(m_source, &QAbstractItemModel::rowsRemoved, this,
             [this](const QModelIndex &, int first, int) {
                 endRemoveRows();
-                emitAllRolesChanged(first - 1, first);
+                emitNeighbourRolesChanged(first - 1, first);
             });
     connect(m_source, &QAbstractItemModel::rowsAboutToBeMoved, this,
             [this](const QModelIndex &, int first, int last, const QModelIndex &, int destination) {
+                invalidateRowCache();
                 beginMoveRows(QModelIndex(), first, last, QModelIndex(), destination);
             });
     connect(m_source, &QAbstractItemModel::rowsMoved, this,
             [this](const QModelIndex &, int first, int last, const QModelIndex &, int destination) {
                 endMoveRows();
                 const int landing = destination > first ? destination - (last - first + 1) : destination;
-                emitAllRolesChanged(std::min(first, landing) - 1, std::max(last, landing) + 1);
+                emitNeighbourRolesChanged(std::min(first, landing) - 1, std::max(last, landing) + 1);
             });
     connect(m_source, &QAbstractItemModel::dataChanged, this,
             [this](const QModelIndex &topLeft, const QModelIndex &bottomRight) {
                 invalidateRows(topLeft.row(), bottomRight.row());
-                emitAllRolesChanged(topLeft.row() - 1, bottomRight.row() + 1);
+                invalidateRowCache();
+                // The changed rows themselves may have changed in any way; only
+                // their neighbours are limited to the grouping roles.
+                emitAllRolesChanged(topLeft.row(), bottomRight.row());
+                emitNeighbourRolesChanged(topLeft.row() - 1, topLeft.row() - 1);
+                emitNeighbourRolesChanged(bottomRight.row() + 1, bottomRight.row() + 1);
             });
 }
 
@@ -177,12 +191,38 @@ QVariantMap ProtocolMessageModel::transfer(const QVariantMap &item) const
 
 void ProtocolMessageModel::invalidateTransferRoles()
 {
-    const int rows = rowCount();
-    if (rows == 0) {
-        return;
+    // The transfers view holds only what is downloading right now — usually
+    // nothing, at most a handful of rows — so refresh exactly those rows
+    // instead of the whole timeline. Rows that were transferring last time are
+    // included too, so one that just finished loses its spinner.
+    QStringList current;
+    if (m_transfers) {
+        const int transferRows = m_transfers->rowCount();
+        current.reserve(transferRows);
+        for (int row = 0; row < transferRows; ++row) {
+            const QString id = m_transfers->data(m_transfers->index(row),
+                                                 whatevr::proto::CollectionViewModel::IdRole).toString();
+            if (!id.isEmpty()) {
+                current.append(id);
+            }
+        }
     }
-    Q_EMIT dataChanged(index(0, 0), index(rows - 1, 0),
-                       {MediaDownloadingRole, MediaDownloadProgressRole});
+
+    QStringList affected = current;
+    for (const QString &id : std::as_const(m_transferRowIds)) {
+        if (!affected.contains(id)) {
+            affected.append(id);
+        }
+    }
+    m_transferRowIds = std::move(current);
+
+    for (const QString &id : std::as_const(affected)) {
+        const int row = indexOf(id);
+        if (row >= 0) {
+            Q_EMIT dataChanged(index(row, 0), index(row, 0),
+                               {MediaDownloadingRole, MediaDownloadProgressRole});
+        }
+    }
 }
 
 QVariantMap ProtocolMessageModel::wireItem(int row) const
@@ -193,16 +233,61 @@ QVariantMap ProtocolMessageModel::wireItem(int row) const
     return m_source->data(m_source->index(row), whatevr::proto::CollectionViewModel::ItemRole).toMap();
 }
 
+void ProtocolMessageModel::invalidateRowCache() const
+{
+    m_rowCache = RowCache{};
+}
+
+const ProtocolMessageModel::RowCache &ProtocolMessageModel::rowCache(int row) const
+{
+    if (m_rowCache.row != row) {
+        m_rowCache = RowCache{};
+        m_rowCache.row = row;
+        m_rowCache.item = wireItem(row);
+    }
+    return m_rowCache;
+}
+
+const QVariantMap &ProtocolMessageModel::cachedSender(const RowCache &cache) const
+{
+    if (!cache.senderLoaded) {
+        m_rowCache.sender = sender(cache.item);
+        m_rowCache.senderLoaded = true;
+    }
+    return m_rowCache.sender;
+}
+
+const QVariantMap &ProtocolMessageModel::cachedMedia(const RowCache &cache) const
+{
+    if (!cache.mediaLoaded) {
+        m_rowCache.media = media(cache.item);
+        m_rowCache.mediaLoaded = true;
+    }
+    return m_rowCache.media;
+}
+
+const QVariantMap &ProtocolMessageModel::cachedReply(const RowCache &cache) const
+{
+    if (!cache.replyLoaded) {
+        m_rowCache.reply = reply(cache.item);
+        m_rowCache.replyLoaded = true;
+    }
+    return m_rowCache.reply;
+}
+
 QVariant ProtocolMessageModel::data(const QModelIndex &index, int role) const
 {
     if (!index.isValid() || index.row() < 0 || index.row() >= rowCount()) {
         return {};
     }
 
-    const QVariantMap item = wireItem(index.row());
-    const QVariantMap senderData = sender(item);
-    const QVariantMap mediaData = media(item);
-    const QVariantMap replyData = reply(item);
+    // One decode per row, shared across the ~45 role reads a delegate makes;
+    // the nested maps resolve only for the roles that actually want them.
+    const RowCache &cache = rowCache(index.row());
+    const QVariantMap &item = cache.item;
+    const auto senderData = [&]() -> const QVariantMap & { return cachedSender(cache); };
+    const auto mediaData = [&]() -> const QVariantMap & { return cachedMedia(cache); };
+    const auto replyData = [&]() -> const QVariantMap & { return cachedReply(cache); };
     const QString direction = item.value(QStringLiteral("direction")).toString();
     const QString status = item.value(QStringLiteral("status")).toString();
     const QString kind = mediaKind(item);
@@ -223,11 +308,11 @@ QVariant ProtocolMessageModel::data(const QModelIndex &index, int role) const
     case ChatIdRole:
         return item.value(QStringLiteral("chat_id"));
     case SenderIdRole:
-        return senderData.value(QStringLiteral("id"));
+        return senderData().value(QStringLiteral("id"));
     case SenderNameRole:
         return senderDisplayName(item);
     case SenderAvatarLocalPathRole:
-        return senderData.value(QStringLiteral("avatar_path"));
+        return senderData().value(QStringLiteral("avatar_path"));
     case SenderInitialsRole:
         return initialsForName(senderDisplayName(item));
     case TextRole:
@@ -275,17 +360,17 @@ QVariant ProtocolMessageModel::data(const QModelIndex &index, int role) const
     case MediaKindRole:
         return kind;
     case MediaMimeTypeRole:
-        return mediaData.value(QStringLiteral("mime"));
+        return mediaData().value(QStringLiteral("mime"));
     case MediaLocalPathRole:
-        return mediaData.value(QStringLiteral("path"));
+        return mediaData().value(QStringLiteral("path"));
     case MediaThumbnailLocalPathRole:
-        return mediaData.value(QStringLiteral("thumbnail_path"));
+        return mediaData().value(QStringLiteral("thumbnail_path"));
     case MediaWidthRole:
-        return mediaData.value(QStringLiteral("width"));
+        return mediaData().value(QStringLiteral("width"));
     case MediaHeightRole:
-        return mediaData.value(QStringLiteral("height"));
+        return mediaData().value(QStringLiteral("height"));
     case MediaAnimatedRole:
-        return mediaData.value(QStringLiteral("animated"));
+        return mediaData().value(QStringLiteral("animated"));
     case ShowSenderHeaderRole:
         return groupChat && !outgoing && startsSenderGroup(index.row());
     case ShowSenderAvatarRole:
@@ -299,21 +384,21 @@ QVariant ProtocolMessageModel::data(const QModelIndex &index, int role) const
     case MediaDownloadingRole:
         return !transfer(item).isEmpty();
     case MediaDownloadErrorRole:
-        return mediaData.value(QStringLiteral("download_error"));
+        return mediaData().value(QStringLiteral("download_error"));
     case ReplyToMessageIdRole:
-        return replyData.value(QStringLiteral("message_id"));
+        return replyData().value(QStringLiteral("message_id"));
     case ReplyToSenderNameRole:
-        return replyData.value(QStringLiteral("sender_name"));
+        return replyData().value(QStringLiteral("sender_name"));
     case ReplyToTextRole:
-        return replyData.value(QStringLiteral("text"));
+        return replyData().value(QStringLiteral("text"));
     case ReplyToMediaKindRole: {
-        const QString replyKind = replyData.value(QStringLiteral("kind")).toString();
+        const QString replyKind = replyData().value(QStringLiteral("kind")).toString();
         return replyKind == QLatin1String("text") ? QString() : replyKind;
     }
     case ReplyToMediaMimeTypeRole:
         return QString();
     case ReplyToIsOutgoingRole:
-        return replyData.value(QStringLiteral("direction")).toString() == QLatin1String("outgoing");
+        return replyData().value(QStringLiteral("direction")).toString() == QLatin1String("outgoing");
     case WidestLineWidthRole: {
         auto &text = textPresentation();
         return text.fullParsed ? text.fullWidest : text.previewWidest;
@@ -832,4 +917,19 @@ void ProtocolMessageModel::emitAllRolesChanged(int first, int last)
     if (boundedFirst <= boundedLast) {
         Q_EMIT dataChanged(index(boundedFirst), index(boundedLast));
     }
+}
+
+void ProtocolMessageModel::emitNeighbourRolesChanged(int first, int last)
+{
+    const int boundedFirst = std::max(0, first);
+    const int boundedLast = std::min(last, rowCount() - 1);
+    if (boundedFirst > boundedLast) {
+        return;
+    }
+    // An empty role list means "every role", which re-evaluates all ~45 model
+    // bindings on every materialised delegate. A neighbour's appearance can
+    // only change in these ways, so say so.
+    Q_EMIT dataChanged(index(boundedFirst), index(boundedLast),
+                       {ShowSenderHeaderRole, ShowSenderAvatarRole, ShowSenderGutterRole,
+                        GroupStartRole, GroupEndRole, DateSeparatorTextRole});
 }

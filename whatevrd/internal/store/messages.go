@@ -2052,6 +2052,65 @@ func (db *DB) SenderDisplay(ctx context.Context, id string) (string, string, err
 	return name, avatarLocalPath, err
 }
 
+// SenderDisplays is the set-based form of SenderDisplay, for callers resolving
+// a whole roster at once. A large group ran one query per candidate id per
+// member — thousands of round trips through the reader pool for a single view
+// open — where one IN() over the union answers all of them. Ids absent from
+// `senders` are simply missing from the result, exactly as SenderDisplay
+// reports them empty.
+func (db *DB) SenderDisplays(ctx context.Context, ids []string) (map[string]SenderDisplayRow, error) {
+	defer db.timeOp("SenderDisplays", time.Now())
+	out := make(map[string]SenderDisplayRow, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	// SQLITE_MAX_VARIABLE_NUMBER is 32766 on modern builds, but a roster can be
+	// arbitrarily large; chunk so the statement is always well within it.
+	const chunk = 500
+	for start := 0; start < len(ids); start += chunk {
+		end := min(start+chunk, len(ids))
+		batch := ids[start:end]
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(batch)), ",")
+		args := make([]any, 0, len(batch))
+		for _, id := range batch {
+			args = append(args, id)
+		}
+		rows, err := db.reader().QueryContext(ctx, `
+			SELECT s.id,
+			       COALESCE(NULLIF(s.name, ''), ''),
+			       COALESCE(NULLIF(a.local_path, ''), NULLIF(s.avatar_local_path, ''), '')
+			FROM senders s
+			LEFT JOIN avatars a ON a.subject_kind = 'sender' AND a.subject_id = s.id
+			WHERE s.id IN (`+placeholders+`)
+		`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var id string
+			var row SenderDisplayRow
+			if err := rows.Scan(&id, &row.Name, &row.AvatarLocalPath); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			out[id] = row
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// SenderDisplayRow is one sender's presentation fields as SenderDisplays
+// returns them.
+type SenderDisplayRow struct {
+	Name            string
+	AvatarLocalPath string
+}
+
 func ExternalMessageID(chatID, internalID string) string {
 	prefix := chatID + ":"
 	if strings.HasPrefix(internalID, prefix) {

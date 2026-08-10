@@ -1024,6 +1024,14 @@ void appendCommonMarkSegment(const QString &text, int start, int end, QString &o
 QStringList extractMessageLinks(const QString &text)
 {
     QStringList links;
+    // findUrlAt only ever matches a bare domain (which needs a dot, since it
+    // must end in a TLD) or an explicit http/https scheme (which needs a
+    // colon). A message with neither character cannot contain a link, and the
+    // scan below probes findUrlAt at every single index — so rejecting those
+    // up front skips the whole walk for the common case.
+    if (!text.contains(QLatin1Char('.')) && !text.contains(QLatin1Char(':'))) {
+        return links;
+    }
     const int end = text.size();
     int i = 0;
     while (i < end) {

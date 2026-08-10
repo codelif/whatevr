@@ -201,10 +201,29 @@ void ProtocolClient::onReadyRead()
         }
         newline = m_readBuffer.indexOf('\n');
     }
+    // Close the batch for every sink this drain touched. A fill arrives as one
+    // frame per item, and the daemon flushes a burst in one write, so this is
+    // where a whole window becomes a single model transaction.
+    const QList<ViewSink *> touched = std::move(m_batchedSinks);
+    m_batchedSinks.clear();
+    for (ViewSink *sink : touched) {
+        sink->onBatchEnd();
+    }
     if (m_readBuffer.size() > kMaxLineBytes) {
         Q_EMIT errorOccurred(QStringLiteral("oversized protocol frame; dropping connection"));
         m_socket->abort();
         onSocketDisconnected();
+    }
+}
+
+// noteBatched records a sink whose batch must be closed at the end of this
+// drain. Linear scan on purpose: a drain touches a handful of distinct sinks,
+// so this is cheaper than hashing.
+void ProtocolClient::noteBatched(ViewSink *sink)
+{
+    if (!m_batchedSinks.contains(sink)) {
+        m_batchedSinks.append(sink);
+        sink->onBatchBegin();
     }
 }
 
@@ -265,9 +284,11 @@ void ProtocolClient::handleEvent(const QJsonObject &msg)
     ViewSink *sink = sub->m_sink;
 
     if (event == QLatin1String("upsert")) {
+        noteBatched(sink);
         sink->onUpsert(msg.value(QStringLiteral("sort")).toString(),
                        msg.value(QStringLiteral("item")).toObject());
     } else if (event == QLatin1String("remove")) {
+        noteBatched(sink);
         sink->onRemove(msg.value(QStringLiteral("id")).toString());
     } else if (event == QLatin1String("ready")) {
         const bool has = msg.contains(QStringLiteral("exhausted"));

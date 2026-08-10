@@ -50,6 +50,15 @@ public:
     virtual void onReady(bool exhausted, bool hasExhausted) = 0;
     // Discard the local copy; fresh upserts (then a `ready`) follow.
     virtual void onReset() = 0;
+    // Bracket a run of events delivered together — one drain of the socket.
+    // Between them a sink may buffer and apply the run as a single
+    // transaction: a view fill arrives as one event per item, and applying
+    // eighty of them as eighty separate model changes made opening a chat cost
+    // eighty layout passes. Outside a bracket, events apply as they arrive, so
+    // a sink driven directly behaves exactly as it did before. Default is a
+    // no-op for sinks that always apply eagerly.
+    virtual void onBatchBegin() {}
+    virtual void onBatchEnd() {}
 };
 
 class ProtocolClient;
@@ -162,6 +171,7 @@ private:
     void dispatchLine(const QByteArray &line);
     void handleResponse(const QJsonObject &msg);
     void handleEvent(const QJsonObject &msg);
+    void noteBatched(ViewSink *sink);
     void handleHelloReply(const QJsonObject &result, const ProtocolError &error);
 
     void sendObject(const QJsonObject &obj);
@@ -197,6 +207,8 @@ private:
     QList<QueuedRequest> m_preHelloQueue; // requests made before Ready
     QHash<int, Subscription *> m_subsBySubId; // by daemon-assigned sub id
     QList<Subscription *> m_subscriptions; // all live subscriptions
+    // Sinks with an open batch, closed at the end of the current socket drain.
+    QList<ViewSink *> m_batchedSinks;
 };
 
 } // namespace whatevr::proto

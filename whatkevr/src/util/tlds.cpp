@@ -1,5 +1,7 @@
 #include "tlds.h"
 
+#include <QList>
+#include <QSet>
 #include <QString>
 
 namespace whatevr::util {
@@ -1453,14 +1455,34 @@ ZW
 
 }
 
+namespace {
+
+// The table is stored as one newline-delimited blob (it is generated), but it
+// is queried once per candidate label while scanning message text for links —
+// which a linear search over ~15 KB made surprisingly expensive on a long
+// timeline. Split it into a hash set on first use instead.
+const QSet<QString> &ianaTldSet()
+{
+    static const QSet<QString> set = [] {
+        QSet<QString> out;
+        const QList<QStringView> lines = QStringView(ianaTlds()).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+        out.reserve(lines.size());
+        for (const QStringView line : lines) {
+            out.insert(line.toString());
+        }
+        return out;
+    }();
+    return set;
+}
+
+} // namespace
+
 bool isKnownIanaTld(QStringView tld)
 {
     if (tld.isEmpty()) {
         return false;
     }
-
-    const QString needle = QStringLiteral("\n") + tld.toString().toUpper() + QStringLiteral("\n");
-    return ianaTlds().contains(needle);
+    return ianaTldSet().contains(tld.toString().toUpper());
 }
 
 }

@@ -247,15 +247,57 @@ func storedParticipantSources(stored []string) []groupMemberSource {
 
 // resolveGroupMembers turns participant sources into resolved members (display
 // name, avatar, formatted phone), de-duplicating by canonical JID.
+//
+// This runs while a frontend waits on a `group_members` subscribe, so it must
+// stay a pure read. Resolving members one at a time cost up to four
+// SenderDisplay queries each *and* queued avatar refreshes inline — and
+// EnsureAvatar writes to the single-writer connection, so a 1024-member group
+// spent half a second here contending with message storage. Now the candidate
+// ids are collected first, answered by one batched query, and the avatar
+// refresh is handed to a goroutine after the roster is already built.
 func (c *Client) resolveGroupMembers(ctx context.Context, sources []groupMemberSource) []app.GroupMember {
 	seen := make(map[string]bool, len(sources))
-	members := make([]app.GroupMember, 0, len(sources))
+	ordered := make([]groupMemberSource, 0, len(sources))
+	candidates := make([][]string, 0, len(sources))
+	unique := make(map[string]bool, len(sources)*2)
+	allIDs := make([]string, 0, len(sources)*2)
 	for _, src := range sources {
 		if src.canonical == "" || seen[src.canonical] {
 			continue
 		}
 		seen[src.canonical] = true
-		name, avatar := c.participantDisplay(ctx, src.canonical)
+		ids := c.participantDisplayIDs(ctx, src.canonical)
+		ordered = append(ordered, src)
+		candidates = append(candidates, ids)
+		for _, id := range ids {
+			if !unique[id] {
+				unique[id] = true
+				allIDs = append(allIDs, id)
+			}
+		}
+	}
+
+	displays, err := c.store.SenderDisplays(ctx, allIDs)
+	if err != nil {
+		c.log.Warnf("Failed to batch-load sender displays for %d ids: %v", len(allIDs), err)
+		displays = nil
+	}
+
+	var needAvatar []string
+	members := make([]app.GroupMember, 0, len(ordered))
+	for i, src := range ordered {
+		name, avatar := displayFromRows(displays, candidates[i])
+		if name == "" {
+			for _, id := range candidates[i] {
+				if n := c.senderNameForParticipantID(ctx, id); n != "" {
+					name = n
+					break
+				}
+			}
+		}
+		if avatar == "" {
+			needAvatar = append(needAvatar, candidates[i]...)
+		}
 		member := app.GroupMember{
 			JID:             src.canonical,
 			DisplayName:     name,
@@ -273,7 +315,47 @@ func (c *Client) resolveGroupMembers(ctx context.Context, sources []groupMemberS
 		}
 		members = append(members, member)
 	}
+
+	// Avatars that land later arrive as ordinary upserts, so nothing here has
+	// to wait for them. Detached from ctx: the caller's context dies with the
+	// subscribe that triggered it, but the fetch is worth finishing.
+	if len(needAvatar) > 0 {
+		go c.queueAvatarRefreshes(context.WithoutCancel(ctx), needAvatar)
+	}
 	return members
+}
+
+// displayFromRows picks a member's name and avatar out of a batched lookup,
+// preferring the first candidate id that has an avatar and falling back to the
+// first that has a name — the same precedence participantDisplay applies.
+func displayFromRows(displays map[string]appstore.SenderDisplayRow, ids []string) (string, string) {
+	fallbackName := ""
+	for _, id := range ids {
+		row, ok := displays[id]
+		if !ok {
+			continue
+		}
+		if fallbackName == "" && row.Name != "" {
+			fallbackName = row.Name
+		}
+		if row.AvatarLocalPath != "" {
+			name := row.Name
+			if name == "" {
+				name = fallbackName
+			}
+			return name, row.AvatarLocalPath
+		}
+	}
+	return fallbackName, ""
+}
+
+// queueAvatarRefreshes enqueues avatar fetches for ids that resolved without
+// one. It is deliberately off the read path: refreshAvatarIfDue stats the cache
+// file and writes through EnsureAvatar on the single-writer connection.
+func (c *Client) queueAvatarRefreshes(ctx context.Context, ids []string) {
+	for _, id := range ids {
+		c.refreshAvatarIfDue(ctx, appstore.AvatarSubject{Kind: appstore.AvatarSubjectSender, ID: id}, avatarPriorityVisible)
+	}
 }
 
 // refreshGroupInfoLive does the live GetGroupInfo network fetch and publishes

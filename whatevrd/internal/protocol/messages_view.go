@@ -176,6 +176,34 @@ type messagesChatFeed struct {
 	cancelCtx    context.CancelFunc
 	done         chan struct{}
 	closeOnce    sync.Once
+
+	// subjectsMu guards avatarSubjects: the ids whose avatar actually appears
+	// in the window right now (every sender in it, plus the chat itself).
+	// Avatar fetching is demand-driven and bursty, and an avatar for some
+	// unrelated chat used to re-read and re-diff this whole window; recording
+	// what the last Items() call actually returned makes the filter exact.
+	subjectsMu     sync.Mutex
+	avatarSubjects map[string]bool
+}
+
+// noteAvatarSubjects records the avatar subjects of the window just built.
+func (f *messagesChatFeed) noteAvatarSubjects(msgs []store.Message) {
+	subjects := make(map[string]bool, len(msgs)+1)
+	subjects[f.chatID] = true
+	for _, m := range msgs {
+		if m.SenderID != "" {
+			subjects[m.SenderID] = true
+		}
+	}
+	f.subjectsMu.Lock()
+	f.avatarSubjects = subjects
+	f.subjectsMu.Unlock()
+}
+
+func (f *messagesChatFeed) avatarInWindow(id string) bool {
+	f.subjectsMu.Lock()
+	defer f.subjectsMu.Unlock()
+	return f.avatarSubjects[id]
 }
 
 func (f *messagesChatFeed) run(events <-chan app.DaemonEvent, invalidate func()) {
@@ -205,9 +233,10 @@ func (f *messagesChatFeed) eventAffectsChat(evt app.DaemonEvent) bool {
 	case app.DaemonEventHistoryBackfilled:
 		return evt.HistorySync.ChatID == f.chatID
 	case app.DaemonEventAvatarUpdated:
-		// An avatar change may be a participant of this chat; re-reading is
-		// cheap and diffs to nothing when no sender row here changed.
-		return true
+		// Only re-read when the avatar belongs to something the window renders.
+		// Matched on id alone, not (kind, id): a message row resolves its
+		// sender's avatar from either the sender or the chat subject.
+		return f.avatarInWindow(evt.Avatar.ID)
 	default:
 		return false
 	}
@@ -243,6 +272,7 @@ func (s *latestMessagesSession) Items(max int) []Item {
 		return nil
 	}
 	reverseMessages(msgs) // newest-first for the prefix window
+	s.noteAvatarSubjects(msgs)
 	items := make([]Item, 0, len(msgs))
 	for _, m := range msgs {
 		items = append(items, messageWireItem(m))
@@ -341,12 +371,14 @@ func (s *anchoredMessagesSession) Items(int) []Item {
 	s.newerExhausted = newerExhausted
 	s.mu.Unlock()
 
-	items := make([]Item, 0, len(older)+1+len(newer))
-	for _, m := range older {
-		items = append(items, messageWireItem(m))
-	}
-	items = append(items, messageWireItem(anchor))
-	for _, m := range newer {
+	window := make([]store.Message, 0, len(older)+1+len(newer))
+	window = append(window, older...)
+	window = append(window, anchor)
+	window = append(window, newer...)
+	s.noteAvatarSubjects(window)
+
+	items := make([]Item, 0, len(window))
+	for _, m := range window {
 		items = append(items, messageWireItem(m))
 	}
 	return items

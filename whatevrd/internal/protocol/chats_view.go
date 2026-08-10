@@ -132,6 +132,27 @@ type chatsSession struct {
 	cancelCtx    context.CancelFunc
 	done         chan struct{}
 	closeOnce    sync.Once
+
+	// windowMu guards windowIDs: the chat ids currently in the window, so an
+	// avatar landing for a chat outside it does not re-read the whole list.
+	windowMu  sync.Mutex
+	windowIDs map[string]bool
+}
+
+func (s *chatsSession) noteWindow(chats []store.Chat) {
+	ids := make(map[string]bool, len(chats))
+	for _, c := range chats {
+		ids[c.ID] = true
+	}
+	s.windowMu.Lock()
+	s.windowIDs = ids
+	s.windowMu.Unlock()
+}
+
+func (s *chatsSession) inWindow(id string) bool {
+	s.windowMu.Lock()
+	defer s.windowMu.Unlock()
+	return s.windowIDs[id]
 }
 
 type chatSession struct {
@@ -171,7 +192,7 @@ func (s *chatsSession) run(events <-chan app.DaemonEvent, invalidate func()) {
 		case <-s.done:
 			return
 		case evt := <-events:
-			if chatEventAffectsList(evt.Kind) {
+			if chatEventAffectsList(evt.Kind) && (evt.Kind != app.DaemonEventAvatarUpdated || s.inWindow(evt.Avatar.ID)) {
 				invalidate()
 			}
 		}
@@ -184,13 +205,17 @@ func (s *chatSession) run(events <-chan app.DaemonEvent, invalidate func()) {
 		case <-s.done:
 			return
 		case evt := <-events:
-			if chatEventAffectsList(evt.Kind) {
+			if chatEventAffectsList(evt.Kind) && (evt.Kind != app.DaemonEventAvatarUpdated || evt.Avatar.ID == s.chatID) {
 				invalidate()
 			}
 		}
 	}
 }
 
+// chatEventAffectsList reports whether an event kind can change a chat row at
+// all. Avatar updates additionally have to name a chat the caller is showing —
+// avatar fetching is bursty and demand-driven, and an unrelated one used to
+// re-read and re-diff the whole window.
 func chatEventAffectsList(kind app.DaemonEventKind) bool {
 	switch kind {
 	case app.DaemonEventResync, // re-read the store after a dropped-event gap
@@ -223,6 +248,7 @@ func (s *chatsSession) Items(max int) []Item {
 		log.Printf("protocol: list chats for view: %v", err)
 		return nil
 	}
+	s.noteWindow(chats)
 	items := make([]Item, 0, len(chats))
 	for _, c := range chats {
 		items = append(items, Item{ID: c.ID, Sort: chatSort(c), Data: chatItemFromStore(c)})

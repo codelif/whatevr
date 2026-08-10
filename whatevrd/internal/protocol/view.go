@@ -1,6 +1,9 @@
 package protocol
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"time"
+)
 
 // Item is one item of a view: a stable id, the daemon-computed opaque sort
 // key (frontends order by bytewise comparison, ascending), and the value
@@ -101,27 +104,44 @@ func (s *Server) handleSubscribe(c *conn, req request) (any, *Error) {
 		window = *p.Limit
 	}
 
-	sub := newSubscription(c.nextSubID(), c, window)
-	sess, meta, verr := view.Open(req.Params, sub.kick)
-	if verr != nil {
-		return nil, verr
-	}
-	sub.sess = sess
-	if d, ok := sess.(DirectionalSession); ok {
-		sub.dir = d
-	}
-	c.registerSub(sub)
-
-	result := map[string]any{"sub": sub.id}
-	for k, v := range meta {
-		if k != "sub" {
-			result[k] = v
+	// Open runs off the dispatch goroutine. Some views do real work there — a
+	// group roster resolves every member — and inline that blocked every later
+	// request on the connection, including the `messages` subscribe the user is
+	// actually waiting for. The *response* moves with it, which is what keeps
+	// the ordering safe: a frontend cannot reference a `sub` it has not been
+	// given, so no extend/unsubscribe can overtake a subscribe still opening,
+	// and a failed Open is still that request's plain error response.
+	go func() {
+		start := time.Now()
+		sub := newSubscription(c.nextSubID(), c, window)
+		sess, meta, verr := view.Open(req.Params, sub.kick)
+		logViewOpen(p.View, start)
+		if verr != nil {
+			c.respondError(req.ID, verr, false)
+			return
 		}
-	}
-	// Respond before starting delivery: the initial fill runs after the
-	// response is queued, giving the wire order response → upserts → ready.
-	c.respondResult(req.ID, result)
-	sub.start()
+		sub.sess = sess
+		if d, ok := sess.(DirectionalSession); ok {
+			sub.dir = d
+		}
+		// A connection that closed while Open ran has already torn down its
+		// registry, so this session would never be closed by anything else.
+		if !c.registerSub(sub) {
+			sess.Close()
+			return
+		}
+
+		result := map[string]any{"sub": sub.id}
+		for k, v := range meta {
+			if k != "sub" {
+				result[k] = v
+			}
+		}
+		// Respond before starting delivery: the initial fill runs after the
+		// response is queued, giving the wire order response → upserts → ready.
+		c.respondResult(req.ID, result)
+		sub.start()
+	}()
 	return responded{}, nil
 }
 

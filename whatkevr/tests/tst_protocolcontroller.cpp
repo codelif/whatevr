@@ -2167,7 +2167,11 @@ private Q_SLOTS:
     }
 
     // D5: the composer's `@`-mention roster is a `group_members` subscription on
-    // the *displayed* conversation — held only while a group is on screen.
+    // the *displayed* conversation — held only while a group is on screen, and
+    // only once something asks for it. Resolving a group's members is the most
+    // expensive thing the daemon does for a chat, so opening one must not pay
+    // for a roster nothing is showing yet; ensureChatMembers() is what the
+    // composer calls when an `@` token opens.
     void mentionRosterFollowsTheDisplayedGroup()
     {
         FakeDaemon daemon(m_path);
@@ -2188,6 +2192,12 @@ private Q_SLOTS:
 
         ctrl.setConversationVisible(true);
         ctrl.selectChat(QStringLiteral("g@g.us"));
+        // Opening the group alone must not subscribe the roster.
+        QCoreApplication::processEvents();
+        QCOMPARE(daemon.subscribeCountByView.value(QStringLiteral("group_members")), 0);
+        QCOMPARE(ctrl.chatMembers(QString()).size(), 0);
+
+        ctrl.ensureChatMembers();
         QTRY_COMPARE(ctrl.chatMembers(QString()).size(), 1);
         QCOMPARE(ctrl.chatMembers(QStringLiteral("ali")).size(), 1);
 
@@ -2196,9 +2206,15 @@ private Q_SLOTS:
         QCOMPARE(ctrl.chatMembers(QString()).size(), 0);
         QTRY_VERIFY(daemon.unsubscribedViews.contains(QStringLiteral("group_members")));
 
-        // Hiding the conversation drops it again.
+        // The demand does not carry across conversations: the next group starts
+        // without a roster until it is asked for again.
         ctrl.selectChat(QStringLiteral("g@g.us"));
+        QCoreApplication::processEvents();
+        QCOMPARE(ctrl.chatMembers(QString()).size(), 0);
+        ctrl.ensureChatMembers();
         QTRY_COMPARE(ctrl.chatMembers(QString()).size(), 1);
+
+        // Hiding the conversation drops it again.
         ctrl.setConversationVisible(false);
         QCOMPARE(ctrl.chatMembers(QString()).size(), 0);
     }

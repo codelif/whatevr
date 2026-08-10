@@ -766,7 +766,15 @@ QAbstractItemModel *ProtocolController::messageListModel() const
 
 QVariantMap ProtocolController::selectedChatItem() const
 {
-    return m_selectedChatId.isEmpty() ? QVariantMap{} : m_selectedChatModel->value();
+    if (m_selectedChatId.isEmpty()) {
+        return {};
+    }
+    // The `chat` view is authoritative, but an open no longer waits for it, so
+    // it may not have answered yet. Until it does, the chat-list row is the
+    // same row from the same daemon-side data — good enough to name the chat
+    // and count its unread while the first frame renders.
+    const QVariantMap value = m_selectedChatModel->value();
+    return value.isEmpty() ? knownChatRow(m_selectedChatId) : value;
 }
 
 void ProtocolController::selectedChatLookupFailed(const QString &chatId, const QString &code,
@@ -800,6 +808,15 @@ int ProtocolController::selectedChatUnreadCount() const
     return selectedChatItem().value(QStringLiteral("unread")).toInt();
 }
 
+QVariantMap ProtocolController::knownChatRow(const QString &chatId) const
+{
+    // Both chat-list windows are the same `chats` view under different params,
+    // so either may hold the row. Empty when the chat is outside both windows —
+    // the caller then falls back to the `chat` object view.
+    const QVariantMap row = m_chatsModel->itemById(chatId);
+    return row.isEmpty() ? m_archivedModel->itemById(chatId) : row;
+}
+
 bool ProtocolController::selectedChatHistoryExhausted() const
 {
     return selectedChatItem().value(QStringLiteral("history_exhausted")).toBool();
@@ -831,6 +848,9 @@ void ProtocolController::selectChat(const QString &chatId)
 void ProtocolController::setSelectedChat(const QString &chatId, const QString &anchor, const QString &jumpMessageId)
 {
     const bool selectionChanged = chatId != m_selectedChatId;
+    // An anchor derived from the chat-list row when the caller supplied none;
+    // it lets an open skip waiting on the `chat` view (see below).
+    QString resolvedAnchor;
     m_selectedChatId = chatId;
     m_stickerController->setChatId(chatId);
     if (selectionChanged) {
@@ -845,7 +865,22 @@ void ProtocolController::setSelectedChat(const QString &chatId, const QString &a
         m_selectedChatSub = nullptr;
         m_selectedChatModel->onReset();
         if (!chatId.isEmpty()) {
-            m_waitingForSelectedChatItem = anchor.isEmpty();
+            // Waiting on the `chat` view before asking for messages made every
+            // open two serialized round trips, for no reason other than reading
+            // the unread count to pick the anchor. The chat list already holds
+            // that row — the user just clicked it — so take the anchor from
+            // there and let both subscriptions fly together. The wait survives
+            // only for opens where the chat is not in a loaded window
+            // (notification click, whatevr:// URI).
+            if (anchor.isEmpty()) {
+                const QVariantMap row = knownChatRow(chatId);
+                if (!row.isEmpty()) {
+                    resolvedAnchor = row.value(QStringLiteral("unread")).toInt() > 0
+                        ? QStringLiteral("unread")
+                        : QStringLiteral("latest");
+                }
+            }
+            m_waitingForSelectedChatItem = anchor.isEmpty() && resolvedAnchor.isEmpty();
             m_selectedChatSub = m_client->subscribe(
                 QStringLiteral("chat"), {{QStringLiteral("chat_id"), chatId}}, m_selectedChatModel);
             connect(m_selectedChatSub, &Subscription::failed, this,
@@ -886,7 +921,12 @@ void ProtocolController::setSelectedChat(const QString &chatId, const QString &a
         return;
     }
 
-    if (anchor.isEmpty()) {
+    // effectiveAnchor is the caller's, or the one derived from the chat-list
+    // row above. Only a genuinely unknown chat leaves it empty, and only then
+    // do we park until the `chat` view answers.
+    const QString effectiveAnchor = anchor.isEmpty() ? resolvedAnchor : anchor;
+
+    if (effectiveAnchor.isEmpty()) {
         delete m_messagesSub;
         m_messagesSub = nullptr;
         m_requestedAnchor.clear();
@@ -902,8 +942,8 @@ void ProtocolController::setSelectedChat(const QString &chatId, const QString &a
     if (!m_conversationVisible) {
         delete m_messagesSub;
         m_messagesSub = nullptr;
-        m_requestedAnchor = anchor;
-        m_effectiveAnchor = anchor;
+        m_requestedAnchor = effectiveAnchor;
+        m_effectiveAnchor = effectiveAnchor;
         m_pendingJumpMessageId = jumpMessageId;
         m_displayedMessagesChatId.clear();
         m_waitingInitialMessages = false;
@@ -912,7 +952,7 @@ void ProtocolController::setSelectedChat(const QString &chatId, const QString &a
         return;
     }
 
-    subscribeMessages(anchor, jumpMessageId);
+    subscribeMessages(effectiveAnchor, jumpMessageId);
 }
 
 void ProtocolController::subscribeMessages(const QString &anchor, const QString &jumpMessageId)
@@ -2177,21 +2217,39 @@ QVariantList ProtocolController::filterMemberRows(const CollectionViewModel *mod
 void ProtocolController::updateChatMembersSubscription()
 {
     // Only a group conversation has a roster, and only a visible one needs it.
-    const bool wanted = m_conversationVisible && m_selectedChatId.endsWith(QLatin1String("@g.us"));
-    const QString target = wanted ? m_selectedChatId : QString();
-    if (target == m_chatMembersChatId) {
-        return;
+    const bool eligible = m_conversationVisible && m_selectedChatId.endsWith(QLatin1String("@g.us"));
+    const QString target = eligible ? m_selectedChatId : QString();
+    const bool retarget = target != m_chatMembersChatId;
+    if (retarget) {
+        // A different conversation: whatever the last one asked for does not
+        // carry over, and its rows must not linger behind the new chat.
+        m_chatMembersChatId = target;
+        m_chatMembersWanted = false;
+        delete m_chatMembersSub;
+        m_chatMembersSub = nullptr;
+        m_chatMembersModel->onReset();
     }
-    m_chatMembersChatId = target;
-    delete m_chatMembersSub;
-    m_chatMembersSub = nullptr;
-    m_chatMembersModel->onReset();
-    if (!target.isEmpty()) {
+    // Deliberately not subscribed on open. Resolving a group's roster is by far
+    // the most expensive thing the daemon does for a conversation — a large
+    // group costs hundreds of milliseconds and ships a row per member — and the
+    // only consumer is the mention picker, which is not on screen yet.
+    // ensureChatMembers() turns it on the moment an `@` token opens.
+    // The model's own reset/count/data signals already bump the revision, so a
+    // retarget has published itself by here and arriving rows will publish
+    // themselves as they land.
+    if (m_chatMembersWanted && !target.isEmpty() && !m_chatMembersSub) {
         m_chatMembersSub = m_client->subscribe(QStringLiteral("group_members"),
                                                {{QStringLiteral("chat_id"), target}}, m_chatMembersModel);
     }
-    ++m_chatMembersRevision;
-    Q_EMIT chatMembersChanged();
+}
+
+void ProtocolController::ensureChatMembers()
+{
+    if (m_chatMembersWanted) {
+        return;
+    }
+    m_chatMembersWanted = true;
+    updateChatMembersSubscription();
 }
 
 void ProtocolController::openContactCard(const QString &jid)
