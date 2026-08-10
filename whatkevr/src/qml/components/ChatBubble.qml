@@ -220,16 +220,16 @@ Item {
     readonly property bool autoDownloadWanted: {
         if (!hasDownloadableMedia)
             return false;
-        const prefs = Whatevr.AppController.appPreferences;
+        const prefs = Whatevr.ProtocolController.appPreferences;
         if (isSticker)
-            return prefs.autoDownloadStickers ?? false;
+            return prefs.auto_download_stickers ?? false;
         if (isImage)
-            return prefs.autoDownloadPhotos ?? false;
+            return prefs.auto_download_photos ?? false;
         if (mediaMimeType.startsWith("video/"))
-            return prefs.autoDownloadVideos ?? false;
+            return prefs.auto_download_videos ?? false;
         if (mediaMimeType.startsWith("audio/"))
-            return prefs.autoDownloadAudio ?? false;
-        return prefs.autoDownloadDocuments ?? false;
+            return prefs.auto_download_audio ?? false;
+        return prefs.auto_download_documents ?? false;
     }
     // Latches once a download is kicked off for the current message so viewport
     // churn doesn't re-fire it. Reset when the delegate is reused (see the
@@ -1478,7 +1478,7 @@ Item {
             anchors.centerIn: parent
             visible: root.isJumboEmoji
             text: root.body
-            font.family: Whatevr.AppController.emojiModel.emojiFontFamily
+            font.family: Whatevr.ProtocolController.emojiModel.emojiFontFamily
             font.pixelSize: root.jumboEmojiPixelSize
             horizontalAlignment: Text.AlignHCenter
             textFormat: Text.PlainText

@@ -13,6 +13,7 @@
 #include <QPointer>
 #include <QProcess>
 #include <QQmlEngine>
+#include <QSet>
 #include <QStandardPaths>
 #include <QStringList>
 #include <QTimer>
@@ -24,11 +25,13 @@
 #include <utility>
 
 #include "collectionviewmodel.h"
+#include "emojimodel.h"
 #include "messagerow.h"
 #include "objectviewmodel.h"
 #include "protocolclient.h"
 #include "protocolmessagemodel.h"
 #include "protocolsearchmodel.h"
+#include "protocolstickercontroller.h"
 #include "richtext.h"
 
 using whatevr::proto::CollectionViewModel;
@@ -348,8 +351,22 @@ ProtocolController::ProtocolController(QString socketPath, QObject *parent)
     // contact card at render time (the D2b2 typing-in-a-chat-row shape) rather
     // than copied into card state.
     m_blocklistModel = new CollectionViewModel(this);
-    connect(m_blocklistModel, &CollectionViewModel::countChanged, this, &ProtocolController::infoCardChanged);
-    connect(m_blocklistModel, &CollectionViewModel::modelReset, this, &ProtocolController::infoCardChanged);
+    const auto blocklistChanged = [this] {
+        Q_EMIT infoCardChanged();
+        Q_EMIT this->blocklistChanged();
+    };
+    connect(m_blocklistModel, &CollectionViewModel::countChanged, this, blocklistChanged);
+    connect(m_blocklistModel, &CollectionViewModel::dataChanged, this, blocklistChanged);
+    connect(m_blocklistModel, &CollectionViewModel::modelReset, this, blocklistChanged);
+
+    m_privacyModel = new ObjectViewModel(this);
+    m_preferencesModel = new ObjectViewModel(this);
+    m_selfModel = new ObjectViewModel(this);
+    connect(m_privacyModel, &ObjectViewModel::valueChanged, this, &ProtocolController::privacySettingsChanged);
+    connect(m_preferencesModel, &ObjectViewModel::valueChanged, this, &ProtocolController::appPreferencesChanged);
+    connect(m_selfModel, &ObjectViewModel::valueChanged, this, &ProtocolController::selfProfileChanged);
+
+    m_stickerController = new ProtocolStickerController(m_client, this);
 
     m_searchResultsModel = new ProtocolSearchModel(this);
 
@@ -444,11 +461,17 @@ ProtocolController::~ProtocolController()
     delete m_groupMembersSub;
     delete m_chatMembersSub;
     delete m_blocklistSub;
+    delete m_privacySub;
+    delete m_preferencesSub;
+    delete m_selfSub;
     m_chatMembersSub = nullptr;
     m_starredSub = nullptr;
     m_infoCardSub = nullptr;
     m_groupMembersSub = nullptr;
     m_blocklistSub = nullptr;
+    m_privacySub = nullptr;
+    m_preferencesSub = nullptr;
+    m_selfSub = nullptr;
     m_connectionSub = nullptr;
     m_loginSub = nullptr;
     m_chatsSub = nullptr;
@@ -505,6 +528,10 @@ void ProtocolController::start()
     m_typingSub = m_client->subscribe(QStringLiteral("typing"), {}, m_typingModel);
     m_syncSub = m_client->subscribe(QStringLiteral("sync"), {}, m_syncModel);
     m_transfersSub = m_client->subscribe(QStringLiteral("transfers"), {}, m_transfersModel);
+    // Own profile is used by the sidebar and preferences drive auto-download,
+    // so both object views remain live for the whole frontend session.
+    m_selfSub = m_client->subscribe(QStringLiteral("self"), {}, m_selfModel);
+    m_preferencesSub = m_client->subscribe(QStringLiteral("preferences"), {}, m_preferencesModel);
     m_client->start();
 }
 
@@ -697,6 +724,7 @@ void ProtocolController::setSelectedChat(const QString &chatId, const QString &a
 {
     const bool selectionChanged = chatId != m_selectedChatId;
     m_selectedChatId = chatId;
+    m_stickerController->setChatId(chatId);
     if (selectionChanged) {
         m_pendingReadWatermark.clear();
         m_lastReadWatermark.clear();
@@ -2045,9 +2073,9 @@ void ProtocolController::openContactCard(const QString &jid)
                     : message;
                 Q_EMIT infoCardChanged();
             });
-    // Block state for the card's action button. Held only while a contact card
-    // is open, like the picker's `chats` subscription.
-    m_blocklistSub = m_client->subscribe(QStringLiteral("blocklist"), {}, m_blocklistModel);
+    // Block state is shared with the settings page; one subscription stays live
+    // while either consumer is visible.
+    updateBlocklistSubscription();
     Q_EMIT infoCardChanged();
     Q_EMIT groupMembersChanged();
 }
@@ -2090,16 +2118,14 @@ void ProtocolController::closeInfoCard()
     }
     delete m_infoCardSub;
     delete m_groupMembersSub;
-    delete m_blocklistSub;
     m_infoCardSub = nullptr;
     m_groupMembersSub = nullptr;
-    m_blocklistSub = nullptr;
     m_infoCardKind.clear();
     m_infoCardSubject.clear();
     m_infoCardError.clear();
     m_infoCardModel->onReset();
     m_groupMembersModel->onReset();
-    m_blocklistModel->onReset();
+    updateBlocklistSubscription();
     Q_EMIT infoCardChanged();
     Q_EMIT groupMembersChanged();
 }
@@ -2113,13 +2139,16 @@ void ProtocolController::setContactBlocked(const QString &jid, bool blocked)
     m_client->request(QStringLiteral("contact.block"),
                       {{QStringLiteral("jid"), jid}, {QStringLiteral("blocked"), blocked}},
                       [this, jid](const QJsonObject &, const ProtocolError &error) {
-        if (!error.isError() || m_infoCardSubject != jid) {
+        if (!error.isError()) {
             return;
         }
-        m_infoCardError = error.message.isEmpty()
-            ? i18nc("@info", "Updating the blocklist failed")
-            : error.message;
-        Q_EMIT infoCardChanged();
+        const QString message = error.message.isEmpty() ? i18nc("@info", "Updating the blocklist failed")
+                                                        : error.message;
+        Q_EMIT settingsActionFailed(message);
+        if (m_infoCardSubject == jid) {
+            m_infoCardError = message;
+            Q_EMIT infoCardChanged();
+        }
     });
 }
 
@@ -2168,6 +2197,175 @@ void ProtocolController::startDirectChat(const QString &jid)
         selectChat(chatId);
         Q_EMIT openChatRequested(chatId);
     });
+}
+
+// --- settings / profile / emoji / stickers (D6) ---------------------------
+
+QVariantMap ProtocolController::privacySettings() const
+{
+    return m_privacyModel->value();
+}
+
+QVariantMap ProtocolController::appPreferences() const
+{
+    return m_preferencesModel->value();
+}
+
+QAbstractItemModel *ProtocolController::blockedContactsModel() const
+{
+    return m_blocklistModel;
+}
+
+QVariantMap ProtocolController::selfProfile() const
+{
+    return m_selfModel->value();
+}
+
+QString ProtocolController::currentUserName() const
+{
+    const QVariantMap profile = selfProfile();
+    const QString name = profile.value(QStringLiteral("push_name")).toString().trimmed();
+    if (!name.isEmpty()) {
+        return name;
+    }
+    const QString phone = profile.value(QStringLiteral("phone")).toString();
+    return phone.isEmpty() ? profile.value(QStringLiteral("jid")).toString().section(QLatin1Char('@'), 0, 0)
+                           : phone;
+}
+
+QString ProtocolController::currentUserAvatarPath() const
+{
+    return selfProfile().value(QStringLiteral("avatar_path")).toString();
+}
+
+QString ProtocolController::currentUserStatusText() const
+{
+    return selfProfile().value(QStringLiteral("about")).toString();
+}
+
+QString ProtocolController::currentUserJid() const
+{
+    return selfProfile().value(QStringLiteral("jid")).toString();
+}
+
+QAbstractItemModel *ProtocolController::emojiModel() const
+{
+    if (!m_emojiModel) {
+        m_emojiModel = new EmojiModel(const_cast<ProtocolController *>(this));
+    }
+    return m_emojiModel;
+}
+
+QObject *ProtocolController::stickers() const
+{
+    return m_stickerController;
+}
+
+void ProtocolController::openPrivacySettings()
+{
+    if (m_privacyPageOpen) {
+        return;
+    }
+    m_privacyPageOpen = true;
+    m_privacySub = m_client->subscribe(QStringLiteral("privacy"), {}, m_privacyModel);
+    connect(m_privacySub, &Subscription::failed, this, [this](const QString &code, const QString &message) {
+        if (code == QLatin1String("io") && m_privacySub) {
+            return;
+        }
+        Q_EMIT settingsActionFailed(message.isEmpty() ? i18nc("@info", "Unable to load privacy settings")
+                                                       : message);
+    });
+}
+
+void ProtocolController::closePrivacySettings()
+{
+    if (!m_privacyPageOpen) {
+        return;
+    }
+    m_privacyPageOpen = false;
+    delete m_privacySub;
+    m_privacySub = nullptr;
+    m_privacyModel->onReset();
+}
+
+void ProtocolController::openBlockedContacts()
+{
+    m_blocklistPageOpen = true;
+    updateBlocklistSubscription();
+}
+
+void ProtocolController::closeBlockedContacts()
+{
+    m_blocklistPageOpen = false;
+    updateBlocklistSubscription();
+}
+
+void ProtocolController::updateBlocklistSubscription()
+{
+    const bool wanted = m_blocklistPageOpen || m_infoCardKind == QLatin1String("contact");
+    if (wanted == (m_blocklistSub != nullptr)) {
+        return;
+    }
+    delete m_blocklistSub;
+    m_blocklistSub = nullptr;
+    m_blocklistModel->onReset();
+    if (wanted) {
+        m_blocklistSub = m_client->subscribe(QStringLiteral("blocklist"), {}, m_blocklistModel);
+    }
+    Q_EMIT blocklistChanged();
+}
+
+void ProtocolController::sendSettingsCommand(const QString &method, const QJsonObject &params,
+                                             const QString &failureText)
+{
+    m_client->request(method, params, [this, failureText](const QJsonObject &, const ProtocolError &error) {
+        if (error.isError()) {
+            Q_EMIT settingsActionFailed(error.message.isEmpty() ? failureText : error.message);
+        }
+    });
+}
+
+void ProtocolController::setPrivacyAudience(const QString &category, const QString &value)
+{
+    if (category.isEmpty() || value.isEmpty()) {
+        return;
+    }
+    sendSettingsCommand(QStringLiteral("privacy.set"),
+                        {{QStringLiteral("category"), category}, {QStringLiteral("value"), value}},
+                        i18nc("@info", "Updating privacy settings failed"));
+}
+
+void ProtocolController::setReadReceipts(bool enabled)
+{
+    sendSettingsCommand(QStringLiteral("privacy.set"),
+                        {{QStringLiteral("category"), QStringLiteral("read_receipts")},
+                         {QStringLiteral("value"), enabled}},
+                        i18nc("@info", "Updating privacy settings failed"));
+}
+
+void ProtocolController::setAppPreference(const QString &key, bool value)
+{
+    static const QSet<QString> keys{
+        QStringLiteral("notifications_enabled"), QStringLiteral("notification_sound"),
+        QStringLiteral("notification_preview"), QStringLiteral("auto_download_photos"),
+        QStringLiteral("auto_download_videos"), QStringLiteral("auto_download_audio"),
+        QStringLiteral("auto_download_documents"), QStringLiteral("auto_download_stickers")};
+    if (!keys.contains(key)) {
+        return;
+    }
+    sendSettingsCommand(QStringLiteral("preferences.set"), {{key, value}},
+                        i18nc("@info", "Updating preferences failed"));
+}
+
+void ProtocolController::setProfileStatus(const QString &text)
+{
+    sendSettingsCommand(QStringLiteral("self.set_about"), {{QStringLiteral("text"), text}},
+                        i18nc("@info", "Changing the profile failed"));
+}
+
+void ProtocolController::logout()
+{
+    sendSettingsCommand(QStringLiteral("account.logout"), {}, i18nc("@info", "Logout failed"));
 }
 
 // --- history-sync strip (D2b2) --------------------------------------------

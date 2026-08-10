@@ -20,6 +20,7 @@
 #include "collectionviewmodel.h"
 #include "protocolcontroller.h"
 #include "protocolmessagemodel.h"
+#include "protocolstickercontroller.h"
 
 using whatevr::proto::CollectionViewModel;
 
@@ -139,6 +140,7 @@ public:
     // views, so the fake just answers with whatever the test seeded.
     void setSearchChats(const QJsonArray &chats) { m_searchChats = chats; }
     void setSearchMessages(const QJsonArray &messages) { m_searchMessages = messages; }
+    void setSearchStickers(const QJsonArray &stickers) { m_searchStickers = stickers; }
     void setCheckPhone(const QJsonObject &result) { m_checkPhone = result; }
     void setEnsureDirectChatId(const QString &chatId) { m_ensureDirectChatId = chatId; }
     void setProfilePicturePath(const QString &path) { m_profilePicturePath = path; }
@@ -342,6 +344,7 @@ private:
             }
             Q_EMIT commandReceived();
         } else if (method == QLatin1String("search.chats") || method == QLatin1String("search.messages")
+                   || method == QLatin1String("search.stickers")
                    || method == QLatin1String("contacts.check_phone")) {
             queryMethods.append(method);
             lastQueryParams.insert(method, params);
@@ -350,6 +353,8 @@ private:
             } else if (method == QLatin1String("search.messages")) {
                 reply(id, QJsonObject{{QStringLiteral("messages"), m_searchMessages},
                                       {QStringLiteral("has_more"), false}});
+            } else if (method == QLatin1String("search.stickers")) {
+                reply(id, QJsonObject{{QStringLiteral("stickers"), m_searchStickers}});
             } else {
                 reply(id, m_checkPhone);
             }
@@ -358,6 +363,23 @@ private:
             lastCommandMethod = method;
             lastCommandParams = params;
             reply(id, QJsonObject{});
+            Q_EMIT commandReceived();
+        } else if (method == QLatin1String("privacy.set")
+                   || method == QLatin1String("preferences.set")
+                   || method == QLatin1String("self.set_about")
+                   || method == QLatin1String("account.logout")
+                   || method == QLatin1String("sticker.favorite")
+                   || method == QLatin1String("sticker.download")
+                   || method == QLatin1String("sticker_pack.install")
+                   || method == QLatin1String("sticker_packs.refresh")
+                   || method == QLatin1String("send.sticker")) {
+            lastCommandMethod = method;
+            lastCommandParams = params;
+            if (method == QLatin1String("send.sticker")) {
+                reply(id, QJsonObject{{QStringLiteral("message_id"), QStringLiteral("sticker-1")}});
+            } else {
+                reply(id, QJsonObject{});
+            }
             Q_EMIT commandReceived();
         } else if (method == QLatin1String("chat.ensure_direct")) {
             lastCommandMethod = method;
@@ -444,6 +466,7 @@ private:
     bool m_rejectMessageCommands = false;
     QJsonArray m_searchChats;
     QJsonArray m_searchMessages;
+    QJsonArray m_searchStickers;
     QJsonObject m_checkPhone;
     QString m_ensureDirectChatId;
     QString m_profilePicturePath;
@@ -1945,6 +1968,180 @@ private Q_SLOTS:
         QCOMPARE(daemon.lastCommandParams.value(QStringLiteral("jid")).toString(), QStringLiteral("911@s"));
         // Opening a result dismisses the search.
         QVERIFY(!ctrl.searchActive());
+    }
+
+    // D6: session-long self/preferences rows and page-scoped privacy/blocklist
+    // rows stay daemon-owned; every mutation is an ack and waits for a view
+    // upsert/remove rather than changing the controller's copy optimistically.
+    void settingsAndProfileUseProtocolViewsAndCommands()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+        daemon.setItem(QStringLiteral("self"),
+                       QJsonObject{{QStringLiteral("id"), QStringLiteral("self")},
+                                   {QStringLiteral("jid"), QStringLiteral("911@s")},
+                                   {QStringLiteral("phone"), QStringLiteral("+91 1")},
+                                   {QStringLiteral("push_name"), QStringLiteral("Harsh")},
+                                   {QStringLiteral("about"), QStringLiteral("hello")},
+                                   {QStringLiteral("avatar_path"), QStringLiteral("/self.jpg")}});
+        daemon.setItem(QStringLiteral("preferences"),
+                       QJsonObject{{QStringLiteral("id"), QStringLiteral("self")},
+                                   {QStringLiteral("notifications_enabled"), true},
+                                   {QStringLiteral("auto_download_photos"), false}});
+        daemon.setItem(QStringLiteral("privacy"),
+                       QJsonObject{{QStringLiteral("id"), QStringLiteral("self")},
+                                   {QStringLiteral("last_seen"), QStringLiteral("contacts")},
+                                   {QStringLiteral("read_receipts"), true}});
+        daemon.setCollection(QStringLiteral("blocklist"),
+                             {QJsonObject{{QStringLiteral("id"), QStringLiteral("a@s")},
+                                          {QStringLiteral("jid"), QStringLiteral("a@s")},
+                                          {QStringLiteral("name"), QStringLiteral("Alice")},
+                                          {QStringLiteral("phone"), QStringLiteral("+91 2")}}});
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+        QTRY_COMPARE(ctrl.currentUserName(), QStringLiteral("Harsh"));
+        QCOMPARE(ctrl.currentUserStatusText(), QStringLiteral("hello"));
+        QCOMPARE(ctrl.currentUserAvatarPath(), QStringLiteral("/self.jpg"));
+        QTRY_COMPARE(ctrl.appPreferences().value(QStringLiteral("notifications_enabled")).toBool(), true);
+        QCOMPARE(daemon.subscribeCountByView.value(QStringLiteral("self")), 1);
+        QCOMPARE(daemon.subscribeCountByView.value(QStringLiteral("preferences")), 1);
+
+        ctrl.openPrivacySettings();
+        QTRY_COMPARE(ctrl.privacySettings().value(QStringLiteral("last_seen")).toString(),
+                     QStringLiteral("contacts"));
+        QCOMPARE(daemon.subscribeCountByView.value(QStringLiteral("privacy")), 1);
+
+        ctrl.openBlockedContacts();
+        QTRY_COMPARE(ctrl.blockedContactsModel()->rowCount(), 1);
+        QCOMPARE(ctrl.blockedContactsModel()->data(ctrl.blockedContactsModel()->index(0, 0),
+                                                   CollectionViewModel::ItemRole).toMap()
+                     .value(QStringLiteral("name")).toString(),
+                 QStringLiteral("Alice"));
+
+        QSignalSpy commandSpy(&daemon, &FakeDaemon::commandReceived);
+        ctrl.setPrivacyAudience(QStringLiteral("last_seen"), QStringLiteral("none"));
+        QVERIFY(commandSpy.wait());
+        QCOMPARE(daemon.lastCommandMethod, QStringLiteral("privacy.set"));
+        QCOMPARE(daemon.lastCommandParams.value(QStringLiteral("category")).toString(),
+                 QStringLiteral("last_seen"));
+        QCOMPARE(daemon.lastCommandParams.value(QStringLiteral("value")).toString(), QStringLiteral("none"));
+        // Ack did not mutate the row; the daemon still owns its current value.
+        QCOMPARE(ctrl.privacySettings().value(QStringLiteral("last_seen")).toString(),
+                 QStringLiteral("contacts"));
+
+        commandSpy.clear();
+        ctrl.setAppPreference(QStringLiteral("auto_download_photos"), true);
+        QVERIFY(commandSpy.wait());
+        QCOMPARE(daemon.lastCommandMethod, QStringLiteral("preferences.set"));
+        QCOMPARE(daemon.lastCommandParams.value(QStringLiteral("auto_download_photos")).toBool(), true);
+        QCOMPARE(ctrl.appPreferences().value(QStringLiteral("auto_download_photos")).toBool(), false);
+
+        commandSpy.clear();
+        ctrl.setProfileStatus(QString());
+        QVERIFY(commandSpy.wait());
+        QCOMPARE(daemon.lastCommandMethod, QStringLiteral("self.set_about"));
+        QVERIFY(daemon.lastCommandParams.contains(QStringLiteral("text")));
+        QCOMPARE(daemon.lastCommandParams.value(QStringLiteral("text")).toString(), QString());
+
+        ctrl.closePrivacySettings();
+        ctrl.closeBlockedContacts();
+        QTRY_VERIFY(daemon.unsubscribedViews.contains(QStringLiteral("privacy")));
+        QVERIFY(daemon.unsubscribedViews.contains(QStringLiteral("blocklist")));
+    }
+
+    // D6: sticker source/pack rows are generic daemon-sorted views, search is a
+    // transient daemon query, and send/install/refresh are wire-only actions.
+    void stickerPickerUsesViewsQueryAndAckOnlyActions()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+        daemon.setActiveChats({chatRow(QStringLiteral("a@s"), QStringLiteral("Alice"), QStringLiteral("1")),
+                               chatRow(QStringLiteral("b@s"), QStringLiteral("Bob"), QStringLiteral("2"))});
+        daemon.setCollection(QStringLiteral("stickers"),
+                             {QJsonObject{{QStringLiteral("id"), QStringLiteral("s1")},
+                                          {QStringLiteral("cache_key"), QStringLiteral("s1")},
+                                          {QStringLiteral("local_path"), QStringLiteral("/s1.webp")},
+                                          {QStringLiteral("is_favorite"), false}}});
+        daemon.setCollection(QStringLiteral("sticker_packs"),
+                             {QJsonObject{{QStringLiteral("id"), QStringLiteral("p1")},
+                                          {QStringLiteral("name"), QStringLiteral("Pack One")},
+                                          {QStringLiteral("installed"), true}}});
+        daemon.setSearchStickers(
+            {QJsonObject{{QStringLiteral("id"), QStringLiteral("s2")},
+                         {QStringLiteral("cache_key"), QStringLiteral("s2")},
+                         {QStringLiteral("local_path"), QStringLiteral("/s2.webp")}},
+             QJsonObject{{QStringLiteral("id"), QStringLiteral("s1")},
+                         {QStringLiteral("cache_key"), QStringLiteral("s1")},
+                         {QStringLiteral("local_path"), QStringLiteral("/s1.webp")}}});
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+        QTRY_VERIFY(!ctrl.chatsLoading());
+        ctrl.selectChat(QStringLiteral("a@s"));
+        auto *stickers = qobject_cast<ProtocolStickerController *>(ctrl.stickers());
+        QVERIFY(stickers);
+        stickers->activate();
+        QTRY_COMPARE(stickers->stickerModel()->rowCount(), 1);
+        QTRY_COMPARE(stickers->packModel()->rowCount(), 1);
+        QCOMPARE(daemon.lastParamsByView.value(QStringLiteral("stickers"))
+                     .value(QStringLiteral("source")).toString(),
+                 QStringLiteral("recent"));
+        QCOMPARE(daemon.lastParamsByView.value(QStringLiteral("stickers"))
+                     .value(QStringLiteral("limit")).toInt(),
+                 200);
+
+        const int stickerSubs = daemon.subscribeCountByView.value(QStringLiteral("stickers"));
+        stickers->beginFavoriteTracking();
+        QTRY_COMPARE(daemon.subscribeCountByView.value(QStringLiteral("stickers")), stickerSubs + 1);
+        stickers->endFavoriteTracking();
+        QTRY_VERIFY(daemon.unsubscribedViews.contains(QStringLiteral("stickers")));
+
+        QSignalSpy querySpy(&daemon, &FakeDaemon::queryReceived);
+        stickers->search(QStringLiteral("wave"));
+        QTRY_COMPARE_WITH_TIMEOUT(querySpy.count(), 1, 1000);
+        QCOMPARE(daemon.lastQueryParams.value(QStringLiteral("search.stickers"))
+                     .value(QStringLiteral("query")).toString(),
+                 QStringLiteral("wave"));
+        QTRY_COMPARE(stickers->stickerModel()->rowCount(), 2);
+        // Query order is preserved exactly; no frontend sort/merge.
+        QCOMPARE(stickers->stickerModel()->data(stickers->stickerModel()->index(0, 0),
+                                                CollectionViewModel::ItemRole).toMap()
+                     .value(QStringLiteral("id")).toString(),
+                 QStringLiteral("s2"));
+
+        QSignalSpy commandSpy(&daemon, &FakeDaemon::commandReceived);
+        stickers->refreshStore();
+        QVERIFY(commandSpy.wait());
+        QCOMPARE(daemon.lastCommandMethod, QStringLiteral("sticker_packs.refresh"));
+
+        commandSpy.clear();
+        stickers->setPackInstalled(QStringLiteral("p1"), false);
+        QVERIFY(commandSpy.wait());
+        QCOMPARE(daemon.lastCommandMethod, QStringLiteral("sticker_pack.install"));
+        QCOMPARE(daemon.lastCommandParams.value(QStringLiteral("installed")).toBool(), false);
+
+        QSignalSpy sentSpy(stickers, &ProtocolStickerController::stickerSent);
+        stickers->sendSticker(QStringLiteral("s1"), QStringLiteral("m1"));
+        QVERIFY(sentSpy.wait());
+        QCOMPARE(daemon.lastCommandMethod, QStringLiteral("send.sticker"));
+        QCOMPARE(daemon.lastCommandParams.value(QStringLiteral("chat_id")).toString(), QStringLiteral("a@s"));
+        QCOMPARE(daemon.lastCommandParams.value(QStringLiteral("cache_key")).toString(), QStringLiteral("s1"));
+        QCOMPARE(daemon.lastCommandParams.value(QStringLiteral("reply_to")).toString(), QStringLiteral("m1"));
+
+        // Alternate navigation routes through setSelectedChat too; sticker sends
+        // must never retain the previous conversation id.
+        ctrl.showMessageInChat(QStringLiteral("b@s"), QStringLiteral("m2"));
+        sentSpy.clear();
+        stickers->sendSticker(QStringLiteral("s2"));
+        QVERIFY(sentSpy.wait());
+        QCOMPARE(daemon.lastCommandParams.value(QStringLiteral("chat_id")).toString(), QStringLiteral("b@s"));
+
+        stickers->deactivate();
+        QCOMPARE(stickers->activeSource(), QStringLiteral("recents"));
+        QCOMPARE(stickers->stickerModel()->rowCount(), 0);
+        QCOMPARE(stickers->packModel()->rowCount(), 0);
+        QTRY_VERIFY(daemon.unsubscribedViews.contains(QStringLiteral("sticker_packs")));
     }
 
 private:

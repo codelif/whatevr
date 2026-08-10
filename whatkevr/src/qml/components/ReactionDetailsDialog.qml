@@ -19,7 +19,7 @@ CenteredDialog {
     // Emoji the reactor list is filtered to; empty shows all reactions.
     property string filterEmoji: ""
 
-    readonly property string emojiFontFamily: Whatevr.AppController.emojiModel.emojiFontFamily
+    readonly property string emojiFontFamily: Whatevr.ProtocolController.emojiModel.emojiFontFamily
 
     // Distinct emoji with counts in first-seen order: [{emoji, count}].
     readonly property var groups: {

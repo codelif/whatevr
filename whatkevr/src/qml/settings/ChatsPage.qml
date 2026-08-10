@@ -10,7 +10,19 @@ SettingsPage {
 
     title: Whatevr.I18n.i18nc("@title settings category", "Chats")
 
-    Component.onCompleted: Whatevr.AppController.refreshAppPreferences()
+    function syncPreferenceBindings() {
+        photosSwitch.checked = Qt.binding(() => Whatevr.ProtocolController.appPreferences.auto_download_photos ?? false)
+        videosSwitch.checked = Qt.binding(() => Whatevr.ProtocolController.appPreferences.auto_download_videos ?? false)
+        audioSwitch.checked = Qt.binding(() => Whatevr.ProtocolController.appPreferences.auto_download_audio ?? false)
+        documentsSwitch.checked = Qt.binding(() => Whatevr.ProtocolController.appPreferences.auto_download_documents ?? false)
+        stickersSwitch.checked = Qt.binding(() => Whatevr.ProtocolController.appPreferences.auto_download_stickers ?? false)
+    }
+
+    Connections {
+        target: Whatevr.ProtocolController
+        function onAppPreferencesChanged() { page.syncPreferenceBindings() }
+        function onSettingsActionFailed() { page.syncPreferenceBindings() }
+    }
 
     // "#rrggbb" for a QML color, so the tint persists as a plain hex string.
     function colorToHex(c) {
@@ -207,47 +219,52 @@ SettingsPage {
 
     FormCard.FormCard {
         FormCard.FormSwitchDelegate {
+            id: photosSwitch
             objectName: "chats.autoDownloadPhotos"
             text: Whatevr.I18n.i18nc("@option:check", "Photos")
             description: Whatevr.I18n.i18nc("@info", "Download incoming photos automatically.")
-            checked: Whatevr.AppController.appPreferences.autoDownloadPhotos ?? false
-            onToggled: Whatevr.AppController.setAppPreference("autoDownloadPhotos", checked)
+            checked: Whatevr.ProtocolController.appPreferences.auto_download_photos ?? false
+            onToggled: Whatevr.ProtocolController.setAppPreference("auto_download_photos", checked)
         }
 
         FormCard.FormDelegateSeparator {}
 
         FormCard.FormSwitchDelegate {
+            id: videosSwitch
             objectName: "chats.autoDownloadVideos"
             text: Whatevr.I18n.i18nc("@option:check", "Videos")
-            checked: Whatevr.AppController.appPreferences.autoDownloadVideos ?? false
-            onToggled: Whatevr.AppController.setAppPreference("autoDownloadVideos", checked)
+            checked: Whatevr.ProtocolController.appPreferences.auto_download_videos ?? false
+            onToggled: Whatevr.ProtocolController.setAppPreference("auto_download_videos", checked)
         }
 
         FormCard.FormDelegateSeparator {}
 
         FormCard.FormSwitchDelegate {
+            id: audioSwitch
             objectName: "chats.autoDownloadAudio"
             text: Whatevr.I18n.i18nc("@option:check", "Voice messages and audio")
-            checked: Whatevr.AppController.appPreferences.autoDownloadAudio ?? false
-            onToggled: Whatevr.AppController.setAppPreference("autoDownloadAudio", checked)
+            checked: Whatevr.ProtocolController.appPreferences.auto_download_audio ?? false
+            onToggled: Whatevr.ProtocolController.setAppPreference("auto_download_audio", checked)
         }
 
         FormCard.FormDelegateSeparator {}
 
         FormCard.FormSwitchDelegate {
+            id: documentsSwitch
             objectName: "chats.autoDownloadDocuments"
             text: Whatevr.I18n.i18nc("@option:check", "Documents")
-            checked: Whatevr.AppController.appPreferences.autoDownloadDocuments ?? false
-            onToggled: Whatevr.AppController.setAppPreference("autoDownloadDocuments", checked)
+            checked: Whatevr.ProtocolController.appPreferences.auto_download_documents ?? false
+            onToggled: Whatevr.ProtocolController.setAppPreference("auto_download_documents", checked)
         }
 
         FormCard.FormDelegateSeparator {}
 
         FormCard.FormSwitchDelegate {
+            id: stickersSwitch
             objectName: "chats.autoDownloadStickers"
             text: Whatevr.I18n.i18nc("@option:check", "Stickers")
-            checked: Whatevr.AppController.appPreferences.autoDownloadStickers ?? false
-            onToggled: Whatevr.AppController.setAppPreference("autoDownloadStickers", checked)
+            checked: Whatevr.ProtocolController.appPreferences.auto_download_stickers ?? false
+            onToggled: Whatevr.ProtocolController.setAppPreference("auto_download_stickers", checked)
         }
     }
 }

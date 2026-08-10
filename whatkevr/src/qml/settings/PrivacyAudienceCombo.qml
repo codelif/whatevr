@@ -3,8 +3,7 @@ import org.kde.kirigamiaddons.formcard as FormCard
 
 import Whatevr as Whatevr
 
-// A privacy-category dropdown bound to AppController.privacySettings[categoryKey]
-// (a PrivacyAudience int). audienceModel is a list of {text, value}.
+// A privacy-category dropdown bound to the protocol privacy object.
 FormCard.FormComboBoxDelegate {
     id: combo
 
@@ -18,13 +17,13 @@ FormCard.FormComboBoxDelegate {
     // PrivacyAudience.CONTACTS_EXCEPT — "My contacts except…". Shown only for
     // display when the account already has this mode (set on the phone); it
     // can't be chosen from here, so selecting it just reverts.
-    readonly property int contactsExcept: 3
+    readonly property string contactsExcept: "contact_blacklist"
 
     // Sync the dropdown to the stored audience. Guard against indexOfValue
     // returning -1 (value not in this combo's model) so the dropdown never
     // blanks out — keep the previous selection instead.
     function syncFromSettings() {
-        const idx = combo.indexOfValue(Whatevr.AppController.privacySettings[combo.categoryKey] ?? 0)
+        const idx = combo.indexOfValue(Whatevr.ProtocolController.privacySettings[combo.categoryKey] ?? "")
         if (idx >= 0)
             combo.currentIndex = idx
     }
@@ -38,12 +37,15 @@ FormCard.FormComboBoxDelegate {
             combo.syncFromSettings()
             return
         }
-        Whatevr.AppController.setPrivacyAudience(combo.categoryKey, combo.currentValue)
+        Whatevr.ProtocolController.setPrivacyAudience(combo.categoryKey, combo.currentValue)
     }
 
     Connections {
-        target: Whatevr.AppController
+        target: Whatevr.ProtocolController
         function onPrivacySettingsChanged() {
+            combo.syncFromSettings();
+        }
+        function onSettingsActionFailed() {
             combo.syncFromSettings();
         }
     }

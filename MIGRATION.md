@@ -111,7 +111,7 @@ Status: `todo` | `doing` | `done` | `blocked` | `needs-decision`
 | D4b | Port message actions: react/edit/revoke/delete/star/pin/forward (context menu, `ReactionDetailsDialog`, `PinnedMessagesBanner`) | done | `ProtocolController` gained the seven `message.*` commands (`sendReaction`/`editMessage`/`revokeMessage`/`deleteMessageForMe`/`setMessageStarred`/`pinMessage`/`unpinMessage`/`forwardMessage`) plus `canEditAt`, all **ack-only**: the gRPC path's optimistic apply-and-rollback (`applyOptimisticEdit`/`Reaction`/`Star`, the pin's cached-message round-trip) is **deleted**, since the reaction pill, star, pin, edited body and revoke tombstone all arrive back as ordinary `messages`/`pinned` upserts (rule 2) — the same simplification D4a got for sends. Failures surface through ported `messageActionFailed`/`messageForwarded` signals (`MessageView`'s `Connections` repointed); a forward batch still reports once for the whole multi-message selection. `PinnedMessagesBanner` now reads the per-chat **`pinned` view** (subscribed/dropped with the displayed conversation, like D3c's `presence`) through `pinnedMessagesCount`/`pinnedMessageAt(i)`/`pinnedMessagesReady` — `PinnedMessagesModel`, its insertion-position ordering and `AppController::loadPinnedMessages` are off the render path. `ForwardChatPickerDialog` holds its **own dialog-scoped `chats` subscription** (`filter:"all"`, `archived:false`) read via `forwardChatTargets(query)` + `forwardTargetsRevision`; this **deleted the last `ChatListFilterModel` proxy from the UI** (the search box is now presentation-side filtering over rows it already has, per PROTOCOL's `group_members` precedent). Net frontend deletion of ordering/caching logic. `just build`, all three Qt suites (`tst_protocolcontroller` 32, `tst_protocolcore` 16, `tst_protocolmessagemodel` 7), `go test -tags sqlite_fts5 ./...`, `scripts/conformance` and `qmllint` (six warnings **removed**, none added) pass; the seven commands + the `pinned` subscribe hand-exercised over a raw socket against a throwaway daemon, plus an offscreen app launch. No PROTOCOL.md change. **Live-account check not performed** — same environment gap as D3c/D4a; **and** the picker now lists active chats only (see Decision log). |
 | D4c | Port `media.download` + the `transfers` progress view + the message image viewer (`ChatBubble` download UI, `ProfilePictureViewer` reuse) | done | `ProtocolController` gained `downloadMessageMedia` (ack-only `media.download`) and a session-long **global `transfers`** subscription, handed to `ProtocolMessageModel::setTransfersSource`. The timeline's two download roles (`mediaDownloading`/`mediaDownloadProgress`, stubbed `false`/`-1` since D3a) now **read through** to that view by message id — a keyed lookup at render time, no copy, no cache, the same compose-two-views shape as D2b2's typing-in-chat-rows and D3c's typing-over-presence; `direction` discriminates so a future upload row cannot light a download spinner. `ChatBubble`'s three `AppController.downloadMessageMedia` call sites (auto-download-on-viewport + the two manual buttons) repointed; the gRPC `m_mediaDownloadingMessageIds`/`m_mediaDownloadReplies` optimistic set is off the render path. Durable failure was already right: `media.download_error` rides the message row (B7b) and the bubble renders it. **The image viewer needed no work** — `ConversationPane`'s `ProfilePictureViewer` lightbox has been fed by the protocol model's `media.path` since D3b. `just build`, all three Qt suites (`tst_protocolcontroller` 33, `tst_protocolcore` 16, `tst_protocolmessagemodel` 8), `go test -tags sqlite_fts5 ./...`, `scripts/conformance` and `qmllint` (clean) pass; `transfers` + `media.download` hand-exercised over a raw socket against a throwaway daemon. No PROTOCOL.md change. **Live-account check not performed** — same environment gap as D3c/D4a/D4b; **and** two reads stay on `AppController` by design (see Decision log). |
 | D5 | Port info dialogs (contact/group/members), starred/pinned pages, unified + in-chat search | done | `ProtocolController` gained four dialog/page-scoped surfaces and their views. **Info card**: `openContactCard`/`openGroupCard`/`closeInfoCard` hold the `contact` **or** `group` object view (one `ObjectViewModel`, whichever the dialog asked for) plus `group_members` and — for a contact — `blocklist`; `ContactInfoDialog` renders the daemon item directly, so its snapshot/restore card cache, its member `ListModel` + `applyMemberFilter` rebuild, its hand-patched avatar merging and its blocklist snapshot are **deleted** (net −180 QML lines): two-phase enrichment is just a second upsert, back-navigation is a re-subscribe, blocked-ness is membership in `blocklist`, member search is presentation-side filtering (`groupMembers(query)` + revision tick). `contact.block`, `media.fetch_profile_picture` (→ `profilePictureReady`) and `chat.ensure_direct` (→ select + `openChatRequested`) ported with it. **Starred page**: `StarredMessagesPage` owns a windowed `starred` subscription for exactly as long as it is on screen (`openStarredMessages`/`closeStarredMessages`, `loadMoreStarredMessages` = `extend older` at the list end) and binds the generic collection, deriving row strings through one pure `messageRowDisplay(item)` helper (shared `util/messagerow` `messageRowPreview`, so `fallback` still covers unknown kinds). **Search**: unified chat-list search and in-chat search both run the daemon *queries* (`search.chats`/`search.messages`/`contacts.check_phone`) into a new `ProtocolSearchModel` (`models/protocolsearchmodel.*`, same roles as the frozen `SearchResultsModel` so `SearchResultDelegate` was a one-line repoint); a generation counter drops superseded replies, the in-chat match cursor stays frontend state and a chat switch ends the search. **Also ported the D4a leftover it unblocked**: the composer's `@`-mention roster is now a `group_members` subscription on the *displayed* conversation (`chatMembers(query)`), deleting MessageComposer's per-chat member cache and its `openGroupInfo` fetch path. **The row's "pinned page" was already done** — whatkevr has no separate pinned page; the `pinned` view landed with D4b's banner. `just build`, all three Qt suites (`tst_protocolcontroller` 40, `tst_protocolcore` 16, `tst_protocolmessagemodel` 8), `go test -tags sqlite_fts5 ./...`, `scripts/conformance` and a qmllint before/after diff (164 warnings before, 164 after — none added) pass; the three queries, the four views and the three commands hand-exercised over a raw socket against a throwaway daemon, plus an offscreen app launch. No PROTOCOL.md change. **Live-account check not performed** — same environment gap as D3c/D4a/D4b/D4c. |
-| D6 | Port settings pages (privacy/prefs/blocklist/profile) + sticker/emoji pickers, incl. `send.sticker` (moved here from D4, see decision log) | todo | |
+| D6 | Port settings pages (privacy/prefs/blocklist/profile) + sticker/emoji pickers, incl. `send.sticker` (moved here from D4, see decision log) | done | `ProtocolController` now owns session-long `self`/`preferences`, page-scoped `privacy`, and shared contact-card/settings `blocklist` views plus ack-only settings/profile/logout commands; all active settings/sidebar/bubble bindings use daemon snake-case rows. Emoji remains frontend presentation state but moved off the gRPC controller. New `ProtocolStickerController` owns picker-scoped `stickers`/`sticker_packs`/`sticker_pack` views, transient daemon-ordered `search.stickers`, bounded download requests, favorite/install/refresh actions, and ack-only `send.sticker` (messages still arrive only through `messages`). PROTOCOL.md adds the approved search query + forced-refresh command; daemon fixes include complete sticker invalidation/unbounded omitted-limit semantics, deterministic search ties, truthful refresh errors, and backgrounded missing-file sticker sends. `just build`, all three Qt suites, full Go tests, conformance, qmllint (161 warnings, down from D5's 164), raw-socket exercise, and offscreen launch pass. No Spirit-checklist bend. |
 | D7 | Remove all gRPC client code + qt6-grpc from whatkevr; whatkevr runs 100% on the new protocol | todo | |
 
 ### Phase E — teardown & flagship polish
@@ -126,6 +126,18 @@ Status: `todo` | `doing` | `done` | `blocked` | `needs-decision`
 _None._
 
 ## D-phase notes
+
+- 2026-08-10 — **D6 live verification gap (environment, unchanged since D3c).**
+  No logged-in WhatsApp session was available, so real privacy/blocklist/about
+  mutations and pack download/install/favorite/send round trips were not watched.
+  Verified instead against an isolated logged-out daemon over the raw socket:
+  `preferences` filled before `ready`, `preferences.set` acked and re-upserted
+  the changed whole object, empty logged-out `self`/`privacy`/`blocklist` and
+  sticker views reached `ready`, `search.stickers` returned its named array,
+  `sticker_packs.refresh` acked, and `send.sticker` reached its handler as
+  `not_logged_in` (not `invalid_params`). The real-account follow-up is to
+  change one privacy value/About, block/unblock a contact, open/search/install a
+  pack, favorite a sticker, and send it while watching the ordinary view upserts.
 
 - 2026-08-10 — **D5 live verification gap (environment, unchanged since D3c) —
   and what it leaves untested.** Still no logged-in WhatsApp session here.
@@ -265,6 +277,33 @@ _None._
   no GUI/gRPC) and drive the real client over a real Unix socket.
 
 ## Decision log
+
+- 2026-08-10 — D6 pre-implementation decisions (approved by Harsh): (1) keep
+  D6 as one step rather than splitting settings/emoji/stickers; if it proves
+  too large to finish safely, the session protocol's mandatory split rule
+  still applies. (2) Add `search.stickers {query, limit}` as a transient query
+  returning `{stickers:[...]}` in daemon order; the legacy picker search cannot
+  be reproduced from a finite `stickers` window without missing matches. (3)
+  Add ack-only `sticker_packs.refresh`; it forces the existing upstream pack
+  refresh and all renderable changes still land through `sticker_packs`.
+
+- 2026-08-10 — D6 implementation readings (no further PROTOCOL.md change):
+  (1) `self` and `preferences` are session-long because the sidebar and message
+  auto-download policy render them outside settings; `privacy` is page-scoped,
+  and one `blocklist` subscription is shared while either the contact card or
+  blocked-contacts page is visible. (2) Emoji recents/search remain QSettings-
+  backed presentation state allowed by rule 1; only ownership moved away from
+  the gRPC controller. (3) Sticker source/pack views live only while the picker
+  is visible; context-menu favorite membership has its own menu-scoped complete
+  favorite view. Search is the approved transient query and preserves the
+  daemon array order; bounded download request bookkeeping is in-flight UI state,
+  not an authoritative sticker cache. (4) Installed pack shortcuts hide
+  uninstalled rows from the already daemon-ordered pack view without reordering
+  or merging it. (5) Porting exposed and fixed daemon correctness issues rather
+  than compensating in the frontend: omitted view limits now mean unbounded,
+  every exposed sticker-row field invalidates correctly, search ties use
+  `cache_key`, forced refresh returns upstream errors, and `send.sticker` is
+  backgrounded because it may fetch a missing file before enqueueing.
 
 - 2026-08-10 — D5 implementation readings (no PROTOCOL.md change; flag if you
   disagree): (1) **Queries are the one place frontend-held result state is

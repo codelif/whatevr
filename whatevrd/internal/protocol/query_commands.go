@@ -87,6 +87,37 @@ func (h commandHandlers) searchMessages(_ *conn, req request) (any, *Error) {
 	return map[string]any{"messages": rows, "has_more": hasMore}, nil
 }
 
+type searchStickersParams struct {
+	Query string `json:"query"`
+	Limit *int   `json:"limit"`
+}
+
+func (h commandHandlers) searchStickers(_ *conn, req request) (any, *Error) {
+	if err := h.requireActions(); err != nil {
+		return nil, err
+	}
+	var p searchStickersParams
+	if err := decodeParams(req.Params, &p); err != nil {
+		return nil, err
+	}
+	query := strings.TrimSpace(p.Query)
+	if query == "" {
+		return nil, errorf(CodeInvalidParams, "query is required")
+	}
+	if p.Limit == nil || *p.Limit <= 0 {
+		return nil, errorf(CodeInvalidParams, "limit must be positive")
+	}
+	stickers, qerr := h.actions.SearchStickers(context.Background(), query, *p.Limit)
+	if perr := mapCommandError(qerr); perr != nil {
+		return nil, perr
+	}
+	rows := make([]stickerItem, 0, len(stickers))
+	for _, sticker := range stickers {
+		rows = append(rows, stickerItemFromStore(sticker))
+	}
+	return map[string]any{"stickers": rows}, nil
+}
+
 func normalizeQueryLimit(limit *int) (int, *Error) {
 	if limit == nil || *limit == 0 {
 		return defaultQueryLimit, nil

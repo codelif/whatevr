@@ -60,27 +60,30 @@ type fakeCommandActions struct {
 	downloadMessage   string
 	fetchJID          string
 
-	privacyCategory  string
-	privacyAudience  string
-	privacyRead      bool
-	prefs            app.AppPreferences
-	setPrefs         app.AppPreferences
-	profileStatus    string
-	blockJID         string
-	blocked          bool
-	favoriteKey      string
-	favoriteMessage  string
-	favorite         bool
-	downloadSticker  string
-	installPackID    string
-	installed        bool
-	searchChatsQuery string
-	searchChatsLimit int
-	searchMsgQuery   string
-	searchMsgChat    string
-	searchMsgLimit   int
-	searchMsgBefore  string
-	checkPhone       string
+	privacyCategory    string
+	privacyAudience    string
+	privacyRead        bool
+	prefs              app.AppPreferences
+	setPrefs           app.AppPreferences
+	profileStatus      string
+	blockJID           string
+	blocked            bool
+	favoriteKey        string
+	favoriteMessage    string
+	favorite           bool
+	downloadSticker    string
+	installPackID      string
+	installed          bool
+	refreshedPacks     bool
+	searchChatsQuery   string
+	searchChatsLimit   int
+	searchMsgQuery     string
+	searchMsgChat      string
+	searchMsgLimit     int
+	searchMsgBefore    string
+	searchStickerQuery string
+	searchStickerLimit int
+	checkPhone         string
 
 	err error
 
@@ -307,6 +310,12 @@ func (f *fakeCommandActions) SetStickerPackInstalled(_ context.Context, packID s
 	f.installPackID, f.installed = packID, installed
 	return appstore.StickerPack{ID: packID, Installed: installed}, f.err
 }
+func (f *fakeCommandActions) RefreshStickerPacks(context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.refreshedPacks = true
+	return f.err
+}
 func (f *fakeCommandActions) SearchChats(_ context.Context, query string, limit int) ([]appstore.Chat, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -320,6 +329,17 @@ func (f *fakeCommandActions) SearchMessages(_ context.Context, query, chatID str
 	return []appstore.MessageSearchResult{
 		{Message: appstore.Message{ID: "m2", ChatID: "chat@s.whatsapp.net", Text: "hello again", TimestampUnix: 20, SortSeq: 2, Direction: appstore.DirectionIncoming, Status: appstore.StatusDelivered}, ChatName: "Alice"},
 		{Message: appstore.Message{ID: "m1", ChatID: "chat@s.whatsapp.net", Text: "hello", TimestampUnix: 10, SortSeq: 1, Direction: appstore.DirectionIncoming, Status: appstore.StatusDelivered}, ChatName: "Alice"},
+	}, f.err
+}
+func (f *fakeCommandActions) SearchStickers(_ context.Context, query string, limit int) ([]appstore.Sticker, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.searchStickerQuery, f.searchStickerLimit = query, limit
+	return []appstore.Sticker{
+		{CacheKey: "s2", LocalPath: "/cache/s2.webp", MimeType: "image/webp", IsAnimated: true,
+			Width: 512, Height: 500, Emojis: "wave hello", AccessibilityText: "Waving",
+			PackID: "p1", IsFavorite: true, LastUsed: 20, RecentWeight: 2.5},
+		{CacheKey: "s1", MimeType: "image/webp", LastUsed: 10},
 	}, f.err
 }
 func (f *fakeCommandActions) CheckPhoneOnWhatsApp(ctx context.Context, phone string) (app.PhoneCheck, error) {
@@ -554,6 +574,72 @@ func TestC3SettingsContactAndStickerCommands(t *testing.T) {
 			t.Fatalf("command failed: %s", tc.line)
 		}
 		tc.want(t)
+	}
+}
+
+func TestD6StickerQueryAndPackRefresh(t *testing.T) {
+	actions := &fakeCommandActions{}
+	socketPath, _ := startCommandTestServer(t, actions)
+	c := dialTest(t, socketPath)
+	c.hello()
+
+	c.sendLine(`{"id":2,"method":"search.stickers","params":{"query":"  wave  ","limit":2}}`)
+	result := c.recv()["result"].(map[string]any)
+	stickers := result["stickers"].([]any)
+	if len(stickers) != 2 {
+		t.Fatalf("search.stickers rows = %v, want 2", stickers)
+	}
+	first := stickers[0].(map[string]any)
+	if first["id"] != "s2" || first["cache_key"] != "s2" || first["local_path"] != "/cache/s2.webp" ||
+		first["mime_type"] != "image/webp" || first["is_animated"] != true ||
+		first["width"] != float64(512) || first["height"] != float64(500) ||
+		first["accessibility_text"] != "Waving" || first["pack_id"] != "p1" ||
+		first["is_favorite"] != true || first["last_used_unix"] != float64(20) ||
+		first["weight"] != 2.5 {
+		t.Fatalf("search.stickers first row = %v", first)
+	}
+	emojis := first["emojis"].([]any)
+	if len(emojis) != 2 || emojis[0] != "wave" || emojis[1] != "hello" {
+		t.Fatalf("search.stickers emojis = %v", emojis)
+	}
+	if second := stickers[1].(map[string]any)["id"]; second != "s1" {
+		t.Fatalf("search.stickers order second id = %v, want s1", second)
+	}
+	if actions.searchStickerQuery != "wave" || actions.searchStickerLimit != 2 {
+		t.Fatalf("search.stickers call = %q/%d", actions.searchStickerQuery, actions.searchStickerLimit)
+	}
+
+	c.sendLine(`{"id":3,"method":"sticker_packs.refresh","params":{}}`)
+	refreshResult := c.recv()["result"].(map[string]any)
+	if len(refreshResult) != 0 {
+		t.Fatalf("sticker_packs.refresh result = %v, want empty ack", refreshResult)
+	}
+	actions.mu.Lock()
+	refreshed := actions.refreshedPacks
+	actions.mu.Unlock()
+	if !refreshed {
+		t.Fatal("sticker_packs.refresh did not reach actions seam")
+	}
+}
+
+func TestD6StickerQueryInvalidParams(t *testing.T) {
+	actions := &fakeCommandActions{}
+	socketPath, _ := startCommandTestServer(t, actions)
+	c := dialTest(t, socketPath)
+	c.hello()
+
+	cases := []string{
+		`{"id":2,"method":"search.stickers","params":{"limit":1}}`,
+		`{"id":3,"method":"search.stickers","params":{"query":"   ","limit":1}}`,
+		`{"id":4,"method":"search.stickers","params":{"query":"wave"}}`,
+		`{"id":5,"method":"search.stickers","params":{"query":"wave","limit":0}}`,
+		`{"id":6,"method":"search.stickers","params":{"query":"wave","limit":-1}}`,
+	}
+	for _, line := range cases {
+		c.sendLine(line)
+		if code := errorCode(t, c.recv()); code != CodeInvalidParams {
+			t.Fatalf("search.stickers invalid params code = %q, want %q for %s", code, CodeInvalidParams, line)
+		}
 	}
 }
 

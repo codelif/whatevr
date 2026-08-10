@@ -74,3 +74,10 @@ func (h commandHandlers) stickerPackInstall(_ *conn, req request) (any, *Error) 
 	_, err := h.actions.SetStickerPackInstalled(context.Background(), packID, *p.Installed)
 	return nil, mapCommandError(err)
 }
+
+func (h commandHandlers) stickerPacksRefresh(ctx context.Context, _ *conn, _ request) (any, *Error) {
+	if err := h.requireActions(); err != nil {
+		return nil, err
+	}
+	return nil, mapCommandError(h.actions.RefreshStickerPacks(ctx))
+}

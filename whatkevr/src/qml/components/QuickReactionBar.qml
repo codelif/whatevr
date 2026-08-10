@@ -23,7 +23,7 @@ Row {
     // The six WhatsApp defaults, with the user's most recent non-default
     // reaction appended so their last-used emoji is always one tap away.
     readonly property var quickEmojis: {
-        const recents = Whatevr.AppController.emojiModel.recentEmoji(8)
+        const recents = Whatevr.ProtocolController.emojiModel.recentEmoji(8)
         for (let i = 0; i < recents.length; ++i) {
             if (bar.baseEmojis.indexOf(recents[i]) === -1) {
                 return bar.baseEmojis.concat([recents[i]])
@@ -31,7 +31,7 @@ Row {
         }
         return bar.baseEmojis
     }
-    readonly property string emojiFontFamily: Whatevr.AppController.emojiModel.emojiFontFamily
+    readonly property string emojiFontFamily: Whatevr.ProtocolController.emojiModel.emojiFontFamily
     readonly property real cellSize: Kirigami.Units.gridUnit * 1.9
 
     // When > 0 the bar stretches to this width and spreads its cells edge to

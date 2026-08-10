@@ -90,6 +90,16 @@ func (c *Client) ListStickerPacks(ctx context.Context, forceRefresh bool) ([]app
 	return c.store.ListStickerPacks(ctx)
 }
 
+// RefreshStickerPacks forces the existing pack-index refresh and announces the
+// resulting store state through the normal sticker-library invalidation path.
+func (c *Client) RefreshStickerPacks(ctx context.Context) error {
+	if err := c.refreshStickerStoreIndex(ctx, true); err != nil {
+		return err
+	}
+	c.publishStickerLibraryChangedDebounced(app.StickerSourceUnspecified)
+	return nil
+}
+
 func (c *Client) GetStickerPack(ctx context.Context, packID string) (appstore.StickerPack, []appstore.Sticker, error) {
 	packID = strings.TrimSpace(packID)
 	if packID == "" {

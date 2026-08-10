@@ -38,7 +38,7 @@ SettingsPage {
             objectName: "emoji.resetRecent"
             text: Whatevr.I18n.i18nc("@action:button", "Reset recently used emoji")
             icon.name: "edit-clear-history-symbolic"
-            onClicked: Whatevr.AppController.emojiModel.resetRecents()
+            onClicked: Whatevr.ProtocolController.emojiModel.resetRecents()
         }
     }
 

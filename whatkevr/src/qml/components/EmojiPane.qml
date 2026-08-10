@@ -23,7 +23,7 @@ Item {
     property bool preparing: false
     property bool animatingGridChange: false
     readonly property real cellSize: Kirigami.Units.gridUnit * 2.2
-    readonly property string emojiFontFamily: Whatevr.AppController.emojiModel.emojiFontFamily
+    readonly property string emojiFontFamily: Whatevr.ProtocolController.emojiModel.emojiFontFamily
 
     // Fitzpatrick skin-tone modifier codepoints (light → dark).
     readonly property int toneModifierLo: 0x1F3FB
@@ -68,7 +68,7 @@ Item {
 
     function applyFilterWithTransition(query, group, categoryIndex) {
         if (pane.animatingGridChange) {
-            Whatevr.AppController.emojiModel.setFilter(query, group)
+            Whatevr.ProtocolController.emojiModel.setFilter(query, group)
             categoryList.currentIndex = categoryIndex
             emojiGrid.positionViewAtBeginning()
             return
@@ -82,8 +82,8 @@ Item {
     }
 
     function viewingRecentCategory() {
-        return Whatevr.AppController.emojiModel.selectedGroup === "Recent"
-               && Whatevr.AppController.emojiModel.searchQuery.length === 0
+        return Whatevr.ProtocolController.emojiModel.selectedGroup === "Recent"
+               && Whatevr.ProtocolController.emojiModel.searchQuery.length === 0
     }
 
     function queueRecentEmoji(emoji) {
@@ -104,7 +104,7 @@ Item {
         const pending = pane.pendingRecentEmoji
         pane.pendingRecentEmoji = []
         for (let i = pending.length - 1; i >= 0; --i) {
-            Whatevr.AppController.addRecentEmoji(pending[i])
+            Whatevr.ProtocolController.emojiModel.addRecentEmoji(pending[i])
         }
     }
 
@@ -118,13 +118,13 @@ Item {
         pane.animatingGridChange = false
         emojiGrid.opacity = 1
         categoryList.currentIndex = -1
-        Whatevr.AppController.emojiModel.setFilter(query, "")
+        Whatevr.ProtocolController.emojiModel.setFilter(query, "")
         emojiGrid.currentIndex = emojiGrid.count > 0 ? 0 : -1
         emojiGrid.positionViewAtBeginning()
     }
 
     function insertFirstVisibleEmoji(event) {
-        const emoji = Whatevr.AppController.emojiModel.emojiAt(0)
+        const emoji = Whatevr.ProtocolController.emojiModel.emojiAt(0)
         if (emoji.length === 0) {
             return
         }
@@ -164,7 +164,7 @@ Item {
     }
 
     function preferredOpenGroup() {
-        const groups = Whatevr.AppController.emojiModel.groups
+        const groups = Whatevr.ProtocolController.emojiModel.groups
         if (groups.length === 0) {
             return ""
         }
@@ -181,8 +181,8 @@ Item {
         pane.hoveredEmojiInfo = ""
 
         const group = pane.preferredOpenGroup()
-        Whatevr.AppController.emojiModel.setFilter("", group)
-        categoryList.currentIndex = Math.max(0, Whatevr.AppController.emojiModel.groups.indexOf(group))
+        Whatevr.ProtocolController.emojiModel.setFilter("", group)
+        categoryList.currentIndex = Math.max(0, Whatevr.ProtocolController.emojiModel.groups.indexOf(group))
         emojiGrid.currentIndex = emojiGrid.count > 0 ? 0 : -1
         emojiGrid.positionViewAtBeginning()
         pane.preparing = false
@@ -205,7 +205,7 @@ Item {
         if (pane.viewingRecentCategory()) {
             pane.queueRecentEmoji(emoji)
         } else {
-            Whatevr.AppController.addRecentEmoji(emoji)
+            Whatevr.ProtocolController.emojiModel.addRecentEmoji(emoji)
         }
         pane.emojiSelected(emoji)
         if (focusTarget) {
@@ -276,7 +276,7 @@ Item {
             interactive: contentWidth > width
             boundsBehavior: Flickable.StopAtBounds
             highlightMoveDuration: 80
-            model: Whatevr.AppController.emojiModel.groups
+            model: Whatevr.ProtocolController.emojiModel.groups
 
             delegate: Item {
                 id: categoryButton
@@ -339,7 +339,7 @@ Item {
 
         Rectangle {
             Layout.fillWidth: true
-            height: 1
+            Layout.preferredHeight: 1
             color: Qt.alpha(Kirigami.Theme.textColor, 0.10)
         }
 
@@ -356,7 +356,7 @@ Item {
             cacheBuffer: pane.cellSize * 8
             boundsBehavior: Flickable.StopAtBounds
             ScrollBar.vertical: DiscreetScrollBar {}
-            model: Whatevr.AppController.emojiModel
+            model: Whatevr.ProtocolController.emojiModel
             cellWidth: Math.max(pane.cellSize, Math.floor(width / Math.max(1, Math.floor(width / pane.cellSize))))
             cellHeight: pane.cellSize
             keyNavigationWraps: true
@@ -381,7 +381,7 @@ Item {
                 }
                 ScriptAction {
                     script: {
-                        Whatevr.AppController.emojiModel.setFilter(gridFadeOut.query, gridFadeOut.group)
+                        Whatevr.ProtocolController.emojiModel.setFilter(gridFadeOut.query, gridFadeOut.group)
                         categoryList.currentIndex = gridFadeOut.categoryIndex
                         emojiGrid.currentIndex = emojiGrid.count > 0 ? 0 : -1
                         emojiGrid.positionViewAtBeginning()
@@ -404,7 +404,7 @@ Item {
                 // the base when the row isn't realised.
                 const item = emojiGrid.currentItem
                 const emoji = item ? item.displayEmoji
-                                   : Whatevr.AppController.emojiModel.emojiAt(emojiGrid.currentIndex)
+                                   : Whatevr.ProtocolController.emojiModel.emojiAt(emojiGrid.currentIndex)
                 if (emoji.length > 0) {
                     pane.selectEmoji(emoji, emojiGrid)
                     event.accepted = true
@@ -413,7 +413,7 @@ Item {
             Keys.onEnterPressed: event => {
                 const item = emojiGrid.currentItem
                 const emoji = item ? item.displayEmoji
-                                   : Whatevr.AppController.emojiModel.emojiAt(emojiGrid.currentIndex)
+                                   : Whatevr.ProtocolController.emojiModel.emojiAt(emojiGrid.currentIndex)
                 if (emoji.length > 0) {
                     pane.selectEmoji(emoji, emojiGrid)
                     event.accepted = true
@@ -548,10 +548,10 @@ Item {
                 visible: emojiGrid.count === 0
                 width: Math.min(parent.width - Kirigami.Units.largeSpacing * 2,
                                 Kirigami.Units.gridUnit * 18)
-                text: Whatevr.AppController.emojiModel.loaded
+                text: Whatevr.ProtocolController.emojiModel.loaded
                       ? Whatevr.I18n.i18nc("@info", "No emoji found")
                       : Whatevr.I18n.i18nc("@info", "Emoji metadata could not be loaded")
-                explanation: Whatevr.AppController.emojiModel.loaded
+                explanation: Whatevr.ProtocolController.emojiModel.loaded
                              ? Whatevr.I18n.i18nc("@info", "Try a shortcode like joy, an emoticon like :-), or another category.")
                              : Whatevr.I18n.i18nc("@info", "The bundled Google Fonts emoji metadata resource is unavailable.")
             }

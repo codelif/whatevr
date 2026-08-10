@@ -52,6 +52,9 @@ Popup {
         }
         if (!preparing && root.mode === "emoji" && newMode !== "emoji") {
             emojiPane.prepareForModeSwitch()
+        } else if (!preparing && root.mode === "stickers" && newMode !== "stickers"
+                   && stickerLoader.item) {
+            stickerLoader.item.deactivate()
         }
         root.mode = newMode
         pickerSettings.lastMode = newMode
@@ -84,7 +87,11 @@ Popup {
     }
 
     onOpened: searchField.forceActiveFocus(Qt.PopupFocusReason)
-    onClosed: emojiPane.reset()
+    onClosed: {
+        emojiPane.reset()
+        if (stickerLoader.item)
+            stickerLoader.item.deactivate()
+    }
 
     Shortcut {
         sequences: ["Ctrl+Tab"]

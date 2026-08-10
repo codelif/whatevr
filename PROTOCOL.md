@@ -283,6 +283,7 @@ views.
 | `sticker.favorite` | `cache_key` or `message_id`, `favorite` | `{}` |
 | `sticker.download` | `cache_key` | `{}` — lands via `stickers`/`sticker_pack` upsert |
 | `sticker_pack.install` | `pack_id`, `installed` | `{}` |
+| `sticker_packs.refresh` | — | `{}` — forces a store refresh; results land via `sticker_packs` upserts/removes |
 
 ## Queries
 
@@ -297,6 +298,7 @@ whole result inside the one response `result` object, under a named key:
 | --- | --- | --- |
 | `search.chats` | `query`, `limit` | `{chats: [chat row, …]}` |
 | `search.messages` | `query`, optional `chat_id`, `limit`, `before_message_id` cursor | `{messages: […], has_more}` — each message row carries `chat_name`; `has_more` drives the `before_message_id` keyset cursor |
+| `search.stickers` | `query`, `limit` | `{stickers: […]}` — daemon-ordered sticker rows |
 | `contacts.check_phone` | `phone` | `{registered, jid, display_name, is_business, phone}` (normalized `phone`) |
 
 ## Messages on the wire
