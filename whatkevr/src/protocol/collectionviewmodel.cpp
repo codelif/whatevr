@@ -48,7 +48,7 @@ QHash<int, QByteArray> CollectionViewModel::roleNames() const
 QVariantMap CollectionViewModel::itemById(const QString &id) const
 {
     const int row = m_indexById.value(id, -1);
-    if (row < 0) {
+    if (row < 0 || row >= m_items.size()) {
         return {};
     }
     return m_items.at(row).data;
@@ -73,6 +73,11 @@ int CollectionViewModel::lowerBound(const Item &item) const
     return static_cast<int>(it - m_items.cbegin());
 }
 
+// Re-key rows from `fromRow` onward after an insert/remove/move shifted them.
+// This must run *before* the matching endInsertRows/endRemoveRows/endMoveRows:
+// those emit synchronously, and an observer that reacts by calling itemById()
+// (ProtocolMessageModel does, for every transfer change) would otherwise read
+// this map while it still describes the pre-mutation list.
 void CollectionViewModel::rebuildIndex(int fromRow)
 {
     for (int row = fromRow; row < m_items.size(); ++row) {
@@ -99,8 +104,8 @@ void CollectionViewModel::onUpsert(const QString &sort, const QJsonObject &item)
         const int row = lowerBound(next);
         beginInsertRows(QModelIndex(), row, row);
         m_items.insert(row, next);
-        endInsertRows();
         rebuildIndex(row);
+        endInsertRows();
         Q_EMIT countChanged();
         return;
     }
@@ -135,8 +140,8 @@ void CollectionViewModel::onUpsert(const QString &sort, const QJsonObject &item)
     beginMoveRows(QModelIndex(), existing, existing, QModelIndex(), moveTo);
     m_items.removeAt(existing);
     m_items.insert(dest, next);
-    endMoveRows();
     rebuildIndex(std::min(existing, dest));
+    endMoveRows();
     const QModelIndex idx = index(dest);
     Q_EMIT dataChanged(idx, idx, {ItemRole, SortRole});
 }
@@ -149,9 +154,9 @@ void CollectionViewModel::onRemove(const QString &id)
     }
     beginRemoveRows(QModelIndex(), row, row);
     m_items.removeAt(row);
-    endRemoveRows();
     m_indexById.remove(id);
     rebuildIndex(row);
+    endRemoveRows();
     Q_EMIT countChanged();
 }
 
