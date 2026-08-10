@@ -57,6 +57,12 @@ constexpr int kMessagePageSize = 80;
 constexpr int kMarkReadDebounceMs = 120;
 constexpr int kPhoneHistoryTimeoutMs = 45'000;
 constexpr int kSearchDebounceMs = 180;
+// The chat list is windowed (DN6). An unbounded `chats` subscribe made the
+// daemon serialise the whole roster — measured at 917 rows / 326 KB / ~30 ms
+// on a real account — once at startup and again on every filter switch, all to
+// paint the dozen rows that fit on screen. One page comfortably overfills any
+// sidebar; the rest arrives by `extend` as the list scrolls.
+constexpr int kChatPageSize = 24;
 // Starred rows are a windowed view like any other collection; the page extends
 // as it scrolls instead of asking the daemon for every star at once.
 constexpr int kStarredPageSize = 50;
@@ -227,6 +233,7 @@ ProtocolController::ProtocolController(QString socketPath, QObject *parent)
     // its row count for the section header.
     m_archivedModel = new CollectionViewModel(this);
     connect(m_archivedModel, &CollectionViewModel::countChanged, this, &ProtocolController::archivedChanged);
+    connect(m_archivedModel, &CollectionViewModel::readyChanged, this, &ProtocolController::archivedChanged);
 
     const auto selectionSourceChanged = [this] {
         if (!m_selectedChatId.isEmpty()) {
@@ -492,6 +499,8 @@ ProtocolController::~ProtocolController()
     m_loginSub = nullptr;
     m_chatsSub = nullptr;
     m_archivedSub = nullptr;
+    m_chatsExtendPending = false;
+    m_archivedExtendPending = false;
     m_typingSub = nullptr;
     m_syncSub = nullptr;
     m_messagesSub = nullptr;
@@ -574,6 +583,8 @@ void ProtocolController::subscribeChats()
     delete m_archivedSub;
     m_chatsSub = nullptr;
     m_archivedSub = nullptr;
+    m_chatsExtendPending = false;
+    m_archivedExtendPending = false;
     m_chatsModel->onReset();
     m_archivedModel->onReset();
 
@@ -582,12 +593,76 @@ void ProtocolController::subscribeChats()
     // way the active list does.
     m_chatsSub = m_client->subscribe(
         QStringLiteral("chats"),
-        {{QStringLiteral("filter"), chatFilterName()}, {QStringLiteral("archived"), false}},
+        {{QStringLiteral("filter"), chatFilterName()},
+         {QStringLiteral("archived"), false},
+         {QStringLiteral("limit"), kChatPageSize}},
         m_chatsModel);
     m_archivedSub = m_client->subscribe(
         QStringLiteral("chats"),
-        {{QStringLiteral("filter"), chatFilterName()}, {QStringLiteral("archived"), true}},
+        {{QStringLiteral("filter"), chatFilterName()},
+         {QStringLiteral("archived"), true},
+         {QStringLiteral("limit"), kChatPageSize}},
         m_archivedModel);
+    // A rejected extend must not leave the list stuck refusing to ask again.
+    connect(m_chatsSub, &Subscription::extendFailed, this,
+            [this](const QString &code, const QString &message) {
+                qWarning() << "protocol: chats extend failed:" << code << message;
+                m_chatsExtendPending = false;
+                Q_EMIT chatsChanged();
+            });
+    connect(m_archivedSub, &Subscription::extendFailed, this,
+            [this](const QString &code, const QString &message) {
+                qWarning() << "protocol: archived chats extend failed:" << code << message;
+                m_archivedExtendPending = false;
+                Q_EMIT archivedChanged();
+            });
+    // `ready` covers the latest subscribe/extend, so it is what clears the
+    // in-flight guard and lets the next page be requested.
+    connect(m_chatsModel, &CollectionViewModel::readyReceived, this, [this](bool) {
+        m_chatsExtendPending = false;
+        ensureSelectedChatLoaded();
+    });
+    connect(m_archivedModel, &CollectionViewModel::readyReceived, this, [this](bool) {
+        m_archivedExtendPending = false;
+        ensureSelectedChatLoaded();
+    });
+}
+
+// A windowed chat list can be asked to open a chat it has not loaded: a search
+// hit, a notification, a whatevr:// link. That row is where the header name and
+// avatar come from (selectedChatItem), so widen the window until the daemon has
+// handed it over, one page per `ready`, stopping at exhaustion. This is window
+// management, not a frontend cache — but the honest fix is a per-chat `chat`
+// object view, which PROTOCOL.md does not have; see MIGRATION.md DN6.
+void ProtocolController::ensureSelectedChatLoaded()
+{
+    if (m_selectedChatId.isEmpty() || !selectedChatItem().isEmpty()) {
+        return;
+    }
+    loadMoreChats();
+    loadMoreArchivedChats();
+}
+
+// Both chat lists are prefix windows, so they only grow away from the top of
+// the list — PROTOCOL.md's `older` direction. The guards mirror the starred
+// page: never extend before the first fill, past exhaustion, or twice over.
+void ProtocolController::loadMoreChats()
+{
+    if (!m_chatsSub || m_chatsExtendPending || !m_chatsModel->isReady() || m_chatsModel->isExhausted()) {
+        return;
+    }
+    m_chatsExtendPending = true;
+    m_chatsSub->extend(kChatPageSize, QStringLiteral("older"));
+}
+
+void ProtocolController::loadMoreArchivedChats()
+{
+    if (!m_archivedSub || m_archivedExtendPending || !m_archivedModel->isReady()
+        || m_archivedModel->isExhausted()) {
+        return;
+    }
+    m_archivedExtendPending = true;
+    m_archivedSub->extend(kChatPageSize, QStringLiteral("older"));
 }
 
 QAbstractItemModel *ProtocolController::chatsModel() const
@@ -603,6 +678,11 @@ QAbstractItemModel *ProtocolController::archivedChatsModel() const
 int ProtocolController::archivedCount() const
 {
     return m_archivedModel->count();
+}
+
+bool ProtocolController::archivedExhausted() const
+{
+    return m_archivedSub == nullptr || m_archivedModel->isExhausted();
 }
 
 bool ProtocolController::chatTyping(const QString &chatId) const
@@ -639,6 +719,11 @@ bool ProtocolController::chatsLoading() const
 bool ProtocolController::chatsEmpty() const
 {
     return m_chatsModel->count() == 0;
+}
+
+bool ProtocolController::chatsExhausted() const
+{
+    return m_chatsSub == nullptr || m_chatsModel->isExhausted();
 }
 
 void ProtocolController::setChatPinned(const QString &chatId, bool pinned)
@@ -762,6 +847,7 @@ void ProtocolController::setSelectedChat(const QString &chatId, const QString &a
     updatePresenceSubscription();
     updatePinnedSubscription();
     updateChatMembersSubscription();
+    ensureSelectedChatLoaded();
 
     if (chatId.isEmpty()) {
         delete m_messagesSub;
