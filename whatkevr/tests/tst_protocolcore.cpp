@@ -316,6 +316,49 @@ private Q_SLOTS:
         QVERIFY(!model.isReady());
     }
 
+    // An observer that reacts to a row signal by looking rows up by id must see
+    // an index that already matches the list. ProtocolMessageModel does exactly
+    // this for the `transfers` view, and before the index was repaired inside
+    // the begin/end pair the last removal (a finished download) left it
+    // pointing at a row that no longer existed — QList::at aborted.
+    void idIndexIsConsistentInsideRowSignals()
+    {
+        CollectionViewModel model;
+        QStringList mismatches;
+        const auto audit = [&] {
+            for (int row = 0; row < model.rowCount(); ++row) {
+                const QString id = model.data(model.index(row), CollectionViewModel::IdRole).toString();
+                if (model.indexOfId(id) != row) {
+                    mismatches << QStringLiteral("%1@%2").arg(id).arg(row);
+                }
+            }
+            // Ids the index still knows about must be addressable in the list.
+            for (const QString &id : {QStringLiteral("1"), QStringLiteral("2"), QStringLiteral("3")}) {
+                const int row = model.indexOfId(id);
+                if (row >= 0 && row >= model.rowCount()) {
+                    mismatches << QStringLiteral("stale:%1->%2").arg(id).arg(row);
+                }
+            }
+        };
+        connect(&model, &QAbstractItemModel::rowsInserted, this, audit);
+        connect(&model, &QAbstractItemModel::rowsRemoved, this, audit);
+        connect(&model, &QAbstractItemModel::rowsMoved, this, audit);
+
+        model.onUpsert(QStringLiteral("b"), item(QStringLiteral("2"), QStringLiteral("Bob")));
+        model.onUpsert(QStringLiteral("a"), item(QStringLiteral("1"), QStringLiteral("Ann")));
+        model.onUpsert(QStringLiteral("c"), item(QStringLiteral("3"), QStringLiteral("Cid")));
+        // Re-sort the first row to the end: the move must re-key before it emits.
+        model.onUpsert(QStringLiteral("z"), item(QStringLiteral("1"), QStringLiteral("Ann")));
+        model.onRemove(QStringLiteral("2"));
+        model.onRemove(QStringLiteral("3"));
+        // The final removal empties the list — the crashing case.
+        model.onRemove(QStringLiteral("1"));
+
+        QCOMPARE(mismatches, QStringList());
+        QCOMPARE(model.count(), 0);
+        QCOMPARE(model.itemById(QStringLiteral("1")), QVariantMap());
+    }
+
     void readyWithoutFlagIsNotExhausted()
     {
         CollectionViewModel model;
