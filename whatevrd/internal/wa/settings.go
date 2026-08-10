@@ -222,7 +222,9 @@ func (c *Client) SetProfileStatus(ctx context.Context, statusText string) error 
 	if client == nil || !client.IsLoggedIn() {
 		return errNotConnected
 	}
-	if err := client.SetStatusMessage(ctx, statusText); err != nil {
+	// The status is now a struct so it can carry an emoji and an expiry; we
+	// only ever set the text, and a zero Duration means it never expires.
+	if err := client.SetStatusMessage(ctx, types.SetStatusInput{Text: &statusText}); err != nil {
 		return err
 	}
 	c.daemon.PublishSelfProfileChanged()
