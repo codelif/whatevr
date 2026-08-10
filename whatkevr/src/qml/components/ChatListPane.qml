@@ -203,6 +203,36 @@ Kirigami.Page {
                 cacheBuffer: Math.max(0, Math.round(height * 0.3))
                 ScrollBar.vertical: DiscreetScrollBar {}
 
+                // How much unseen content to keep below the viewport. Also what
+                // makes the list self-fill on a short window: each page that
+                // lands grows contentHeight, which re-runs the check until
+                // there is a screenful in reserve (or the daemon is exhausted).
+                readonly property real prefetchMargin: Math.max(height, Kirigami.Units.gridUnit * 10)
+
+                // The `chats` views are windowed (DN6), so the list asks the
+                // daemon for the next page as the bottom comes into reach.
+                // Ordering and membership stay entirely daemon-side — this only
+                // decides *when* to widen the window. The archived section
+                // lives in this list's footer, so the same trigger feeds it
+                // once it is expanded.
+                function maybeLoadMore() {
+                    if (contentHeight <= 0) {
+                        return
+                    }
+                    if (contentY + height < contentHeight - prefetchMargin) {
+                        return
+                    }
+                    Whatevr.ProtocolController.loadMoreChats()
+                    if (archivedExpanded) {
+                        Whatevr.ProtocolController.loadMoreArchivedChats()
+                    }
+                }
+
+                onContentYChanged: maybeLoadMore()
+                onContentHeightChanged: maybeLoadMore()
+                onArchivedExpandedChanged: if (archivedExpanded) Whatevr.ProtocolController.loadMoreArchivedChats()
+                Component.onCompleted: Qt.callLater(maybeLoadMore)
+
                 // One row shape for both the active list and the archived footer
                 // section. The generic collection model exposes the whole daemon
                 // `chats` row as `model.item` (id/name/preview/unread/pinned/…);
@@ -301,17 +331,31 @@ Kirigami.Page {
 
                             Label {
                                 Layout.fillWidth: true
-                                text: Whatevr.I18n.i18nc("@title:group chat list section",
-                                                         "Archived (%1)",
-                                                         Whatevr.ProtocolController.archivedCount)
+                                // archivedCount is the loaded window, not the
+                                // total: while the daemon still has archived
+                                // chats past it, say so rather than state a
+                                // number that is quietly wrong.
+                                text: Whatevr.ProtocolController.archivedExhausted
+                                      ? Whatevr.I18n.i18nc("@title:group chat list section",
+                                                           "Archived (%1)",
+                                                           Whatevr.ProtocolController.archivedCount)
+                                      : Whatevr.I18n.i18nc("@title:group chat list section, more are still loading",
+                                                           "Archived (%1+)",
+                                                           Whatevr.ProtocolController.archivedCount)
                                 elide: Text.ElideRight
                                 font.bold: true
                             }
                         }
                     }
 
+                    // A Repeater builds every delegate it is given, so binding
+                    // the model unconditionally instantiated a full chat row for
+                    // each archived chat at startup — all of them collapsed to
+                    // zero height behind a section nobody had opened yet.
                     Repeater {
-                        model: Whatevr.ProtocolController.archivedChatsModel
+                        model: chatList.archivedExpanded
+                               ? Whatevr.ProtocolController.archivedChatsModel
+                               : null
                         delegate: chatRowDelegate
                     }
                 }

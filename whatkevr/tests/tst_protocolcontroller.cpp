@@ -114,6 +114,14 @@ public:
             sendUpsert(sub, item, sort);
         }
     }
+    // Both chat lists are the same view, so m_subByView only remembers the
+    // archived one; the active subscription is tracked separately.
+    void pushActiveChat(const QJsonObject &item)
+    {
+        if (m_activeChatsSub >= 0) {
+            sendUpsert(m_activeChatsSub, item, item.value(QStringLiteral("sort")).toString());
+        }
+    }
     void readyMessages(bool exhausted)
     {
         const int sub = m_subByView.value(QStringLiteral("messages"), -1);
@@ -252,7 +260,11 @@ private:
             QList<QJsonObject> rows;
             bool hasRows = false;
             if (view == QLatin1String("chats")) {
-                rows = params.value(QStringLiteral("archived")).toBool() ? m_chatsArchived : m_chatsActive;
+                const bool archived = params.value(QStringLiteral("archived")).toBool();
+                if (!archived) {
+                    m_activeChatsSub = sub;
+                }
+                rows = archived ? m_chatsArchived : m_chatsActive;
                 hasRows = true;
             } else if (view == QLatin1String("messages")) {
                 rows = m_messages;
@@ -470,6 +482,7 @@ private:
     bool m_holdMessagesReady = false;
     bool m_holdExtendReady = false;
     bool m_heldExtendExhausted = false;
+    int m_activeChatsSub = -1;
     int m_heldExtendSub = -1;
     bool m_rejectNextExtend = false;
     bool m_rejectNextSend = false;
@@ -691,6 +704,99 @@ private Q_SLOTS:
         QTRY_COMPARE(daemon.chatsSubscribeCount, 4);
         QCOMPARE(daemon.lastChatsParams.value(QStringLiteral("filter")).toString(), QStringLiteral("groups"));
         QCOMPARE(ctrl.chatFilter(), 2);
+    }
+
+    // DN6: the chat list is a *window*, not the whole roster. Both `chats`
+    // subscriptions carry a `limit`, and the next page is asked for with an
+    // `older` extend — one at a time, and never past the daemon's exhaustion.
+    void chatListIsWindowedAndExtendsOnDemand()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+        daemon.setActiveChats(
+            {chatRow(QStringLiteral("a@s"), QStringLiteral("Alice"), QStringLiteral("1-000"))});
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+        QTRY_COMPARE(daemon.chatsSubscribeCount, 2);
+        // Both the active and the archived subscribe are windowed. lastChatsParams
+        // holds the archived one (subscribed second); the limit is what matters.
+        const int limit = daemon.lastChatsParams.value(QStringLiteral("limit")).toInt();
+        QVERIFY(limit > 0);
+        QVERIFY(daemon.lastChatsParams.value(QStringLiteral("archived")).toBool());
+
+        auto *model = qobject_cast<CollectionViewModel *>(ctrl.chatsModel());
+        QVERIFY(model);
+        QTRY_VERIFY(model->isReady());
+        // The fake daemon's `ready` carries no exhausted flag, so the window is
+        // treated as still growable — a client must never stop extending on an
+        // unknown exhaustion.
+        QVERIFY(!ctrl.chatsExhausted());
+
+        ctrl.loadMoreChats();
+        QTRY_COMPARE(daemon.extendCount, 1);
+        QCOMPARE(daemon.lastExtendParams.value(QStringLiteral("count")).toInt(), limit);
+        QCOMPARE(daemon.lastExtendParams.value(QStringLiteral("direction")).toString(),
+                 QStringLiteral("older"));
+
+        // A second ask while the first is still in flight is dropped: the list
+        // scrolls continuously and must not pile pages onto the daemon.
+        daemon.setHoldExtendReady(true);
+        ctrl.loadMoreChats();
+        QTRY_COMPARE(daemon.extendCount, 2);
+        ctrl.loadMoreChats();
+        // The socket is asynchronous, so "no extend was sent" has to be observed
+        // rather than merely not-yet-arrived: queue a command behind it and wait
+        // for that. One connection, so the daemon sees them in order.
+        ctrl.setMessageStarred(QStringLiteral("m1"), true);
+        QTRY_VERIFY(daemon.messageCommands.contains(QStringLiteral("message.star")));
+        QCOMPARE(daemon.extendCount, 2);
+
+        // Once the daemon says the window is exhausted, extending stops for good.
+        daemon.setHoldExtendReady(false);
+        daemon.releaseExtendReady();
+        daemon.setNextExtendExhausted(true);
+        // Releasing clears the in-flight guard asynchronously, so keep asking
+        // until the next page actually goes out.
+        const int held = daemon.extendCount;
+        QTRY_VERIFY([&] {
+            ctrl.loadMoreChats();
+            return daemon.extendCount > held;
+        }());
+        QTRY_VERIFY(ctrl.chatsExhausted());
+        const int settled = daemon.extendCount;
+        ctrl.loadMoreChats();
+        QCOMPARE(daemon.extendCount, settled);
+    }
+
+    // DN6 follow-on: windowing the list means a chat can be opened before its
+    // row has been loaded (search hit, notification, whatevr:// link). The
+    // window is widened until the daemon hands the row over, so the header
+    // stops showing a bare jid.
+    void selectingAnUnloadedChatWidensTheWindow()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+        daemon.setActiveChats(
+            {chatRow(QStringLiteral("a@s"), QStringLiteral("Alice"), QStringLiteral("1-000"))});
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+        QTRY_COMPARE(daemon.chatsSubscribeCount, 2);
+        auto *model = qobject_cast<CollectionViewModel *>(ctrl.chatsModel());
+        QVERIFY(model);
+        QTRY_COMPARE(model->count(), 1);
+
+        // "deep@s" is past the loaded window: the name falls back to the jid.
+        ctrl.selectChat(QStringLiteral("deep@s"));
+        QCOMPARE(ctrl.selectedChatName(), QStringLiteral("deep"));
+        QTRY_VERIFY(daemon.extendCount >= 1);
+
+        // The daemon answers the widened window with the missing row; the header
+        // picks it up without the frontend having cached anything.
+        daemon.pushActiveChat(chatRow(QStringLiteral("deep@s"), QStringLiteral("Deep Chat"),
+                                      QStringLiteral("9-000")));
+        QTRY_COMPARE(ctrl.selectedChatName(), QStringLiteral("Deep Chat"));
     }
 
     // A list command maps to the daemon `chat.*` command (ack only); no local

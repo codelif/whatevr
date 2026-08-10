@@ -81,11 +81,18 @@ class ProtocolController final : public QObject
     Q_PROPERTY(int chatFilter READ chatFilter WRITE setChatFilter NOTIFY chatFilterChanged FINAL)
     Q_PROPERTY(bool chatsLoading READ chatsLoading NOTIFY chatsChanged FINAL)
     Q_PROPERTY(bool chatsEmpty READ chatsEmpty NOTIFY chatsChanged FINAL)
+    // The list is windowed (DN6): the sidebar extends it as it scrolls instead
+    // of asking the daemon for every chat at once. Exhausted means the daemon
+    // has nothing past the current window.
+    Q_PROPERTY(bool chatsExhausted READ chatsExhausted NOTIFY chatsChanged FINAL)
 
     // Archived chats (D2b2): a second `chats` subscription (`archived: true`) for
     // the collapsible archived section; honours the same filter as the main list.
     Q_PROPERTY(QAbstractItemModel *archivedChatsModel READ archivedChatsModel CONSTANT FINAL)
     Q_PROPERTY(int archivedCount READ archivedCount NOTIFY archivedChanged FINAL)
+    // Windowed like the active list, so archivedCount is the loaded window, not
+    // the true total; the header renders "N+" while more remain.
+    Q_PROPERTY(bool archivedExhausted READ archivedExhausted NOTIFY archivedChanged FINAL)
 
     // Typing overlay (D2b2): the global `typing` view, keyed by chat_id. The
     // delegate reads chatTyping(chatId); typingRevision bumps on every change so
@@ -270,9 +277,14 @@ public:
     void setChatFilter(int filter);
     [[nodiscard]] bool chatsLoading() const;
     [[nodiscard]] bool chatsEmpty() const;
+    [[nodiscard]] bool chatsExhausted() const;
+    Q_INVOKABLE void loadMoreChats();
+    void ensureSelectedChatLoaded();
 
     [[nodiscard]] QAbstractItemModel *archivedChatsModel() const;
     [[nodiscard]] int archivedCount() const;
+    [[nodiscard]] bool archivedExhausted() const;
+    Q_INVOKABLE void loadMoreArchivedChats();
 
     [[nodiscard]] int typingRevision() const { return m_typingRevision; }
     [[nodiscard]] Q_INVOKABLE bool chatTyping(const QString &chatId) const;
@@ -735,6 +747,10 @@ private:
     bool m_unreadAnchorResolving = false;
     bool m_waitingInitialMessages = false;
     bool m_refillingAfterReset = false;
+    // One chat-list `extend` in flight at a time; cleared by the view's `ready`
+    // (or by a rejected extend) so scrolling cannot pile requests up.
+    bool m_chatsExtendPending = false;
+    bool m_archivedExtendPending = false;
     bool m_olderMessagesLoading = false;
     bool m_newerMessagesLoading = false;
     bool m_canLoadOlderMessages = false;

@@ -45,6 +45,13 @@ Item {
 
     // How close (in rows) to the newest message we must be to keep following it.
     property int followRowThreshold: 2
+    // …and how close in pixels. Exact bottom (`atYEnd`, or the last row being
+    // the bottom-most visible one) is too strict to hold on to: a row appended
+    // at the live edge, a delegate settling from its estimated height to its
+    // real one, or a sub-pixel contentHeight revision each leave the viewport a
+    // hair short of the bottom, and following would stop for good. Anything
+    // within this band still counts as parked at the newest message.
+    readonly property real followPixelSlack: Kirigami.Units.gridUnit
     // Start fetching older history once the topmost visible row is within this
     // many rows of the oldest loaded message, so the next page usually arrives
     // before the user reaches the edge.
@@ -546,6 +553,44 @@ Item {
         atNewest = true
     }
 
+    // Gap between the bottom of the content and the bottom of the viewport.
+    // Zero (or negative, mid-overshoot) means parked at the newest message.
+    function distanceFromBottom() {
+        return list.contentHeight - list.height - list.contentY
+    }
+
+    // list.count trails the model inside a rowsInserted handler: QQuickListView
+    // and our Connections both observe the same signal and the handler order is
+    // an implementation detail. Ask the model itself so an append is never
+    // misread as a prepend.
+    function modelRowCount() {
+        return list.model && typeof list.model.rowCount === "function"
+               ? list.model.rowCount()
+               : list.count
+    }
+
+    // Put a row in the middle of the viewport. positionViewAtIndex(Center)
+    // alone is not enough: while the target row is still unmaterialised the
+    // view centres against an *estimated* content height, so the row lands
+    // visibly off centre once its real delegate exists. Correcting contentY
+    // against the materialised item afterwards is what makes a jump land
+    // centred. Rows near either end cannot be centred at all — the clamp
+    // leaves them as close as the bounds allow, which is the "when possible".
+    function centerOnIndex(index) {
+        if (index < 0 || index >= list.count) {
+            return
+        }
+        list.positionViewAtIndex(index, ListView.Center)
+        list.forceLayout()
+        const item = list.itemAtIndex(index)
+        if (item === null || item.height <= 0) {
+            return
+        }
+        list.contentY = Math.max(kineticWheelScroller.minimumY(),
+                                 Math.min(kineticWheelScroller.maximumY(),
+                                          item.y + (item.height - list.height) / 2))
+    }
+
     function captureOlderViewport() {
         olderViewportAnchorId = ""
         if (topVisibleIndex < 0 || !list.model || typeof list.model.messageIdAt !== "function") {
@@ -707,14 +752,6 @@ Item {
         Qt.callLater(updateScrollState)
     }
 
-    function itemIsVisible(item) {
-        return item !== null
-               && !item.pooled
-               && item.messageId === pendingJumpMessageId
-               && item.y + item.height > list.contentY
-               && item.y < list.contentY + list.height
-    }
-
     function retryOrFailPendingJump() {
         if (Date.now() <= pendingJumpDeadlineMs) {
             jumpSettleTimer.restart()
@@ -743,7 +780,13 @@ Item {
             return
         }
 
-        item.triggerReplyGlow()
+        // The row is real now, so its height is no longer an estimate. Re-centre
+        // before glowing: a jump into unmaterialised history is centred against
+        // estimated heights first time round and settles off centre otherwise.
+        centerOnIndex(index)
+        const centred = list.itemAtIndex(index)
+        const glowTarget = centred !== null && !centred.pooled ? centred : item
+        glowTarget.triggerReplyGlow()
         finishPendingJump()
     }
 
@@ -773,20 +816,15 @@ Item {
             return
         }
 
-        const currentItem = list.itemAtIndex(index)
-        if (itemIsVisible(currentItem)) {
-            currentItem.triggerReplyGlow()
-            finishPendingJump()
-            return
-        }
-
+        // Centre unconditionally, including when the row already happens to be
+        // on screen: a goto should always put its target in the middle, not
+        // leave it clinging to whichever edge it was already near.
         programmaticScroll = true
         floatingDateActive = false
         floatingDateIdleTimer.stop()
         kineticWheelScroller.stopKinetic()
         if (list.flicking) list.cancelFlick()
-        list.positionViewAtIndex(index, ListView.Center)
-        list.forceLayout()
+        centerOnIndex(index)
         Qt.callLater(settlePendingJump)
     }
 
@@ -847,12 +885,18 @@ Item {
             bottomVisibleIndex = hi
         }
 
+        // Geometry decides first: within followPixelSlack of the bottom counts
+        // as parked at the newest message even when the index probe disagrees
+        // (it returns -1 whenever it lands in the gap between two rows, which
+        // at the very bottom used to drop follow-mode outright).
+        const nearBottom = distanceFromBottom() <= followPixelSlack
+
         if (hi >= 0) {
-            atNewest = hi === list.count - 1
-            followNewest = hi >= list.count - 1 - followRowThreshold
+            atNewest = nearBottom || hi === list.count - 1
+            followNewest = atNewest || hi >= list.count - 1 - followRowThreshold
         } else {
-            atNewest = list.atYEnd
-            followNewest = list.atYEnd
+            atNewest = nearBottom || list.atYEnd
+            followNewest = atNewest
         }
 
         if (atNewest) {
@@ -1361,7 +1405,7 @@ Item {
             function onRowsInserted(parent, first, last) {
                 // Live-edge messages append at the end. Older extends prepend;
                 // their viewport is restored when loadingOlderMessages clears.
-                if (!root.openingChat && last === list.count - 1) {
+                if (!root.openingChat && last === root.modelRowCount() - 1) {
                     if (root.followNewest && root.pendingJumpMessageId.length === 0) {
                         Qt.callLater(root.scrollToNewest)
                     } else {
@@ -1393,14 +1437,27 @@ Item {
                     || root.unreadAnchorPositioned
                     || root.userScrolledSinceOpen
                     || root.pendingJumpMessageId.length > 0) {
+                // Declining to move the viewport still ends the open. Leaving
+                // openingChat latched here (the user scrolled, or a jump took
+                // the viewport, before the anchor resolved) killed live-edge
+                // follow *and* older-history prefetch for the rest of the
+                // chat's life — both are guarded on !openingChat.
+                root.openingChat = false
                 return
             }
             Qt.callLater(() => {
                 if (root.userScrolledSinceOpen || root.pendingJumpMessageId.length > 0) {
+                    root.openingChat = false
                     return
                 }
                 if (Whatevr.ProtocolController.unreadAnchorMessageId.length > 0) {
-                    root.positionAtUnreadAnchor()
+                    // An anchor the model does not (yet) hold: fall back to the
+                    // newest message rather than sitting latched in openingChat.
+                    if (!root.positionAtUnreadAnchor()
+                            && !Whatevr.ProtocolController.unreadAnchorResolving) {
+                        root.scrollToNewest()
+                        root.openingChat = false
+                    }
                 } else if (root.openingChat && !Whatevr.ProtocolController.unreadAnchorResolving) {
                     root.scrollToNewest()
                     root.openingChat = false
