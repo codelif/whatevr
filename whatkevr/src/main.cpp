@@ -36,7 +36,13 @@ void filterKirigamiNullPropertyWarnings(QtMsgType type, const QMessageLogContext
     }
     if (g_previousMessageHandler) {
         g_previousMessageHandler(type, context, message);
+        return;
     }
+    // qInstallMessageHandler() returns nullptr when the *default* handler was in
+    // place, so there is nothing to chain to: format and emit the message the way
+    // Qt would have, or everything the app logs disappears.
+    fprintf(stderr, "%s\n", qFormatLogMessage(type, context, message).toLocal8Bit().constData());
+    fflush(stderr);
 }
 }
 
@@ -111,12 +117,12 @@ int main(int argc, char *argv[])
 
     // Constructed before the controller so the models it creates can read the
     // shared Settings instance (default skin tone, draft persistence).
-    Settings settings;
+    Settings settings(nullptr);
     Settings::setInstance(&settings);
 
     // The one controller: it owns the socket to whatevrd and every view the UI
     // renders (PROTOCOL.md).
-    ProtocolController protocolController;
+    ProtocolController protocolController(nullptr);
     ProtocolController::setInstance(&protocolController);
 
     // Single-instance: a second launch (e.g. clicking a notification, which runs
