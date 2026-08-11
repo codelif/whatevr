@@ -548,8 +548,8 @@ QString ProtocolController::daemonSocketPath()
     if (runtimePath.isEmpty()) {
         return {};
     }
-    // The whatevr protocol socket lives under whatevr/, next to (not the same as)
-    // the gRPC socket under whatevrd/ — see whatevrd/internal/app/paths.go.
+    // The whatevr protocol socket lives under whatevr/ — see
+    // whatevrd/internal/app/paths.go.
     return QDir(runtimePath).filePath(QStringLiteral("whatevr/whatevrd.sock"));
 }
 

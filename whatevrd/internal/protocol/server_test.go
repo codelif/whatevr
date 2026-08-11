@@ -374,3 +374,78 @@ func TestShutdownClosesConnectionsAndRemovesSocket(t *testing.T) {
 		t.Fatalf("socket file not removed on shutdown: %v", err)
 	}
 }
+
+// TestActivatedListenerIsAdoptedAndSocketSurvivesShutdown covers the systemd
+// socket-activation path: the inherited listener is served as-is, and the
+// socket file — which systemd created, secured and reuses for the next start —
+// is left in place on shutdown.
+func TestActivatedListenerIsAdoptedAndSocketSurvivesShutdown(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatalf("chmod socket dir: %v", err)
+	}
+	socketPath := filepath.Join(dir, "d.sock")
+
+	// Stand in for systemd: it owns the socket, the daemon only inherits the fd.
+	activated, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+
+	daemon := app.NewDaemon(app.Paths{})
+	ctx, cancel := context.WithCancel(context.Background())
+	server, err := New(socketPath, activated, daemon)
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+	server.Serve(ctx)
+
+	c := dialTest(t, socketPath)
+	c.hello()
+
+	cancel()
+	for err := range server.Err() {
+		t.Fatalf("server error during shutdown: %v", err)
+	}
+
+	c.expectClosed()
+	if _, err := os.Stat(socketPath); err != nil {
+		t.Fatalf("activated socket file must survive shutdown: %v", err)
+	}
+}
+
+// TestActivatedListenerSkipsSocketDirValidation makes sure a systemd-created
+// parent directory (0755 by default, unlike the 0700 the daemon insists on when
+// it creates the socket itself) does not stop the daemon from starting.
+func TestActivatedListenerSkipsSocketDirValidation(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatalf("chmod socket dir: %v", err)
+	}
+	socketPath := filepath.Join(dir, "d.sock")
+
+	if err := validateSocketDir(socketPath); err == nil {
+		t.Fatal("expected a 0755 socket dir to fail validation when the daemon owns it")
+	}
+
+	activated, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	server, err := New(socketPath, activated, app.NewDaemon(app.Paths{}))
+	if err != nil {
+		t.Fatalf("new server with activated listener: %v", err)
+	}
+	server.Serve(ctx)
+	t.Cleanup(func() {
+		cancel()
+		for err := range server.Err() {
+			t.Errorf("server error during shutdown: %v", err)
+		}
+	})
+
+	dialTest(t, socketPath).hello()
+}

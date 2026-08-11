@@ -2,8 +2,7 @@
 // (PROTOCOL.md): newline-delimited JSON over a Unix socket, with a
 // request/response/event envelope and a subscription-based view model.
 //
-// This package is built alongside the legacy gRPC server during the
-// migration and replaces it entirely once the migration finishes.
+// It is the daemon's only frontend interface.
 package protocol
 
 import (

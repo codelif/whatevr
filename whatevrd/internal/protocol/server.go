@@ -32,9 +32,13 @@ type handlerFunc func(c *conn, req request) (any, *Error)
 // built in; views and commands register into handlers as migration steps
 // land them.
 type Server struct {
-	daemon         *app.Daemon
-	listener       net.Listener
-	socketPath     string
+	daemon     *app.Daemon
+	listener   net.Listener
+	socketPath string
+	// ownsSocket is false when the listener was inherited from systemd, which
+	// then owns the socket file and reuses it for the next start; the daemon
+	// must not unlink it on shutdown.
+	ownsSocket     bool
 	errCh          chan error
 	commandActions CommandActions
 
@@ -55,30 +59,48 @@ type Server struct {
 // connections. Callers register all views and commands, then call Serve — so a
 // client can never reach the handlers/views maps before they are populated
 // (which would both race the maps and answer valid methods with
-// unknown_method). The daemon creates and owns the socket file; systemd socket
-// activation for this socket arrives when packaging flips over at teardown (the
-// activation unit still carries the legacy gRPC socket during the migration).
-func New(socketPath string, daemon *app.Daemon) (*Server, error) {
-	if err := validateSocketDir(socketPath); err != nil {
-		return nil, err
+// unknown_method).
+//
+// When activated is non-nil (systemd socket activation) that inherited listener
+// is used and systemd owns, secures and outlives the socket file; otherwise the
+// daemon creates and owns the socket itself.
+func New(socketPath string, activated net.Listener, daemon *app.Daemon) (*Server, error) {
+	listener := activated
+	ownsSocket := false
+	if listener != nil {
+		// systemd owns the socket file and reuses it for the next start, so
+		// closing our end must never unlink it. net.FileListener already leaves
+		// unlink off, but say so explicitly: an adopted listener that unlinks on
+		// shutdown would leave systemd accepting on a path no client can reach.
+		if unixLn, ok := listener.(*net.UnixListener); ok {
+			unixLn.SetUnlinkOnClose(false)
+		}
 	}
-	if err := removeStaleSocket(socketPath); err != nil {
-		return nil, err
-	}
+	if listener == nil {
+		if err := validateSocketDir(socketPath); err != nil {
+			return nil, err
+		}
+		if err := removeStaleSocket(socketPath); err != nil {
+			return nil, err
+		}
 
-	listener, err := net.Listen("unix", socketPath)
-	if err != nil {
-		return nil, err
-	}
-	if err := os.Chmod(socketPath, 0o600); err != nil {
-		listener.Close()
-		return nil, err
+		ln, err := net.Listen("unix", socketPath)
+		if err != nil {
+			return nil, err
+		}
+		if err := os.Chmod(socketPath, 0o600); err != nil {
+			ln.Close()
+			return nil, err
+		}
+		listener = ln
+		ownsSocket = true
 	}
 
 	server := &Server{
 		daemon:     daemon,
 		listener:   listener,
 		socketPath: socketPath,
+		ownsSocket: ownsSocket,
 		errCh:      make(chan error, 1),
 		views:      map[string]View{},
 		conns:      map[*conn]struct{}{},
@@ -108,7 +130,7 @@ func (s *Server) Serve(ctx context.Context) {
 // mutex-guarded regardless, so late registration is race-free (it only risks a
 // transient unknown_method for a client that raced the registration).
 func Start(ctx context.Context, socketPath string, daemon *app.Daemon) (*Server, error) {
-	server, err := New(socketPath, daemon)
+	server, err := New(socketPath, nil, daemon)
 	if err != nil {
 		return nil, err
 	}
@@ -154,7 +176,9 @@ func (s *Server) serve(ctx context.Context) {
 	s.wg.Wait()
 
 	s.listener.Close()
-	_ = os.Remove(s.socketPath)
+	if s.ownsSocket {
+		_ = os.Remove(s.socketPath)
+	}
 }
 
 func (s *Server) acceptLoop(acceptErr chan<- error) {

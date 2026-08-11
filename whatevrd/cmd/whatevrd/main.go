@@ -9,22 +9,9 @@ import (
 	"whatevrd/internal/app"
 	"whatevrd/internal/notify"
 	"whatevrd/internal/protocol"
-	daemonrpc "whatevrd/internal/rpc"
 	"whatevrd/internal/store"
 	"whatevrd/internal/wa"
 )
-
-type multiChatOpener []notify.ChatOpener
-
-func (m multiChatOpener) OpenChat(chatID string) bool {
-	delivered := false
-	for _, opener := range m {
-		if opener != nil && opener.OpenChat(chatID) {
-			delivered = true
-		}
-	}
-	return delivered
-}
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -59,19 +46,16 @@ func main() {
 	defer db.Close()
 
 	daemon := app.NewDaemon(paths)
-	// The whatevr protocol server (PROTOCOL.md) runs alongside gRPC for the
-	// duration of the migration; frontends move over view by view.
-	protocolServer, err := protocol.New(paths.ProtocolSocketPath, daemon)
+	// The whatevr protocol server (PROTOCOL.md) is the daemon's only frontend
+	// interface.
+	protocolServer, err := protocol.New(paths.SocketPath, activatedListener, daemon)
 	if err != nil {
 		log.Fatalf("start protocol server: %v", err)
 	}
 
-	// The session bus carries daemon→frontend pushes (e.g. open-chat on
-	// notification click) for the legacy gRPC HoldSession streams. The protocol
-	// server implements the same opener for connection-directed open_chat events;
-	// the notification worker fans to both during the migration.
-	sessionBus := daemonrpc.NewSessionBus()
-	notificationWorker, err := notify.NewWorker(multiChatOpener{sessionBus, protocolServer})
+	// The protocol server routes daemon→frontend pushes (open_chat on a
+	// notification click) as connection-directed events.
+	notificationWorker, err := notify.NewWorker(protocolServer)
 	if err != nil {
 		log.Printf("notifications disabled: %v", err)
 	}
@@ -85,11 +69,6 @@ func main() {
 	}
 	defer waClient.Close()
 
-	server, err := daemonrpc.Start(ctx, paths.SocketPath, activatedListener, daemon, waClient, waClient, sessionBus, db, waClient, waClient, waClient, waClient, waClient)
-	if err != nil {
-		log.Fatalf("start rpc server: %v", err)
-	}
-
 	protocol.RegisterDaemonViews(protocolServer, daemon, db, waClient)
 	protocol.RegisterDaemonCommands(protocolServer, waClient)
 	// Every view and command is registered above; only now do we accept
@@ -97,20 +76,13 @@ func main() {
 	protocolServer.Serve(ctx)
 	waClient.Start(ctx)
 
-	log.Printf("whatevrd listening on %s (grpc) and %s (protocol)", paths.SocketPath, paths.ProtocolSocketPath)
+	log.Printf("whatevrd listening on %s", paths.SocketPath)
 
 	select {
 	case <-ctx.Done():
 		log.Print("whatevrd shutting down")
-		if err := <-server.Err(); err != nil {
-			log.Fatalf("rpc server failed during shutdown: %v", err)
-		}
 		if err := <-protocolServer.Err(); err != nil {
 			log.Fatalf("protocol server failed during shutdown: %v", err)
-		}
-	case err := <-server.Err():
-		if err != nil {
-			log.Fatalf("rpc server failed: %v", err)
 		}
 	case err := <-protocolServer.Err():
 		if err != nil {

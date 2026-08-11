@@ -47,7 +47,7 @@ const (
 
 	// The frontend bounds itself to a small in-flight download pool, so the
 	// daemon only needs enough parallelism to keep that pool fed; more just
-	// holds gRPC streams open longer.
+	// holds requests open longer.
 	stickerDownloadConcurrency = 8
 	stickerDownloadTimeout     = 30 * time.Second
 	stickerLibraryDebounce     = 250 * time.Millisecond
@@ -490,8 +490,8 @@ func (c *Client) ensureStickerFileLocked(ctx context.Context, cacheKey string, n
 	}
 
 	// Bound the network fetch so a hung media server frees this semaphore slot
-	// (and the caller's gRPC stream) instead of blocking the picker's download
-	// pool indefinitely.
+	// (and the caller's request) instead of blocking the picker's download pool
+	// indefinitely.
 	dlCtx, cancel := context.WithTimeout(ctx, stickerDownloadTimeout)
 	defer cancel()
 

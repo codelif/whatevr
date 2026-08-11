@@ -6,11 +6,9 @@ import (
 )
 
 // CommandErrorKind classifies a daemon command failure independently of any
-// transport. The daemon (app/wa) raises CommandError values; each frontend
+// transport. The daemon (app/wa) raises CommandError values; the frontend
 // boundary maps the kind into its own vocabulary — the whatevr-protocol layer
-// into its error codes, the frozen gRPC boundary into a status code — so neither
-// transport leaks into the other. In particular the protocol layer no longer
-// imports google.golang.org/grpc: it switches on these kinds instead.
+// into its error codes — so no transport detail leaks into the daemon core.
 type CommandErrorKind int
 
 const (
