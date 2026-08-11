@@ -1,5 +1,10 @@
 # Protocol Migration Ledger
 
+> **Finished 2026-08-11.** Every step A1 through E2 is `done`, the end goal
+> below is met in full, and PROTOCOL.md is stable at version 1. This file is
+> now a record of how it was done, not a plan. The DeezNuts table stays open for
+> field reports.
+
 **End goal (definition of finished):** `whatevrd` serves the full
 [PROTOCOL.md](PROTOCOL.md) surface (except the explicitly deferred
 `notifications` view), `whatkevr` runs entirely on it, the gRPC server,
@@ -136,6 +141,11 @@ released Phase E. **The table stays live:** a new field report is still filed
 here and still jumps the queue ahead of Phase E — what closed is the hold on
 the teardown, not the field testing.
 
+**The three live-verification debts are settled.** Harsh confirmed on
+2026-08-11 (during the E2 session) that DN12, DN13 and DN16 are all verified on
+his account and screen. Nothing is owed against this table any more. The
+original wording is kept below for the record:
+
 **Three rows closed with live verification still owed** (fixes landed,
 test-covered, and reasoned from the code, but never watched on Harsh's screen
 or account): **DN12** — no wallpaper squash on chat open, pattern present on a
@@ -197,16 +207,40 @@ Status: `todo` | `doing` | `done` | `blocked` | `needs-decision` |
 | id | step | status | notes |
 | --- | --- | --- | --- |
 | E1 | Delete daemon gRPC server + `proto/`; purge protobuf/grpc from go.mod, CMake, justfile, packaging, README dependency lists | done | **The gRPC stack is gone; whatevrd serves exactly one socket.** Deleted `proto/whatevr.proto` and all of `whatevrd/internal/rpc/` (7 services, `server.go`, `session_bus.go`, the 442 KB generated `pb/`) — 14 files. `go mod tidy` dropped `google.golang.org/grpc` and `genproto/googleapis/rpc`; **`google.golang.org/protobuf` stays** and always will, it is whatsmeow's waE2E wire format and never was ours. **The packaging flip A1 deferred to teardown landed here**: `protocol.New` gained an `activated net.Listener` parameter (nil = standalone), `packaging/systemd/whatevrd.socket` now listens on `%t/whatevr/whatevrd.sock`, and the protocol server tracks `ownsSocket` so it unlinks the socket only when it created it. One bug found doing it: an adopted listener must also `SetUnlinkOnClose(false)` or shutdown unlinks systemd's own socket, leaving systemd accepting on a path no client can reach — `net.FileListener` already defaults that off, so the old gRPC path was accidentally safe, but it is now explicit and tested rather than inherited. `main.go` lost the `multiChatOpener` fan-out (the notification worker takes the protocol server directly), the second server's lifecycle arm, and the two-socket log line. `app.Paths` collapsed to one socket (`SocketDir`/`SocketPath` = `$XDG_RUNTIME_DIR/whatevr/`, PROTOCOL.md's path); **`LockPath` deliberately did not move** — see the Decision log. Also purged: the `just proto` recipe, the `-X whatevrd/internal/rpc.Version` ldflag, `qt6-grpc` from both CI workflows, and the `proto/**` CI path filters; five stale comments that described a gRPC stack that no longer exists were corrected. New tests: `protocol.TestActivatedListenerIsAdoptedAndSocketSurvivesShutdown` / `…SkipsSocketDirValidation` (systemd creates the parent 0755, which the daemon's own path rejects) and `app.TestResolvePathsSocketAndLockLocations`. `just build`, full Go suite, `ctest` 5/5, `scripts/conformance` and `ldd` (no grpc/protobuf in whatkevr) pass. Hand-verified both socket lifecycles end to end under `systemd-socket-activate` and standalone — see the E-phase notes. |
-| E2 | **Final audit + release polish:** full PROTOCOL.md vs implementation pass; promote PROTOCOL.md DRAFT → v1 stable; rewrite README around the daemon/protocol as the flagship feature (30-line-frontend pitch, `examples/` front and center) | todo | |
+| E2 | **Final audit + release polish:** full PROTOCOL.md vs implementation pass; promote PROTOCOL.md DRAFT → v1 stable; rewrite README around the daemon/protocol as the flagship feature (30-line-frontend pitch, `examples/` front and center) | done | **The migration is over.** Audit: transport, framing, hello, error codes, the three verbs and four events, all 22 registered views, 30 commands, 4 queries and the message wire shape were read against PROTOCOL.md line by line. Names, params, result keys and event ordering all matched; six pieces of drift came out, three of them in the spec (Harsh signed off on all three, see Decision log). **One was a real daemon bug (F1).** PROTOCOL.md's *Windows* section says an anchored window whose newer frontier has been extended to the live edge stays adjacent to it, so later messages arrive as ordinary upserts; `anchoredMessagesSession.Items` trimmed `newer[:newerN]` unconditionally, so they were dropped and `ready` merely re-reported "not exhausted". A frontend anchored at `unread` and paged to the present therefore went blind to new messages until it re-subscribed (whatkevr hides this behind its own `jumpToBottom` re-anchor; the shell example had no such escape). Fixed with a sticky `atLiveEdge` latch: once the frontier reports exhausted, the newer fetch goes unbounded and the frontier stays exhausted instead of re-opening a gap behind each arrival. New test `TestMessagesViewAnchoredWindowFollowsTheLiveEdgeOnceReached` pins both halves (withheld before the latch, delivered after) and was confirmed to hang on the old code. **Spec (approved):** DRAFT → **stable, protocol 1 frozen**, with the freeze rule stated; "byte size" dropped from the `media` field list (no column, no consumer, and `video`/`document` will bring it as a legal addition); the `notifications` row marked reserved and not served; and the example session rewritten into a transcript that reproduces (`kind_hint` removed, real `chatSort` digits, `last_message_status`/`last_message_direction` instead of a `status` field that never existed, no "you: " preview prefix the daemon does not add). **Examples:** `shell-frontend.sh` now renders `item.fallback` rather than `text` with a `[kind]` guess, which is what makes it a legal partial frontend under rule 5; `frontend.go` rewritten from a stub carrying Harsh's real phone number into a runnable fifty-line stdlib client. **README rewritten** around the daemon and protocol: the flagship section is now "The protocol is the point" (four design rules, a hand transcript) plus "Write a frontend" pointing at both examples, and the Architecture section no longer claims a "local RPC API". `feature-gap.md` gained a dated banner and lost its gRPC-socket CLI proposal. Verified: `just build`, full Go suite, `scripts/conformance`, `ctest` 5/5, and a hand-driven socat session against a seeded daemon showing the F1 behaviour end to end (four live-edge messages withheld, one `extend newer` reaching `exhausted:true`, then three arrivals delivered unsolicited); both examples run against that daemon. No Spirit-checklist bend: nothing was added to a frontend, the grammar is untouched, and the fix is on the daemon side of the socket. |
 
 ## Blockers
 
-- None. The one blocker this plan ever carried — **Phase E blocked on Phase
-  DeezNuts** (raised 2026-08-10) — was cleared on 2026-08-11 when Harsh closed
-  the field-testing phase, and E1 spent it. There is no fallback stack in the
-  tree any more; from here every fix is a forward fix.
+- None, and there is nothing left to block. Every step A1 through E2 is `done`,
+  so per the end goal above **the migration is finished; there is no step N+1.**
+  The DeezNuts table stays live for field reports, which are now ordinary bug
+  reports against a shipped protocol rather than migration work.
+
+- The one blocker this plan ever carried, **Phase E blocked on Phase DeezNuts**
+  (raised 2026-08-10), was cleared on 2026-08-11 when Harsh closed the
+  field-testing phase, and E1 spent it. There is no fallback stack in the tree
+  any more; from here every fix is a forward fix.
 
 ## E-phase notes
+
+- 2026-08-11: **E2 audit method, and what it did not cover.** The pass was a
+  read of PROTOCOL.md against the code that serves it, section by section:
+  socket path and directory mode, NDJSON framing and the frame cap, the `hello`
+  handshake and its result fields, all eleven core error codes (every one is in
+  use), the `subscribe`/`extend`/`unsubscribe` params and their validation, the
+  four events and their ordering, then every row of the view inventory and the
+  command and query tables against the registrations in `daemon_views.go` and
+  `commands.go`, and finally the message item shape field by field. Field
+  *names* were checked but are explicitly not fixed by the spec ("this inventory
+  fixes the shape of the protocol, not every field name"), so `presence`
+  emitting `last_seen_unix` where the table says `last_seen` is not drift. Two
+  things are worth knowing for later: the daemon emits a `kind` of
+  `"unsupported"` that the spec does not enumerate, which is legal (unknown
+  kinds are covered by `fallback`, rule 5) and was left alone rather than
+  spending a fourth spec amendment on it; and the audit is a *specification*
+  audit, not a behavioural one, so it says nothing about whether the views are
+  correct against a live WhatsApp account beyond what DeezNuts already
+  established.
 
 - 2026-08-11 — **E1 socket verification, both lifecycles, by hand.** The one
   thing unit tests cannot cover is a real inherited fd, so both paths were run
@@ -403,6 +437,46 @@ Status: `todo` | `doing` | `done` | `blocked` | `needs-decision` |
   no GUI/gRPC) and drive the real client over a real Unix socket.
 
 ## Decision log
+
+- 2026-08-11: **E2 spec amendments, all three put to Harsh and approved before
+  PROTOCOL.md was touched.** (1) **`media` byte size dropped.** The *Messages on
+  the wire* section listed a byte size no store column and no wire field ever
+  carried. Nothing renders it today, and the kinds that will want it (`video`,
+  `document`) are not modelled yet, so specifying an absent field in a frozen v1
+  is worse than leaving it out; it can arrive later as an ordinary additive
+  field. (2) **`kind_hint` removed from the example session.** The daemon stores
+  a last-message preview string, not a last-message kind (logged at B2 and never
+  revisited), so the field was fiction. The chat row already carries `preview`
+  plus `last_message_direction`/`last_message_status`. (3) **`notifications`
+  marked reserved.** It is in the inventory but not registered, so subscribing
+  errors `not_found`; the frozen doc now says so rather than advertising a view
+  that fails. Its shape still waits on a real relay or applet consumer.
+
+- 2026-08-11: **The example session became a transcript, not an illustration.**
+  Fixing `kind_hint` exposed three more inventions in the same ten lines: a
+  `status` field on a chat row (the daemon emits `last_message_status`), a
+  "you: " preview prefix the daemon never adds (frontends compose it from
+  `last_message_direction`), and sort keys of the wrong shape entirely. Real
+  `chatSort` keys are `1-%020d-%s` over `(1<<62) - timestamp`, so the digits in
+  the doc are now computed from that formula and the pinned row shows its real
+  three-part form. Scope call: this is the same class of correction Harsh
+  approved for `kind_hint`, and PROTOCOL.md's own acceptance bar is that you can
+  reproduce the session by hand, so a doc example that cannot be reproduced is a
+  bug in the doc. Recorded here rather than asked again mid-session.
+
+- 2026-08-11: **E2 left two E1 leftovers deliberately undone.** (1) **The
+  process lock stays at `$XDG_RUNTIME_DIR/whatevrd/whatevrd.lock`.** E1 said
+  fold it into `SocketDir` "once no pre-teardown build can plausibly still be
+  running". E1 shipped the same day and no release has gone out since, so
+  pre-teardown daemons are exactly what is still installed; the separate lock
+  path is the only thing keeping one of them and a current daemon off the same
+  SQLite database. Revisit after a release carrying E1 has been out for a while.
+  (2) **`ProtocolController` keeps its name.** D7 left the rename to "E2's
+  polish", but there is no longer a second controller to distinguish it from, so
+  the name is merely redundant rather than wrong, and the rename would touch
+  every QML binding in the frontend for zero behavioural gain at the moment the
+  migration closes. If it happens it should be its own commit, not a rider on
+  the final one.
 
 - 2026-08-11 — **Harsh closed Phase DeezNuts** ("end phase DN"), with the three
   outstanding live-verification debts (DN12/DN13/DN16) put to him first and

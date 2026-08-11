@@ -8,6 +8,10 @@
 #
 # Type a line and press enter to send it to <chat_id>; Ctrl-D stops typing but
 # keeps watching; Ctrl-C quits.
+#
+# It renders every message through the item's `fallback` string, which is why it
+# needs no cases for image, sticker or any kind added later (PROTOCOL.md rule 5:
+# partial frontends are first-class citizens).
 set -euo pipefail
 
 socket="${WHATEVR_SOCKET:-${XDG_RUNTIME_DIR:?XDG_RUNTIME_DIR is not set}/whatevr/whatevrd.sock}"
@@ -47,7 +51,7 @@ socat - "UNIX-CONNECT:${socket}" < "$req" | jq -rn --unbuffered '
           elif $m.result.message_id then "sent: \($m.result.message_id)"
           elif $m.error             then "error[\($m.id)]: \($m.error.code): \($m.error.message)"
           elif $m.event == "upsert" and $view == "chats"    then "chat  id=\($m.item.id) name=\($m.item.name // "") unread=\($m.item.unread // 0) preview=\($m.item.preview // "")"
-          elif $m.event == "upsert" and $view == "messages" then "msg   \(if $m.item.direction == "outgoing" then "→" else "←" end) \($m.item.text // "[\($m.item.kind)]")"
+          elif $m.event == "upsert" and $view == "messages" then "msg   \(if $m.item.direction == "outgoing" then "→" else "←" end) \($m.item.fallback)"
           elif $m.event == "remove" then "remove \($m.id) (sub \($m.sub))"
           elif $m.event == "ready"  then "ready sub=\($m.sub) exhausted=\($m.exhausted // false)"
           elif $m.event == "reset"  then "reset sub=\($m.sub)"

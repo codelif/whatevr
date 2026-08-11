@@ -367,6 +367,51 @@ func TestMessagesViewMessageIDAnchorDirectionalExtend(t *testing.T) {
 	c.expectReady(sub, true) // newer frontier exhausted
 }
 
+// An anchored window is bounded until its newer frontier reaches the present;
+// after that it stays adjacent to the live edge and keeps growing there
+// (PROTOCOL.md, "Windows"). Both halves are asserted here: a message past the
+// frontier is withheld (delivering it would leave a render gap), while one
+// arriving after the frontier has reached the live edge is contiguous with the
+// window and lands as an ordinary upsert.
+func TestMessagesViewAnchoredWindowFollowsTheLiveEdgeOnceReached(t *testing.T) {
+	socketPath, daemon, db := startChatsTestServer(t)
+	base := time.Unix(1_700_000_000, 0)
+	chat := "c@s.whatsapp.net"
+	ids := make([]string, 4) // m0..m3
+	for i := range ids {
+		ids[i] = seedTextMessage(t, db, chat, fmt.Sprintf("m%d", i), base.Add(time.Duration(i)*time.Minute))
+	}
+
+	c := dialTest(t, socketPath)
+	c.hello()
+	// Anchor on m1 with a size-3 window: m0, m1, m2. m3 is one past the newer
+	// frontier.
+	sub := c.subscribe(2, fmt.Sprintf(`{"view":"messages","chat_id":%q,"anchor":%q,"limit":3}`, chat, ids[1]))
+	c.collectUpserts(sub, 3)
+	c.expectReady(sub, false)
+
+	// A message arrives at the present while the frontier is still short of it.
+	// m3 sits between the window and m4, so m4 is not contiguous and must be
+	// withheld, so the next event is whatever the following extend produces.
+	m4 := seedTextMessage(t, db, chat, "m4", base.Add(4*time.Minute))
+	daemon.PublishNewMessage(app.Message{ID: m4, ChatID: chat}, appChatFor(t, db, chat))
+
+	c.extend(3, sub, 1, "newer")
+	c.expectUpsert(sub, ids[3]) // m3, not m4
+	c.expectReady(sub, false)   // m4 is still beyond the frontier
+
+	// One more extend closes the gap: the frontier now holds the newest message
+	// in the chat, so it reports exhausted and latches onto the live edge.
+	c.extend(4, sub, 1, "newer")
+	c.expectUpsert(sub, m4)
+	c.expectReady(sub, true)
+
+	// From here the window follows the present: no extend, no re-subscribe.
+	m5 := seedTextMessage(t, db, chat, "m5", base.Add(5*time.Minute))
+	daemon.PublishNewMessage(app.Message{ID: m5, ChatID: chat}, appChatFor(t, db, chat))
+	c.expectUpsert(sub, m5)
+}
+
 func TestMessagesViewExtendNewerOnLatestErrors(t *testing.T) {
 	socketPath, _, db := startChatsTestServer(t)
 	base := time.Unix(1_700_000_000, 0)

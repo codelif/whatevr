@@ -1,6 +1,64 @@
 > _This project is not affiliated with WhatsApp or Meta._
 # Whatevr
-A Linux-first native client for WhatsApp. It uses [whatsmeow](https://github.com/tulir/whatsmeow) to access the WhatsApp web multidevice API.
+
+A Linux-first native client for WhatsApp, built as **one daemon and any number
+of thin frontends**. `whatevrd` owns the WhatsApp connection (via
+[whatsmeow](https://github.com/tulir/whatsmeow)), the login session, the SQLite
+message store, the media cache and notifications. Frontends own pixels. They
+talk over a documented protocol on a unix socket, and writing one is a weekend
+project, not a fork.
+
+## The protocol is the point
+
+[**PROTOCOL.md**](PROTOCOL.md) is the contract: newline-delimited JSON over
+`$XDG_RUNTIME_DIR/whatevr/whatevrd.sock`, protocol version 1, stable. Four ideas
+carry the whole thing:
+
+- **The daemon owns all state.** A frontend does no sorting, merging, dedup or
+  cache invalidation. Ever. It keeps a map of items and renders it.
+- **You subscribe to views, not endpoints.** `subscribe` to `chats`, `messages`,
+  `typing`, `presence`… and the daemon sends the contents, then keeps your copy
+  correct forever with keyed `upsert`/`remove` events. Every item carries a
+  daemon-computed `sort` key; ordering is never your problem.
+- **Commands only ever return an id.** Send a message and the response is a
+  message id. The message itself arrives through the view you already had open,
+  the same way one from your phone would. There is no second code path.
+- **Every message renders in every frontend.** Each one carries a `fallback`
+  string, so a client that has never heard of stickers still shows something
+  sensible. Partial frontends are first-class.
+
+The whole surface is 22 views, 30 commands and 4 queries, and it is meant to be
+driven by hand:
+
+```console
+$ socat - UNIX-CONNECT:"$XDG_RUNTIME_DIR/whatevr/whatevrd.sock"
+{"id":1,"method":"hello","params":{"client":"human","protocol":1}}
+{"id":1,"result":{"daemon":"whatevrd","version":"0.6.0","protocol":1,"state":"online","data_dir":"…","cache_dir":"…"}}
+{"id":2,"method":"subscribe","params":{"view":"chats","limit":2}}
+{"id":2,"result":{"sub":1}}
+{"sub":1,"event":"upsert","sort":"0-…","item":{"id":"12036…@g.us","name":"family","unread":3,"preview":"📷 Photo","pinned":true}}
+{"sub":1,"event":"ready"}
+{"id":3,"method":"send.text","params":{"chat_id":"91887…@s.whatsapp.net","text":"oi"}}
+{"id":3,"result":{"message_id":"3EB0…"}}
+```
+
+### Write a frontend
+
+Two complete ones ship in [`examples/`](examples), and neither imports a client
+library because there isn't one to import:
+
+- [`examples/shell-frontend.sh`](examples/shell-frontend.sh): **a working
+  WhatsApp client in ~30 lines of shell**, using nothing but `socat` and `jq`.
+  It lists your chats, follows a conversation and sends the lines you type.
+  That script is the project's acceptance bar: a protocol change that breaks its
+  spirit is the wrong change.
+- [`examples/frontend.go`](examples/frontend.go): the same thing in fifty lines
+  of Go and the standard library.
+
+A TUI, a scriptable CLI (`whatevrctl send/list/watch`), a status-bar applet or a
+bridge to something else are all a socket and a JSON parser away. If a frontend
+ever feels awkward to write, that is a bug in the daemon or in PROTOCOL.md.
+Report it as one.
 
 ## Frontends
 
@@ -148,6 +206,10 @@ install -Dm755 target/release/whatevr ~/.local/bin/whatevr
 Whatevr is very early-stage software. It is usable for development and testing, but the should be treated as **EXPERIMENTAL**. 
 There is lots of missing functionality that is considered essential, and there WILL be bugs.
 
+The **protocol**, on the other hand, is stable at version 1: new views, commands
+and message kinds will be added, but nothing already in PROTOCOL.md changes
+shape. A frontend written against it today keeps working.
+
 Now with that, here is the current feature map, this is for whatevrd+whatkevr.
 <details>
   <summary>Feature Map</summary>
@@ -205,10 +267,20 @@ Now with that, here is the current feature map, this is for whatevrd+whatkevr.
 </details>
 
 ## Architecture
-Whatevr is built around a single background daemon, `whatevrd`. The daemon owns WhatsApp connection, login session, local SQLite store, media cache, notifications, and local RPC API. Frontends connect to that daemon instead of speaking to WhatsApp directly.
 
-This approach lets multiple frontends share the same backend. Currently frontend is mainly focused on the Qt/Kirigami frontend, `whatkevr`. There is a primitive GTK4/libadwaita frontend, `whatgevr`, but I will not be working on that for a while (see for my reasons).\
-I also have a TUI frontend and a scriptable CLI in mind, though they are far into the future, feel free to take up the task if you feel qualified.
+Whatevr is one background daemon, `whatevrd`, and a socket. The daemon owns the
+WhatsApp connection, the login session, the local SQLite store, the media cache
+and desktop notifications, and serves all of it over
+[the whatevr protocol](PROTOCOL.md). Frontends never speak to WhatsApp directly
+and never keep durable state of their own; several can run at once against the
+same daemon, and each sees the same rows in the same order because the daemon
+computed that order.
+
+The daemon is Go (`whatevrd/`); the flagship frontend is `whatkevr`, in
+C++20/QML on Qt 6 and Kirigami. `whatgevr`, a primitive GTK4/libadwaita
+frontend, is unmaintained and excluded from the build. A TUI and a scriptable
+CLI are wanted and unclaimed (see *Write a frontend* above); that work needs no
+changes to the daemon.
 
 Whatevr will be Linux-first for now until its stable. I am open to contributions for porting functionality to other platforms as long as they don't affect existing performance and Linux functionality significantly. 
 

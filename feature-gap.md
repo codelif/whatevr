@@ -1,5 +1,11 @@
 # Whatevr — Feature Gap Audit
 
+> **Dated 2026-07-03, before the protocol migration finished.** The gRPC stack
+> it audits against (`proto/whatevr.proto`, `whatevrd/internal/rpc/`) has since
+> been deleted; the daemon now serves [PROTOCOL.md](PROTOCOL.md) on one socket.
+> Read every "RPC" below as "daemon method". The *gaps* it lists are still
+> accurate: they are missing features, not missing plumbing.
+
 A comprehensive list of everything not yet implemented in whatevr, audited against the
 **actual code**: `proto/whatevr.proto` (the full RPC surface), the daemon's
 `internal/wa` / `internal/store` / `internal/notify` packages, the **whatkevr**
@@ -424,8 +430,9 @@ Current daemon notifier is solid (avatars, markup, sound, click-to-open). Missin
 - **KRunner / GNOME Shell search provider** — fuzzy-find chats from the shell
   (search RPCs already exist; D-Bus shim).
 - **Share portal target** — "Send via Whatevr" system-wide.
-- **CLI companion** (`whatevrctl send/list/watch`) over the existing gRPC unix
-  socket — near-free and huge for scripting.
+- **CLI companion** (`whatevrctl send/list/watch`) over the protocol socket,
+  near-free and huge for scripting; `examples/shell-frontend.sh` is most of it
+  already.
 - **Packaging spread** — Flatpak/flathub manifest, RPM/deb CI artifacts (AUR
   exists).
 

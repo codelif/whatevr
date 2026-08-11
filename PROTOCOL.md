@@ -1,6 +1,12 @@
 # The Whatevr Protocol
 
-**Status: DRAFT — protocol version 1 (not yet implemented). No backwards compatibility with the retired gRPC API.**
+**Status: stable. Protocol version 1, implemented and served by `whatevrd`.
+No backwards compatibility with the retired gRPC API.**
+
+Version 1 is frozen: within it, additions (new views, new commands, new fields,
+new message kinds) are always allowed and never break a conforming frontend,
+but nothing already specified here changes shape. A change that would break a
+frontend is protocol 2, negotiated through `hello`.
 
 This document is the contract between `whatevrd` and every frontend. It is the
 source of truth: the daemon implements this document, not the other way
@@ -76,7 +82,7 @@ The first request on a connection must be `hello`:
 
 ```jsonc
 {"id": 1, "method": "hello", "params": {"client": "whatkevr", "protocol": 1}}
-{"id": 1, "result": {"daemon": "whatevrd", "version": "0.7.0", "protocol": 1,
+{"id": 1, "result": {"daemon": "whatevrd", "version": "0.6.0", "protocol": 1,
                      "state": "online", "data_dir": "...", "cache_dir": "..."}}
 ```
 
@@ -221,7 +227,7 @@ noted; this inventory fixes the shape of the protocol, not every field name.
 | `sticker_packs` | — | packs | |
 | `sticker_pack` | `pack_id` | stickers | contents fetch is async; items land as they resolve |
 | `transfers` | — | active media transfers | `message_id`, `direction`, `received_bytes`, `total_bytes`, optional active `error`; `remove` on terminal success or failure — success itself is visible as the message row upserting with its new `media.path`, failure as the message row upserting with `media.download_error`. `direction` is `"download"` today; outbound uploads are not yet modelled here (a known gap) |
-| `notifications` | — | notification records | what the daemon would notify about, for applets, relays, and headless setups; daemon's own D-Bus notifier is unaffected |
+| `notifications` | — | notification records | **Reserved, not served in protocol 1**: subscribing errors `not_found`. What the daemon would notify about, for applets, relays, and headless setups; the daemon's own D-Bus notifier is unaffected. Its shape waits on a real consumer (see *Open questions*) |
 
 Avatar paths are embedded in chat/message/contact/member rows and refresh via
 ordinary upserts; visibility-driven fetching is automatic (see above).
@@ -317,7 +323,7 @@ and always:
   quote, `reactions`, `mentions`, `edited`, `revoked`, `starred`, `pinned_until`.
 
 Media-bearing kinds carry `media` (`mime`, dimensions, `thumbnail_path`,
-`path` — empty until downloaded, byte size, optional `download_error`) and the
+`path` which is empty until downloaded, optional `download_error`) and the
 download lifecycle is: `media.download` → active progress in `transfers` →
 `transfers` remove when the attempt ends → message upsert with `path` set on
 success or `download_error` set on failure. A retry clears `download_error` via
@@ -333,21 +339,26 @@ Events without `sub`, sent to specific connections. Currently exactly one:
 
 ## Example session
 
-A complete frontend, by hand:
+A complete frontend, by hand. Rows are abridged (a real chat row carries more
+fields) and ids shortened; everything else is what the daemon sends:
 
 ```console
 $ socat - UNIX-CONNECT:"$XDG_RUNTIME_DIR/whatevr/whatevrd.sock"
 {"id":1,"method":"hello","params":{"client":"human","protocol":1}}
-{"id":1,"result":{"daemon":"whatevrd","version":"0.7.0","protocol":1,"state":"online"}}
+{"id":1,"result":{"daemon":"whatevrd","version":"0.6.0","protocol":1,"state":"online","data_dir":"…","cache_dir":"…"}}
 {"id":2,"method":"subscribe","params":{"view":"chats","limit":2}}
 {"id":2,"result":{"sub":1}}
-{"sub":1,"event":"upsert","sort":"0-000000000018832100","item":{"id":"12036...@g.us","name":"family","unread":3,"preview":"Mom: photo","kind_hint":"image"}}
-{"sub":1,"event":"upsert","sort":"1-000000000018831970","item":{"id":"91887...@s.whatsapp.net","name":"Aditi","unread":0,"preview":"you: see you then"}}
+{"sub":1,"event":"upsert","sort":"0-00000000004294967295-04611686016657387904-12036…@g.us","item":{"id":"12036…@g.us","name":"family","is_group":true,"unread":3,"preview":"📷 Photo","pinned":true}}
+{"sub":1,"event":"upsert","sort":"1-04611686016657387774-91887…@s.whatsapp.net","item":{"id":"91887…@s.whatsapp.net","name":"Aditi","is_group":false,"unread":0,"preview":"see you then","last_message_direction":"outgoing","last_message_status":"read"}}
 {"sub":1,"event":"ready"}
-{"id":3,"method":"send.text","params":{"chat_id":"91887...@s.whatsapp.net","text":"oi"}}
-{"id":3,"result":{"message_id":"3EB0..."}}
-{"sub":1,"event":"upsert","sort":"1-000000000018832544","item":{"id":"91887...@s.whatsapp.net","name":"Aditi","unread":0,"preview":"you: oi","status":"sent"}}
+{"id":3,"method":"send.text","params":{"chat_id":"91887…@s.whatsapp.net","text":"oi"}}
+{"id":3,"result":{"message_id":"3EB0…"}}
+{"sub":1,"event":"upsert","sort":"1-04611686016657387360-91887…@s.whatsapp.net","item":{"id":"91887…@s.whatsapp.net","name":"Aditi","is_group":false,"unread":0,"preview":"oi","last_message_direction":"outgoing","last_message_status":"pending"}}
 ```
+
+Note what the last line is *not*: the send's response carried only an id. The
+row you render arrived through the view you were already subscribed to, and the
+`sort` key moved the chat up the list for you.
 
 The acceptance bar for this protocol, kept under `examples/`: **a working
 frontend in ~30 lines of shell with `socat` and `jq`** — subscribe to the
