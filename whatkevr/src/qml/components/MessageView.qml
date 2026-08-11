@@ -723,6 +723,35 @@ Item {
                                           item.y + (item.height - list.height) / 2))
     }
 
+    // Put the unread divider — not the anchor row — in the middle of the
+    // viewport. The divider is drawn at the *top* of the anchor row, so
+    // centring the row itself pushes the divider (item.height - list.height)/2
+    // above the viewport whenever the anchor message is taller than the screen,
+    // which is ordinary for a long message or a media bubble: a 1021px row in a
+    // 758px viewport hid the marker by 131px. Placing the row's top at the
+    // viewport centre puts the marker on screen with the unread messages
+    // reading downward from it, and the clamp is the "when possible" at either
+    // end of a chat.
+    function centerDividerOnIndex(index) {
+        if (index < 0 || index >= list.count) {
+            traceViewport("centerDividerOnIndex:out-of-range", "index=" + index)
+            return false
+        }
+        list.positionViewAtIndex(index, ListView.Center)
+        list.forceLayout()
+        const item = list.itemAtIndex(index)
+        if (item === null || item.height <= 0) {
+            traceViewport("centerDividerOnIndex:unmaterialised", "index=" + index)
+            return false
+        }
+        list.contentY = Math.max(kineticWheelScroller.minimumY(),
+                                 Math.min(kineticWheelScroller.maximumY(),
+                                          item.y - list.height / 2))
+        traceViewport("centerDividerOnIndex:ok", "index=" + index + " itemY=" + item.y.toFixed(0)
+                      + " itemH=" + item.height.toFixed(0))
+        return true
+    }
+
     function captureOlderViewport() {
         olderViewportAnchorId = ""
         if (topVisibleIndex < 0 || !list.model || typeof list.model.messageIdAt !== "function") {
@@ -821,9 +850,7 @@ Item {
         unreadAnchorSettleDeadlineMs = Date.now() + 1000
         unreadAnchorHiddenDeadlineMs = Date.now() + 10000
         if (viewportReady()) {
-            // centerOnIndex, not a bare positionViewAtIndex: it also corrects
-            // contentY against the materialised row (DN4).
-            centerOnIndex(index)
+            centerDividerOnIndex(index)
         }
         unreadAnchorSettleTimer.restart()
         return true
@@ -870,7 +897,7 @@ Item {
         const item = list.itemAtIndex(index)
         if (item === null || item.pooled || item.messageId !== unreadAnchorMessageId) {
             if (Date.now() <= unreadAnchorSettleDeadlineMs) {
-                centerOnIndex(index)
+                centerDividerOnIndex(index)
                 unreadAnchorSettleTimer.restart()
                 return
             }
@@ -878,7 +905,7 @@ Item {
             return
         }
 
-        centerOnIndex(index)
+        centerDividerOnIndex(index)
         unreadAnchorPositioned = true
         finishUnreadAnchorSettle()
     }
