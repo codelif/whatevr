@@ -543,6 +543,10 @@ func (c *Client) ensureStickerFileLocked(ctx context.Context, cacheKey string, n
 
 	localPath := filepath.Join(stickerDir, canonicalKey+mediaExtension(sticker.MimeType))
 	archivePath := sticker.ArchivePath
+	// Land the file already correct rather than patching it afterwards: an
+	// animated WebP whose frames carry ALPH deltas needs VP8X's alpha flag set
+	// or Qt renders it as blocky garbage from frame 1 on (see webp.go).
+	repairWebPAlphaFlagBytes(data)
 	if err := writeFileAtomic(localPath, data, 0o600); err != nil {
 		return appstore.Sticker{}, app.NewCommandError(app.CommandErrorInternal, "write sticker cache file: %v", err)
 	}

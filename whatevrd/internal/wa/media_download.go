@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"image"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -233,6 +234,12 @@ func (c *Client) DownloadMessageMedia(ctx context.Context, messageID string) (ap
 	if err := os.Rename(partPath, localPath); err != nil {
 		state.err = app.NewCommandError(app.CommandErrorInternal, "store media cache file: %v", err)
 		return appstore.Message{}, state.err
+	}
+	// Repair before anything renders the file: some animated WebPs arrive with
+	// VP8X's alpha flag clear even though their frames carry ALPH deltas, which
+	// makes Qt skip frame compositing and draw the mask holes (see webp.go).
+	if _, err := repairWebPAlphaFlagFile(localPath); err != nil {
+		slog.Debug("repair downloaded sticker webp alpha flag", "message_id", message.ID, "error", err)
 	}
 	if isWhatsAppAnimatedSticker(message.MediaMimeType) {
 		localPath, err = extractLottieSticker(localPath)
