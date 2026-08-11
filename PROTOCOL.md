@@ -117,8 +117,8 @@ The entire live surface uses three methods and four events.
 | --- | --- | --- |
 | `upsert` | `sort`, `item` | insert or replace the item with this `item.id`, positioned by `sort` |
 | `remove` | `id` | delete the item with this id |
-| `ready` | optional `exhausted` | the window is fully populated for the latest subscribe/extend; `exhausted: true` means there is nothing further to extend into locally (for the frontier just extended — see *Windows*) |
-| `reset` | — | discard the local copy; fresh upserts follow, then `ready` |
+| `ready` | optional `exhausted` | the window is fully populated for the latest subscribe/extend; `exhausted: true` means there is nothing further to extend into locally (for the frontier just extended, see *Windows*) |
+| `reset` | none | discard the local copy; fresh upserts follow, then `ready` |
 
 Order after `subscribe`: response first (delivering `sub`), then upserts, then
 `ready`. Same for `extend`. Live updates flow from the moment of subscription;
@@ -130,14 +130,14 @@ timestamp with arrival-order tiebreaker). A changed `sort` in an upsert means
 the item moved. Frontends never look inside it.
 
 `reset` is rare (e.g. a history-sync rewrite of a chat, or the daemon
-recovering a slow consumer — see below). Frontends implement it once, in the
+recovering a slow consumer, see below). Frontends implement it once, in the
 same generic view code, and never think about it again.
 
 ### Granularity
 
-An upsert always carries the whole item. When that starts to feel wasteful —
-the item is big, or it mixes slow-changing facts with fast-changing ones
-(persistent chat data vs. who-is-typing-right-now) — the answer is never a
+An upsert always carries the whole item. When that starts to feel wasteful,
+because the item is big or it mixes slow-changing facts with fast-changing
+ones (persistent chat data vs. who-is-typing-right-now), the answer is never a
 richer grammar (no patch events, no field masks): it is a finer-grained
 view. Splitting keeps clients dumb, and it composes with pick-and-choose:
 frontends subscribe to exactly the granularity they render.
@@ -151,17 +151,17 @@ view order, and the daemon keeps the client copy exactly equal to that
 window (items pushed out of the window are `remove`d). `extend` grows the
 window, and every `extend` carries a `direction`.
 
-Every collection view — and a `messages` view with the `latest` anchor — is a
+Every collection view, and a `messages` view with the `latest` anchor, is a
 **live-edge** window: it sits at the newest / highest-priority end, new items
 arrive there unsolicited regardless of window size, and `extend` with
 `direction: "older"` reaches back away from that edge into the local store.
-`direction: "newer"` is meaningless for a live-edge window — its newer edge
-*is* the live edge — so the daemon rejects it (`invalid_params`).
+`direction: "newer"` is meaningless for a live-edge window, whose newer edge
+*is* the live edge, so the daemon rejects it (`invalid_params`).
 
 The `unread` and `{message_id}` message anchors instead pin a **bounded window
 around a mid-history anchor**, and its two frontiers grow independently:
 `extend` with `direction: "older"` reaches up-history, `"newer"` toward the
-present. Messages outside the window do not intrude — a new message far past
+present. Messages outside the window do not intrude: a new message far past
 the anchor is *not* delivered into this window (it would leave a render gap);
 the frontend learns of it through the `chats` view (its row's updated
 preview/unread) and *follows* the live edge by subscribing `latest`. `ready`'s
@@ -192,8 +192,8 @@ on a frontend seeing every intermediate state.
 ### A useful consequence: the daemon knows what is visible
 
 Subscriptions tell the daemon exactly what every frontend is currently
-displaying. Demand-driven work — avatar fetching, presence subscription
-upstream to WhatsApp, notification suppression for the visible chat — keys
+displaying. Demand-driven work (avatar fetching, presence subscription
+upstream to WhatsApp, notification suppression for the visible chat) keys
 off subscriptions automatically. (The old API needed `RequestAvatars`,
 `SubscribeChatPresence`, and `UpdateSessionState` for this; they are gone.)
 
@@ -205,29 +205,29 @@ noted; this inventory fixes the shape of the protocol, not every field name.
 
 | view | params | items | notes |
 | --- | --- | --- | --- |
-| `connection` | — | object | daemon/WhatsApp state (`starting`, `need_login`, `connecting`, `online`, `reconnecting`, `offline`), retry info, pending outgoing count |
-| `login` | — | object | subscribing starts/attaches to the QR pairing flow when logged out; item carries `state` and current `qr` (`code`, `expires_at`). Phone-number pairing later adds a field, not a new mechanism |
-| `sync` | — | object | history sync progress: type, phase, percent, counts; `stalled` phase included |
+| `connection` | none | object | daemon/WhatsApp state (`starting`, `need_login`, `connecting`, `online`, `reconnecting`, `offline`), retry info, pending outgoing count |
+| `login` | none | object | subscribing starts/attaches to the QR pairing flow when logged out; item carries `state` and current `qr` (`code`, `expires_at`). Phone-number pairing later adds a field, not a new mechanism |
+| `sync` | none | object | history sync progress: type, phase, percent, counts; `stalled` phase included |
 | `chats` | `filter` (`all`\|`direct`\|`groups`), `archived` (bool), `limit` | chat rows | full row per old `Chat` incl. preview, unread, mute/pin/archive, `history_exhausted`; typing indicators live in the `typing` view |
 | `chat` | `chat_id` | object | the same live chat row emitted by `chats`, independent of chat-list filters and windows |
 | `messages` | `chat_id`, `limit`, `anchor` (`latest` \| `unread` \| `{message_id}`) | message rows | subscribe meta returns `anchor_id` when anchored at unread; `remove` on delete-for-me; revocation is an upsert with `revoked: true` |
-| `typing` | — | one item per chat with anyone composing | id is the `chat_id`; `senders` (jid + display name — frontends compose the localized label); `remove` when the last sender stops. Global, unwindowed, and tiny: chat lists and conversation headers both read it, everyone else skips it |
-| `presence` | `chat_id` | one item per participant | `availability`, `last_seen`. Subscribing is what triggers the upstream WhatsApp presence subscription for that chat — availability is only delivered on request, whereas typing arrives unsolicited, which is why `typing` and `presence` are separate views |
+| `typing` | none | one item per chat with anyone composing | id is the `chat_id`; `senders` (jid + display name; frontends compose the localized label); `remove` when the last sender stops. Global, unwindowed, and tiny: chat lists and conversation headers both read it, everyone else skips it |
+| `presence` | `chat_id` | one item per participant | `availability`, `last_seen`. Subscribing is what triggers the upstream WhatsApp presence subscription for that chat: availability is only delivered on request, whereas typing arrives unsolicited, which is why `typing` and `presence` are separate views |
 | `receipts` | `message_id` | one item per participant | per-member delivered/read/played times, updating live while the info dialog is open |
-| `self` | — | object | own profile: jid, phone, push name, about, avatar path |
-| `contact` | `jid` | object | contact card; local data (including the `is_business` flag) upserted immediately, the network-fetched `about` upserted when it lands — the old two-phase hack is just how views work |
-| `group` | `chat_id` | object | subject, description, avatar, created, owner, `member_count`, `my_role`, announce/locked flags (feeds composer lockout in admins-only groups); same two-phase behavior. No member array — the chat header and card chrome need only this |
+| `self` | none | object | own profile: jid, phone, push name, about, avatar path |
+| `contact` | `jid` | object | contact card; local data (including the `is_business` flag) upserted immediately, the network-fetched `about` upserted when it lands; the old two-phase hack is just how views work |
+| `group` | `chat_id` | object | subject, description, avatar, created, owner, `member_count`, `my_role`, announce/locked flags (feeds composer lockout in admins-only groups); same two-phase behavior. No member array; the chat header and card chrome need only this |
 | `group_members` | `chat_id` | one item per member | jid, display name, phone, avatar path, role; joins/leaves/promotions are single upserts/removes. The info dialog subscribes to `group` + `group_members`; member search is presentation-side filtering over rows it already has |
-| `privacy` | — | object | all privacy category values |
-| `preferences` | — | object | daemon-persisted app preferences (notification gates, auto-download) |
-| `blocklist` | — | blocked contacts | |
-| `starred` | optional `chat_id`, `limit` | message rows + `chat_name` | windowed; syncs with stars made on other devices. Ordered by the message's own timestamp (newest first), not by when it was starred — the store records no star time — so starring an old message places it deep in the window rather than at the top |
+| `privacy` | none | object | all privacy category values |
+| `preferences` | none | object | daemon-persisted app preferences (notification gates, auto-download) |
+| `blocklist` | none | blocked contacts | |
+| `starred` | optional `chat_id`, `limit` | message rows + `chat_name` | windowed; syncs with stars made on other devices. Ordered by the message's own timestamp (newest first), not by when it was starred (the store records no star time), so starring an old message places it deep in the window rather than at the top |
 | `pinned` | `chat_id` | message rows | currently-pinned, unexpired; expiry produces `remove` |
 | `stickers` | `source` (`recent`\|`favorite`\|`all`), `limit` | stickers | |
-| `sticker_packs` | — | packs | |
+| `sticker_packs` | none | packs | |
 | `sticker_pack` | `pack_id` | stickers | contents fetch is async; items land as they resolve |
-| `transfers` | — | active media transfers | `message_id`, `direction`, `received_bytes`, `total_bytes`, optional active `error`; `remove` on terminal success or failure — success itself is visible as the message row upserting with its new `media.path`, failure as the message row upserting with `media.download_error`. `direction` is `"download"` today; outbound uploads are not yet modelled here (a known gap) |
-| `notifications` | — | notification records | **Reserved, not served in protocol 1**: subscribing errors `not_found`. What the daemon would notify about, for applets, relays, and headless setups; the daemon's own D-Bus notifier is unaffected. Its shape waits on a real consumer (see *Open questions*) |
+| `transfers` | none | active media transfers | `message_id`, `direction`, `received_bytes`, `total_bytes`, optional active `error`; `remove` on terminal success or failure: success itself is visible as the message row upserting with its new `media.path`, failure as the message row upserting with `media.download_error`. `direction` is `"download"` today; outbound uploads are not yet modelled here (a known gap) |
+| `notifications` | none | notification records | **Reserved, not served in protocol 1**: subscribing errors `not_found`. What the daemon would notify about, for applets, relays, and headless setups; the daemon's own D-Bus notifier is unaffected. Its shape waits on a real consumer (see *Open questions*) |
 
 Avatar paths are embedded in chat/message/contact/member rows and refresh via
 ordinary upserts; visibility-driven fetching is automatic (see above).
@@ -241,9 +241,9 @@ correlation (e.g. to scroll to your own just-sent message when it upserts).
 
 | method | params | result |
 | --- | --- | --- |
-| `session.update` | `focused` (bool), `active_chat_id` | `{}` — feeds notification suppression and `open_chat` routing |
-| `daemon.reconnect` | — | `{}` |
-| `account.logout` | — | `{}` |
+| `session.update` | `focused` (bool), `active_chat_id` | `{}`: feeds notification suppression and `open_chat` routing |
+| `daemon.reconnect` | none | `{}` |
+| `account.logout` | none | `{}` |
 
 **Chats**
 
@@ -254,8 +254,8 @@ correlation (e.g. to scroll to your own just-sent message when it upserts).
 | `chat.archive` | `chat_id`, `archived` | `{}` |
 | `chat.mute` | `chat_id`, `muted`, `duration_secs` (0 = forever) | `{}` |
 | `chat.typing` | `chat_id`, `composing` | `{}` |
-| `chat.request_older` | `chat_id` | `{requested}` — asks the phone; results land as message upserts, exhaustion flips the chat row flag |
-| `chat.ensure_direct` | `jid` | `{chat_id}` — row appears in `chats` views |
+| `chat.request_older` | `chat_id` | `{requested}`: asks the phone; results land as message upserts, exhaustion flips the chat row flag |
+| `chat.ensure_direct` | `jid` | `{chat_id}`: row appears in `chats` views |
 
 `chat.mark_read` marks messages read through the frontend's visible horizon;
 `up_to_message_id` is the newest message the user has actually seen. The daemon
@@ -267,17 +267,17 @@ views.
 | method | params | result |
 | --- | --- | --- |
 | `send.text` | `chat_id`, `text`, `reply_to`, `mentions` (jids) | `{message_id}` |
-| `send.media` | `chat_id`, `path`, `caption`, `reply_to`, `mentions` | `{message_id}` — daemon copies the file into its cache immediately; the caller may delete its copy on return |
+| `send.media` | `chat_id`, `path`, `caption`, `reply_to`, `mentions` | `{message_id}`: daemon copies the file into its cache immediately; the caller may delete its copy on return |
 | `send.sticker` | `chat_id`, `cache_key`, `reply_to` | `{message_id}` |
 | `message.react` | `message_id`, `emoji` ("" removes) | `{}` |
-| `message.edit` | `message_id`, `text` | `{}` — may fail `expired` |
-| `message.revoke` | `message_id` | `{}` — may fail `expired` |
-| `message.delete` | `message_id` | `{}` — local delete-for-me |
+| `message.edit` | `message_id`, `text` | `{}`: may fail `expired` |
+| `message.revoke` | `message_id` | `{}`: may fail `expired` |
+| `message.delete` | `message_id` | `{}`: local delete-for-me |
 | `message.star` | `message_id`, `starred` | `{}` |
 | `message.pin` | `message_id`, `pinned`, `duration_secs` | `{}` |
 | `message.forward` | `message_id`, `chat_ids` | `{message_ids}` |
-| `media.download` | `message_id` | `{}` — progress in `transfers`, path lands via message upsert |
-| `media.fetch_profile_picture` | `jid` | `{path}` — full resolution, for the avatar viewer |
+| `media.download` | `message_id` | `{}`: progress in `transfers`, path lands via message upsert |
+| `media.fetch_profile_picture` | `jid` | `{path}`: full resolution, for the avatar viewer |
 
 **Settings, contacts, stickers**
 
@@ -288,14 +288,14 @@ views.
 | `self.set_about` | `text` | `{}` (later: `self.set_name`, `self.set_avatar`) |
 | `contact.block` | `jid`, `blocked` | `{}` |
 | `sticker.favorite` | `cache_key` or `message_id`, `favorite` | `{}` |
-| `sticker.download` | `cache_key` | `{}` — lands via `stickers`/`sticker_pack` upsert |
+| `sticker.download` | `cache_key` | `{}`: lands via `stickers`/`sticker_pack` upsert |
 | `sticker_pack.install` | `pack_id`, `installed` | `{}` |
-| `sticker_packs.refresh` | — | `{}` — forces a store refresh; results land via `sticker_packs` upserts/removes |
+| `sticker_packs.refresh` | none | `{}`: forces a store refresh; results land via `sticker_packs` upserts/removes |
 
 ## Queries
 
 One-shot request/response for data that is legitimately transient (search
-results a frontend renders and throws away — frontend-only state is allowed
+results a frontend renders and throws away; frontend-only state is allowed
 for these).
 
 Unlike view events (which stream item-at-a-time upserts), a query returns its
@@ -304,8 +304,8 @@ whole result inside the one response `result` object, under a named key:
 | method | params | result |
 | --- | --- | --- |
 | `search.chats` | `query`, `limit` | `{chats: [chat row, …]}` |
-| `search.messages` | `query`, optional `chat_id`, `limit`, `before_message_id` cursor | `{messages: […], has_more}` — each message row carries `chat_name`; `has_more` drives the `before_message_id` keyset cursor |
-| `search.stickers` | `query`, `limit` | `{stickers: […]}` — daemon-ordered sticker rows |
+| `search.messages` | `query`, optional `chat_id`, `limit`, `before_message_id` cursor | `{messages: […], has_more}`: each message row carries `chat_name`; `has_more` drives the `before_message_id` keyset cursor |
+| `search.stickers` | `query`, `limit` | `{stickers: […]}`: daemon-ordered sticker rows |
 | `contacts.check_phone` | `phone` | `{registered, jid, display_name, is_business, phone}` (normalized `phone`) |
 
 ## Messages on the wire
@@ -314,7 +314,7 @@ A message item has a `kind` (`text`, `image`, `sticker`, and over time
 `video`, `voice`, `document`, `location`, `poll`, …), kind-specific fields,
 and always:
 
-- `fallback` — a human-readable one-line rendering ("🎤 Voice message (0:12)",
+- `fallback`: a human-readable one-line rendering ("🎤 Voice message (0:12)",
   "📊 Poll: dinner?"). A frontend renders `fallback` for any `kind` it does
   not implement. New kinds are therefore never a breaking change.
 - `sort` (on the envelope), `id`, `chat_id`, `sender` (id, name, avatar path),
@@ -361,7 +361,7 @@ row you render arrived through the view you were already subscribed to, and the
 `sort` key moved the chat up the list for you.
 
 The acceptance bar for this protocol, kept under `examples/`: **a working
-frontend in ~30 lines of shell with `socat` and `jq`** — subscribe to the
+frontend in ~30 lines of shell with `socat` and `jq`**: subscribe to the
 chat list, print incoming messages, send replies. If a change to the
 protocol breaks the spirit of that script, the change is wrong.
 
@@ -376,7 +376,7 @@ protocol breaks the spirit of that script, the change is wrong.
 
 ## Open questions
 
-- **`notifications` view shape** (actions? dismissal sync?) — sketch when the
+- **`notifications` view shape** (actions? dismissal sync?): sketch when the
   first non-D-Bus consumer (relay/applet) is real.
 - **Multi-account:** out of scope for protocol 1; the likely shape is an
   `account` param on `hello` or per-account sockets. Nothing in this design

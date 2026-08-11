@@ -7,5 +7,5 @@ A primitive GTK4/libadwaita frontend for the `whatevrd` daemon.
 > (Arch) or the top-level `justfile`. The maintained frontend is `whatkevr`
 > (Qt/Kirigami).
 
-Build it manually if you want to hack on it — see the GTK frontend section of
+Build it manually if you want to hack on it; see the GTK frontend section of
 the top-level [README](../README.md).

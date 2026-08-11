@@ -5,7 +5,7 @@ when it received our encrypted message but could not decrypt it. The recipient
 then sends **retry receipts**; whatsmeow answers them automatically by
 re-encrypting the stored plaintext (rebuilding the Signal session / fetching
 fresh prekeys as needed). The placeholder resolves only when one of those
-retries succeeds — so a permanent placeholder means either the retries are not
+retries succeeds, so a permanent placeholder means either the retries are not
 being answered, or every re-encryption fails the same way. This runbook
 pinpoints which.
 
@@ -42,7 +42,7 @@ sqlite3 "file:$HOME/.local/share/whatevrd/whatevrd.db?mode=ro" \
 ```
 
 A row stuck at `status=pending` with a `last_send_error` (for example an
-untrusted-identity error — `AutoTrustIdentity` is off by default) is a
+untrusted-identity error; `AutoTrustIdentity` is off by default) is a
 **send-side** failure: the recipient never got anything, which is a different
 bug class from an undecryptable delivery. Stop here and fix that instead.
 
@@ -52,13 +52,13 @@ Grep the daemon log after the recipient shows the placeholder:
 
 | log line | meaning |
 | --- | --- |
-| *(nothing retry-related at all)* | The recipient never asked — or we were offline when it did (`EnableAutoReconnect` is off; check the connection supervisor around that time). Zero retry receipts with a placeholder points at recipient-side session establishment, not our buffer. |
+| *(nothing retry-related at all)* | The recipient never asked, or we were offline when it did (`EnableAutoReconnect` is off; check the connection supervisor around that time). Zero retry receipts with a placeholder points at recipient-side session establishment, not our buffer. |
 | `Failed to handle retry receipt for <chat>/<id> …: failed to get message from retry store: sql: no rows` | Buffer miss. The daemon-store fallback answers these now; if this still shows, the message is in neither the whatsmeow buffer nor the daemon `messages` table (check step 4). |
-| `Answered retry for <chat>/<id> from the daemon message store` (INFO) | The fallback fired — the resend should follow. |
-| `Sent retry #N for <chat>/<id> to <sender>` (DEBUG) | We answered. Repeated `#1..#4` with the placeholder still stuck means the recipient cannot decrypt *our re-encryptions either*: a session/identity problem — go to step 4. |
+| `Answered retry for <chat>/<id> from the daemon message store` (INFO) | The fallback fired; the resend should follow. |
+| `Sent retry #N for <chat>/<id> to <sender>` (DEBUG) | We answered. Repeated `#1..#4` with the placeholder still stuck means the recipient cannot decrypt *our re-encryptions either*: a session/identity problem; go to step 4. |
 | `Failed to handle retry receipt …: failed to encrypt message for retry / failed to fetch prekeys / didn't get prekey bundle` | Re-encryption itself failing; usually connectivity or a server-side prekey problem for that device. |
 | `Dropping retry request … internal retry counter is 10` | We gave up on that (sender, message) pair. |
-| `Error decrypting message …: failed to decrypt prekey message: untrusted identity` | The peer's Signal identity changed (they reinstalled/re-registered WhatsApp). **This blocks both directions at once** — their messages fail to decrypt here, and our messages were encrypted for their dead pre-reinstall session, so their phone shows the placeholder. Auto-trust (the default since 2026-07-18) clears the stale identity and self-heals on the next message; it appears as WARN `WhatsApp identity changed for <jid>`. If you opted into strict mode (`WHATEVRD_AUTO_TRUST_IDENTITY=0`) this stays broken until you clear the peer's rows from `whatsmeow_identity_keys`/`whatsmeow_sessions` with the daemon stopped. |
+| `Error decrypting message …: failed to decrypt prekey message: untrusted identity` | The peer's Signal identity changed (they reinstalled/re-registered WhatsApp). **This blocks both directions at once**: their messages fail to decrypt here, and our messages were encrypted for their dead pre-reinstall session, so their phone shows the placeholder. Auto-trust (the default since 2026-07-18) clears the stale identity and self-heals on the next message; it appears as WARN `WhatsApp identity changed for <jid>`. If you opted into strict mode (`WHATEVRD_AUTO_TRUST_IDENTITY=0`) this stays broken until you clear the peer's rows from `whatsmeow_identity_keys`/`whatsmeow_sessions` with the daemon stopped. |
 
 ## 4. Inspect the session store (read-only!)
 
@@ -102,5 +102,5 @@ Send to the same recipient in each configuration and record steps 2–4:
 The recipient's bubble resolves right after a `Sent retry #N` (or
 `Answered retry … from the daemon message store`) line. If retries are answered
 but the placeholder persists across all matrix cells, collect the step-3/4
-output — that is a session/identity problem to debug upstream, not a daemon
+output; that is a session/identity problem to debug upstream, not a daemon
 send-path bug.

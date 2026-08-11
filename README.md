@@ -113,7 +113,7 @@ sudo dnf install go just gcc gcc-c++ sqlite-devel pkgconf-pkg-config cmake ninja
   kf6-kdbusaddons-devel kf6-ki18n-devel kf6-kirigami-devel kf6-prison-devel \
   kf6-qqc2-desktop-style-devel kf6-kirigami-addons-devel rlottie-devel
 
-# Debian 13 "trixie" (needs Go >= 1.25 — see Platform support)
+# Debian 13 "trixie" (needs Go >= 1.25, see Platform support)
 sudo apt install golang just gcc g++ libsqlite3-dev pkg-config cmake ninja-build \
   extra-cmake-modules vulkan-headers qt6-base-dev qt6-declarative-dev qt6-shadertools-dev \
   libkf6coreaddons-dev libkf6dbusaddons-dev libkf6i18n-dev \
@@ -148,7 +148,7 @@ whatkevr
 
 #### Run the daemon via systemd (optional)
 
-`just install` ships two **mutually exclusive** user units — enable **one**,
+`just install` ships two **mutually exclusive** user units: enable **one**,
 never both (they share the same socket path):
 
 - **Socket activation (recommended):** the daemon starts on demand the moment a
@@ -287,13 +287,13 @@ Whatevr will be Linux-first for now until its stable. I am open to contributions
 ## Acknowledgements
 Whatevr stands on the shoulders of:
 
-- [whatsmeow](https://github.com/tulir/whatsmeow) — WhatsApp Web multidevice protocol library (MPL-2.0)
-- [Qt](https://www.qt.io) — cross-platform application framework (LGPL-3.0)
-- [KDE Frameworks](https://kde.org) / [Kirigami](https://develop.kde.org/frameworks/kirigami/) — UI toolkit and helpers (LGPL)
-- [Kirigami Addons](https://invent.kde.org/libraries/kirigami-addons) — convergent UI components (LGPL)
-- [rlottie](https://github.com/Samsung/rlottie) — Lottie rendering for animated stickers (MIT)
-- [emojilib](https://github.com/muan/emojilib) — emoji keyword / shortcode data, © 2014 Mu-An Chiou (MIT)
-- [Google Fonts emoji metadata](https://github.com/googlefonts/emoji-metadata) — emoji ordering & grouping data (Apache-2.0)
+- [whatsmeow](https://github.com/tulir/whatsmeow): WhatsApp Web multidevice protocol library (MPL-2.0)
+- [Qt](https://www.qt.io): cross-platform application framework (LGPL-3.0)
+- [KDE Frameworks](https://kde.org) / [Kirigami](https://develop.kde.org/frameworks/kirigami/): UI toolkit and helpers (LGPL)
+- [Kirigami Addons](https://invent.kde.org/libraries/kirigami-addons): convergent UI components (LGPL)
+- [rlottie](https://github.com/Samsung/rlottie): Lottie rendering for animated stickers (MIT)
+- [emojilib](https://github.com/muan/emojilib): emoji keyword / shortcode data, © 2014 Mu-An Chiou (MIT)
+- [Google Fonts emoji metadata](https://github.com/googlefonts/emoji-metadata): emoji ordering & grouping data (Apache-2.0)
 
 Additionally, I took a fair amount of inspiration for UI layouts :from [NeoChat](https://apps.kde.org/neochat/)
 
