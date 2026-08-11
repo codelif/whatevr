@@ -8,13 +8,17 @@ import (
 
 type Paths struct {
 	RuntimeDir string
+	// SocketDir/SocketPath serve the whatevr protocol (PROTOCOL.md) — the
+	// daemon's only socket.
 	SocketDir  string
 	SocketPath string
-	// ProtocolSocketDir/Path serve the whatevr protocol (PROTOCOL.md); they
-	// live beside the legacy gRPC socket until the migration removes it.
-	ProtocolSocketDir  string
-	ProtocolSocketPath string
-	LockPath           string
+	// LockDir/LockPath deliberately keep the pre-teardown location rather than
+	// moving into SocketDir: a pre-teardown daemon (which still binds the gRPC
+	// socket and locks here) and this one must continue to exclude each other,
+	// or an upgrade could leave two daemons on one SQLite database. Safe to
+	// fold into SocketDir once no such build can still be running.
+	LockDir       string
+	LockPath      string
 	DataDir       string
 	CacheDir      string
 	DatabasePath  string
@@ -44,18 +48,17 @@ func ResolvePaths() (Paths, error) {
 		cacheBase = filepath.Join(home, ".cache")
 	}
 
-	socketDir := filepath.Join(runtimeBase, "whatevrd")
-	protocolSocketDir := filepath.Join(runtimeBase, "whatevr")
+	socketDir := filepath.Join(runtimeBase, "whatevr")
+	lockDir := filepath.Join(runtimeBase, "whatevrd")
 	dataDir := filepath.Join(dataBase, "whatevrd")
 	cacheDir := filepath.Join(cacheBase, "whatevrd")
 
 	return Paths{
-		RuntimeDir:         runtimeBase,
-		SocketDir:          socketDir,
-		SocketPath:         filepath.Join(socketDir, "whatevrd.sock"),
-		ProtocolSocketDir:  protocolSocketDir,
-		ProtocolSocketPath: filepath.Join(protocolSocketDir, "whatevrd.sock"),
-		LockPath:           filepath.Join(socketDir, "whatevrd.lock"),
+		RuntimeDir:    runtimeBase,
+		SocketDir:     socketDir,
+		SocketPath:    filepath.Join(socketDir, "whatevrd.sock"),
+		LockDir:       lockDir,
+		LockPath:      filepath.Join(lockDir, "whatevrd.lock"),
 		DataDir:       dataDir,
 		CacheDir:      cacheDir,
 		DatabasePath:  filepath.Join(dataDir, "whatevrd.db"),
@@ -66,7 +69,7 @@ func ResolvePaths() (Paths, error) {
 }
 
 func (p Paths) Ensure() error {
-	for _, dir := range []string{p.SocketDir, p.ProtocolSocketDir, p.DataDir, p.SessionDir, p.CacheDir, p.MediaCacheDir} {
+	for _, dir := range []string{p.SocketDir, p.LockDir, p.DataDir, p.SessionDir, p.CacheDir, p.MediaCacheDir} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return err
 		}

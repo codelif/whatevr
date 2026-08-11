@@ -51,7 +51,6 @@ jobs:
             go:
               - 'justfile'
               - 'VERSION'
-              - 'proto/**'
               - 'whatevrd/**'
               - '.github/workflows/**'
             validate:
@@ -63,7 +62,6 @@ jobs:
             build:
               - 'justfile'
               - 'VERSION'
-              - 'proto/**'
               - 'whatevrd/**'
               - 'whatkevr/**'
               - 'packaging/systemd/**'
@@ -144,7 +142,7 @@ jobs:
         run: |
           pacman -Syu --noconfirm --needed \
             git sudo base-devel go just cmake ninja ccache extra-cmake-modules zstd vulkan-headers \
-            qt6-base qt6-declarative qt6-shadertools qt6-grpc \
+            qt6-base qt6-declarative qt6-shadertools \
             kcoreaddons kdbusaddons ki18n kirigami kirigami-addons prison qqc2-desktop-style sqlite
           useradd -m -G wheel builduser
           printf 'builduser ALL=(ALL) NOPASSWD: ALL\n' >> /etc/sudoers

@@ -15,12 +15,12 @@ page by page; **Phase DeezNuts** then shakes the ported client out in real
 daily use; teardown (Phase E) deletes the old stack. At no point is the app
 broken for daily use.
 
-**Phase DeezNuts gates the teardown.** Phase D is done, so the frontend now
-runs purely on the protocol — but nothing about it has been exercised against
-a live WhatsApp account (see the D-phase notes: no session was available in
-any D session). Deleting the gRPC stack is the one irreversible move in this
-plan, and doing it while the replacement is unproven would leave no fallback.
-So Phase E does not start until Harsh closes Phase DeezNuts.
+**Phase DeezNuts gated the teardown, and is now closed** (2026-08-11, Harsh's
+call — "end phase DN"). Phase D left the frontend running purely on the
+protocol but never exercised against a live WhatsApp account; DN1–DN16 were
+sixteen field reports from daily use, all fixed. Deleting the gRPC stack was
+the one irreversible move in this plan, so it waited for that word. Phase E is
+unblocked.
 
 This file is the **only** progress tracker. Every work session updates it in
 the same commit as the code it describes. If this file and reality disagree,
@@ -34,10 +34,10 @@ One session = one step. Each session (see `.claude/commands/migrate.md`):
    previous session's notes, open blockers/decisions.
 2. If the next step is `blocked` or `needs-decision`, resolve that first
    (ask the user); otherwise take the **first step not marked `done`**.
-   **While Phase DeezNuts is open, "first step not marked `done`" means the
-   first open row in *its* table** — Phase E steps are not eligible, however
-   inviting they look. If that table is empty, there is no step to take: say
-   so and stop.
+   Phase DeezNuts is closed, so that is now simply the first open Phase E row.
+   A new field report still opens a DeezNuts row and still takes priority over
+   Phase E — the phase closing means the teardown may proceed, not that the
+   client stopped being field-tested.
 3. If the step is too big for one session (and really make sure it needs 
    another session, don't split willy nilly), **split it in the table** 
    (e.g. B3 → B3a/B3b) instead of pushing through — then do the first half.
@@ -126,13 +126,24 @@ Status: `todo` | `doing` | `done` | `blocked` | `needs-decision`
 | D6 | Port settings pages (privacy/prefs/blocklist/profile) + sticker/emoji pickers, incl. `send.sticker` (moved here from D4, see decision log) | done | `ProtocolController` now owns session-long `self`/`preferences`, page-scoped `privacy`, and shared contact-card/settings `blocklist` views plus ack-only settings/profile/logout commands; all active settings/sidebar/bubble bindings use daemon snake-case rows. Emoji remains frontend presentation state but moved off the gRPC controller. New `ProtocolStickerController` owns picker-scoped `stickers`/`sticker_packs`/`sticker_pack` views, transient daemon-ordered `search.stickers`, bounded download requests, favorite/install/refresh actions, and ack-only `send.sticker` (messages still arrive only through `messages`). PROTOCOL.md adds the approved search query + forced-refresh command; daemon fixes include complete sticker invalidation/unbounded omitted-limit semantics, deterministic search ties, truthful refresh errors, and backgrounded missing-file sticker sends. `just build`, all three Qt suites, full Go tests, conformance, qmllint (161 warnings, down from D5's 164), raw-socket exercise, and offscreen launch pass. No Spirit-checklist bend. |
 | D7 | Remove all gRPC client code + qt6-grpc from whatkevr; whatkevr runs 100% on the new protocol | done | **whatkevr is now a pure protocol client.** Deleted `app/appcontroller.{h,cpp}` (5.9k lines), `app/stickercontroller.*` and the eight proto-typed models (`chatlist`, `chatlistfilter`, `messagelist`, `pinnedmessages`, `searchresults`, `starredmessages`, `sticker`, `stickerpack`) — ~10.4k lines net deletion; dropped `qt_add_protobuf`/`qt_add_grpc` and `Qt6::Grpc`/`Qt6::Protobuf` from `whatkevr/{,src/}CMakeLists.txt`, and `qt6-grpc` from the README build deps + all three AUR packages (the binary links neither library now: `ldd` is clean). `main.cpp` constructs only `ProtocolController`. The eighteen remaining `AppController.*` QML call sites fell into three buckets: **already ported** (`selectChat` mirroring in Main/ChatListPane/StarredMessagesPage, `bannerText`, `composerEnabled` — deleted as duplicates), **gRPC-only machinery with no protocol counterpart** (`populateSelectedChat`/`uiTransitionActive`, the deferred-load gate — the messages subscription already starts at `selectChat`; and `requestChatAvatar`, which PROTOCOL deliberately has no command for), and **frontend-only helpers with no daemon behind them**, which moved onto `ProtocolController` (drafts `chatDraft`/`setChatDraft`, `toCommonMark`, `previousGraphemeBoundary`, `copyImageToClipboard`, `saveMediaAs`, `perfLogging`) alongside `handleCommandLine` + a new `activateWindowRequested` signal for single-instance/deep-link routing. Drafts are a plain `QHash` over the same `settings/drafts` QSettings key (read directly, the way EmojiModel reads its own state) — the gRPC version's draft-floats-the-row-to-the-top ordering is **gone**, since the daemon owns `chats` sort. `tst_protocolcontroller` +4 (deep link held until `shellVisible` then applied once, plain/malformed command line raises only, drafts round-trip across a controller restart, grapheme-cluster Backspace); `just build`, all four Qt tests (46 controller cases), `go test -tags sqlite_fts5 ./...`, `scripts/conformance` and qmllint (161 warnings, same as D6) pass; the startup subscription set hand-exercised over a raw socket and an offscreen `whatkevr` verified to hold a live protocol session (daemon fd count) with no QML errors. No PROTOCOL.md change. **Phase D complete.** **Live-account check not performed** — same environment gap as D3c–D6; **and** two behaviour narrowings are logged below (dead-avatar re-fetch, transition gate). |
 
-### Phase DeezNuts — field testing (status: **open**, indefinite)
+### Phase DeezNuts — field testing (status: **closed** 2026-08-11, after DN1–DN16)
 
 Harsh uses whatkevr as his daily WhatsApp client and reports whatever is
 broken, half-working, or worse than the gRPC build was. Each report becomes a
 row below and is fixed one per session, exactly like a migration step. The
-phase has no step count and no end date: it closes when Harsh says it closes,
-and Phase E stays untouchable until then.
+phase had no step count and no end date; Harsh closed it on 2026-08-11, which
+released Phase E. **The table stays live:** a new field report is still filed
+here and still jumps the queue ahead of Phase E — what closed is the hold on
+the teardown, not the field testing.
+
+**Three rows closed with live verification still owed** (fixes landed,
+test-covered, and reasoned from the code, but never watched on Harsh's screen
+or account): **DN12** — no wallpaper squash on chat open, pattern present on a
+cold launch; **DN13** — the badge actually clearing and the read receipts
+actually reaching the phone; **DN16** — snap-on-send with the toggle both ways,
+and the badge staying at 0 across your own sends. Harsh closed the phase
+knowing this. Recorded here because after E1 the gRPC fallback no longer
+exists, so if any of the three is wrong the fix is forward, not back.
 
 **Why a phase and not a checklist:** the whole D phase was verified against
 fake daemons, raw sockets and offscreen launches, because no logged-in
@@ -181,19 +192,41 @@ Status: `todo` | `doing` | `done` | `blocked` | `needs-decision` |
 
 | DN16 | Add a setting for snapping to the bottom when sending a message; the go-to-bottom badge should count received messages, not my own sends | done | Frontend-only, two halves. **(a) The setting.** New client-side `Settings.snapToBottomOnSend`, **default true** (Harsh's call — WhatsApp's behaviour), following `enterToSend` exactly: `Q_PROPERTY`/accessors/NOTIFY/member in `app/settings.{h,cpp}`, `settings/snapToBottomOnSend` key loaded in `Settings::load()`, a `FormSwitchDelegate` in ChatsPage's existing "Composing" card, and a curated `SettingsView` search-index record. Wiring is a new `ProtocolController::messageSent()` emitted next to the existing `dismissUnreadAnchor()` in `sendText`/`sendMedia` — **on the request, not the ack**, so the snap feels immediate — plus a relay from `ProtocolStickerController::stickerSent` (stickers are sent by their own controller, which has no earlier signal; firing on its ack only means the row has already landed). Explicitly **not** from `sendReaction`: reacting puts nothing in the timeline. `MessageView.onMessageSent` calls `ProtocolController.jumpToBottom()` **and** `scrollToNewest()`, the same pair the go-to-bottom button uses — the scroll alone is not enough, because while the window is anchored mid-history the sent message is never delivered into it at all (PROTOCOL.md, "Windows"), so there would be nothing to scroll to. With the toggle off, behaviour is unchanged: `followNewest` still pulls the view down when you were already near the bottom. **(b) The badge.** `pendingNewestMessageCount` was bumped by the whole inserted range (`last - first + 1`) regardless of direction, so your own message counted as something you had missed whenever you were scrolled up. New `incomingRowsBetween(first, last)` counts only rows the model reports as not outgoing, via a new `ProtocolMessageModel::isOutgoingAt(row)` (sibling of `messageIdAt`, reading the same `direction` wire field `messageRowDisplay` uses); it falls back to the full range if the model cannot answer, which is the old behaviour and never under-reports. `just build`, `ctest` 5/5 (with a new assertion that `messageSent` fires once on `sendText` and not at all on `sendReaction`), qmllint clean on the three touched QML files. **Not verified live:** the scroll behaviour itself is QML and needs Harsh's hands — toggle on/off while scrolled up in a busy chat, and confirm the badge stays at 0 across several of your own sends but reads "1" when someone else writes. |
 
-### Phase E — teardown & flagship polish (blocked on Phase DeezNuts)
+### Phase E — teardown & flagship polish
 
 | id | step | status | notes |
 | --- | --- | --- | --- |
-| E1 | Delete daemon gRPC server + `proto/`; purge protobuf/grpc from go.mod, CMake, justfile, packaging, README dependency lists | blocked | Blocked on Phase DeezNuts closing. The frozen gRPC stack is the only fallback if field testing turns up something the protocol path cannot do yet; deleting it is irreversible, so it waits. |
+| E1 | Delete daemon gRPC server + `proto/`; purge protobuf/grpc from go.mod, CMake, justfile, packaging, README dependency lists | done | **The gRPC stack is gone; whatevrd serves exactly one socket.** Deleted `proto/whatevr.proto` and all of `whatevrd/internal/rpc/` (7 services, `server.go`, `session_bus.go`, the 442 KB generated `pb/`) — 14 files. `go mod tidy` dropped `google.golang.org/grpc` and `genproto/googleapis/rpc`; **`google.golang.org/protobuf` stays** and always will, it is whatsmeow's waE2E wire format and never was ours. **The packaging flip A1 deferred to teardown landed here**: `protocol.New` gained an `activated net.Listener` parameter (nil = standalone), `packaging/systemd/whatevrd.socket` now listens on `%t/whatevr/whatevrd.sock`, and the protocol server tracks `ownsSocket` so it unlinks the socket only when it created it. One bug found doing it: an adopted listener must also `SetUnlinkOnClose(false)` or shutdown unlinks systemd's own socket, leaving systemd accepting on a path no client can reach — `net.FileListener` already defaults that off, so the old gRPC path was accidentally safe, but it is now explicit and tested rather than inherited. `main.go` lost the `multiChatOpener` fan-out (the notification worker takes the protocol server directly), the second server's lifecycle arm, and the two-socket log line. `app.Paths` collapsed to one socket (`SocketDir`/`SocketPath` = `$XDG_RUNTIME_DIR/whatevr/`, PROTOCOL.md's path); **`LockPath` deliberately did not move** — see the Decision log. Also purged: the `just proto` recipe, the `-X whatevrd/internal/rpc.Version` ldflag, `qt6-grpc` from both CI workflows, and the `proto/**` CI path filters; five stale comments that described a gRPC stack that no longer exists were corrected. New tests: `protocol.TestActivatedListenerIsAdoptedAndSocketSurvivesShutdown` / `…SkipsSocketDirValidation` (systemd creates the parent 0755, which the daemon's own path rejects) and `app.TestResolvePathsSocketAndLockLocations`. `just build`, full Go suite, `ctest` 5/5, `scripts/conformance` and `ldd` (no grpc/protobuf in whatkevr) pass. Hand-verified both socket lifecycles end to end under `systemd-socket-activate` and standalone — see the E-phase notes. |
 | E2 | **Final audit + release polish:** full PROTOCOL.md vs implementation pass; promote PROTOCOL.md DRAFT → v1 stable; rewrite README around the daemon/protocol as the flagship feature (30-line-frontend pitch, `examples/` front and center) | todo | |
 
 ## Blockers
 
-- **Phase E is blocked on Phase DeezNuts** (2026-08-10). Field testing of the
-  fully-ported client is open-ended and Harsh closes it; until then the frozen
-  gRPC stack stays in the tree as the fallback. Not a defect — a deliberate
-  hold on the one irreversible step.
+- None. The one blocker this plan ever carried — **Phase E blocked on Phase
+  DeezNuts** (raised 2026-08-10) — was cleared on 2026-08-11 when Harsh closed
+  the field-testing phase, and E1 spent it. There is no fallback stack in the
+  tree any more; from here every fix is a forward fix.
+
+## E-phase notes
+
+- 2026-08-11 — **E1 socket verification, both lifecycles, by hand.** The one
+  thing unit tests cannot cover is a real inherited fd, so both paths were run
+  against the built daemon in an isolated `XDG_*` fixture (short `/tmp` path —
+  a Unix socket path is capped at 108 bytes and the scratchpad blows it).
+  **Socket-activated** (`systemd-socket-activate -l …/whatevr/whatevrd.sock`,
+  parent left 0755 as systemd creates it): the daemon adopted fd 3, answered
+  `hello`, served `connection` + `chats` with response→upsert→`ready` ordering
+  intact and `nope` → `unknown_method`, and **left the socket file in place on
+  exit** — the `SetUnlinkOnClose(false)` guarantee. (The reconnect after that
+  exit is refused because `systemd-socket-activate` is one-shot and dies with
+  its child; real systemd keeps listening. Tool limitation, not daemon
+  behaviour.) **Standalone**: created `…/whatevr/whatevrd.sock` at mode 0600,
+  logged the single new line `whatevrd listening on …`, and removed the socket
+  on shutdown. In both runs the runtime tree held **exactly one socket** plus
+  the lock at its old path, and nothing was ever created under
+  `$XDG_RUNTIME_DIR/whatevrd/` but that lock. Finally an offscreen `whatkevr`
+  was launched against the standalone daemon: it held a live session (daemon
+  open-fd count 19 → 22) and printed nothing at all — no QML errors, no
+  warnings.
 
 ## D-phase notes
 
@@ -370,6 +403,34 @@ Status: `todo` | `doing` | `done` | `blocked` | `needs-decision` |
   no GUI/gRPC) and drive the real client over a real Unix socket.
 
 ## Decision log
+
+- 2026-08-11 — **Harsh closed Phase DeezNuts** ("end phase DN"), with the three
+  outstanding live-verification debts (DN12/DN13/DN16) put to him first and
+  accepted. Same session, at his direction, E1 was taken immediately rather
+  than held for the next one — the third recorded deviation from
+  one-session-one-step, after DN4/5/6 and DN9, and recorded for the same reason:
+  so the ledger does not read as drift.
+
+- 2026-08-11 — **E1: the process lock deliberately stays at
+  `$XDG_RUNTIME_DIR/whatevrd/whatevrd.lock`.** Everything else in `app.Paths`
+  collapsed onto the single `whatevr/` runtime dir, and leaving one directory
+  behind purely for a lock file is ugly. It is also the only thing stopping a
+  pre-teardown daemon and this one from running at once: the new daemon
+  `removeStaleSocket`s and rebinds the protocol socket without complaint, so if
+  the lock moved too, an upgrade with the old binary still running would put
+  **two daemons on one SQLite database** with two whatsmeow sessions — silent
+  and unpleasant to diagnose. The path is pinned by
+  `app.TestResolvePathsSocketAndLockLocations` and commented at the struct.
+  Fold it into `SocketDir` at E2 or later, once no pre-teardown build can
+  plausibly still be running.
+
+- 2026-08-11 — **E1 scope call: README prose was left for E2.** E1's brief says
+  "README dependency lists", and those were already clean (D7 took `qt6-grpc`
+  out). The README still describes the daemon as exposing a "local RPC API"
+  (line ~208), and `feature-gap.md` still proposes a CLI companion "over the
+  existing gRPC unix socket" — both are now wrong, and both are prose, so they
+  belong to E2's rewrite rather than a deletion step. Flagged here so E2 does
+  not have to rediscover them.
 
 - 2026-08-11 — **DN9 taken as one pass across all layers at Harsh's explicit
   request**, against the one-row-per-session rule in the Session protocol above

@@ -158,7 +158,7 @@ func main() {
 	})
 	daemon.SetState(app.StateOnline)
 
-	server, err := protocol.New(socketPath, daemon)
+	server, err := protocol.New(socketPath, nil, daemon)
 	if err != nil {
 		log.Fatalf("start protocol fixture: %v", err)
 	}
