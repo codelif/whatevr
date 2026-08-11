@@ -296,6 +296,13 @@ type anchoredMessagesSession struct {
 	lastDir        string // "", "older", "newer"
 	olderExhausted bool
 	newerExhausted bool
+	// atLiveEdge latches once the newer frontier has reached the newest message
+	// in the chat. From then on the window stays adjacent to the live edge
+	// (PROTOCOL.md, "Windows"): messages arriving at the present are contiguous
+	// with it, so they belong in it and are delivered as ordinary upserts. Before
+	// the latch, the newer side is trimmed to newerReach: a message past the
+	// frontier is separated from the window by a gap the frontend cannot render.
+	atLiveEdge bool
 }
 
 func (s *anchoredMessagesSession) ExtendWindow(direction string, count int) {
@@ -328,7 +335,7 @@ func (s *anchoredMessagesSession) Items(int) []Item {
 		return nil
 	}
 	s.mu.Lock()
-	olderN, newerN := s.olderReach, s.newerReach
+	olderN, newerN, live := s.olderReach, s.newerReach, s.atLiveEdge
 	s.mu.Unlock()
 	ctx := s.ctx
 
@@ -355,20 +362,37 @@ func (s *anchoredMessagesSession) Items(int) []Item {
 	}
 
 	// Newer frontier: the newerN messages nearest the anchor on the newer side
-	// (ascending). Same one-extra exhaustion probe, keep the oldest.
-	newer, err := s.lister.ListMessagesAfter(ctx, s.chatID, newerN+1, s.anchorID)
+	// (ascending). Same one-extra exhaustion probe, keep the oldest. Once the
+	// frontier has reached the live edge the trim stops for good, because
+	// everything after the anchor is contiguous with the window, including what
+	// arrives
+	// while it is open, so the fetch is unbounded and the frontier stays
+	// exhausted rather than re-opening a gap behind each new message.
+	newerLimit := newerN + 1
+	if live {
+		newerLimit = messagesUnboundedLimit
+	}
+	newer, err := s.lister.ListMessagesAfter(ctx, s.chatID, newerLimit, s.anchorID)
 	if err != nil {
 		log.Printf("protocol: anchored messages newer frontier: %v", err)
 		return nil
 	}
-	newerExhausted := len(newer) <= newerN
-	if len(newer) > newerN {
+	newerExhausted := live || len(newer) <= newerN
+	if !live && len(newer) > newerN {
 		newer = newer[:newerN]
 	}
 
 	s.mu.Lock()
 	s.olderExhausted = olderExhausted
 	s.newerExhausted = newerExhausted
+	if newerExhausted {
+		s.atLiveEdge = true
+		if len(newer) > s.newerReach {
+			// Keep the reach describing the window actually held, so an extend
+			// after the latch cannot ask for less than is already delivered.
+			s.newerReach = len(newer)
+		}
+	}
 	s.mu.Unlock()
 
 	window := make([]store.Message, 0, len(older)+1+len(newer))
