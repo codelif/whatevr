@@ -18,6 +18,11 @@ Item {
 
     // Motif SVG url. Empty hides the layer entirely.
     property url source: ""
+    // Whether to paint. Kept separate from `source` so a caller can hand over
+    // the motif while the pane is still empty: rasterising a large SVG takes
+    // long enough to be visible, and doing it during startup means the pattern
+    // is ready the first time a chat opens instead of arriving seconds late.
+    property bool active: true
     // Tile size as a percentage of the motif's natural display size (100 = base).
     property int scalePercent: 100
     // Overall motif opacity, 0..1. Kept low so it reads as a subtle texture.
@@ -33,7 +38,21 @@ Item {
     property real originY: 0
 
     readonly property bool hasSource: String(source).length > 0
-    visible: hasSource && intensity > 0
+    // The tile grid is only correct once the motif's own proportions are known:
+    // until the SVG has rasterised, motifAspect falls back to 1 and every tile
+    // would be drawn square, which visibly squashes any non-square motif. So the
+    // pattern is held back rather than shown wrong and corrected a moment later.
+    readonly property bool motifReady:
+        motif.status === Image.Ready && motif.implicitWidth > 0 && motif.implicitHeight > 0
+    visible: active && hasSource && intensity > 0
+
+    // A ShaderEffectSource cannot capture an item that is not being rendered, so
+    // a grab scheduled while this layer was hidden (during preload, or on another
+    // page of the column view) yields an empty texture and — with live: false —
+    // is never retried. Re-grabbing whenever the layer becomes visible makes that
+    // self-healing instead of leaving the wallpaper blank until something else
+    // happens to dirty the scene.
+    onVisibleChanged: if (visible) scheduleTextureUpdate()
 
     // On-screen tile size (logical px) at 100%, scaled by scalePercent. Logical
     // pixels keep the motif a consistent physical size across display scales; the
@@ -115,7 +134,10 @@ Item {
 
     ShaderEffect {
         anchors.fill: parent
-        visible: root.visible
+        visible: root.visible && root.motifReady
+        // Fade in on first rasterisation so the pattern arrives deliberately
+        // rather than popping in at whatever moment the SVG finishes decoding.
+        opacity: root.motifReady ? 1 : 0
         blending: true
         property variant source: motifTexture
         property color tint: root.effectiveTint
@@ -126,5 +148,12 @@ Item {
         property vector2d resolution: Qt.vector2d(Math.max(1, width), Math.max(1, height))
         property vector2d origin: Qt.vector2d(root.originX, root.originY)
         fragmentShader: "qrc:/qt/qml/Whatevr/shaders/chatwallpaper.frag.qsb"
+
+        Behavior on opacity {
+            NumberAnimation {
+                duration: 160
+                easing.type: Easing.OutCubic
+            }
+        }
     }
 }
