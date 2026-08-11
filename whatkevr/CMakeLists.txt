@@ -77,11 +77,17 @@ qt_standard_project_setup(REQUIRES ${QT_MIN_VERSION})
 # -DWHATEVR_BUILD_TESTS=ON to build and run the protocol-core unit tests.
 option(WHATEVR_BUILD_TESTS "Build whatkevr unit tests" OFF)
 
-add_subdirectory(src)
-
+# Resolved before src/ is added: the delegate benchmark (DN9) lives in src/,
+# next to the QML module whose files it reuses, so add_test() must already be
+# usable by the time that directory is processed.
 if(WHATEVR_BUILD_TESTS)
     find_package(Qt6 ${QT_MIN_VERSION} REQUIRED COMPONENTS Test)
     enable_testing()
+endif()
+
+add_subdirectory(src)
+
+if(WHATEVR_BUILD_TESTS)
     add_subdirectory(tests)
 endif()
 

@@ -200,6 +200,57 @@ Item {
         font.weight: Font.DemiBold
     }
 
+    // Likewise shared: at most one row glows at a time (a jump lands on exactly
+    // one message), so the whole list drives one animation chain instead of
+    // giving every delegate its own five animation objects (DN9).
+    SequentialAnimation {
+        id: sharedReplyGlow
+
+        property ChatBubble glowTarget: null
+
+        PropertyAction {
+            target: sharedReplyGlow.glowTarget
+            property: "replyGlowOpacity"
+            value: 0
+        }
+        NumberAnimation {
+            target: sharedReplyGlow.glowTarget
+            property: "replyGlowOpacity"
+            from: 0
+            to: 1
+            duration: Kirigami.Units.shortDuration
+            easing.type: Easing.OutCubic
+        }
+        PauseAnimation {
+            duration: Kirigami.Units.shortDuration
+        }
+        NumberAnimation {
+            target: sharedReplyGlow.glowTarget
+            property: "replyGlowOpacity"
+            from: 1
+            to: 0
+            duration: Kirigami.Units.longDuration
+            easing.type: Easing.OutCubic
+        }
+    }
+
+    // Retargets the shared glow. A glow already in flight is stopped and its
+    // row reset first, otherwise the previous target would be left latched at
+    // whatever opacity it had reached.
+    function playReplyGlow(bubble) {
+        if (bubble === null) {
+            return
+        }
+        if (sharedReplyGlow.running) {
+            sharedReplyGlow.stop()
+            if (sharedReplyGlow.glowTarget !== null) {
+                sharedReplyGlow.glowTarget.replyGlowOpacity = 0
+            }
+        }
+        sharedReplyGlow.glowTarget = bubble
+        sharedReplyGlow.restart()
+    }
+
     function messageSnapshot(messageId) {
         if (!list.model || typeof list.model.messageSnapshot !== "function") {
             return null
@@ -1298,71 +1349,32 @@ Item {
         delegate: ChatBubble {
             id: messageDelegate
 
-            required property var model
+            // Every model role ChatBubble renders is declared `required` on
+            // ChatBubble itself, named after the role, so ListView assigns it
+            // directly in C++. What used to live here — ~60 bindings of the
+            // form `String(model.x || "")` — was one JS evaluation plus a type
+            // coercion per role per row, and it was why this file had the worst
+            // ahead-of-time compilation coverage in the codebase (DN9).
+            // Only genuine view state is passed down now.
             property bool pooledByListView: false
             readonly property bool insideViewport: !pooledByListView
                                                    && y + height >= list.contentY
                                                    && y <= list.contentY + list.height
 
             listWidth: list.width
-            messageId: String(model.messageId || "")
-            readonly property bool messageTextTruncated: Boolean(model.textTruncated)
-            readonly property bool messageTextExpanded: root.messageTextExpanded(messageId)
-            body: messageTextExpanded ? String(model.text || "") : String(model.textPreview || model.text || "")
-            layoutBody: messageTextExpanded ? String(model.layoutText || "") : String(model.layoutTextPreview || model.layoutText || "")
-            emojiOnlyCount: messageTextExpanded || !messageTextTruncated ? Number(model.emojiOnlyCount || 0) : 0
-            hasRichText: messageTextExpanded ? Boolean(model.hasRichText) : Boolean(model.previewHasRichText)
-            richText: messageTextExpanded ? String(model.richText || "") : String(model.previewRichText || "")
-            replyPreviewBody: String(model.textPreview || model.text || "")
-            textTruncated: messageTextTruncated
-            textExpanded: messageTextExpanded
-            widestLineWidth: Number(model.widestLineWidth || 0)
-            lastLineWidth: Number(model.lastLineWidth || 0)
+            textExpanded: root.messageTextExpanded(messageId)
             readMoreTextWidth: readMoreSharedMetrics.advanceWidth
-            timeText: String(model.timeText || "")
-            dateSeparatorText: String(model.dateSeparatorText || "")
-            status: Number(model.status || 0)
-            outgoing: Boolean(model.isOutgoing)
-            senderName: String(model.senderName || "")
-            senderAvatarLocalPath: String(model.senderAvatarLocalPath || "")
-            senderInitials: String(model.senderInitials || "?")
-            showSenderHeader: Boolean(model.showSenderHeader)
-            showSenderAvatar: Boolean(model.showSenderAvatar)
-            showSenderGutter: Boolean(model.showSenderGutter)
-            groupStart: Boolean(model.groupStart)
-            groupEnd: Boolean(model.groupEnd)
-            mediaKind: String(model.mediaKind || "")
-            mediaMimeType: String(model.mediaMimeType || "")
-            mediaLocalPath: String(model.mediaLocalPath || "")
-            mediaThumbnailLocalPath: String(model.mediaThumbnailLocalPath || "")
-            mediaCacheKey: String(model.mediaCacheKey || "")
-            mediaIntrinsicWidth: Number(model.mediaWidth || 0)
-            mediaIntrinsicHeight: Number(model.mediaHeight || 0)
-            mediaAnimated: Boolean(model.mediaAnimated)
-            isRevoked: Boolean(model.isRevoked)
-            isEdited: Boolean(model.isEdited)
-            isStarred: Boolean(model.isStarred)
-            isPinned: Boolean(model.isPinned)
             selectionModeActive: root.selectionActive
             selected: root.selectionRevision >= 0 && root.isSelected(messageId)
             pooled: pooledByListView
             activeInViewport: insideViewport
             fastFlicking: list.fastFlicking
-            mediaDownloading: Boolean(model.mediaDownloading)
-            mediaDownloadError: String(model.mediaDownloadError || "")
-            mediaDownloadProgress: model.mediaDownloadProgress !== undefined ? Number(model.mediaDownloadProgress) : -1
             unreadSeparatorCount: root.unreadAnchorMessageId.length > 0 && messageId === root.unreadAnchorMessageId
                                   ? root.unreadAnchorCount : 0
-            replyToMessageId: String(model.replyToMessageId || "")
-            replyToSenderName: String(model.replyToSenderName || "")
-            replyToText: String(model.replyToText || "")
-            replyToMediaKind: String(model.replyToMediaKind || "")
-            replyToMediaMimeType: String(model.replyToMediaMimeType || "")
-            replyToOutgoing: Boolean(model.replyToIsOutgoing)
-            reactions: model.reactions
             clearSelectionGeneration: root.clearSelectionGeneration
             activeSelectionMessageId: root.activeSelectionMessageId
             onConversationFocusRequested: root.conversationFocusRequested()
+            onReplyGlowRequested: root.playReplyGlow(messageDelegate)
             onMessageSelectionClaimed: messageId => root.claimMessageSelection(messageId)
             onTypeIntoComposerRequested: text => root.typeIntoComposerRequested(text)
             onReplyRequested: (messageId, senderName, text, mediaKind, mediaMimeType, outgoing) => root.replyToMessageRequested(messageId, senderName, text, mediaKind, mediaMimeType, outgoing)
