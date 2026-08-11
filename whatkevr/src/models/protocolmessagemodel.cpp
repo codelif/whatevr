@@ -302,17 +302,24 @@ QVariant ProtocolMessageModel::data(const QModelIndex &index, int role) const
         return *presentation;
     };
 
+    // Every branch below must return a *typed* QVariant, never a default-
+    // constructed one. A missing key in a QVariantMap yields an invalid
+    // QVariant, which reaches QML as `undefined`; binding that to a delegate's
+    // `required property string` stringifies it to the literal "undefined"
+    // rather than leaving it empty. The delegate used to launder every role
+    // through `String(model.x || "")`, which hid it — DN9 removed that layer,
+    // so the types have to be right at the source.
     switch (role) {
     case IdRole:
-        return item.value(QStringLiteral("id"));
+        return item.value(QStringLiteral("id")).toString();
     case ChatIdRole:
-        return item.value(QStringLiteral("chat_id"));
+        return item.value(QStringLiteral("chat_id")).toString();
     case SenderIdRole:
-        return senderData().value(QStringLiteral("id"));
+        return senderData().value(QStringLiteral("id")).toString();
     case SenderNameRole:
         return senderDisplayName(item);
     case SenderAvatarLocalPathRole:
-        return senderData().value(QStringLiteral("avatar_path"));
+        return senderData().value(QStringLiteral("avatar_path")).toString();
     case SenderInitialsRole:
         return initialsForName(senderDisplayName(item));
     case TextRole:
@@ -360,17 +367,17 @@ QVariant ProtocolMessageModel::data(const QModelIndex &index, int role) const
     case MediaKindRole:
         return kind;
     case MediaMimeTypeRole:
-        return mediaData().value(QStringLiteral("mime"));
+        return mediaData().value(QStringLiteral("mime")).toString();
     case MediaLocalPathRole:
-        return mediaData().value(QStringLiteral("path"));
+        return mediaData().value(QStringLiteral("path")).toString();
     case MediaThumbnailLocalPathRole:
-        return mediaData().value(QStringLiteral("thumbnail_path"));
+        return mediaData().value(QStringLiteral("thumbnail_path")).toString();
     case MediaWidthRole:
-        return mediaData().value(QStringLiteral("width"));
+        return mediaData().value(QStringLiteral("width")).toInt();
     case MediaHeightRole:
-        return mediaData().value(QStringLiteral("height"));
+        return mediaData().value(QStringLiteral("height")).toInt();
     case MediaAnimatedRole:
-        return mediaData().value(QStringLiteral("animated"));
+        return mediaData().value(QStringLiteral("animated")).toBool();
     case ShowSenderHeaderRole:
         return groupChat && !outgoing && startsSenderGroup(index.row());
     case ShowSenderAvatarRole:
@@ -384,13 +391,13 @@ QVariant ProtocolMessageModel::data(const QModelIndex &index, int role) const
     case MediaDownloadingRole:
         return !transfer(item).isEmpty();
     case MediaDownloadErrorRole:
-        return mediaData().value(QStringLiteral("download_error"));
+        return mediaData().value(QStringLiteral("download_error")).toString();
     case ReplyToMessageIdRole:
-        return replyData().value(QStringLiteral("message_id"));
+        return replyData().value(QStringLiteral("message_id")).toString();
     case ReplyToSenderNameRole:
-        return replyData().value(QStringLiteral("sender_name"));
+        return replyData().value(QStringLiteral("sender_name")).toString();
     case ReplyToTextRole:
-        return replyData().value(QStringLiteral("text"));
+        return replyData().value(QStringLiteral("text")).toString();
     case ReplyToMediaKindRole: {
         const QString replyKind = replyData().value(QStringLiteral("kind")).toString();
         return replyKind == QLatin1String("text") ? QString() : replyKind;
@@ -422,7 +429,7 @@ QVariant ProtocolMessageModel::data(const QModelIndex &index, int role) const
     case IsPinnedRole:
         return item.value(QStringLiteral("pinned_until")).toLongLong() > QDateTime::currentSecsSinceEpoch();
     case PinnedUntilUnixRole:
-        return item.value(QStringLiteral("pinned_until"));
+        return item.value(QStringLiteral("pinned_until")).toLongLong();
     case ReactionsRole:
         return reactions(item);
     case MediaDownloadProgressRole: {

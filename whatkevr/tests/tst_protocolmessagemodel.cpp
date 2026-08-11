@@ -225,6 +225,38 @@ private Q_SLOTS:
         QCOMPARE(model.messageSnapshot(QStringLiteral("m2")).value(QStringLiteral("text")).toString(),
                  QStringLiteral("second"));
     }
+
+    // A bare message carries no `media`, `reply_to` or transfer sub-map, so the
+    // roles that read those keys are the ones most likely to fall through to a
+    // default-constructed QVariant. That reaches QML as `undefined`, and a
+    // delegate's `required property string` stringifies it to the literal
+    // "undefined" — which is exactly what shipped in DN9 once the delegate
+    // stopped laundering roles through `String(model.x || "")`. Every role must
+    // therefore hand back a valid, typed value for every row.
+    void everyRoleIsTypedForASparseMessage()
+    {
+        CollectionViewModel source;
+        ProtocolMessageModel model(&source);
+        source.onUpsert(QStringLiteral("0001"), message(QStringLiteral("m1"), 1'700'000'000));
+        QCOMPARE(model.rowCount(), 1);
+
+        const QModelIndex index = model.index(0);
+        const QHash<int, QByteArray> names = model.roleNames();
+        for (auto it = names.constBegin(); it != names.constEnd(); ++it) {
+            const QVariant value = model.data(index, it.key());
+            QVERIFY2(value.isValid(),
+                     qPrintable(QStringLiteral("role %1 returned an invalid QVariant")
+                                    .arg(QString::fromUtf8(it.value()))));
+            QVERIFY2(value.metaType() != QMetaType::fromType<std::nullptr_t>(),
+                     qPrintable(QStringLiteral("role %1 returned null").arg(QString::fromUtf8(it.value()))));
+        }
+
+        // Spot-check the three that produced the visible "undefined undefined"
+        // reply banner on every row.
+        QVERIFY(role(model, 0, ProtocolMessageModel::ReplyToMessageIdRole).toString().isEmpty());
+        QVERIFY(role(model, 0, ProtocolMessageModel::ReplyToSenderNameRole).toString().isEmpty());
+        QVERIFY(role(model, 0, ProtocolMessageModel::ReplyToTextRole).toString().isEmpty());
+    }
 };
 
 QTEST_MAIN(TestProtocolMessageModel)
