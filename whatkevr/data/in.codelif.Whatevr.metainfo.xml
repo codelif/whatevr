@@ -19,6 +19,33 @@
   </provides>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.7.0" date="2026-08-11">
+      <description>
+        <p><em>gRPC is dead. Long live the daemon!</em></p>
+        <p>After almost 2 months of work, Whatevr finally has the architecture I wanted from the start.</p>
+        <p>New stuff:</p>
+        <ul>
+          <li>whatkevr now talks to whatevrd over a stable, documented local protocol. One daemon, one socket, and as many frontends as you want.</li>
+          <li>Two tiny example frontends now ship with the project, including a working WhatsApp client in about 30 lines of shell.</li>
+          <li>Phone-side chat deletions and read state now sync properly, and Whatevr can ask the phone for older history.</li>
+          <li>You can edit your profile about, block contacts, open downloaded photos in the viewer, and see useful tombstones for unsupported media.</li>
+          <li>Added a setting to snap back to the newest message after sending.</li>
+        </ul>
+        <p>Fixed stuff:</p>
+        <ul>
+          <li>Chats open much faster, the chat list loads lazily, and navigation and column slides are considerably smoother.</li>
+          <li>Unread counts can actually be cleared now, unread dividers land where they should, and new-message badges no longer count your own sends.</li>
+          <li>Starred messages, search results, reply quotes, and other message jumps now go to the correct message instead of vaguely opening the chat.</li>
+          <li>Fixed animated stickers turning into blocky garbage after the first frame.</li>
+          <li>Fixed custom wallpapers appearing squashed or missing while opening a chat.</li>
+          <li>Fixed encrypted message edits, changed contact identities, stalled history syncs, and several "waiting for this message" cases.</li>
+          <li>Lots of protocol hardening, ordering fixes, UI polish and regression tests.</li>
+        </ul>
+        <p>Upgrade note:</p>
+        <p>The systemd socket moved in this release. If you use the systemd user units, run:</p>
+        <p><code>systemctl --user daemon-reload systemctl --user try-restart whatevrd.socket whatevrd.service See ya! I am going to stare at something that is not a socket now.</code></p>
+      </description>
+    </release>
     <release version="0.6.0" date="2026-06-17">
       <description>
         <p><em>Doooooooooodless!!</em></p>
