@@ -10,7 +10,7 @@ import (
 	"github.com/mattn/go-sqlite3"
 )
 
-const schemaVersion = 6
+const schemaVersion = 7
 const SQLiteDriverName = "whatevrd-sqlite"
 
 // SQLiteReadDriverName backs the read-only connection pool. Its ConnectHook
@@ -381,6 +381,62 @@ func (db *DB) migrate(ctx context.Context) error {
 		return err
 	}
 
+	if version < 7 {
+		// v7: repair chats whose badge was written without any unread message
+		// rows behind it (history sync inserts with CountUnread=false, and the
+		// phone's "mark unread" is a dot). Such a badge could never be cleared:
+		// mark-read only ever looks at is_read=0 rows and found none. Needs the
+		// is_revoked column, hence its position after every ensure* step.
+		if err := db.repairChatUnreadState(ctx); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// repairChatUnreadState reconstructs per-message read state for chats carrying
+// a non-zero badge with no unread rows behind it, so the badge becomes both
+// clearable and receipt-able. OverwriteChatUnreadCount is the same reconcile
+// history sync now performs, so the repaired rows match what a fresh sync
+// would have produced.
+func (db *DB) repairChatUnreadState(ctx context.Context) error {
+	rows, err := db.conn.QueryContext(ctx, `
+		SELECT c.id, c.unread_count
+		FROM chats c
+		WHERE c.unread_count > 0
+		  AND NOT EXISTS (
+			SELECT 1 FROM messages m
+			WHERE m.chat_id = c.id AND m.direction = ? AND m.is_read = 0
+		  )
+	`, DirectionIncoming)
+	if err != nil {
+		return err
+	}
+	type stale struct {
+		id     string
+		unread int32
+	}
+	var chats []stale
+	for rows.Next() {
+		var entry stale
+		if err := rows.Scan(&entry.id, &entry.unread); err != nil {
+			rows.Close()
+			return err
+		}
+		chats = append(chats, entry)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+
+	for _, entry := range chats {
+		if _, _, err := db.OverwriteChatUnreadCount(ctx, entry.id, uint32(entry.unread)); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

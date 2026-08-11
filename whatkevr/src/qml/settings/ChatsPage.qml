@@ -85,6 +85,16 @@ SettingsPage {
             checked: Whatevr.Settings.persistDrafts
             onToggled: Whatevr.Settings.persistDrafts = checked
         }
+
+        FormCard.FormDelegateSeparator {}
+
+        FormCard.FormSwitchDelegate {
+            objectName: "chats.snapToBottomOnSend"
+            text: Whatevr.I18n.i18nc("@option:check", "Jump to the newest message when sending")
+            description: Whatevr.I18n.i18nc("@info", "Scroll the conversation down to your message even if you were reading further up.")
+            checked: Whatevr.Settings.snapToBottomOnSend
+            onToggled: Whatevr.Settings.snapToBottomOnSend = checked
+        }
     }
 
     FormCard.FormHeader {

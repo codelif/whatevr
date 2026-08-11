@@ -110,6 +110,9 @@ Item {
     property bool userScrolledSinceOpen: false
     // The viewport was already placed at the unread divider for this open.
     property bool unreadAnchorPositioned: false
+    // Deadline for the re-centring passes that follow the first placement of
+    // the unread divider (see settleUnreadAnchor).
+    property double unreadAnchorSettleDeadlineMs: 0
 
     signal loadOlderMessagesRequested()
     signal loadNewerMessagesRequested()
@@ -183,6 +186,14 @@ Item {
         interval: 1200
         repeat: false
         onTriggered: root.finishPendingJump()
+    }
+
+    Timer {
+        id: unreadAnchorSettleTimer
+
+        interval: 50
+        repeat: false
+        onTriggered: root.settleUnreadAnchor()
     }
 
     DragHandler {
@@ -591,6 +602,7 @@ Item {
     }
 
     function scrollToNewest() {
+        cancelUnreadAnchorSettle()
         if (list.count > 0) {
             programmaticScroll = true
             list.positionViewAtEnd()
@@ -750,19 +762,76 @@ Item {
         floatingDateIdleTimer.stop()
         kineticWheelScroller.stopKinetic()
         if (list.flicking) list.cancelFlick()
-        list.positionViewAtIndex(index, ListView.Center)
-        // Synchronous layout before first visible paint prevents a marker jump
-        // after the timeline appears.
-        list.forceLayout()
+        // centerOnIndex, not a bare positionViewAtIndex: it also corrects
+        // contentY against the materialised row (DN4). Without that the divider
+        // is centred against the view's *estimated* content height and drifts
+        // off the top of the viewport as the real delegate heights land.
+        centerOnIndex(index)
         unreadAnchorPositioned = true
         openingChat = false
         pendingNewestMessageCount = 0
-        Qt.callLater(() => {
-            root.programmaticScroll = false
-            root.updateScrollState()
-            root.maybeMarkViewedRead()
-        })
+        // The first pass still centres against estimates for every row that is
+        // not materialised yet — including the divider's own height, which the
+        // anchor delegate only gains once it is built. Keep re-centring until
+        // the row is real.
+        unreadAnchorSettleDeadlineMs = Date.now() + 1000
+        unreadAnchorSettleTimer.restart()
         return true
+    }
+
+    // Re-centre the unread divider until its row is materialised, then hand the
+    // viewport back. Mirrors settlePendingJump; programmaticScroll stays true
+    // for the duration so the bottom re-pin paths (list.onHeightChanged,
+    // onContentHeightChanged) do not drag the view to the newest message while
+    // the divider is still settling.
+    function settleUnreadAnchor() {
+        if (unreadAnchorMessageId.length === 0 || !list.model
+                || typeof list.model.indexOf !== "function") {
+            finishUnreadAnchorSettle()
+            return
+        }
+        // The user taking over always wins; the settle must never fight a drag.
+        if (list.dragging || list.flicking || kineticWheelScroller.interactionActive
+                || kineticWheelScroller.kineticActive) {
+            userScrolledSinceOpen = true
+            finishUnreadAnchorSettle()
+            return
+        }
+
+        const index = list.model.indexOf(unreadAnchorMessageId)
+        if (index < 0 || index >= list.count) {
+            finishUnreadAnchorSettle()
+            return
+        }
+
+        const item = list.itemAtIndex(index)
+        if (item === null || item.pooled || item.messageId !== unreadAnchorMessageId) {
+            if (Date.now() <= unreadAnchorSettleDeadlineMs) {
+                unreadAnchorSettleTimer.restart()
+                return
+            }
+            finishUnreadAnchorSettle()
+            return
+        }
+
+        centerOnIndex(index)
+        finishUnreadAnchorSettle()
+    }
+
+    function finishUnreadAnchorSettle() {
+        unreadAnchorSettleTimer.stop()
+        unreadAnchorSettleDeadlineMs = 0
+        programmaticScroll = false
+        lastScrollY = list.contentY
+        updateScrollState()
+        maybeMarkViewedRead()
+    }
+
+    // Drop a settle that has been superseded (a jump, an explicit scroll to the
+    // newest message). The caller owns programmaticScroll from here on.
+    function cancelUnreadAnchorSettle() {
+        unreadAnchorSettleTimer.stop()
+        unreadAnchorSettleDeadlineMs = 0
     }
 
     // Single decision point for clearing a chat's unread state, mirroring how
@@ -804,6 +873,7 @@ Item {
     }
 
     function beginProgrammaticJump(messageId) {
+        cancelUnreadAnchorSettle()
         pendingJumpMessageId = messageId
         pendingJumpDeadlineMs = Date.now() + 1000
         programmaticScroll = true
@@ -901,6 +971,22 @@ Item {
         if (list.flicking) list.cancelFlick()
         centerOnIndex(index)
         Qt.callLater(settlePendingJump)
+    }
+
+    // How many of the rows in [first, last] were received rather than sent.
+    // Falls back to the whole range when the model cannot say, which is the
+    // old behaviour and never under-counts what the user missed.
+    function incomingRowsBetween(first, last) {
+        if (!list.model || typeof list.model.isOutgoingAt !== "function") {
+            return last - first + 1
+        }
+        let count = 0
+        for (let row = first; row <= last; ++row) {
+            if (!list.model.isOutgoingAt(row)) {
+                ++count
+            }
+        }
+        return count
     }
 
     function displayedPendingNewestMessageCount() {
@@ -1089,6 +1175,11 @@ Item {
         if (pendingJumpMessageId.length > 0) {
             finishPendingJump()
         }
+        // A settle can still be holding programmaticScroll for the chat we are
+        // leaving; releasing it here keeps user-scroll detection alive in the
+        // chat we are entering.
+        cancelUnreadAnchorSettle()
+        programmaticScroll = false
         clearSelection()
         expandedMessageTextIds = ({})
         pendingNewestMessageCount = 0
@@ -1463,7 +1554,10 @@ Item {
                     if (root.followNewest && root.pendingJumpMessageId.length === 0) {
                         Qt.callLater(root.scrollToNewest)
                     } else {
-                        root.pendingNewestMessageCount = Math.min(100, root.pendingNewestMessageCount + last - first + 1)
+                        // The badge answers "what did I miss", so it counts
+                        // received messages only — your own sends are not news.
+                        root.pendingNewestMessageCount = Math.min(
+                            100, root.pendingNewestMessageCount + root.incomingRowsBetween(first, last))
                     }
                 }
                 if (root.phoneHistoryAnchorActive && list.model
@@ -1525,12 +1619,43 @@ Item {
             root.maybeMarkViewedRead()
         }
 
+        function onMessageSent() {
+            if (!Whatevr.Settings.snapToBottomOnSend || root.chatId.length === 0) {
+                return
+            }
+            // jumpToBottom() as well as the scroll: while the window is anchored
+            // mid-history the sent message is not delivered into it at all
+            // (PROTOCOL.md, "Windows"), so there would be nothing to scroll to.
+            // Same pair the go-to-bottom button uses.
+            root.cancelUnreadAnchorSettle()
+            if (root.pendingJumpMessageId.length > 0) {
+                root.finishPendingJump()
+            }
+            kineticWheelScroller.stopKinetic()
+            if (list.flicking) list.cancelFlick()
+            Whatevr.ProtocolController.jumpToBottom()
+            root.scrollToNewest()
+        }
+
         function onMessageJumpReady(messageId) {
+            // A jump started on the C++ side (showMessageInChat: starred lists,
+            // global search results) never went through jumpToReplyTarget, so
+            // this view has no pendingJumpMessageId and every guard below would
+            // decline it — the chat opened at the newest message with no glow.
+            // Adopt it here instead. This runs synchronously inside the
+            // subscription's ready handler, ahead of the Qt.callLater-queued
+            // afterModelReset(), which then sees the pending jump and leaves the
+            // viewport alone rather than scrolling to the newest message.
+            if (root.pendingJumpMessageId !== messageId) {
+                root.beginProgrammaticJump(messageId)
+            }
             root.jumpToLoadedMessage(messageId)
         }
 
         function onMessageJumpUnavailable(messageId) {
-            if (root.pendingJumpMessageId !== messageId) {
+            // An adopted jump has nothing pending here yet, but the user still
+            // asked for that message and deserves to be told it is gone.
+            if (root.pendingJumpMessageId.length > 0 && root.pendingJumpMessageId !== messageId) {
                 return
             }
             root.finishPendingJump()

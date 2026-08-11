@@ -63,6 +63,9 @@ class Settings final : public QObject
     // true  => Enter sends, Shift+Enter inserts a newline (current behaviour).
     // false => Enter inserts a newline, Ctrl/Cmd+Enter sends.
     Q_PROPERTY(bool enterToSend READ enterToSend WRITE setEnterToSend NOTIFY enterToSendChanged FINAL)
+    // true => sending jumps the timeline to the new message even when the user
+    // was reading further up; false leaves the viewport where it is.
+    Q_PROPERTY(bool snapToBottomOnSend READ snapToBottomOnSend WRITE setSnapToBottomOnSend NOTIFY snapToBottomOnSendChanged FINAL)
 
     // --- Window & Layout ---
     Q_PROPERTY(bool rememberWindowGeometry READ rememberWindowGeometry WRITE setRememberWindowGeometry NOTIFY rememberWindowGeometryChanged FINAL)
@@ -127,6 +130,8 @@ public:
     void setPersistDrafts(bool persist);
     [[nodiscard]] bool enterToSend() const;
     void setEnterToSend(bool enabled);
+    [[nodiscard]] bool snapToBottomOnSend() const;
+    void setSnapToBottomOnSend(bool enabled);
 
     [[nodiscard]] bool rememberWindowGeometry() const;
     void setRememberWindowGeometry(bool remember);
@@ -183,6 +188,7 @@ Q_SIGNALS:
     void chatWallpaperTintChanged();
     void persistDraftsChanged();
     void enterToSendChanged();
+    void snapToBottomOnSendChanged();
     void rememberWindowGeometryChanged();
     void rememberColumnWidthChanged();
     void chatListColumnWidthChanged();
@@ -208,6 +214,7 @@ private:
     QString m_chatWallpaperTint;
     bool m_persistDrafts = true;
     bool m_enterToSend = true;
+    bool m_snapToBottomOnSend = true;
     bool m_rememberWindowGeometry = true;
     bool m_rememberColumnWidth = true;
     int m_chatListColumnWidth = 0;
