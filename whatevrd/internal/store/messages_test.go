@@ -1905,10 +1905,112 @@ func TestOverwriteChatUnreadCountSetsNonZeroBadge(t *testing.T) {
 		t.Fatalf("expected unread_count=7, got %+v", chat)
 	}
 
-	// With unread=7 we did NOT mark messages read. ReadCandidates is
-	// based on per-message is_read which we shouldn't have touched.
 	if _, err := db.GetMessage(ctx, chatID+":a"); err == sql.ErrNoRows {
 		t.Fatalf("message disappeared after overwrite")
+	}
+
+	// The badge is the phone's number, but the stored message is now unread
+	// behind it: without that, mark-read would find no candidates and the
+	// badge could never be cleared.
+	candidates, err := db.ReadCandidatesForChat(ctx, chatID)
+	if err != nil {
+		t.Fatalf("read candidates: %v", err)
+	}
+	if len(candidates) != 1 || candidates[0].InternalID != chatID+":a" {
+		t.Fatalf("expected the stored message to back the badge, got %+v", candidates)
+	}
+}
+
+// A history-synced chat carries a badge from the phone while every one of its
+// message rows was inserted with CountUnread=false. Reading it must clear the
+// badge and produce receipt-able candidates.
+func TestOverwriteChatUnreadCountMakesHistorySyncBadgeClearable(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	const chatID = "chat-history"
+	ids := []string{chatID + ":m1", chatID + ":m2", chatID + ":m3"}
+	for i, id := range ids {
+		if _, err := db.SaveTextMessage(ctx, TextMessageInput{
+			ID:          id,
+			ChatID:      chatID,
+			ChatName:    "Test",
+			SenderID:    "123@s.whatsapp.net",
+			Text:        "hi",
+			Timestamp:   time.Unix(int64(100+i), 0),
+			Direction:   DirectionIncoming,
+			Status:      StatusDelivered,
+			CountUnread: false,
+		}); err != nil {
+			t.Fatalf("save %s: %v", id, err)
+		}
+	}
+
+	chat, _, err := db.OverwriteChatUnreadCount(ctx, chatID, 2)
+	if err != nil {
+		t.Fatalf("overwrite unread: %v", err)
+	}
+	if chat.UnreadCount != 2 {
+		t.Fatalf("expected badge 2, got %+v", chat)
+	}
+
+	// The two newest, matching the rows under the unread divider.
+	candidates, err := db.ReadCandidatesForChat(ctx, chatID)
+	if err != nil {
+		t.Fatalf("read candidates: %v", err)
+	}
+	if len(candidates) != 2 || candidates[0].InternalID != ids[1] || candidates[1].InternalID != ids[2] {
+		t.Fatalf("unexpected read candidates: %+v", candidates)
+	}
+
+	chat, changed, err := db.MarkMessagesReadByIDs(ctx, chatID, []string{ids[1], ids[2]})
+	if err != nil {
+		t.Fatalf("mark read: %v", err)
+	}
+	if !changed || chat.UnreadCount != 0 {
+		t.Fatalf("expected the badge to clear: changed=%v chat=%+v", changed, chat)
+	}
+}
+
+// A badge with nothing behind it must still be clearable; the empty-id early
+// return used to skip the recompute and leave it stuck forever.
+func TestMarkMessagesReadByIDsRecomputesWithoutIDs(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	const chatID = "chat-stale"
+	if _, err := db.SaveTextMessage(ctx, TextMessageInput{
+		ID:          chatID + ":a",
+		ChatID:      chatID,
+		ChatName:    "Test",
+		SenderID:    "123@s.whatsapp.net",
+		Text:        "hi",
+		Timestamp:   time.Unix(100, 0),
+		Direction:   DirectionIncoming,
+		Status:      StatusDelivered,
+		CountUnread: false,
+	}); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if _, err := db.conn.ExecContext(ctx,
+		`UPDATE chats SET unread_count = 12 WHERE id = ?`, chatID); err != nil {
+		t.Fatalf("poison badge: %v", err)
+	}
+
+	chat, changed, err := db.MarkMessagesReadByIDs(ctx, chatID, nil)
+	if err != nil {
+		t.Fatalf("mark read: %v", err)
+	}
+	if !changed || chat.UnreadCount != 0 {
+		t.Fatalf("expected the stale badge to clear: changed=%v chat=%+v", changed, chat)
 	}
 }
 

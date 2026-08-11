@@ -585,6 +585,12 @@ Q_SIGNALS:
     void messageForwarded(int chatCount);
     void messageJumpReady(const QString &messageId);
     void messageJumpUnavailable(const QString &messageId);
+    // The user put a message into the open chat's timeline (text, media or
+    // sticker — not a reaction). The timeline uses it to follow the live edge
+    // again when Settings.snapToBottomOnSend is set. Emitted when the command
+    // is issued, not when it is acked: the snap should feel immediate, and the
+    // row lands through the messages view either way.
+    void messageSent();
     void openChatRequested(const QString &chatId);
     // Raise and focus the window: a second launch, or a deep link arriving
     // before the chat shell exists.

@@ -1862,35 +1862,35 @@ func (db *DB) MarkChatReadUpTo(ctx context.Context, chatID string, uptoUnix int6
 // MarkMessagesReadByIDs marks the given incoming messages as read (self read
 // receipts name exact messages) and recomputes the chat badge. Returns
 // sql.ErrNoRows for unknown chats.
+//
+// An empty id list still recomputes: a badge with no unread rows behind it is
+// stale, and returning early would leave it permanently unclearable.
 func (db *DB) MarkMessagesReadByIDs(ctx context.Context, chatID string, internalIDs []string) (Chat, bool, error) {
-	if len(internalIDs) == 0 {
-		chat, err := db.GetChat(ctx, chatID)
-		return chat, false, err
-	}
-
 	tx, err := db.conn.BeginTx(ctx, nil)
 	if err != nil {
 		return Chat{}, false, err
 	}
 	defer tx.Rollback()
 
-	args := make([]any, 0, len(internalIDs)+3)
-	args = append(args, chatID, DirectionIncoming)
-	for _, id := range internalIDs {
-		args = append(args, id)
-	}
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(internalIDs)), ",")
-	result, err := tx.ExecContext(ctx, `
-		UPDATE messages
-		SET is_read = 1
-		WHERE chat_id = ? AND direction = ? AND is_read = 0 AND id IN (`+placeholders+`)
-	`, args...)
-	if err != nil {
-		return Chat{}, false, err
-	}
-	messagesChanged, err := result.RowsAffected()
-	if err != nil {
-		return Chat{}, false, err
+	var messagesChanged int64
+	if len(internalIDs) > 0 {
+		args := make([]any, 0, len(internalIDs)+2)
+		args = append(args, chatID, DirectionIncoming)
+		for _, id := range internalIDs {
+			args = append(args, id)
+		}
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(internalIDs)), ",")
+		result, err := tx.ExecContext(ctx, `
+			UPDATE messages
+			SET is_read = 1
+			WHERE chat_id = ? AND direction = ? AND is_read = 0 AND id IN (`+placeholders+`)
+		`, args...)
+		if err != nil {
+			return Chat{}, false, err
+		}
+		if messagesChanged, err = result.RowsAffected(); err != nil {
+			return Chat{}, false, err
+		}
 	}
 
 	chat, changed, err := recomputeChatUnreadTx(ctx, tx, chatID)

@@ -769,6 +769,11 @@ QString ProtocolMessageModel::messageIdAt(int row) const
     return wireItem(row).value(QStringLiteral("id")).toString();
 }
 
+bool ProtocolMessageModel::isOutgoingAt(int row) const
+{
+    return wireItem(row).value(QStringLiteral("direction")).toString() == QLatin1String("outgoing");
+}
+
 QString ProtocolMessageModel::dateTextForRow(int row) const
 {
     return row >= 0 && row < rowCount() ? cachedRelativeDate(wireItem(row)) : QString();

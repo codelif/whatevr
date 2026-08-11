@@ -857,13 +857,24 @@ func (db *DB) listTables(ctx context.Context) (regular, virtual []string, err er
 }
 
 // OverwriteChatUnreadCount sets the chat's unread_count to the given value
-// directly. When unread is 0, all incoming messages in the chat are also
-// marked is_read=1 so the badge agrees with per-message state.
+// directly and puts per-message read state behind it: the newest `unread`
+// incoming messages are marked is_read=0 and every older one is marked read.
 //
 // This is intended for history sync, where the phone sends authoritative
 // per-conversation read state and we want the chat list badge to mirror it
 // (instead of the sum of locally inserted unread rows, which is always 0
-// because history sync inserts run with CountUnread=false).
+// because history sync inserts run with CountUnread=false), and for the
+// phone's manual "mark unread", which is a dot with no message behind it.
+//
+// The badge is the phone's number even when fewer messages are stored locally
+// than it claims — but the rows behind it are what make it *clearable*. Writing
+// the badge alone (which is what this did before) left a count chat.mark_read
+// could never clear: ReadCandidatesForChat only sees is_read=0 rows, found
+// none, marked nothing, sent no receipt, and the badge stuck forever. Marking
+// read afterwards recomputes the badge from these rows, so it lands on 0.
+//
+// The ordering matches ListMessagesAroundUnread, so the rows marked unread are
+// exactly the ones under the unread divider.
 //
 // Returns the chat row (post-update) and whether anything actually changed.
 func (db *DB) OverwriteChatUnreadCount(ctx context.Context, chatID string, unread uint32) (Chat, bool, error) {
@@ -893,12 +904,26 @@ func (db *DB) OverwriteChatUnreadCount(ctx context.Context, chatID string, unrea
 		}
 	}
 
-	if unread == 0 {
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE messages
+		SET is_read = 1
+		WHERE chat_id = ? AND direction = ? AND is_read = 0
+	`, chatID, DirectionIncoming); err != nil {
+		return Chat{}, false, err
+	}
+
+	if unread > 0 {
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE messages
-			SET is_read = 1
-			WHERE chat_id = ? AND direction = ? AND is_read = 0
-		`, chatID, DirectionIncoming); err != nil {
+			SET is_read = 0
+			WHERE chat_id = ? AND id IN (
+				SELECT id
+				FROM messages
+				WHERE chat_id = ? AND direction = ? AND is_revoked = 0
+				ORDER BY timestamp DESC, rowid DESC
+				LIMIT ?
+			)
+		`, chatID, chatID, DirectionIncoming, int64(unread)); err != nil {
 			return Chat{}, false, err
 		}
 	}

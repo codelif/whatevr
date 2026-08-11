@@ -31,6 +31,7 @@ constexpr auto kMessageFontSize = "settings/messageFontSize";
 constexpr auto kShowAvatars = "settings/showAvatars";
 constexpr auto kPersistDrafts = "settings/persistDrafts";
 constexpr auto kEnterToSend = "settings/enterToSend";
+constexpr auto kSnapToBottomOnSend = "settings/snapToBottomOnSend";
 constexpr auto kRememberWindowGeometry = "settings/rememberWindowGeometry";
 constexpr auto kRememberColumnWidth = "settings/rememberColumnWidth";
 constexpr auto kChatListColumnWidth = "settings/chatListColumnWidth";
@@ -109,6 +110,7 @@ void Settings::load()
     m_showAvatars = settings.value(QLatin1String(kShowAvatars), true).toBool();
     m_persistDrafts = settings.value(QLatin1String(kPersistDrafts), true).toBool();
     m_enterToSend = settings.value(QLatin1String(kEnterToSend), true).toBool();
+    m_snapToBottomOnSend = settings.value(QLatin1String(kSnapToBottomOnSend), true).toBool();
     m_rememberWindowGeometry = settings.value(QLatin1String(kRememberWindowGeometry), true).toBool();
     m_rememberColumnWidth = settings.value(QLatin1String(kRememberColumnWidth), true).toBool();
     m_chatListColumnWidth = settings.value(QLatin1String(kChatListColumnWidth), 0).toInt();
@@ -384,6 +386,21 @@ void Settings::setEnterToSend(bool enabled)
     m_enterToSend = enabled;
     QSettings().setValue(QLatin1String(kEnterToSend), m_enterToSend);
     Q_EMIT enterToSendChanged();
+}
+
+bool Settings::snapToBottomOnSend() const
+{
+    return m_snapToBottomOnSend;
+}
+
+void Settings::setSnapToBottomOnSend(bool enabled)
+{
+    if (m_snapToBottomOnSend == enabled) {
+        return;
+    }
+    m_snapToBottomOnSend = enabled;
+    QSettings().setValue(QLatin1String(kSnapToBottomOnSend), m_snapToBottomOnSend);
+    Q_EMIT snapToBottomOnSendChanged();
 }
 
 bool Settings::rememberWindowGeometry() const

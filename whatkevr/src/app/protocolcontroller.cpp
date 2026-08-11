@@ -409,6 +409,12 @@ ProtocolController::ProtocolController(QString socketPath, QObject *parent)
     connect(m_selfModel, &ObjectViewModel::valueChanged, this, &ProtocolController::selfProfileChanged);
 
     m_stickerController = new ProtocolStickerController(m_client, this);
+    // Stickers are sent by their own controller, so the timeline hears about
+    // them here. This fires on the ack rather than on the request (there is no
+    // earlier signal), which only means the row has already landed by the time
+    // the view follows it.
+    connect(m_stickerController, &ProtocolStickerController::stickerSent, this,
+            [this] { Q_EMIT messageSent(); });
 
     m_searchResultsModel = new ProtocolSearchModel(this);
 
@@ -1495,6 +1501,7 @@ void ProtocolController::sendText(const QString &text, const QString &replyToMes
 
     setSelectedChatComposing(false);
     dismissUnreadAnchor();
+    Q_EMIT messageSent();
 
     QJsonObject params{{QStringLiteral("chat_id"), m_selectedChatId}, {QStringLiteral("text"), trimmed}};
     if (const QString reply = replyToMessageId.trimmed(); !reply.isEmpty()) {
@@ -1531,6 +1538,7 @@ void ProtocolController::sendMedia(const QString &fileUrl, const QString &captio
 
     setSelectedChatComposing(false);
     dismissUnreadAnchor();
+    Q_EMIT messageSent();
 
     QJsonObject params{{QStringLiteral("chat_id"), m_selectedChatId},
                        {QStringLiteral("path"), filePath},

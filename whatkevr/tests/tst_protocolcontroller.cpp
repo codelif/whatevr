@@ -1521,8 +1521,13 @@ private Q_SLOTS:
 
         QSignalSpy commandSpy(&daemon, &FakeDaemon::commandReceived);
         QSignalSpy composerSpy(&ctrl, &ProtocolController::composerChanged);
+        QSignalSpy sentSpy(&ctrl, &ProtocolController::messageSent);
         ctrl.sendText(QStringLiteral("  hello  "), QStringLiteral("m1"), {QStringLiteral("x@s")});
         QVERIFY(ctrl.sendInFlight());
+        // The timeline follows the live edge again on this signal (the
+        // snap-to-bottom-on-send setting), so it has to fire with the request,
+        // not with the ack.
+        QCOMPARE(sentSpy.count(), 1);
         QVERIFY(commandSpy.wait());
         QCOMPARE(daemon.lastCommandMethod, QStringLiteral("send.text"));
         QCOMPARE(daemon.lastCommandParams.value(QStringLiteral("chat_id")).toString(), QStringLiteral("a@s"));
@@ -1653,6 +1658,7 @@ private Q_SLOTS:
         QTRY_COMPARE(ctrl.unreadAnchorMessageId(), QStringLiteral("m1"));
 
         QSignalSpy commandSpy(&daemon, &FakeDaemon::commandReceived);
+        QSignalSpy sentSpy(&ctrl, &ProtocolController::messageSent);
 
         ctrl.sendReaction(QStringLiteral("m1"), QStringLiteral("👍"));
         QVERIFY(commandSpy.wait());
@@ -1661,6 +1667,9 @@ private Q_SLOTS:
         QCOMPARE(daemon.lastCommandParams.value(QStringLiteral("emoji")).toString(), QStringLiteral("👍"));
         // Reacting means the user has seen the divider they reacted past.
         QVERIFY(ctrl.unreadAnchorMessageId().isEmpty());
+        // …but it puts nothing in the timeline, so it must not drag the
+        // viewport to the newest message.
+        QCOMPARE(sentSpy.count(), 0);
 
         commandSpy.clear();
         ctrl.setMessageStarred(QStringLiteral("m1"), true);
