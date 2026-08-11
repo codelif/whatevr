@@ -125,7 +125,7 @@ def start_fixture() -> tuple[tempfile.TemporaryDirectory[str] | None, subprocess
     ready_file = Path(tmp.name) / "ready"
     fixture_bin = Path(tmp.name) / "protocol-fixture"
     build = subprocess.run(
-        ["go", "build", "-o", str(fixture_bin), "./cmd/protocol-fixture"],
+        ["go", "build", "-buildvcs=false", "-o", str(fixture_bin), "./cmd/protocol-fixture"],
         cwd=ROOT / "whatevrd",
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
