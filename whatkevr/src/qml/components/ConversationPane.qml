@@ -684,10 +684,13 @@ Kirigami.Page {
                 backgroundColor: wallpaperBackground.color
                 originX: timelineArea.x
                 originY: timelineArea.y
+                // Painted only for a real conversation, but the motif is handed
+                // over unconditionally so a large custom SVG rasterises while the
+                // pane is still empty. Gating the source on hasSelectedChat meant
+                // the decode did not start until the first chat opened, which is
+                // exactly when the frame budget is tightest.
+                active: Whatevr.ProtocolController.hasSelectedChat
                 source: {
-                    if (!Whatevr.ProtocolController.hasSelectedChat) {
-                        return "";
-                    }
                     switch (Whatevr.Settings.chatWallpaperPattern) {
                     case "doodle": return "qrc:/data/wallpapers/doodle.svg";
                     case "custom": return Whatevr.Settings.chatWallpaperPath.length > 0
