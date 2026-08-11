@@ -62,6 +62,8 @@ jobs:
             build:
               - 'justfile'
               - 'VERSION'
+              - 'PROTOCOL.md'
+              - 'scripts/conformance'
               - 'whatevrd/**'
               - 'whatkevr/**'
               - 'packaging/systemd/**'
@@ -197,12 +199,23 @@ jobs:
           key: arch-ccache-${{ github.sha }}
           restore-keys: arch-ccache-
 
-      - name: Build
+      - name: Build application and tests
         env:
           CCACHE_DIR: ${{ github.workspace }}/.cache/ccache
           CCACHE_MAXSIZE: 500M
           CMAKE_CXX_COMPILER_LAUNCHER: ccache
-        run: just build
+        run: |
+          just build
+          cmake -S whatkevr -B build/debug/whatkevr -DWHATEVR_BUILD_TESTS=ON
+          cmake --build build/debug/whatkevr
+
+      - name: Test protocol conformance
+        run: scripts/conformance
+
+      - name: Test frontend
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: ctest --test-dir build/debug/whatkevr --output-on-failure
 
       - name: Install smoke test
         run: just install-dev /usr "$RUNNER_TEMP/pkgroot"
