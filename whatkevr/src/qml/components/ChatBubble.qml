@@ -11,51 +11,93 @@ Item {
     Kirigami.Theme.inherit: false
     Kirigami.Theme.colorSet: Kirigami.Theme.View
 
-    // Always-active highlight: Kirigami.Theme.highlightColor follows the
-    // window's active/inactive palette group and greys out when the window
-    // loses focus, so accent surfaces (bubble fill, read ticks) read from this
-    // instead to stay vivid regardless of focus.
-    SystemPalette {
-        id: activePalette
-        colorGroup: SystemPalette.Active
-    }
+    // Always-active highlight comes from the app-wide Whatevr.Palette singleton
+    // (see qml/Palette.qml): the value is identical for every row, so a
+    // per-delegate SystemPalette was one wasted QObject per message (DN9).
 
-    property string messageId: ""
-    property string body: ""
-    property string layoutBody: ""
-    property string replyPreviewBody: ""
-    property int emojiOnlyCount: 0
-    property bool hasRichText: false
-    property string richText: ""
-    property bool textTruncated: false
-    property bool textExpanded: false
-    property string timeText: ""
-    property string dateSeparatorText: ""
-    property int status: 0
-    property bool outgoing: false
-    property string senderName: ""
-    property string senderAvatarLocalPath: ""
-    property string senderInitials: "?"
-    property bool showSenderHeader: false
-    property bool showSenderAvatar: false
-    property bool showSenderGutter: false
-    property bool groupStart: true
-    property bool groupEnd: true
-    property string mediaKind: ""
-    property string mediaMimeType: ""
-    property string mediaLocalPath: ""
-    property string mediaThumbnailLocalPath: ""
-    property string mediaCacheKey: ""
-    property int mediaIntrinsicWidth: 0
-    property int mediaIntrinsicHeight: 0
-    property bool mediaAnimated: false
-    property bool isRevoked: false
-    property bool isEdited: false
-    property bool isStarred: false
-    property bool isPinned: false
+    // ---- Model roles ----
+    //
+    // These are `required` and named exactly after ProtocolMessageModel's role
+    // names, so ListView assigns them straight from the model in C++. They used
+    // to be plain properties fed by ~60 `String(model.x || "")` bindings in
+    // MessageView's delegate block: one JS evaluation and one type coercion per
+    // role per row, and the single biggest reason qmlcachegen could not compile
+    // that block (DN9).
+    required property string messageId
+    required property string timeText
+    required property string dateSeparatorText
+    required property int status
+    required property bool isOutgoing
+    required property string senderName
+    required property string senderAvatarLocalPath
+    required property string senderInitials
+    required property bool showSenderHeader
+    required property bool showSenderAvatar
+    required property bool showSenderGutter
+    required property bool groupStart
+    required property bool groupEnd
+    required property string mediaKind
+    required property string mediaMimeType
+    required property string mediaLocalPath
+    required property string mediaThumbnailLocalPath
+    required property string mediaCacheKey
+    required property int mediaWidth
+    required property int mediaHeight
+    required property bool mediaAnimated
+    required property bool isRevoked
+    required property bool isEdited
+    required property bool isStarred
+    required property bool isPinned
+    required property bool mediaDownloading
+    required property string mediaDownloadError
+    // Download progress 0..1 while bytes are streaming; -1 when the total size
+    // is unknown (falls back to the indeterminate spinner).
+    required property real mediaDownloadProgress
+    required property string replyToMessageId
+    required property string replyToSenderName
+    required property string replyToText
+    required property string replyToMediaKind
+    required property string replyToMediaMimeType
+    required property bool replyToIsOutgoing
+    // Unwrapped widest/last line widths of the displayed body, measured in C++
+    // (model roles). Replaces per-delegate TextMetrics + JS line splitting.
+    required property real widestLineWidth
+    required property real lastLineWidth
     // Reactions on this message: list of {emoji, senderId, senderName, fromMe}
-    // maps (MessageListModel ReactionsRole).
-    property var reactions: []
+    // maps (ProtocolMessageModel ReactionsRole).
+    required property var reactions
+
+    // Raw text roles. A long message is delivered twice — the full text and a
+    // truncated preview — and which one is shown depends on `textExpanded`,
+    // which is view state rather than model data. The choice used to be made in
+    // MessageView; it is made here now so the roles can arrive untouched.
+    required property string text
+    required property string textPreview
+    required property string layoutText
+    required property string layoutTextPreview
+    required property bool hasRichText
+    required property bool previewHasRichText
+    required property string richText
+    required property string previewRichText
+    required property int emojiOnlyCount
+    required property bool textTruncated
+
+    // ---- Derived display text ----
+    readonly property string body: textExpanded
+        ? text
+        : (textPreview.length > 0 ? textPreview : text)
+    readonly property string layoutBody: textExpanded
+        ? layoutText
+        : (layoutTextPreview.length > 0 ? layoutTextPreview : layoutText)
+    readonly property string replyPreviewBody: textPreview.length > 0 ? textPreview : text
+    readonly property bool displayHasRichText: textExpanded ? hasRichText : previewHasRichText
+    readonly property string displayRichText: textExpanded ? richText : previewRichText
+    // A truncated preview never renders as jumbo emoji: the count describes the
+    // whole message, not the fragment being shown.
+    readonly property int displayEmojiOnlyCount: textExpanded || !textTruncated ? emojiOnlyCount : 0
+
+    // ---- View state (not model roles) ----
+    property bool textExpanded: false
     // Multi-message selection (top-bar actions). While the mode is active a
     // covering handler turns every click into a toggle and swallows the
     // bubble's normal interactions (links, text selection, reply).
@@ -67,26 +109,11 @@ Item {
     // held off during a fling so the cheap, already-cached thumbnail carries the
     // scroll; it upgrades to full-res the instant scrolling settles.
     property bool fastFlicking: false
-    property bool mediaDownloading: false
-    property string mediaDownloadError: ""
-    // Download progress 0..1 while bytes are streaming; -1 when the total size
-    // is unknown (falls back to the indeterminate spinner).
-    property real mediaDownloadProgress: -1
     // Number shown in the "N unread messages" divider above this message; 0
     // hides the divider. Set only on the unread-anchor row.
     property int unreadSeparatorCount: 0
     property int clearSelectionGeneration: 0
     property string activeSelectionMessageId: ""
-    property string replyToMessageId: ""
-    property string replyToSenderName: ""
-    property string replyToText: ""
-    property string replyToMediaKind: ""
-    property string replyToMediaMimeType: ""
-    property bool replyToOutgoing: false
-    // Unwrapped widest/last line widths of the displayed body, measured in C++
-    // (model roles). Replaces per-delegate TextMetrics + JS line splitting.
-    property real widestLineWidth: 0
-    property real lastLineWidth: 0
     // Advance width of the "Read more" label, measured once in MessageView and
     // shared by all delegates.
     property real readMoreTextWidth: 0
@@ -101,6 +128,8 @@ Item {
     property bool selectionLatched: false
 
     signal conversationFocusRequested()
+    // Asks the view to run its shared reply-glow animation against this row.
+    signal replyGlowRequested()
     signal messageSelectionClaimed(string messageId)
     signal typeIntoComposerRequested(string text)
     signal replyRequested(string messageId, string senderName, string text, string mediaKind, string mediaMimeType, bool outgoing)
@@ -134,7 +163,7 @@ Item {
         // on the on-demand overlay (absent until the row was hovered).
         if (selectionEditLoader.item) {
             selectionEditLoader.item.deselect()
-        } else if (bodyTextLoader.item && root.hasRichText) {
+        } else if (bodyTextLoader.item && root.displayHasRichText) {
             bodyTextLoader.item.deselect()
         }
     }
@@ -193,10 +222,10 @@ Item {
     readonly property bool isUnsupported: mediaKind === "unsupported"
     // 1-3 emoji-only messages render large and frameless, like stickers. The single
     // emoji case is biggest; size steps down as the count rises.
-    readonly property bool isJumboEmoji: emojiOnlyCount > 0 && emojiOnlyCount <= 3
+    readonly property bool isJumboEmoji: displayEmojiOnlyCount > 0 && displayEmojiOnlyCount <= 3
     readonly property bool frameless: isSticker || isJumboEmoji
     readonly property real jumboEmojiPixelSize: Kirigami.Units.gridUnit
-        * (emojiOnlyCount === 1 ? 2.8 : emojiOnlyCount === 2 ? 2.2 : 1.8)
+        * (displayEmojiOnlyCount === 1 ? 2.8 : displayEmojiOnlyCount === 2 ? 2.2 : 1.8)
     readonly property bool isAnimatedSticker: isSticker && (mediaAnimated || mediaMimeType === "image/gif")
     readonly property bool isLottieSticker: isSticker && mediaMimeType === "application/was"
     readonly property bool isRenderableStickerImage: isSticker && isImage && !isLottieSticker
@@ -320,8 +349,8 @@ Item {
     }
 
     function resetReservedImageGeometry() {
-        reservedImageAspectRatio = normalisedImageAspectRatio(mediaIntrinsicWidth, mediaIntrinsicHeight)
-        reservedImageNaturalWidth = mediaIntrinsicWidth > 0 ? mediaIntrinsicWidth : fallbackImageWidth
+        reservedImageAspectRatio = normalisedImageAspectRatio(mediaWidth, mediaHeight)
+        reservedImageNaturalWidth = mediaWidth > 0 ? mediaWidth : fallbackImageWidth
     }
 
     readonly property int imageDecodeWidth: decodeWidthForAspect(imageDecodeWidthCap, imageDecodeHeightCap, reservedImageAspectRatio)
@@ -334,11 +363,14 @@ Item {
         hoverLatched = false
         selectionLatched = false
         autoDownloadTriggered = false
+        // The glow lives on a shared animation now, so a row recycled mid-glow
+        // would otherwise keep the leftover opacity of the row it replaced.
+        replyGlowOpacity = 0
         maybeAutoDownloadMedia()
     }
     onMediaMimeTypeChanged: resetReservedImageGeometry()
-    onMediaIntrinsicWidthChanged: resetReservedImageGeometry()
-    onMediaIntrinsicHeightChanged: resetReservedImageGeometry()
+    onMediaWidthChanged: resetReservedImageGeometry()
+    onMediaHeightChanged: resetReservedImageGeometry()
     Component.onCompleted: {
         resetReservedImageGeometry()
         maybeAutoDownloadMedia()
@@ -386,7 +418,7 @@ Item {
         default: return ""
         }
     }
-    readonly property bool showStatusIcon: outgoing && (statusIsDoubleTick || statusSingleIcon.length > 0)
+    readonly property bool showStatusIcon: isOutgoing && (statusIsDoubleTick || statusSingleIcon.length > 0)
 
     readonly property real footerTimePointSize: Kirigami.Theme.smallFont.pointSize * 0.72
     readonly property real statusIconSize: Math.max(1, Math.round(Kirigami.Units.iconSizes.small * 0.82))
@@ -451,7 +483,7 @@ Item {
     readonly property real blockTntReserve: tntHeight + tntGap
 
     function currentSenderNameForReply() {
-        return root.outgoing ? Whatevr.I18n.i18nc("@label quoted own message sender", "You") : root.senderName
+        return root.isOutgoing ? Whatevr.I18n.i18nc("@label quoted own message sender", "You") : root.senderName
     }
 
     function requestReply() {
@@ -460,12 +492,17 @@ Item {
         }
         root.triggerReplyGlow()
         root.messageSelectionClaimed(root.messageId)
-        root.replyRequested(root.messageId, root.currentSenderNameForReply(), root.replyPreviewBody.length > 0 ? root.replyPreviewBody : root.body, root.mediaKind, root.mediaMimeType, root.outgoing)
+        root.replyRequested(root.messageId, root.currentSenderNameForReply(), root.replyPreviewBody.length > 0 ? root.replyPreviewBody : root.body, root.mediaKind, root.mediaMimeType, root.isOutgoing)
         root.conversationFocusRequested()
     }
 
+    // The glow itself runs on a single animation shared by the whole list (see
+    // MessageView.playReplyGlow): only one row can be glowing at a time, so
+    // giving every row its own five-object animation chain was pure overhead
+    // (DN9). Kept as a function because MessageView calls it on the delegate
+    // item directly after a jump settles.
     function triggerReplyGlow() {
-        replyGlowAnimation.restart()
+        root.replyGlowRequested()
     }
 
     // Absolute y within contentColumn (which now spans the full bubble at y:0).
@@ -552,7 +589,7 @@ Item {
     // light tones for contrast; otherwise the muted theme colours are used.
     readonly property color footerTextColor: imageOnly ? "white" : Kirigami.Theme.disabledTextColor
     readonly property color statusTickColor: statusIsRead
-        ? (imageOnly ? Qt.lighter(activePalette.highlight, 1.4) : activePalette.highlight)
+        ? (imageOnly ? Qt.lighter(Whatevr.Palette.highlight, 1.4) : Whatevr.Palette.highlight)
         : (imageOnly ? "white" : Kirigami.Theme.disabledTextColor)
     readonly property color statusSingleColor: statusIsFailed
         ? Kirigami.Theme.negativeTextColor
@@ -562,41 +599,42 @@ Item {
     // bubble's top corners; bottom corners are only rounded for image-only
     // messages (when there is a caption the image meets the text squarely).
     readonly property real bubbleCornerRadius: Kirigami.Units.cornerRadius
-    readonly property real mediaTopLeftRadius: (!outgoing && !groupStart) ? bubbleCornerRadius * 0.45 : bubbleCornerRadius
-    readonly property real mediaTopRightRadius: (outgoing && !groupStart) ? bubbleCornerRadius * 0.45 : bubbleCornerRadius
-    readonly property real mediaBottomLeftRadius: !imageOnly ? 0 : ((!outgoing && !groupEnd) ? bubbleCornerRadius * 0.45 : bubbleCornerRadius)
-    readonly property real mediaBottomRightRadius: !imageOnly ? 0 : ((outgoing && !groupEnd) ? bubbleCornerRadius * 0.45 : bubbleCornerRadius)
-    readonly property real replyGlowLeft: frameless
-        ? Math.min(stickerSlot.x,
-                   stickerReplyPreviewLoader.active ? stickerReplyPreviewLoader.x : stickerSlot.x,
-                   stickerFooter.x)
-        : bubble.x
-    readonly property real replyGlowTop: frameless
-        ? Math.min(stickerSlot.y,
-                   stickerReplyPreviewLoader.active ? stickerReplyPreviewLoader.y : stickerSlot.y,
-                   stickerFooter.y)
-        : bubble.y
-    readonly property real replyGlowRight: frameless
-        ? Math.max(stickerSlot.x + stickerSlot.width,
-                   stickerReplyPreviewLoader.active ? stickerReplyPreviewLoader.x + stickerReplyPreviewLoader.width : stickerSlot.x + stickerSlot.width,
-                   stickerFooter.x + stickerFooter.width)
-        : bubble.x + bubble.width
-    readonly property real replyGlowBottom: frameless
-        ? Math.max(stickerSlot.y + stickerSlot.height,
-                   stickerReplyPreviewLoader.active ? stickerReplyPreviewLoader.y + stickerReplyPreviewLoader.height : stickerSlot.y + stickerSlot.height,
-                   stickerFooter.y + stickerFooter.height)
-        : bubble.y + bubble.height
+    readonly property real mediaTopLeftRadius: (!isOutgoing && !groupStart) ? bubbleCornerRadius * 0.45 : bubbleCornerRadius
+    readonly property real mediaTopRightRadius: (isOutgoing && !groupStart) ? bubbleCornerRadius * 0.45 : bubbleCornerRadius
+    readonly property real mediaBottomLeftRadius: !imageOnly ? 0 : ((!isOutgoing && !groupEnd) ? bubbleCornerRadius * 0.45 : bubbleCornerRadius)
+    readonly property real mediaBottomRightRadius: !imageOnly ? 0 : ((isOutgoing && !groupEnd) ? bubbleCornerRadius * 0.45 : bubbleCornerRadius)
+    // Loader.item is declared as QObject, so the frameless subtree is read
+    // through a typed handle: that keeps the geometry bindings below statically
+    // checked and lets qmlcachegen compile them rather than interpreting them.
+    readonly property FramelessBubble framelessBubble: framelessLoader.item as FramelessBubble
+
+    // Outer bounds of everything the row draws, used to place the jump glow and
+    // the reaction band. On frameless rows these come from the frameless
+    // subtree (which only exists for those rows — see framelessLoader); every
+    // other row is just the bubble.
+    readonly property real replyGlowLeft: framelessBubble ? framelessBubble.contentLeft : bubble.x
+    readonly property real replyGlowTop: framelessBubble ? framelessBubble.contentTop : bubble.y
+    readonly property real replyGlowRight: framelessBubble ? framelessBubble.contentRight : bubble.x + bubble.width
+    readonly property real replyGlowBottom: framelessBubble ? framelessBubble.contentBottom : bubble.y + bubble.height
+
+    // Bounds of the row's visual body — the bubble, or the sticker slot on
+    // frameless rows. Shared by the selection check circle and the hover reply
+    // button, which both sit in the free space beside it.
+    readonly property real visualX: framelessBubble ? framelessBubble.slotX : bubble.x
+    readonly property real visualY: framelessBubble ? framelessBubble.slotY : bubble.y
+    readonly property real visualWidth: framelessBubble ? framelessBubble.slotWidth : bubble.width
+    readonly property real visualHeight: framelessBubble ? framelessBubble.slotHeight : bubble.height
 
     readonly property bool hasReactions: reactions !== undefined && reactions !== null && reactions.length > 0
     // The reaction chip row sits in its own band below the bubble; reserve its
     // full height plus the gap above it so it never clips into the next row.
     readonly property real reactionRowReserve: hasReactions
-        ? Math.round(reactionRow.height + Kirigami.Units.smallSpacing / 2)
+        ? Math.round(reactionRowLoader.height + Kirigami.Units.smallSpacing / 2)
         : 0
 
     width: listWidth
-    height: (frameless
-        ? stickerFooter.y + stickerFooter.height
+    height: (framelessBubble
+        ? framelessBubble.bottomEdge
         : bubble.y + bubble.height) + reactionRowReserve + (groupEnd ? Kirigami.Units.smallSpacing : Kirigami.Units.smallSpacing / 4)
 
     HoverHandler {
@@ -663,7 +701,7 @@ Item {
             if (item) {
                 const p = mapToItem(item, mouseX, mouseY)
                 if (p.x >= 0 && p.y >= 0 && p.x <= item.width && p.y <= item.height) {
-                    if (root.hasRichText && item.linkAt(p.x, p.y)) {
+                    if (root.displayHasRichText && item.linkAt(p.x, p.y)) {
                         return Qt.PointingHandCursor
                     }
                     return Qt.IBeamCursor
@@ -682,97 +720,78 @@ Item {
         }
     }
 
-    // Selection-mode click surface: every left click toggles this message and
-    // nothing underneath (links, reply button, image buttons) reacts.
-    MouseArea {
+    // Everything multi-select mode needs — the covering click surface, the row
+    // tint and the check circle — is built only while that mode is on. It used
+    // to be three permanently instantiated (and normally invisible) subtrees on
+    // every row, worth roughly seven objects each time (DN9).
+    Loader {
+        id: selectionChromeLoader
+
         anchors.fill: parent
-        visible: root.selectionModeActive
-        acceptedButtons: Qt.LeftButton
-        z: 10
-        cursorShape: Qt.PointingHandCursor
-        onClicked: root.selectionToggleRequested()
-    }
+        active: root.selectionModeActive
 
-    // Selection tint over the message row, excluding the date-pill region at
-    // the top so the day separator is never highlighted as selected.
-    Rectangle {
-        anchors.fill: parent
-        anchors.topMargin: root.dateSeparatorHeight
-        z: 6
-        visible: root.selectionModeActive && root.selected
-        color: Qt.alpha(Kirigami.Theme.highlightColor, 0.14)
-        radius: Kirigami.Units.cornerRadius
-    }
+        sourceComponent: Item {
+            anchors.fill: parent
 
-    // Selection check circle in the free space opposite the bubble (mirrors
-    // the hover reply button's placement), so nothing has to shift.
-    Rectangle {
-        id: selectionCheck
-
-        readonly property real visualX: root.frameless ? stickerSlot.x : bubble.x
-        readonly property real visualY: root.frameless ? stickerSlot.y : bubble.y
-        readonly property real visualWidth: root.frameless ? stickerSlot.width : bubble.width
-        readonly property real visualHeight: root.frameless ? stickerSlot.height : bubble.height
-        readonly property real desiredX: root.outgoing
-                                         ? visualX - width - Kirigami.Units.smallSpacing
-                                         : visualX + visualWidth + Kirigami.Units.smallSpacing
-
-        visible: root.selectionModeActive
-        z: 11
-        x: Math.round(Math.max(root.outerMargin,
-                               Math.min(root.width - root.outerMargin - width, desiredX)))
-        y: Math.round(visualY + Math.max(0, visualHeight - height) / 2)
-        width: Kirigami.Units.iconSizes.smallMedium + Kirigami.Units.smallSpacing
-        height: width
-        radius: width / 2
-        color: root.selected ? Kirigami.Theme.highlightColor : Qt.alpha(Kirigami.Theme.backgroundColor, 0.92)
-        border.color: root.selected ? Kirigami.Theme.highlightColor : Qt.alpha(Kirigami.Theme.textColor, 0.38)
-        border.width: 1
-
-        Behavior on color {
-            ColorAnimation {
-                duration: Kirigami.Units.shortDuration
-                easing.type: Easing.OutCubic
+            // Selection-mode click surface: every left click toggles this
+            // message and nothing underneath (links, reply button, image
+            // buttons) reacts.
+            MouseArea {
+                anchors.fill: parent
+                acceptedButtons: Qt.LeftButton
+                z: 10
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.selectionToggleRequested()
             }
-        }
 
-        Kirigami.Icon {
-            anchors.centerIn: parent
-            visible: root.selected
-            source: root.tickSource
-            width: Math.round(parent.width * 0.62)
-            height: width
-            color: Kirigami.Theme.highlightedTextColor
-            isMask: true
-        }
-    }
+            // Selection tint over the message row, excluding the date-pill
+            // region at the top so the day separator is never highlighted.
+            Rectangle {
+                anchors.fill: parent
+                anchors.topMargin: root.dateSeparatorHeight
+                z: 6
+                visible: root.selected
+                color: Qt.alpha(Kirigami.Theme.highlightColor, 0.14)
+                radius: Kirigami.Units.cornerRadius
+            }
 
-    SequentialAnimation {
-        id: replyGlowAnimation
+            // Selection check circle in the free space opposite the bubble
+            // (mirrors the hover reply button's placement), so nothing shifts.
+            Rectangle {
+                id: selectionCheck
 
-        PropertyAction {
-            target: root
-            property: "replyGlowOpacity"
-            value: 0
-        }
-        NumberAnimation {
-            target: root
-            property: "replyGlowOpacity"
-            from: 0
-            to: 1
-            duration: Kirigami.Units.shortDuration
-            easing.type: Easing.OutCubic
-        }
-        PauseAnimation {
-            duration: Kirigami.Units.shortDuration
-        }
-        NumberAnimation {
-            target: root
-            property: "replyGlowOpacity"
-            from: 1
-            to: 0
-            duration: Kirigami.Units.longDuration
-            easing.type: Easing.OutCubic
+                readonly property real desiredX: root.isOutgoing
+                                                 ? root.visualX - width - Kirigami.Units.smallSpacing
+                                                 : root.visualX + root.visualWidth + Kirigami.Units.smallSpacing
+
+                z: 11
+                x: Math.round(Math.max(root.outerMargin,
+                                       Math.min(root.width - root.outerMargin - width, desiredX)))
+                y: Math.round(root.visualY + Math.max(0, root.visualHeight - height) / 2)
+                width: Kirigami.Units.iconSizes.smallMedium + Kirigami.Units.smallSpacing
+                height: width
+                radius: width / 2
+                color: root.selected ? Kirigami.Theme.highlightColor : Qt.alpha(Kirigami.Theme.backgroundColor, 0.92)
+                border.color: root.selected ? Kirigami.Theme.highlightColor : Qt.alpha(Kirigami.Theme.textColor, 0.38)
+                border.width: 1
+
+                Behavior on color {
+                    ColorAnimation {
+                        duration: Kirigami.Units.shortDuration
+                        easing.type: Easing.OutCubic
+                    }
+                }
+
+                Kirigami.Icon {
+                    anchors.centerIn: parent
+                    visible: root.selected
+                    source: root.tickSource
+                    width: Math.round(parent.width * 0.62)
+                    height: width
+                    color: Kirigami.Theme.highlightedTextColor
+                    isMask: true
+                }
+            }
         }
     }
 
@@ -782,6 +801,10 @@ Item {
         font.pointSize: root.footerTimePointSize
     }
 
+    // Published so FramelessBubble can size its own time label without
+    // reaching into this file's ids.
+    readonly property real footerTimeWidth: Math.ceil(footerMetrics.advanceWidth)
+
     Kirigami.ShadowedRectangle {
         id: bubble
 
@@ -789,7 +812,7 @@ Item {
 
         readonly property real bubbleRadius: Kirigami.Units.cornerRadius
 
-        x: root.outgoing
+        x: root.isOutgoing
            ? root.width - width - root.outerMargin
            : root.outerMargin + root.senderGutterWidth
         y: root.messageBaseY
@@ -799,18 +822,18 @@ Item {
         width: root.bubbleContentWidth + (root.hasInlineMedia ? 0 : root.innerPadding * 2)
         height: contentColumn.height
 
-        corners.topLeftRadius: !root.outgoing && !root.groupStart ? bubbleRadius * 0.45 : bubbleRadius
-        corners.topRightRadius: root.outgoing && !root.groupStart ? bubbleRadius * 0.45 : bubbleRadius
-        corners.bottomLeftRadius: !root.outgoing && !root.groupEnd ? bubbleRadius * 0.45 : bubbleRadius
-        corners.bottomRightRadius: root.outgoing && !root.groupEnd ? bubbleRadius * 0.45 : bubbleRadius
+        corners.topLeftRadius: !root.isOutgoing && !root.groupStart ? bubbleRadius * 0.45 : bubbleRadius
+        corners.topRightRadius: root.isOutgoing && !root.groupStart ? bubbleRadius * 0.45 : bubbleRadius
+        corners.bottomLeftRadius: !root.isOutgoing && !root.groupEnd ? bubbleRadius * 0.45 : bubbleRadius
+        corners.bottomRightRadius: root.isOutgoing && !root.groupEnd ? bubbleRadius * 0.45 : bubbleRadius
 
         // Opaque so the wallpaper doodle never shows through. The outgoing tint
         // is the old translucent highlight composited onto the theme background,
         // preserving the prior look on the default wallpaper while staying solid.
-        color: root.outgoing
-                ? Qt.tint(Kirigami.Theme.backgroundColor, Qt.alpha(activePalette.highlight, 0.30))
+        color: root.isOutgoing
+                ? Qt.tint(Kirigami.Theme.backgroundColor, Qt.alpha(Whatevr.Palette.highlight, 0.30))
                 : Kirigami.Theme.backgroundColor
-        border.color: Qt.alpha(Kirigami.Theme.textColor, root.outgoing ? 0.05 : 0.12)
+        border.color: Qt.alpha(Kirigami.Theme.textColor, root.isOutgoing ? 0.05 : 0.12)
         border.width: 1
 
         Item {
@@ -850,8 +873,8 @@ Item {
                     mediaKind: root.replyToMediaKind
                     mediaMimeType: root.replyToMediaMimeType
                     targetMessageId: root.replyToMessageId
-                    outgoing: root.replyToOutgoing
-                    fillColor: Qt.alpha(Kirigami.Theme.textColor, root.outgoing ? 0.06 : 0.045)
+                    outgoing: root.replyToIsOutgoing
+                    fillColor: Qt.alpha(Kirigami.Theme.textColor, root.isOutgoing ? 0.06 : 0.045)
                     borderColor: Qt.alpha(Kirigami.Theme.textColor, 0.07)
                     onActivated: messageId => root.replyPreviewActivated(messageId)
                 }
@@ -1149,7 +1172,7 @@ Item {
                     readonly property real lastLineY: endCursorRect.y
                     readonly property real lastLineHeight: endCursorRect.height
 
-                    text: root.richText
+                    text: root.displayRichText
                     textFormat: TextEdit.RichText
                     readOnly: true
                     selectByMouse: true
@@ -1206,7 +1229,7 @@ Item {
                 y: root.contentOffsetBeforeBody()
                 width: root.textRegionWidth
 
-                sourceComponent: root.hasRichText ? richBodyComponent : plainBodyComponent
+                sourceComponent: root.displayHasRichText ? richBodyComponent : plainBodyComponent
             }
 
             // On-demand selection surface for plain bodies (rich bodies select
@@ -1220,7 +1243,7 @@ Item {
 
                 active: root.selectionLatched
                         && root.hasBody
-                        && !root.hasRichText
+                        && !root.displayHasRichText
                         && !root.frameless
                         && !root.pooled
                 x: bodyTextLoader.x
@@ -1328,49 +1351,37 @@ Item {
                 width: root.tntWidth
                 height: root.tntHeight
 
-                Item {
-                    id: statusArea
+                // Delivery status, built only for rows that show one — i.e.
+                // never for incoming messages. The single/double forms share
+                // one icon pair rather than instantiating both layouts (DN9).
+                Loader {
+                    id: statusAreaLoader
+
+                    active: root.showStatusIcon
                     anchors.right: parent.right
                     anchors.verticalCenter: parent.verticalCenter
-                    visible: root.showStatusIcon
-                    implicitWidth: root.statusAreaWidth
-                    implicitHeight: root.statusIconSize
-                    width: implicitWidth
-                    height: implicitHeight
+                    width: root.statusAreaWidth
+                    height: root.statusIconSize
 
-                    // Single icon (clock, single checkmark, error)
-                    Kirigami.Icon {
-                        id: singleIcon
-                        x: Math.round((parent.width - width) / 2)
-                        anchors.verticalCenter: parent.verticalCenter
-                        visible: !root.statusIsDoubleTick
-                        source: root.statusSingleIcon
-                        width: root.statusIconSize
-                        height: root.statusIconSize
-                        color: root.statusSingleColor
-                        isMask: true
-                    }
-
-                    // Double tick (delivered / read)
-                    Item {
-                        id: doubleTick
+                    sourceComponent: Item {
                         anchors.fill: parent
-                        visible: root.statusIsDoubleTick
 
+                        // Doubles as the single icon (clock / tick / error) and
+                        // as the first of the two delivered/read ticks.
                         Kirigami.Icon {
-                            id: firstStatusTick
-
-                            x: 0
+                            x: root.statusIsDoubleTick
+                               ? 0
+                               : Math.round((parent.width - width) / 2)
                             anchors.verticalCenter: parent.verticalCenter
-                            source: root.tickSource
+                            source: root.statusIsDoubleTick ? root.tickSource : root.statusSingleIcon
                             width: root.statusIconSize
                             height: root.statusIconSize
-                            color: root.statusTickColor
+                            color: root.statusIsDoubleTick ? root.statusTickColor : root.statusSingleColor
                             isMask: true
                         }
-                        Kirigami.Icon {
-                            id: secondStatusTick
 
+                        Kirigami.Icon {
+                            visible: root.statusIsDoubleTick
                             x: root.statusDoubleTickOffset
                             anchors.verticalCenter: parent.verticalCenter
                             source: root.tickSource
@@ -1384,8 +1395,8 @@ Item {
 
                 Label {
                     id: timeLabel
-                    anchors.right: statusArea.visible ? statusArea.left : parent.right
-                    anchors.rightMargin: statusArea.visible ? root.tntSpacing : 0
+                    anchors.right: root.showStatusIcon ? statusAreaLoader.left : parent.right
+                    anchors.rightMargin: root.showStatusIcon ? root.tntSpacing : 0
                     anchors.verticalCenter: parent.verticalCenter
                     text: root.timeText
                     color: root.footerTextColor
@@ -1394,448 +1405,67 @@ Item {
                     font.pointSize: root.footerTimePointSize
                 }
 
-                Kirigami.Icon {
-                    id: editMark
-                    visible: root.showEditMark
-                    source: "document-edit-symbolic"
+                // Pin / star / edit marks. Most messages carry none, so the
+                // three icons (and the anchor chain that used to thread them
+                // together) are built only when at least one applies; the Row
+                // drops the ones that do not, so ordering stays automatic.
+                Loader {
+                    active: root.showPinMark || root.showStarMark || root.showEditMark
                     anchors.right: timeLabel.left
                     anchors.rightMargin: root.tntSpacing
                     anchors.verticalCenter: parent.verticalCenter
-                    width: root.editMarkSize
-                    height: root.editMarkSize
-                    color: root.footerTextColor
-                    isMask: true
-                }
 
-                Kirigami.Icon {
-                    id: starMark
-                    visible: root.showStarMark
-                    source: "starred-symbolic"
-                    anchors.right: editMark.visible ? editMark.left : timeLabel.left
-                    anchors.rightMargin: root.tntSpacing
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: root.starMarkSize
-                    height: root.starMarkSize
-                    color: root.footerTextColor
-                    isMask: true
-                }
+                    sourceComponent: Row {
+                        spacing: root.tntSpacing
 
-                Kirigami.Icon {
-                    id: pinMark
-                    visible: root.showPinMark
-                    source: "pin-symbolic"
-                    anchors.right: starMark.visible ? starMark.left
-                                                    : (editMark.visible ? editMark.left : timeLabel.left)
-                    anchors.rightMargin: root.tntSpacing
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: root.pinMarkSize
-                    height: root.pinMarkSize
-                    color: root.footerTextColor
-                    isMask: true
+                        Kirigami.Icon {
+                            visible: root.showPinMark
+                            source: "pin-symbolic"
+                            width: root.pinMarkSize
+                            height: root.pinMarkSize
+                            color: root.footerTextColor
+                            isMask: true
+                        }
+
+                        Kirigami.Icon {
+                            visible: root.showStarMark
+                            source: "starred-symbolic"
+                            width: root.starMarkSize
+                            height: root.starMarkSize
+                            color: root.footerTextColor
+                            isMask: true
+                        }
+
+                        Kirigami.Icon {
+                            visible: root.showEditMark
+                            source: "document-edit-symbolic"
+                            width: root.editMarkSize
+                            height: root.editMarkSize
+                            color: root.footerTextColor
+                            isMask: true
+                        }
+                    }
                 }
             }
         }
     }
 
+    // Frameless rows — stickers and 1-3 emoji "jumbo" messages — draw no
+    // bubble: a bare slot with a floating time pill beside it. All of that used
+    // to be instantiated on every single row and merely hidden, including a
+    // jumbo-emoji Text bound to `root.body`, which laid the message body out a
+    // second time for rows that never showed it (DN9). The subtree publishes
+    // the geometry the row needs (content bounds for the glow, slot bounds for
+    // the selection check and reply button, bottom edge for row height) so the
+    // outer bindings can fall back to the bubble when it does not exist.
     Loader {
-        id: stickerReplyPreviewLoader
+        id: framelessLoader
 
-        active: root.frameless && root.hasReplyPreview
-        x: root.outgoing
-           ? root.width - width - root.outerMargin
-           : root.outerMargin + root.senderGutterWidth
-        y: root.messageBaseY
-        width: Math.min(Math.max(0, root.width - root.outerMargin * 2 - root.senderGutterWidth),
-                        Math.max(Kirigami.Units.gridUnit * 5, item ? item.naturalContentWidth : 0))
+        active: root.frameless
+        anchors.fill: parent
 
-        sourceComponent: ReplyPreview {
-            senderName: root.replyToSenderName
-            body: root.replyToText
-            mediaKind: root.replyToMediaKind
-            mediaMimeType: root.replyToMediaMimeType
-            targetMessageId: root.replyToMessageId
-            outgoing: root.replyToOutgoing
-            fillColor: Qt.alpha(Kirigami.Theme.backgroundColor, 0.78)
-            borderColor: Qt.alpha(Kirigami.Theme.textColor, 0.08)
-            onActivated: messageId => root.replyPreviewActivated(messageId)
-        }
-    }
-
-    Item {
-        id: stickerSlot
-
-        visible: root.frameless
-        x: root.outgoing
-           ? root.width - width - root.outerMargin
-           : root.outerMargin + root.senderGutterWidth
-        y: root.messageBaseY + (stickerReplyPreviewLoader.active ? stickerReplyPreviewLoader.height + Kirigami.Units.smallSpacing : 0)
-        width: root.isJumboEmoji ? jumboEmoji.implicitWidth : root.stickerDisplayWidth
-        height: root.isJumboEmoji ? jumboEmoji.implicitHeight : root.stickerDisplayHeight
-
-        Text {
-            id: jumboEmoji
-
-            anchors.centerIn: parent
-            visible: root.isJumboEmoji
-            text: root.body
-            font.family: Whatevr.ProtocolController.emojiModel.emojiFontFamily
-            font.pixelSize: root.jumboEmojiPixelSize
-            horizontalAlignment: Text.AlignHCenter
-            textFormat: Text.PlainText
-        }
-
-        // The sticker renderers — an AnimatedImage and a custom Lottie paint
-        // item are the heaviest — are built only for sticker messages. Text,
-        // image and jumbo-emoji delegates never instantiate them. jumboEmoji
-        // stays outside so the slot can size to it.
-        Loader {
-            anchors.fill: parent
-            active: root.isSticker
-            sourceComponent: Component {
-              Item {
-                anchors.fill: parent
-
-                // Whether the actual sticker (whichever renderer applies) is on
-                // screen. Drives the thumbnail placeholder during a fast fling.
-                readonly property bool stickerContentReady: root.isLottieSticker
-                    ? lottieSticker.status === Whatevr.RlottieSticker.Ready
-                    : root.isAnimatedSticker
-                        ? animatedSticker.status === AnimatedImage.Ready
-                        : staticSticker.status === Image.Ready
-
-        // While the sticker is still decoding it draws nothing, which over the
-        // wallpaper doodle reads as an empty hole. A faint plate fills the slot
-        // until the real sticker (or its thumbnail) is on screen.
-        Rectangle {
-            anchors.fill: parent
-            radius: Kirigami.Units.cornerRadius
-            visible: !parent.stickerContentReady
-                     && !(root.isSticker && root.hasThumbnailImage && stickerThumb.status === Image.Ready)
-            color: Qt.alpha(Kirigami.Theme.textColor, 0.06)
-        }
-
-        Image {
-            id: stickerThumb
-
-            anchors.fill: parent
-            // Hold the thumbnail until the real sticker is showing, so a fling
-            // (which defers the full sticker decode) still has a placeholder.
-            visible: root.isSticker && root.hasThumbnailImage && !parent.stickerContentReady
-            opacity: status === Image.Ready ? 0.7 : 0
-            source: root.mediaSourceActive && stickerSlot.visible && visible ? Qt.resolvedUrl("file://" + root.mediaThumbnailLocalPath) : ""
-            fillMode: Image.PreserveAspectFit
-            asynchronous: true
-            cache: true
-            smooth: true
-            sourceSize.width: root.stickerDecodeCap
-            sourceSize.height: root.stickerDecodeCap
-        }
-
-        Image {
-            id: staticSticker
-
-            // Latched readiness, set from onStatusChanged rather than read off
-            // `status` inside the source binding (which would make source depend
-            // on its own load state and loop). Reset when the underlying file
-            // changes on delegate reuse.
-            property bool everDecoded: false
-            readonly property string targetPath: root.mediaLocalPath
-            onTargetPathChanged: everDecoded = false
-            onStatusChanged: if (status === Image.Ready) everDecoded = true
-
-            anchors.fill: parent
-            visible: root.isRenderableStickerImage && root.hasLocalSticker && !root.isAnimatedSticker
-            opacity: status === Image.Ready ? 1 : 0
-            // Defer the decode while flinging unless it is already decoded.
-            source: root.mediaSourceActive && stickerSlot.visible && visible
-                    && (!root.fastFlicking || everDecoded)
-                    ? Qt.resolvedUrl("file://" + root.mediaLocalPath) : ""
-            fillMode: Image.PreserveAspectFit
-            asynchronous: true
-            cache: true
-            smooth: true
-            sourceSize.width: root.stickerDecodeCap
-            sourceSize.height: root.stickerDecodeCap
-        }
-
-        AnimatedImage {
-            id: animatedSticker
-
-            // Same latch as staticSticker: keeps `status` out of the source
-            // binding so it cannot loop on its own load state.
-            property bool everDecoded: false
-            readonly property string targetPath: root.mediaLocalPath
-            onTargetPathChanged: everDecoded = false
-            onStatusChanged: if (status === AnimatedImage.Ready) everDecoded = true
-
-            anchors.fill: parent
-            visible: root.isRenderableStickerImage && root.hasLocalSticker && root.isAnimatedSticker
-            playing: root.animationActive && visible && status === AnimatedImage.Ready
-            // Defer the (heavy, multi-frame) decode while flinging unless ready.
-            source: root.mediaSourceActive && stickerSlot.visible && visible
-                    && (!root.fastFlicking || everDecoded)
-                    ? Qt.resolvedUrl("file://" + root.mediaLocalPath) : ""
-            fillMode: Image.PreserveAspectFit
-            asynchronous: true
-            cache: false
-            smooth: true
-            sourceSize.width: root.stickerDecodeCap
-            sourceSize.height: root.stickerDecodeCap
-        }
-
-        Whatevr.RlottieSticker {
-            id: lottieSticker
-
-            // Same latch as staticSticker: keeps `status` out of the source
-            // binding so it cannot loop on its own load state.
-            property bool everDecoded: false
-            readonly property string targetPath: root.mediaLocalPath
-            onTargetPathChanged: everDecoded = false
-            onStatusChanged: if (status === Whatevr.RlottieSticker.Ready) everDecoded = true
-
-            anchors.fill: parent
-            visible: root.isLottieSticker && root.hasLocalSticker
-            // Defer the JSON load + first rasterisation while flinging unless ready.
-            source: root.mediaSourceActive && stickerSlot.visible && visible
-                    && (!root.fastFlicking || everDecoded)
-                    ? Qt.resolvedUrl("file://" + root.mediaLocalPath) : ""
-            playing: root.animationActive && visible
-            // Rasterise at device resolution (capped) rather than a fixed 2.5×;
-            // the sticker is ~144 px so 2× is already crisp and halves the
-            // per-frame raster cost on 1× displays.
-            renderScale: Math.max(1, Math.min(2, Screen.devicePixelRatio))
-        }
-
-        Item {
-            id: stickerOverlay
-
-            anchors.fill: parent
-            visible: root.isSticker
-                     && (!root.hasLocalSticker
-                     || root.mediaDownloading
-                     || stickerThumb.status === Image.Loading
-                     || staticSticker.status === Image.Loading
-                     || animatedSticker.status === AnimatedImage.Loading
-                     || lottieSticker.status === Whatevr.RlottieSticker.Loading
-                     || staticSticker.status === Image.Error
-                     || animatedSticker.status === AnimatedImage.Error
-                     || lottieSticker.status === Whatevr.RlottieSticker.Error
-                     || root.mediaDownloadError.length > 0)
-
-            Rectangle {
-                anchors.centerIn: parent
-                width: stickerOverlayColumn.width + Kirigami.Units.largeSpacing
-                height: stickerOverlayColumn.height + Kirigami.Units.smallSpacing * 2
-                radius: Kirigami.Units.cornerRadius
-                visible: false
-                color: Qt.alpha(Kirigami.Theme.backgroundColor, 0.72)
-                border.color: Qt.alpha(Kirigami.Theme.textColor, 0.10)
-            }
-
-            Column {
-                id: stickerOverlayColumn
-
-                anchors.centerIn: parent
-                width: Math.max(0, parent.width - Kirigami.Units.largeSpacing * 1.5)
-                spacing: Kirigami.Units.smallSpacing
-
-                BusyIndicator {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    visible: (root.mediaDownloading && root.mediaDownloadProgress < 0)
-                             || (!root.mediaDownloading && !root.hasLocalSticker && root.hasThumbnailImage && stickerThumb.status === Image.Loading)
-                             || (root.hasLocalSticker && (staticSticker.status === Image.Loading
-                                                          || animatedSticker.status === AnimatedImage.Loading
-                                                          || lottieSticker.status === Whatevr.RlottieSticker.Loading))
-                    running: visible
-                    implicitWidth: Kirigami.Units.gridUnit * 1.75
-                    implicitHeight: implicitWidth
-                }
-
-                ProgressCircle {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    visible: root.mediaDownloading && root.mediaDownloadProgress >= 0
-                    progress: Math.max(0, root.mediaDownloadProgress)
-                    width: Kirigami.Units.gridUnit * 1.75
-                    height: width
-                }
-
-                Button {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    visible: !root.hasLocalSticker && !root.mediaDownloading
-                    flat: true
-                    icon.name: "folder-download-symbolic"
-                    text: Whatevr.I18n.i18nc("@action:button", "Load sticker")
-                    enabled: root.messageId.length > 0
-                    onClicked: {
-                        Whatevr.ProtocolController.downloadMessageMedia(root.messageId)
-                        root.conversationFocusRequested()
-                    }
-                }
-
-                Label {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    width: parent.width
-                    visible: (staticSticker.status === Image.Error
-                              || animatedSticker.status === AnimatedImage.Error
-                              || lottieSticker.status === Whatevr.RlottieSticker.Error) && root.hasLocalSticker
-                    text: Whatevr.I18n.i18nc("@info", "Sticker could not be displayed")
-                    color: Kirigami.Theme.negativeTextColor
-                    font.pointSize: Kirigami.Theme.smallFont.pointSize
-                    wrapMode: Text.Wrap
-                    horizontalAlignment: Text.AlignHCenter
-                }
-
-                Label {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    width: parent.width
-                    visible: !root.mediaDownloading && root.mediaDownloadError.length > 0
-                    text: root.mediaDownloadError
-                    color: Kirigami.Theme.negativeTextColor
-                    font.pointSize: Kirigami.Theme.smallFont.pointSize
-                    wrapMode: Text.Wrap
-                    horizontalAlignment: Text.AlignHCenter
-                }
-            }
-        }
-              }
-            }
-        }
-    }
-
-    Rectangle {
-        id: stickerFooter
-
-        visible: root.frameless
-        x: Math.round(Math.max(root.outerMargin + root.senderGutterWidth,
-                               Math.min(root.width - root.outerMargin - width,
-                                        stickerSlot.x + stickerSlot.width - width)))
-        y: Math.round(stickerSlot.y + stickerSlot.height + Kirigami.Units.smallSpacing / 2)
-        width: root.tntWidth + root.framelessFooterHPadding * 2
-        height: root.tntHeight + root.framelessFooterVPadding * 2
-        radius: Kirigami.Units.cornerRadius
-        // Opaque so the wallpaper doodle never shows through the time/ticks pill
-        // on frameless (sticker / jumbo-emoji) rows. Mirrors the bubble fill: the
-        // old translucent tints composited onto the theme background.
-        color: root.outgoing
-               ? Qt.tint(Kirigami.Theme.backgroundColor, Qt.alpha(Kirigami.Theme.highlightColor, 0.30))
-               : Kirigami.Theme.backgroundColor
-        border.color: Qt.alpha(Kirigami.Theme.textColor, root.outgoing ? 0.05 : 0.12)
-
-        // The footer content (status ticks + time label) is only built for
-        // frameless rows; the Rectangle itself stays so geometry consumers
-        // (root.height, reply glow) keep working before/without the content.
-        Loader {
-            active: root.frameless
-            x: root.framelessFooterHPadding
-            y: Math.round((parent.height - height) / 2)
-            width: root.tntWidth
-            height: root.tntHeight
-
-            sourceComponent: Item {
-            id: stickerFooterContent
-
-            anchors.fill: parent
-
-            Item {
-                id: stickerStatusArea
-
-                anchors.right: parent.right
-                anchors.verticalCenter: parent.verticalCenter
-                visible: root.showStatusIcon
-                width: root.statusAreaWidth
-                height: root.statusIconSize
-
-                Kirigami.Icon {
-                    id: stickerSingleIcon
-                    x: Math.round((parent.width - width) / 2)
-                    anchors.verticalCenter: parent.verticalCenter
-                    visible: !root.statusIsDoubleTick
-                    source: root.statusSingleIcon
-                    width: root.statusIconSize
-                    height: root.statusIconSize
-                    color: root.statusSingleColor
-                    isMask: true
-                }
-
-                Item {
-                    anchors.fill: parent
-                    visible: root.statusIsDoubleTick
-
-                    Kirigami.Icon {
-                        id: firstStickerTick
-                        x: 0
-                        anchors.verticalCenter: parent.verticalCenter
-                        source: root.tickSource
-                        width: root.statusIconSize
-                        height: root.statusIconSize
-                        color: root.statusTickColor
-                        isMask: true
-                    }
-
-                    Kirigami.Icon {
-                        id: secondStickerTick
-                        x: root.statusDoubleTickOffset
-                        anchors.verticalCenter: parent.verticalCenter
-                        source: root.tickSource
-                        width: root.statusIconSize
-                        height: root.statusIconSize
-                        color: root.statusTickColor
-                        isMask: true
-                    }
-                }
-            }
-
-            Label {
-                id: stickerTimeLabel
-                anchors.right: stickerStatusArea.visible ? stickerStatusArea.left : parent.right
-                anchors.rightMargin: stickerStatusArea.visible ? root.tntSpacing : 0
-                anchors.verticalCenter: parent.verticalCenter
-                text: root.timeText
-                color: Kirigami.Theme.disabledTextColor
-                width: Math.ceil(footerMetrics.advanceWidth)
-                horizontalAlignment: Text.AlignRight
-                font.pointSize: root.footerTimePointSize
-            }
-
-            Kirigami.Icon {
-                id: stickerEditMark
-                visible: root.showEditMark
-                source: "document-edit-symbolic"
-                anchors.right: stickerTimeLabel.left
-                anchors.rightMargin: root.tntSpacing
-                anchors.verticalCenter: parent.verticalCenter
-                width: root.editMarkSize
-                height: root.editMarkSize
-                color: root.footerTextColor
-                isMask: true
-            }
-
-            Kirigami.Icon {
-                id: stickerStarMark
-                visible: root.showStarMark
-                source: "starred-symbolic"
-                anchors.right: stickerEditMark.visible ? stickerEditMark.left : stickerTimeLabel.left
-                anchors.rightMargin: root.tntSpacing
-                anchors.verticalCenter: parent.verticalCenter
-                width: root.starMarkSize
-                height: root.starMarkSize
-                color: root.footerTextColor
-                isMask: true
-            }
-
-            Kirigami.Icon {
-                visible: root.showPinMark
-                source: "pin-symbolic"
-                anchors.right: stickerStarMark.visible ? stickerStarMark.left
-                                                       : (stickerEditMark.visible ? stickerEditMark.left : stickerTimeLabel.left)
-                anchors.rightMargin: root.tntSpacing
-                anchors.verticalCenter: parent.verticalCenter
-                width: root.pinMarkSize
-                height: root.pinMarkSize
-                color: root.footerTextColor
-                isMask: true
-            }
-            }
+        sourceComponent: FramelessBubble {
+            row: root
         }
     }
 
@@ -1888,22 +1518,18 @@ Item {
             ToolButton {
                 id: replyButton
 
-                readonly property real visualX: root.frameless ? stickerSlot.x : bubble.x
-                readonly property real visualY: root.frameless ? stickerSlot.y : bubble.y
-                readonly property real visualWidth: root.frameless ? stickerSlot.width : bubble.width
-                readonly property real visualHeight: root.frameless ? stickerSlot.height : bubble.height
-                readonly property real desiredX: root.outgoing
-                                                 ? visualX - width - Kirigami.Units.smallSpacing
-                                                 : visualX + visualWidth + Kirigami.Units.smallSpacing
+                readonly property real desiredX: root.isOutgoing
+                                                 ? root.visualX - width - Kirigami.Units.smallSpacing
+                                                 : root.visualX + root.visualWidth + Kirigami.Units.smallSpacing
 
                 enabled: opacity > 0.01
                 opacity: (rowHoverHandler.hovered || hovered || pressed) ? 1 : 0
                 x: Math.round(Math.max(root.outerMargin,
                                        Math.min(root.width - root.outerMargin - width, desiredX)))
-                y: Math.round(visualY + Math.max(0, visualHeight - height) / 2)
+                y: Math.round(root.visualY + Math.max(0, root.visualHeight - height) / 2)
                 width: Math.round(Math.max(Kirigami.Units.iconSizes.smallMedium + Kirigami.Units.smallSpacing,
                                            Math.min(Kirigami.Units.gridUnit * 1.45,
-                                                    visualHeight - Kirigami.Units.smallSpacing)))
+                                                    root.visualHeight - Kirigami.Units.smallSpacing)))
                 height: width
                 icon.name: "smiley-add-symbolic"
                 // Set both dimensions to the constant directly; binding icon.height to
@@ -1951,21 +1577,28 @@ Item {
     // couple of chips per line on very narrow bubbles. Sits above the
     // context-menu surface (z:9) so chips own their clicks, but is disabled in
     // selection mode so the covering toggle surface wins there.
-    ReactionRow {
-        id: reactionRow
+    // Built only for rows that actually carry reactions: ReactionRow's Repeater
+    // drags in a QQmlDelegateModel and its two delegate groups even when the
+    // reaction list is empty, which most rows' lists are (DN9).
+    Loader {
+        id: reactionRowLoader
 
-        reactions: root.reactions
-        visible: root.hasReactions
-        enabled: !root.selectionModeActive
+        active: root.hasReactions
         z: 10
         width: Math.max(root.replyGlowRight - root.replyGlowLeft,
                         Kirigami.Units.gridUnit * 8)
-        layoutDirection: root.outgoing ? Qt.RightToLeft : Qt.LeftToRight
-        x: Math.round(root.outgoing ? root.replyGlowRight - width : root.replyGlowLeft)
+        x: Math.round(root.isOutgoing ? root.replyGlowRight - width : root.replyGlowLeft)
         y: Math.round(root.replyGlowBottom + Kirigami.Units.smallSpacing / 2)
 
-        onToggleRequested: emoji => root.reactionToggleRequested(emoji)
-        onDetailsRequested: root.reactionDetailsRequested()
+        sourceComponent: ReactionRow {
+            reactions: root.reactions
+            enabled: !root.selectionModeActive
+            width: reactionRowLoader.width
+            layoutDirection: root.isOutgoing ? Qt.RightToLeft : Qt.LeftToRight
+
+            onToggleRequested: emoji => root.reactionToggleRequested(emoji)
+            onDetailsRequested: root.reactionDetailsRequested()
+        }
     }
 
     // Sender header (group chats, first message of a sender group) is loaded
