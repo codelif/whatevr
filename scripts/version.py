@@ -30,6 +30,51 @@ def git_describe() -> str | None:
     return version.removeprefix("v")
 
 
+def version_describe(version: str) -> str | None:
+    result = subprocess.run(
+        ["git", "-C", str(ROOT), "log", "-1", "--format=%H", "--", "VERSION"],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
+    release_commit = result.stdout.strip()
+    if result.returncode != 0 or not release_commit:
+        return None
+
+    count = subprocess.run(
+        ["git", "-C", str(ROOT), "rev-list", "--count", f"{release_commit}..HEAD"],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
+    commits = count.stdout.strip()
+    if count.returncode != 0 or not commits:
+        return None
+    if commits == "0":
+        return version
+
+    head = subprocess.run(
+        ["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
+    short_head = head.stdout.strip()
+    if head.returncode != 0 or not short_head:
+        return None
+
+    dirty = subprocess.run(
+        ["git", "-C", str(ROOT), "diff-index", "--quiet", "HEAD", "--"],
+        check=False,
+        stderr=subprocess.DEVNULL,
+    ).returncode
+    suffix = "-dirty" if dirty else ""
+    return f"{version}-{commits}-g{short_head}{suffix}"
+
+
 def version_file() -> str | None:
     path = ROOT / "VERSION"
     if not path.exists():
@@ -40,7 +85,11 @@ def version_file() -> str | None:
 
 
 def full_version() -> str:
-    return git_describe() or version_file() or "0.0.0-unknown"
+    described = git_describe()
+    file_version = version_file()
+    if described and file_version and not described.startswith(file_version):
+        return version_describe(file_version) or described
+    return described or file_version or "0.0.0-unknown"
 
 
 def numeric_version() -> str:
