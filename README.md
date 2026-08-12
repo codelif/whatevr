@@ -5,60 +5,8 @@ A Linux-first native client for WhatsApp, built as **one daemon and any number
 of thin frontends**. `whatevrd` owns the WhatsApp connection (via
 [whatsmeow](https://github.com/tulir/whatsmeow)), the login session, the SQLite
 message store, the media cache and notifications. Frontends own pixels. They
-talk over a documented protocol on a unix socket, and writing one is a weekend
-project, not a fork.
+talk over a documented protocol on a unix socket, and writing one is a fun weekend (for me atleast)
 
-## The protocol is the point
-
-[**PROTOCOL.md**](PROTOCOL.md) is the contract: newline-delimited JSON over
-`$XDG_RUNTIME_DIR/whatevr/whatevrd.sock`, protocol version 1, stable. Four ideas
-carry the whole thing:
-
-- **The daemon owns all state.** A frontend does no sorting, merging, dedup or
-  cache invalidation. Ever. It keeps a map of items and renders it.
-- **You subscribe to views, not endpoints.** `subscribe` to `chats`, `messages`,
-  `typing`, `presence`… and the daemon sends the contents, then keeps your copy
-  correct forever with keyed `upsert`/`remove` events. Every item carries a
-  daemon-computed `sort` key; ordering is never your problem.
-- **Commands only ever return an id.** Send a message and the response is a
-  message id. The message itself arrives through the view you already had open,
-  the same way one from your phone would. There is no second code path.
-- **Every message renders in every frontend.** Each one carries a `fallback`
-  string, so a client that has never heard of stickers still shows something
-  sensible. Partial frontends are first-class.
-
-The whole surface is 22 views, 30 commands and 4 queries, and it is meant to be
-driven by hand:
-
-```console
-$ socat - UNIX-CONNECT:"$XDG_RUNTIME_DIR/whatevr/whatevrd.sock"
-{"id":1,"method":"hello","params":{"client":"human","protocol":1}}
-{"id":1,"result":{"daemon":"whatevrd","version":"0.6.0","protocol":1,"state":"online","data_dir":"…","cache_dir":"…"}}
-{"id":2,"method":"subscribe","params":{"view":"chats","limit":2}}
-{"id":2,"result":{"sub":1}}
-{"sub":1,"event":"upsert","sort":"0-…","item":{"id":"12036…@g.us","name":"family","unread":3,"preview":"📷 Photo","pinned":true}}
-{"sub":1,"event":"ready"}
-{"id":3,"method":"send.text","params":{"chat_id":"91887…@s.whatsapp.net","text":"oi"}}
-{"id":3,"result":{"message_id":"3EB0…"}}
-```
-
-### Write a frontend
-
-Two complete ones ship in [`examples/`](examples), and neither imports a client
-library because there isn't one to import:
-
-- [`examples/shell-frontend.sh`](examples/shell-frontend.sh): **a working
-  WhatsApp client in ~30 lines of shell**, using nothing but `socat` and `jq`.
-  It lists your chats, follows a conversation and sends the lines you type.
-  That script is the project's acceptance bar: a protocol change that breaks its
-  spirit is the wrong change.
-- [`examples/frontend.go`](examples/frontend.go): the same thing in fifty lines
-  of Go and the standard library.
-
-A TUI, a scriptable CLI (`whatevrctl send/list/watch`), a status-bar applet or a
-bridge to something else are all a socket and a JSON parser away. If a frontend
-ever feels awkward to write, that is a bug in the daemon or in PROTOCOL.md.
-Report it as one.
 
 ## Frontends
 
@@ -85,7 +33,8 @@ For other systems, for now you can follow the build instructions below:
 
 ## Building
 <details>
-    <summary>Build Instructions</summary>
+    <summary>
+      Build Instructions</summary>
     
 whatevr builds through a single top-level `justfile` that compiles **both** the
 daemon (`whatevrd`) and the Qt/Kirigami frontend (`whatkevr`). The daemon must be
@@ -283,6 +232,40 @@ CLI are wanted and unclaimed (see *Write a frontend* above); that work needs no
 changes to the daemon.
 
 Whatevr will be Linux-first for now until its stable. I am open to contributions for porting functionality to other platforms as long as they don't affect existing performance and Linux functionality significantly. 
+
+
+## The protocol is the point
+
+[**PROTOCOL.md**](PROTOCOL.md) is the contract: newline-delimited JSON over
+`$XDG_RUNTIME_DIR/whatevr/whatevrd.sock`, protocol version 1, stable. Four ideas
+carry the whole thing:
+
+- **The daemon owns all state.** A frontend does no sorting, merging, dedup or
+  cache invalidation. Ever. It keeps a map of items and renders it.
+- **You subscribe to views, not endpoints.** `subscribe` to `chats`, `messages`,
+  `typing`, `presence`… and the daemon sends the contents, then keeps your copy
+  correct forever with keyed `upsert`/`remove` events. Every item carries a
+  daemon-computed `sort` key; ordering is never your problem.
+- **Commands only ever return an id.** Send a message and the response is a
+  message id. The message itself arrives through the view you already had open,
+  the same way one from your phone would. There is no second code path.
+- **Every message renders in every frontend.** Each one carries a `fallback`
+  string, so a client that has never heard of stickers still shows something
+  sensible. Partial frontends are first-class.
+
+The whole surface is slim, and it is meant to be driven by hand:
+
+```console
+$ socat - UNIX-CONNECT:"$XDG_RUNTIME_DIR/whatevr/whatevrd.sock"
+{"id":1,"method":"hello","params":{"client":"human","protocol":1}}
+{"id":1,"result":{"daemon":"whatevrd","version":"0.6.0","protocol":1,"state":"online","data_dir":"…","cache_dir":"…"}}
+{"id":2,"method":"subscribe","params":{"view":"chats","limit":2}}
+{"id":2,"result":{"sub":1}}
+{"sub":1,"event":"upsert","sort":"0-…","item":{"id":"12036…@g.us","name":"family","unread":3,"preview":"📷 Photo","pinned":true}}
+{"sub":1,"event":"ready"}
+{"id":3,"method":"send.text","params":{"chat_id":"91887…@s.whatsapp.net","text":"oi"}}
+{"id":3,"result":{"message_id":"3EB0…"}}
+```
 
 ## Acknowledgements
 Whatevr stands on the shoulders of:
