@@ -129,17 +129,18 @@ func (s *starredSession) Items(max int) []Item {
 	for _, sm := range rows {
 		items = append(items, Item{
 			ID:   sm.ID,
-			Sort: starredSort(sm.Message),
+			Sort: newestFirstSort(sm.Message),
 			Data: starredItem{messageItem: messageItemFromStore(sm.Message), ChatName: sm.ChatName},
 		})
 	}
 	return items
 }
 
-const starredSortTimeMax = int64(1) << 62
+const newestFirstSortMax = int64(1) << 62
 
-// starredSort matches store.ListStarredMessages: newest message timestamp
-// first, then newest rowid first for same-second arrivals.
+// newestFirstSort is the sort key for every newest-first message window
+// (`starred`, `chat_media`): newest message timestamp first, then newest rowid
+// first for same-second arrivals.
 //
 // F27: the store records only is_starred, not a star time, so `starred` is
 // ordered by the message's own timestamp, not when it was starred. A
@@ -147,18 +148,18 @@ const starredSortTimeMax = int64(1) << 62
 // than at the top, so it can fall outside a small window until the window is
 // extended. Recording a star time would need a schema migration; ordering by
 // message timestamp is the documented behavior (see PROTOCOL.md `starred`).
-func starredSort(m store.Message) string {
-	return fmt.Sprintf("%020d-%020d-%s", invStarredSort(m.TimestampUnix), invStarredSort(m.SortSeq), m.ID)
+func newestFirstSort(m store.Message) string {
+	return fmt.Sprintf("%020d-%020d-%s", invNewestFirst(m.TimestampUnix), invNewestFirst(m.SortSeq), m.ID)
 }
 
-func invStarredSort(v int64) int64 {
+func invNewestFirst(v int64) int64 {
 	if v < 0 {
 		v = 0
 	}
-	if v > starredSortTimeMax {
-		v = starredSortTimeMax
+	if v > newestFirstSortMax {
+		v = newestFirstSortMax
 	}
-	return starredSortTimeMax - v
+	return newestFirstSortMax - v
 }
 
 func (s *starredSession) Close() {

@@ -94,6 +94,17 @@ CenteredDialog {
     // by the controller — no local snapshot to refresh.
     readonly property bool contactBlocked: Whatevr.ProtocolController.infoCardBlocked
     readonly property bool canBlock: !isGroup && targetJid.length > 0
+    // The chat whose media gallery this dialog can open. A group's subject key
+    // is its chat id; a contact card only has one when that contact is the chat
+    // currently open.
+    readonly property string galleryChatId: {
+        if (isGroup) {
+            return subjectKey
+        }
+        return targetJid.length > 0 && targetJid === Whatevr.ProtocolController.selectedChatId
+            ? targetJid
+            : ""
+    }
 
     title: isGroup
            ? Whatevr.I18n.i18nc("@title group info dialog", "Group info")
@@ -364,6 +375,25 @@ CenteredDialog {
                         blockConfirmDialog.open()
                     }
                 }
+            }
+        }
+
+        // ---- Media, links and documents ----
+        // The gallery is per chat, so it only makes sense where the dialog was
+        // opened from a chat rather than from a bare contact card.
+        QQC2.Button {
+            Layout.alignment: Qt.AlignHCenter
+            visible: root.galleryChatId.length > 0
+            icon.name: "folder-images-symbolic"
+            text: Whatevr.I18n.i18nc("@action:button", "Media, links and documents")
+            onClicked: {
+                const chatId = root.galleryChatId
+                const chatName = root.primaryName
+                root.close()
+                applicationWindow().pageStack.layers.push(Qt.resolvedUrl("ChatMediaGalleryPage.qml"), {
+                    chatId: chatId,
+                    chatName: chatName
+                })
             }
         }
 

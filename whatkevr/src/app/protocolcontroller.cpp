@@ -5,6 +5,7 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
+#include <QDesktopServices>
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QImage>
@@ -66,6 +67,8 @@ constexpr int kChatPageSize = 24;
 // Starred rows are a windowed view like any other collection; the page extends
 // as it scrolls instead of asking the daemon for every star at once.
 constexpr int kStarredPageSize = 50;
+// A gallery page is a grid, so it shows more per screen than the starred list.
+constexpr int kChatMediaPageSize = 60;
 // In-chat search asks for one generous page of matches: the match cursor walks
 // that list, it is not a scrollable surface.
 constexpr int kChatSearchLimit = 100;
@@ -358,6 +361,10 @@ ProtocolController::ProtocolController(QString socketPath, QObject *parent)
     // Starred page (D5): a windowed `starred` collection the page binds
     // directly; loading/exhausted drive its spinner and scroll-extend.
     m_starredModel = new CollectionViewModel(this);
+    m_chatMediaModel = new CollectionViewModel(this);
+    connect(m_chatMediaModel, &CollectionViewModel::countChanged, this, &ProtocolController::chatMediaChanged);
+    connect(m_chatMediaModel, &CollectionViewModel::readyChanged, this, &ProtocolController::chatMediaChanged);
+    connect(m_chatMediaModel, &CollectionViewModel::modelReset, this, &ProtocolController::chatMediaChanged);
     connect(m_starredModel, &CollectionViewModel::countChanged, this, &ProtocolController::starredMessagesChanged);
     connect(m_starredModel, &CollectionViewModel::readyChanged, this, &ProtocolController::starredMessagesChanged);
     connect(m_starredModel, &CollectionViewModel::modelReset, this, &ProtocolController::starredMessagesChanged);
@@ -504,6 +511,7 @@ ProtocolController::~ProtocolController()
     delete m_pinnedSub;
     delete m_forwardTargetsSub;
     delete m_transfersSub;
+    delete m_chatMediaSub;
     delete m_starredSub;
     delete m_infoCardSub;
     delete m_groupMembersSub;
@@ -514,6 +522,7 @@ ProtocolController::~ProtocolController()
     delete m_selfSub;
     m_chatMembersSub = nullptr;
     m_starredSub = nullptr;
+    m_chatMediaSub = nullptr;
     m_infoCardSub = nullptr;
     m_groupMembersSub = nullptr;
     m_blocklistSub = nullptr;
@@ -1750,6 +1759,64 @@ void ProtocolController::downloadMessageMedia(const QString &messageId)
                        i18nc("@info", "Unable to download the attachment"));
 }
 
+void ProtocolController::cancelMessageMediaDownload(const QString &messageId)
+{
+    if (messageId.isEmpty()) {
+        return;
+    }
+    // Fire and forget: the transfers view reports the row closing, and a
+    // rejection just means the fetch had already finished on its own.
+    m_client->request(QStringLiteral("media.cancel_download"),
+                      {{QStringLiteral("message_id"), messageId}},
+                      [](const QJsonObject &, const ProtocolError &) {});
+}
+
+void ProtocolController::streamMessageMedia(const QString &messageId)
+{
+    if (messageId.isEmpty()) {
+        return;
+    }
+    m_client->request(QStringLiteral("media.stream"),
+                      {{QStringLiteral("message_id"), messageId}},
+                      [this, messageId](const QJsonObject &result, const ProtocolError &error) {
+                          if (error.isError()) {
+                              // Not every message can be streamed (no length, no
+                              // hash, a CDN that ignores ranges). The bubble
+                              // falls back to an ordinary download rather than
+                              // showing an error for something the user can
+                              // still watch a moment later.
+                              Q_EMIT mediaStreamFailed(messageId, error.message);
+                              return;
+                          }
+                          const QString url = result.value(QStringLiteral("url")).toString();
+                          if (url.isEmpty()) {
+                              Q_EMIT mediaStreamFailed(messageId, QString());
+                              return;
+                          }
+                          Q_EMIT mediaStreamReady(messageId, QUrl(url));
+                      });
+}
+
+void ProtocolController::markMessagePlayed(const QString &messageId)
+{
+    if (messageId.isEmpty()) {
+        return;
+    }
+    // A played receipt is a courtesy to the sender; failing to send one is not
+    // worth interrupting the listener over.
+    m_client->request(QStringLiteral("message.mark_played"),
+                      {{QStringLiteral("message_id"), messageId}},
+                      [](const QJsonObject &, const ProtocolError &) {});
+}
+
+bool ProtocolController::openLocalFile(const QString &localPath)
+{
+    if (localPath.isEmpty() || !QFileInfo::exists(localPath)) {
+        return false;
+    }
+    return QDesktopServices::openUrl(QUrl::fromLocalFile(localPath));
+}
+
 void ProtocolController::forwardMessage(const QString &messageId, const QStringList &chatIds)
 {
     if (messageId.isEmpty() || chatIds.isEmpty()) {
@@ -2145,6 +2212,60 @@ void ProtocolController::loadMoreStarredMessages()
         return;
     }
     m_starredSub->extend(kStarredPageSize, QStringLiteral("older"));
+}
+
+// --- per-chat media gallery -------------------------------------------------
+
+QAbstractItemModel *ProtocolController::chatMediaModel() const
+{
+    return m_chatMediaModel;
+}
+
+bool ProtocolController::chatMediaLoading() const
+{
+    return m_chatMediaSub != nullptr && !m_chatMediaModel->isReady();
+}
+
+bool ProtocolController::chatMediaExhausted() const
+{
+    return m_chatMediaSub == nullptr || m_chatMediaModel->isExhausted();
+}
+
+void ProtocolController::openChatMedia(const QString &chatId)
+{
+    delete m_chatMediaSub;
+    m_chatMediaSub = nullptr;
+    m_chatMediaModel->onReset();
+    if (chatId.isEmpty()) {
+        Q_EMIT chatMediaChanged();
+        return;
+    }
+
+    m_chatMediaSub = m_client->subscribe(QStringLiteral("chat_media"),
+                                         {{QStringLiteral("chat_id"), chatId},
+                                          {QStringLiteral("limit"), kChatMediaPageSize}},
+                                         m_chatMediaModel);
+    Q_EMIT chatMediaChanged();
+}
+
+void ProtocolController::closeChatMedia()
+{
+    if (!m_chatMediaSub) {
+        return;
+    }
+    delete m_chatMediaSub;
+    m_chatMediaSub = nullptr;
+    m_chatMediaModel->onReset();
+    Q_EMIT chatMediaChanged();
+}
+
+void ProtocolController::extendChatMedia(int count)
+{
+    // A newest-first live-edge window only grows into older rows.
+    if (!m_chatMediaSub || m_chatMediaModel->isExhausted() || !m_chatMediaModel->isReady()) {
+        return;
+    }
+    m_chatMediaSub->extend(count > 0 ? count : kChatMediaPageSize, QStringLiteral("older"));
 }
 
 QVariantMap ProtocolController::messageRowDisplay(const QVariantMap &item) const
@@ -2564,6 +2685,13 @@ void ProtocolController::setAppPreference(const QString &key, bool value)
         return;
     }
     sendSettingsCommand(QStringLiteral("preferences.set"), {{key, value}},
+                        i18nc("@info", "Updating preferences failed"));
+}
+
+void ProtocolController::setAutoDownloadLimit(qint64 maxBytes)
+{
+    sendSettingsCommand(QStringLiteral("preferences.set"),
+                        {{QStringLiteral("auto_download_max_bytes"), qMax(qint64(0), maxBytes)}},
                         i18nc("@info", "Updating preferences failed"));
 }
 
@@ -3023,6 +3151,24 @@ void ProtocolController::copyImageToClipboard(const QString &localPath)
     if (QClipboard *clipboard = QGuiApplication::clipboard()) {
         clipboard->setImage(image);
     }
+}
+
+void ProtocolController::copyFileToClipboard(const QString &localPath)
+{
+    if (localPath.isEmpty() || !QFile::exists(localPath)) {
+        return;
+    }
+    QClipboard *clipboard = QGuiApplication::clipboard();
+    if (!clipboard) {
+        return;
+    }
+    // A file URL rather than the decoded bytes: this is what a file manager or
+    // another chat app expects to receive when something is pasted into it.
+    auto *mime = new QMimeData;
+    const QUrl url = QUrl::fromLocalFile(localPath);
+    mime->setUrls({url});
+    mime->setText(localPath);
+    clipboard->setMimeData(mime);
 }
 
 bool ProtocolController::saveMediaAs(const QString &localPath, const QUrl &destUrl)

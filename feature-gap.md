@@ -95,18 +95,29 @@ Daemon-side, incoming handling stores only `Conversation`, `ExtendedTextMessage`
 `events.Message`; each needs storage (`MediaKind`), a bubble in whatkevr, and a
 chat-list preview string:
 
-- **Video**: playback, duration, thumbnail-first render (`VideoMessage`).
-- **GIFs**: `VideoMessage` + `GifPlayback`; auto-looping muted playback.
-- **Voice notes (PTT)**: `AudioMessage` with `PTT=true`; the wire message carries
-  `Waveform` bytes and `Seconds`, so waveform bubbles are nearly free. Send the
-  **"played" receipt** on listen (`MarkRead` with `types.ReceiptTypePlayed`); the
-  proto and Message Info dialog already model `played_ts_unix`, so the display half
-  exists. Playback speed toggle (1×/1.5×/2×) in the bubble.
-- **Audio files**: `AudioMessage` with `PTT=false`.
-- **Documents**: `DocumentMessage`: filename, size, page count, MIME icon,
-  open-with / save-as; plus the `DocumentWithCaptionMessage` wrapper (captioned
-  documents currently arrive **invisible**).
-- **Video notes (PTV)**: round instant videos (`PtvMessage`).
+- ~~**Video**: playback, duration, thumbnail-first render (`VideoMessage`).~~
+- ~~**GIFs**: `VideoMessage` + `GifPlayback`; auto-looping muted playback.~~
+- ~~**Voice notes (PTT)**: `AudioMessage` with `PTT=true` ... Playback speed
+  toggle (1×/1.5×/2×) in the bubble.~~
+- ~~**Audio files**: `AudioMessage` with `PTT=false`.~~
+- ~~**Documents**: `DocumentMessage`: filename, size, page count, MIME icon,
+  open-with / save-as; plus the `DocumentWithCaptionMessage` wrapper.~~
+- ~~**Video notes (PTV)**: round instant videos (`PtvMessage`).~~
+  **Done 2026-08-13:** all six kinds now ingest into real rows
+  (`videoMessageInput` / `audioMessageInput` / `documentMessageInput`), carry
+  `duration_secs`, `size_bytes`, `filename`, `page_count`, `waveform` and
+  `played` on the wire, and render as their own bubbles (`VideoBubble`,
+  `VoiceBubble`, `DocumentBubble`) plus a full-screen `MediaViewer` and a
+  per-chat gallery over the new `chat_media` view. Playback is libmpv, with Qt
+  Multimedia as the video fallback when the scene graph is not on OpenGL
+  (Settings → Advanced). Voice notes send a played receipt on first listen
+  (`message.mark_played`), auto-advance to the next note, remember where you
+  stopped, and get a daemon-derived waveform via ffmpeg when the sender omitted
+  one. Media no longer waits for a whole-file download: `media.stream` serves
+  ranged, chunk-verified bytes over a loopback endpoint while the fetch fills a
+  sparse cache file, so a large video starts immediately and seeks anywhere;
+  when the last chunk lands the file is hash-verified and becomes an ordinary
+  cache entry. Note view-once video and audio deliberately stay tombstoned.
 - **Location**: `LocationMessage`: lat/long, name, address, embedded JPEG thumb;
   click → OSM/system maps.
 - **Live location**: `LiveLocationMessage` + its update stream.
@@ -397,8 +408,10 @@ Zero handling: `events.CallOffer` / `CallOfferNotice` / `CallTerminate` /
   to images/video/docs across chats).
 - **`DeleteMedia`** server-side cleanup after revoke.
 - **EXIF strip toggle on image send** (privacy; local).
-- The auto-download prefs for video/audio/documents are **dead switches** until
-  §1 lands those kinds; either wire them or hide them.
+- ~~The auto-download prefs for video/audio/documents are **dead switches** until
+  §1 lands those kinds; either wire them or hide them.~~ **Done 2026-08-13:**
+  §1 landed those kinds, so every switch is live, gated by a 16 MiB ceiling
+  above which nothing auto-fetches.
 
 ## 14. Notifications & Linux desktop integration
 

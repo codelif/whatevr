@@ -378,6 +378,20 @@ QVariant ProtocolMessageModel::data(const QModelIndex &index, int role) const
         return mediaData().value(QStringLiteral("height")).toInt();
     case MediaAnimatedRole:
         return mediaData().value(QStringLiteral("animated")).toBool();
+    case MediaSizeBytesRole:
+        // Sizes exceed 2 GiB only in theory, but a document is the one kind
+        // that could, so it stays a 64-bit value all the way to QML.
+        return QVariant::fromValue(mediaData().value(QStringLiteral("size_bytes")).toLongLong());
+    case MediaDurationSecsRole:
+        return mediaData().value(QStringLiteral("duration_secs")).toInt();
+    case MediaFileNameRole:
+        return mediaData().value(QStringLiteral("filename")).toString();
+    case MediaPageCountRole:
+        return mediaData().value(QStringLiteral("page_count")).toInt();
+    case MediaWaveformRole:
+        return mediaData().value(QStringLiteral("waveform")).toList();
+    case MediaPlayedRole:
+        return mediaData().value(QStringLiteral("played")).toBool();
     case ShowSenderHeaderRole:
         return groupChat && !outgoing && startsSenderGroup(index.row());
     case ShowSenderAvatarRole:
@@ -482,6 +496,12 @@ QHash<int, QByteArray> ProtocolMessageModel::roleNames() const
         {MediaWidthRole, "mediaWidth"},
         {MediaHeightRole, "mediaHeight"},
         {MediaAnimatedRole, "mediaAnimated"},
+        {MediaSizeBytesRole, "mediaSizeBytes"},
+        {MediaDurationSecsRole, "mediaDurationSecs"},
+        {MediaFileNameRole, "mediaFileName"},
+        {MediaPageCountRole, "mediaPageCount"},
+        {MediaWaveformRole, "mediaWaveform"},
+        {MediaPlayedRole, "mediaPlayed"},
         {ShowSenderHeaderRole, "showSenderHeader"},
         {ShowSenderAvatarRole, "showSenderAvatar"},
         {ShowSenderGutterRole, "showSenderGutter"},
@@ -517,9 +537,14 @@ QString ProtocolMessageModel::displayText(const QVariantMap &item)
     if (item.value(QStringLiteral("revoked")).toBool()) {
         return item.value(QStringLiteral("fallback")).toString();
     }
-    if (kind == QLatin1String("text") || kind == QLatin1String("image") || kind == QLatin1String("sticker")) {
+    // The daemon's fallback ("🎥 Video (0:11)") is a one-line summary for the
+    // chat list, reply previews and notifications. A bubble that renders the
+    // media itself must not also print it as a caption, so anything with a
+    // media object shows only the real caption, which is usually empty.
+    if (kind == QLatin1String("text") || !media(item).isEmpty()) {
         return text;
     }
+    // No media to draw: unsupported kinds still need their tombstone label.
     return item.value(QStringLiteral("fallback")).toString();
 }
 
@@ -871,7 +896,17 @@ QVariantMap ProtocolMessageModel::messageSnapshot(const QString &messageId) cons
         {QStringLiteral("mediaKind"), mediaKind(item)},
         {QStringLiteral("mediaMimeType"), mediaData.value(QStringLiteral("mime"))},
         {QStringLiteral("mediaLocalPath"), mediaData.value(QStringLiteral("path"))},
+        {QStringLiteral("mediaFileName"), mediaData.value(QStringLiteral("filename"))},
+        {QStringLiteral("mediaSizeBytes"), mediaData.value(QStringLiteral("size_bytes"))},
+        {QStringLiteral("mediaDurationSecs"), mediaData.value(QStringLiteral("duration_secs"))},
         {QStringLiteral("mediaCacheKey"), QString()},
+        // Download state, so the context menu can offer Download, Cancel and
+        // Retry rather than being blind to anything that is not on disk yet.
+        {QStringLiteral("mediaDownloading"), data(index(row, 0), MediaDownloadingRole)},
+        {QStringLiteral("mediaDownloadProgress"), data(index(row, 0), MediaDownloadProgressRole)},
+        {QStringLiteral("mediaDownloadError"), mediaData.value(QStringLiteral("download_error"))},
+        {QStringLiteral("mediaPageCount"), mediaData.value(QStringLiteral("page_count"))},
+        {QStringLiteral("mediaPlayed"), mediaData.value(QStringLiteral("played"))},
         {QStringLiteral("isRevoked"), item.value(QStringLiteral("revoked"))},
         {QStringLiteral("isEdited"), item.value(QStringLiteral("edited"))},
         {QStringLiteral("isStarred"), item.value(QStringLiteral("starred"))},
@@ -891,6 +926,34 @@ QStringList ProtocolMessageModel::allMessageIds() const
         }
     }
     return ids;
+}
+
+QVariantMap ProtocolMessageModel::nextVoiceMessage(const QString &messageId) const
+{
+    // WhatsApp plays a run of voice notes back to back, so finishing one hands
+    // off to the next one below it that is already downloaded. A note that is
+    // not on disk ends the run rather than stalling on a download.
+    const int from = indexOf(messageId);
+    if (from < 0) {
+        return {};
+    }
+    for (int row = from + 1; row < rowCount(); ++row) {
+        const QVariantMap item = wireItem(row);
+        if (mediaKind(item) != QLatin1String("voice")) {
+            continue;
+        }
+        const QVariantMap mediaData = media(item);
+        const QString path = mediaData.value(QStringLiteral("path")).toString();
+        if (path.isEmpty()) {
+            return {};
+        }
+        return {
+            {QStringLiteral("messageId"), item.value(QStringLiteral("id")).toString()},
+            {QStringLiteral("localPath"), path},
+            {QStringLiteral("durationSecs"), mediaData.value(QStringLiteral("duration_secs"))},
+        };
+    }
+    return {};
 }
 
 QStringList ProtocolMessageModel::messageIdsForDay(const QString &messageId) const

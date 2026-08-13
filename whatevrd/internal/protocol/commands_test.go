@@ -58,6 +58,9 @@ type fakeCommandActions struct {
 	forwardMessage    string
 	forwardChats      []string
 	downloadMessage   string
+	streamMessage     string
+	cancelledMessage  string
+	playedMessage     string
 	fetchJID          string
 
 	privacyCategory    string
@@ -233,6 +236,24 @@ func (f *fakeCommandActions) DownloadMessageMedia(_ context.Context, messageID s
 	defer f.mu.Unlock()
 	f.downloadMessage = messageID
 	return appstore.Message{ID: messageID}, f.err
+}
+func (f *fakeCommandActions) StreamMessageMedia(_ context.Context, messageID string) (app.MediaStream, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.streamMessage = messageID
+	return app.MediaStream{URL: "http://127.0.0.1:1/media/" + messageID, Mime: "video/mp4", SizeBytes: 42}, f.err
+}
+func (f *fakeCommandActions) CancelMessageMediaDownload(_ context.Context, messageID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cancelledMessage = messageID
+	return f.err
+}
+func (f *fakeCommandActions) MarkMessagePlayed(_ context.Context, messageID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.playedMessage = messageID
+	return f.err
 }
 
 // waitDownloadMessage polls for the message id media.download reaches the seam

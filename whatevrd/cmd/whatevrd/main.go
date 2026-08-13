@@ -69,6 +69,14 @@ func main() {
 	}
 	defer waClient.Close()
 
+	// The loopback range server backs media.stream: it hands players the bytes
+	// of an in-progress download. It is bound before commands are registered
+	// so a media.stream can never arrive before there is somewhere to point it.
+	if err := waClient.StartMediaServer(); err != nil {
+		log.Printf("media streaming disabled: %v", err)
+	}
+	defer waClient.StopMediaServer()
+
 	protocol.RegisterDaemonViews(protocolServer, daemon, db, waClient)
 	protocol.RegisterDaemonCommands(protocolServer, waClient)
 	// Every view and command is registered above; only now do we accept

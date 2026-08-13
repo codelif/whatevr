@@ -182,6 +182,34 @@ QtObject {
           rowId: "chats.autoDownloadStickers", label: Whatevr.I18n.i18nc("@label", "Auto-download stickers"),
           description: "",
           keywords: ["media", "auto", "download", "stickers", "sticker"] },
+        { moduleId: "chats", category: Whatevr.I18n.i18nc("@title settings category", "Chats"),
+          rowId: "chats.autoDownloadSizeLimit", label: Whatevr.I18n.i18nc("@label", "Auto-download size limit"),
+          description: Whatevr.I18n.i18nc("@info", "Nothing larger downloads by itself."),
+          keywords: ["media", "auto", "download", "size", "limit", "cap", "mib", "large"] },
+        { moduleId: "chats", category: Whatevr.I18n.i18nc("@title settings category", "Chats"),
+          rowId: "chats.autoplayInlineMedia", label: Whatevr.I18n.i18nc("@label", "Autoplay GIFs and video messages"),
+          description: "",
+          keywords: ["autoplay", "gif", "video", "message", "loop", "playback", "motion"] },
+        { moduleId: "chats", category: Whatevr.I18n.i18nc("@title settings category", "Chats"),
+          rowId: "chats.loopGifs", label: Whatevr.I18n.i18nc("@label", "Loop GIFs"),
+          description: "",
+          keywords: ["loop", "gif", "repeat", "animation"] },
+        { moduleId: "chats", category: Whatevr.I18n.i18nc("@title settings category", "Chats"),
+          rowId: "chats.advanceVoiceMessages", label: Whatevr.I18n.i18nc("@label", "Continue to the next voice message"),
+          description: "",
+          keywords: ["voice", "message", "next", "advance", "continue", "autoplay", "queue"] },
+        { moduleId: "chats", category: Whatevr.I18n.i18nc("@title settings category", "Chats"),
+          rowId: "chats.rememberPlaybackPosition", label: Whatevr.I18n.i18nc("@label", "Remember where playback stopped"),
+          description: "",
+          keywords: ["resume", "position", "playback", "voice", "remember", "continue"] },
+        { moduleId: "chats", category: Whatevr.I18n.i18nc("@title settings category", "Chats"),
+          rowId: "chats.defaultPlaybackSpeed", label: Whatevr.I18n.i18nc("@label", "Voice message speed"),
+          description: "",
+          keywords: ["speed", "playback", "rate", "voice", "faster", "1.5x", "2x"] },
+        { moduleId: "chats", category: Whatevr.I18n.i18nc("@title settings category", "Chats"),
+          rowId: "chats.mediaSaveDirectory", label: Whatevr.I18n.i18nc("@label", "Save media to"),
+          description: "",
+          keywords: ["save", "folder", "directory", "download", "media", "location"] },
 
         { moduleId: "notifications", category: Whatevr.I18n.i18nc("@title settings category", "Notifications"),
           rowId: "notifications.enabled", label: Whatevr.I18n.i18nc("@label", "Show notifications"),
@@ -304,7 +332,27 @@ QtObject {
         { moduleId: "shortcuts", category: Whatevr.I18n.i18nc("@title settings category", "Keyboard Shortcuts"),
           rowId: "shortcuts.pasteImage", label: Whatevr.I18n.i18nc("@label", "Paste image from clipboard"),
           description: "Ctrl+V",
-          keywords: ["keyboard", "shortcut", "paste", "image", "clipboard"] }
+          keywords: ["keyboard", "shortcut", "paste", "image", "clipboard"] },
+        { moduleId: "advanced", category: Whatevr.I18n.i18nc("@title settings category", "Advanced"),
+          rowId: "advanced.videoBackend", label: Whatevr.I18n.i18nc("@label", "Playback engine"),
+          description: "",
+          keywords: ["video", "playback", "engine", "backend", "mpv", "qt", "multimedia", "player"] },
+        { moduleId: "advanced", category: Whatevr.I18n.i18nc("@title settings category", "Advanced"),
+          rowId: "advanced.hardwareDecoding", label: Whatevr.I18n.i18nc("@label", "Hardware decoding"),
+          description: "",
+          keywords: ["hardware", "decoding", "gpu", "vaapi", "video", "acceleration"] },
+        { moduleId: "advanced", category: Whatevr.I18n.i18nc("@title settings category", "Advanced"),
+          rowId: "advanced.inlineVideoLimit", label: Whatevr.I18n.i18nc("@label", "Videos playing at once"),
+          description: "",
+          keywords: ["video", "inline", "limit", "decoder", "performance", "memory", "pool"] },
+        { moduleId: "advanced", category: Whatevr.I18n.i18nc("@title settings category", "Advanced"),
+          rowId: "advanced.pausePlaybackWhileScrolling", label: Whatevr.I18n.i18nc("@label", "Pause playback while scrolling fast"),
+          description: "",
+          keywords: ["pause", "scroll", "fling", "performance", "playback", "smooth"] },
+        { moduleId: "advanced", category: Whatevr.I18n.i18nc("@title settings category", "Advanced"),
+          rowId: "advanced.streamWhileDownloading", label: Whatevr.I18n.i18nc("@label", "Play while downloading"),
+          description: "",
+          keywords: ["stream", "download", "buffer", "seek", "progressive", "video"] }
     ]
 
     property list<KirigamiSettings.ConfigurationModule> modules: [
@@ -361,6 +409,12 @@ QtObject {
             text: Whatevr.I18n.i18nc("@title settings category", "Keyboard Shortcuts")
             icon.name: "configure-shortcuts-symbolic"
             page: () => Qt.createComponent("Whatevr", "KeyboardShortcutsPage")
+        },
+        KirigamiSettings.ConfigurationModule {
+            moduleId: "advanced"
+            text: Whatevr.I18n.i18nc("@title settings category", "Advanced")
+            icon.name: "preferences-other-symbolic"
+            page: () => Qt.createComponent("Whatevr", "AdvancedPage")
         },
         KirigamiSettings.ConfigurationModule {
             moduleId: "about"

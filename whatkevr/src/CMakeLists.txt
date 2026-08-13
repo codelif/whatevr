@@ -17,6 +17,16 @@ set(WHATKEVR_SOURCES
     models/protocolmessagemodel.h
     models/protocolsearchmodel.cpp
     models/protocolsearchmodel.h
+    media/audioplayer.cpp
+    media/audioplayer.h
+    media/mediabackend.cpp
+    media/mediabackend.h
+    media/mpvcore.cpp
+    media/mpvcore.h
+    media/mpvpool.cpp
+    media/mpvpool.h
+    media/mpvvideoitem.cpp
+    media/mpvvideoitem.h
     protocol/protocolclient.cpp
     protocol/protocolclient.h
     protocol/collectionviewmodel.cpp
@@ -25,6 +35,8 @@ set(WHATKEVR_SOURCES
     protocol/objectviewmodel.h
     ui/rlottiestickeritem.cpp
     ui/rlottiestickeritem.h
+    ui/waveformitem.cpp
+    ui/waveformitem.h
     util/messagemarkup.cpp
     util/messagemarkup.h
     util/messagerow.cpp
@@ -38,6 +50,7 @@ set(WHATKEVR_SOURCES
 set(WHATKEVR_LINK_LIBRARIES
     Qt6::Core
     Qt6::Gui
+    Qt6::Multimedia
     Qt6::Network
     Qt6::Qml
     Qt6::Quick
@@ -50,11 +63,13 @@ set(WHATKEVR_LINK_LIBRARIES
     KF6::Kirigami
     KF6::Prison
     PkgConfig::RLottie
+    PkgConfig::Mpv
 )
 
 set(WHATKEVR_INCLUDE_DIRS
     ${CMAKE_CURRENT_BINARY_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/app
+    ${CMAKE_CURRENT_SOURCE_DIR}/media
     ${CMAKE_CURRENT_SOURCE_DIR}/models
     ${CMAKE_CURRENT_SOURCE_DIR}/protocol
     ${CMAKE_CURRENT_SOURCE_DIR}/ui
@@ -102,6 +117,16 @@ set(WHATKEVR_QML_FILES
         qml/components/RoundedImage.qml
         qml/components/ChatWallpaper.qml
         qml/components/ChatBubble.qml
+    qml/components/ChatMediaGalleryPage.qml
+    qml/components/DocumentBubble.qml
+    qml/components/MediaViewer.qml
+    qml/components/VideoBubble.qml
+    qml/components/MpvVideoSurface.qml
+    qml/components/QtVideoSurface.qml
+    qml/components/VideoSurface.qml
+    qml/components/VideoSurfaceBackend.qml
+    qml/components/MediaDragArea.qml
+    qml/components/VoiceBubble.qml
         qml/components/FramelessBubble.qml
         qml/components/QuickReactionBar.qml
         qml/components/QuickReactionPopup.qml
@@ -139,6 +164,7 @@ set(WHATKEVR_QML_FILES
         qml/settings/EmojiStickersPage.qml
         qml/settings/KeyboardShortcutsPage.qml
         qml/settings/AboutPage.qml
+    qml/settings/AdvancedPage.qml
 )
 
 qt_add_qml_module(whatkevr

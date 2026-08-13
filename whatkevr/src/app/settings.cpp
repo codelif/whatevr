@@ -1,5 +1,7 @@
 #include "settings.h"
 
+#include <algorithm>
+
 #include <QAbstractItemModel>
 #include <QDir>
 #include <QDirIterator>
@@ -29,6 +31,17 @@ constexpr auto kChatWallpaperOpacity = "settings/chatWallpaperOpacity";
 constexpr auto kChatWallpaperTint = "settings/chatWallpaperTint";
 constexpr auto kMessageFontSize = "settings/messageFontSize";
 constexpr auto kShowAvatars = "settings/showAvatars";
+constexpr auto kVideoBackend = "settings/videoBackend";
+constexpr auto kHardwareDecoding = "settings/hardwareDecoding";
+constexpr auto kInlineVideoLimit = "settings/inlineVideoLimit";
+constexpr auto kPausePlaybackWhileScrolling = "settings/pausePlaybackWhileScrolling";
+constexpr auto kStreamWhileDownloading = "settings/streamWhileDownloading";
+constexpr auto kAutoplayInlineMedia = "settings/autoplayInlineMedia";
+constexpr auto kLoopGifs = "settings/loopGifs";
+constexpr auto kAdvanceVoiceMessages = "settings/advanceVoiceMessages";
+constexpr auto kRememberPlaybackPosition = "settings/rememberPlaybackPosition";
+constexpr auto kDefaultPlaybackSpeed = "settings/defaultPlaybackSpeed";
+constexpr auto kMediaSaveDirectory = "settings/mediaSaveDirectory";
 constexpr auto kPersistDrafts = "settings/persistDrafts";
 constexpr auto kEnterToSend = "settings/enterToSend";
 constexpr auto kSnapToBottomOnSend = "settings/snapToBottomOnSend";
@@ -108,6 +121,17 @@ void Settings::load()
     m_chatWallpaperTint = settings.value(QLatin1String(kChatWallpaperTint)).toString();
     m_messageFontSize = settings.value(QLatin1String(kMessageFontSize), 0).toInt();
     m_showAvatars = settings.value(QLatin1String(kShowAvatars), true).toBool();
+    m_videoBackend = settings.value(QLatin1String(kVideoBackend), QStringLiteral("auto")).toString();
+    m_hardwareDecoding = settings.value(QLatin1String(kHardwareDecoding), true).toBool();
+    m_inlineVideoLimit = std::clamp(settings.value(QLatin1String(kInlineVideoLimit), 3).toInt(), 0, 3);
+    m_pausePlaybackWhileScrolling = settings.value(QLatin1String(kPausePlaybackWhileScrolling), true).toBool();
+    m_streamWhileDownloading = settings.value(QLatin1String(kStreamWhileDownloading), true).toBool();
+    m_autoplayInlineMedia = settings.value(QLatin1String(kAutoplayInlineMedia), true).toBool();
+    m_loopGifs = settings.value(QLatin1String(kLoopGifs), true).toBool();
+    m_advanceVoiceMessages = settings.value(QLatin1String(kAdvanceVoiceMessages), true).toBool();
+    m_rememberPlaybackPosition = settings.value(QLatin1String(kRememberPlaybackPosition), true).toBool();
+    m_defaultPlaybackSpeed = settings.value(QLatin1String(kDefaultPlaybackSpeed), 1.0).toDouble();
+    m_mediaSaveDirectory = settings.value(QLatin1String(kMediaSaveDirectory), QString()).toString();
     m_persistDrafts = settings.value(QLatin1String(kPersistDrafts), true).toBool();
     m_enterToSend = settings.value(QLatin1String(kEnterToSend), true).toBool();
     m_snapToBottomOnSend = settings.value(QLatin1String(kSnapToBottomOnSend), true).toBool();
@@ -356,6 +380,182 @@ void Settings::setShowAvatars(bool show)
     m_showAvatars = show;
     QSettings().setValue(QLatin1String(kShowAvatars), m_showAvatars);
     Q_EMIT showAvatarsChanged();
+}
+
+QString Settings::videoBackend() const
+{
+    return m_videoBackend;
+}
+
+void Settings::setVideoBackend(const QString &backend)
+{
+    // Anything unrecognised means automatic, so a hand-edited config cannot
+    // leave the app with no way to play video.
+    const QString normalized = (backend == QLatin1String("mpv") || backend == QLatin1String("qt")) ? backend : QStringLiteral("auto");
+    if (m_videoBackend == normalized) {
+        return;
+    }
+    m_videoBackend = normalized;
+    QSettings().setValue(QLatin1String(kVideoBackend), m_videoBackend);
+    Q_EMIT videoBackendChanged();
+}
+
+bool Settings::hardwareDecoding() const
+{
+    return m_hardwareDecoding;
+}
+
+void Settings::setHardwareDecoding(bool enabled)
+{
+    if (m_hardwareDecoding == enabled) {
+        return;
+    }
+    m_hardwareDecoding = enabled;
+    QSettings().setValue(QLatin1String(kHardwareDecoding), m_hardwareDecoding);
+    Q_EMIT hardwareDecodingChanged();
+}
+
+int Settings::inlineVideoLimit() const
+{
+    return m_inlineVideoLimit;
+}
+
+void Settings::setInlineVideoLimit(int limit)
+{
+    // Above three, a chat full of clips spends more on decoders than on the
+    // conversation; below zero is meaningless.
+    const int clamped = std::clamp(limit, 0, 3);
+    if (m_inlineVideoLimit == clamped) {
+        return;
+    }
+    m_inlineVideoLimit = clamped;
+    QSettings().setValue(QLatin1String(kInlineVideoLimit), m_inlineVideoLimit);
+    Q_EMIT inlineVideoLimitChanged();
+}
+
+bool Settings::pausePlaybackWhileScrolling() const
+{
+    return m_pausePlaybackWhileScrolling;
+}
+
+void Settings::setPausePlaybackWhileScrolling(bool enabled)
+{
+    if (m_pausePlaybackWhileScrolling == enabled) {
+        return;
+    }
+    m_pausePlaybackWhileScrolling = enabled;
+    QSettings().setValue(QLatin1String(kPausePlaybackWhileScrolling), m_pausePlaybackWhileScrolling);
+    Q_EMIT pausePlaybackWhileScrollingChanged();
+}
+
+bool Settings::streamWhileDownloading() const
+{
+    return m_streamWhileDownloading;
+}
+
+void Settings::setStreamWhileDownloading(bool enabled)
+{
+    if (m_streamWhileDownloading == enabled) {
+        return;
+    }
+    m_streamWhileDownloading = enabled;
+    QSettings().setValue(QLatin1String(kStreamWhileDownloading), m_streamWhileDownloading);
+    Q_EMIT streamWhileDownloadingChanged();
+}
+
+bool Settings::autoplayInlineMedia() const
+{
+    return m_autoplayInlineMedia;
+}
+
+void Settings::setAutoplayInlineMedia(bool enabled)
+{
+    if (m_autoplayInlineMedia == enabled) {
+        return;
+    }
+    m_autoplayInlineMedia = enabled;
+    QSettings().setValue(QLatin1String(kAutoplayInlineMedia), m_autoplayInlineMedia);
+    Q_EMIT autoplayInlineMediaChanged();
+}
+
+bool Settings::loopGifs() const
+{
+    return m_loopGifs;
+}
+
+void Settings::setLoopGifs(bool enabled)
+{
+    if (m_loopGifs == enabled) {
+        return;
+    }
+    m_loopGifs = enabled;
+    QSettings().setValue(QLatin1String(kLoopGifs), m_loopGifs);
+    Q_EMIT loopGifsChanged();
+}
+
+bool Settings::advanceVoiceMessages() const
+{
+    return m_advanceVoiceMessages;
+}
+
+void Settings::setAdvanceVoiceMessages(bool enabled)
+{
+    if (m_advanceVoiceMessages == enabled) {
+        return;
+    }
+    m_advanceVoiceMessages = enabled;
+    QSettings().setValue(QLatin1String(kAdvanceVoiceMessages), m_advanceVoiceMessages);
+    Q_EMIT advanceVoiceMessagesChanged();
+}
+
+bool Settings::rememberPlaybackPosition() const
+{
+    return m_rememberPlaybackPosition;
+}
+
+void Settings::setRememberPlaybackPosition(bool enabled)
+{
+    if (m_rememberPlaybackPosition == enabled) {
+        return;
+    }
+    m_rememberPlaybackPosition = enabled;
+    QSettings().setValue(QLatin1String(kRememberPlaybackPosition), m_rememberPlaybackPosition);
+    Q_EMIT rememberPlaybackPositionChanged();
+}
+
+double Settings::defaultPlaybackSpeed() const
+{
+    return m_defaultPlaybackSpeed;
+}
+
+void Settings::setDefaultPlaybackSpeed(double speed)
+{
+    // The three speeds the pill cycles; anything else means 1x.
+    double normalized = 1.0;
+    if (qFuzzyCompare(speed, 1.5) || qFuzzyCompare(speed, 2.0)) {
+        normalized = speed;
+    }
+    if (qFuzzyCompare(m_defaultPlaybackSpeed, normalized)) {
+        return;
+    }
+    m_defaultPlaybackSpeed = normalized;
+    QSettings().setValue(QLatin1String(kDefaultPlaybackSpeed), m_defaultPlaybackSpeed);
+    Q_EMIT defaultPlaybackSpeedChanged();
+}
+
+QString Settings::mediaSaveDirectory() const
+{
+    return m_mediaSaveDirectory;
+}
+
+void Settings::setMediaSaveDirectory(const QString &path)
+{
+    if (m_mediaSaveDirectory == path) {
+        return;
+    }
+    m_mediaSaveDirectory = path;
+    QSettings().setValue(QLatin1String(kMediaSaveDirectory), m_mediaSaveDirectory);
+    Q_EMIT mediaSaveDirectoryChanged();
 }
 
 bool Settings::persistDrafts() const

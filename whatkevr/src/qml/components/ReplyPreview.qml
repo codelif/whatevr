@@ -36,16 +36,54 @@ Control {
     signal activated(string messageId)
 
     function fallbackBody() {
-        if (mediaKind === "sticker") {
+        switch (mediaKind) {
+        case "sticker":
             return Whatevr.I18n.i18nc("@label quoted message preview", "Sticker")
+        case "image":
+            return Whatevr.I18n.i18nc("@label quoted message preview", "Photo")
+        case "video":
+            return Whatevr.I18n.i18nc("@label quoted message preview", "Video")
+        case "gif":
+            return Whatevr.I18n.i18nc("@label quoted message preview", "GIF")
+        case "video_note":
+            return Whatevr.I18n.i18nc("@label quoted message preview", "Video message")
+        case "voice":
+            return Whatevr.I18n.i18nc("@label quoted message preview", "Voice message")
+        case "audio":
+            return Whatevr.I18n.i18nc("@label quoted message preview", "Audio")
+        case "document":
+            return Whatevr.I18n.i18nc("@label quoted message preview", "Document")
         }
-        if (mediaKind === "image" || mediaMimeType.startsWith("image/")) {
+        if (mediaMimeType.startsWith("image/")) {
             return Whatevr.I18n.i18nc("@label quoted message preview", "Photo")
         }
         if (mediaKind.length > 0 || mediaMimeType.length > 0) {
             return Whatevr.I18n.i18nc("@label quoted message preview", "Media")
         }
         return Whatevr.I18n.i18nc("@label quoted message preview", "Message unavailable")
+    }
+
+    /// A glyph for the quoted kind, so a reply to a voice note reads as one at
+    /// a glance rather than as an anonymous line of text.
+    function mediaIconName() {
+        switch (mediaKind) {
+        case "image":
+            return "image-x-generic-symbolic"
+        case "sticker":
+            return "emoji-symbols-symbolic"
+        case "video":
+        case "gif":
+            return "video-x-generic-symbolic"
+        case "video_note":
+            return "camera-video-symbolic"
+        case "voice":
+            return "audio-input-microphone-symbolic"
+        case "audio":
+            return "audio-x-generic-symbolic"
+        case "document":
+            return "text-x-generic-symbolic"
+        }
+        return ""
     }
 
     function displayBody() {
@@ -69,7 +107,10 @@ Control {
     // independent of the assigned/anchored width, so the parent can use this to
     // size the bubble without creating a binding loop.
     readonly property real naturalContentWidth: Math.max(senderLabel.implicitWidth,
-                                                         previewLabel.implicitWidth)
+                                                         previewLabel.implicitWidth
+                                                         + (bodyIcon.visible
+                                                            ? bodyIcon.width + Kirigami.Units.smallSpacing / 2
+                                                            : 0))
                                                 + leftPadding + rightPadding
 
     leftPadding: Kirigami.Units.smallSpacing + Kirigami.Units.smallSpacing / 2 + Kirigami.Units.smallSpacing
@@ -137,10 +178,25 @@ Control {
             font.pointSize: Kirigami.Theme.smallFont.pointSize * 0.92
         }
 
+        Kirigami.Icon {
+            id: bodyIcon
+
+            // Only for a quoted media message; a quoted text reply keeps the
+            // body flush with the sender name above it.
+            visible: root.mediaIconName().length > 0
+            source: root.mediaIconName()
+            color: previewLabel.color
+            width: visible ? Math.round(previewLabel.implicitHeight * 0.92) : 0
+            height: width
+            anchors.left: senderLabel.left
+            anchors.verticalCenter: previewLabel.verticalCenter
+        }
+
         Label {
             id: previewLabel
 
-            anchors.left: senderLabel.left
+            anchors.left: bodyIcon.visible ? bodyIcon.right : senderLabel.left
+            anchors.leftMargin: bodyIcon.visible ? Kirigami.Units.smallSpacing / 2 : 0
             anchors.right: senderLabel.right
             anchors.top: senderLabel.bottom
             anchors.topMargin: Kirigami.Units.smallSpacing / 3

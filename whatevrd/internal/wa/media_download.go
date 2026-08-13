@@ -29,6 +29,12 @@ import (
 const (
 	mediaRetryTimeout = 30 * time.Second
 	maxInt32          = 1<<31 - 1
+
+	// maxInboundMediaBytes is the ceiling for anything we will pull down. It is
+	// deliberately far above the outbound limit: WhatsApp accepts documents and
+	// videos much larger than whatevr will ever send, and refusing to fetch a
+	// message the phone already shows is worse than spending the disk.
+	maxInboundMediaBytes = 2 << 30 // 2 GiB
 )
 
 type downloadableMedia interface {
@@ -38,6 +44,45 @@ type downloadableMedia interface {
 	GetFileEncSHA256() []byte
 	GetFileSHA256() []byte
 	GetFileLength() uint64
+}
+
+// CancelMessageMediaDownload stops an in-flight fetch, whether it is a whole-file
+// download or a ranged stream. The partial file is kept: the chunks already on
+// disk are exactly what a later resume would have fetched again.
+func (c *Client) CancelMessageMediaDownload(ctx context.Context, messageID string) error {
+	messageID = strings.TrimSpace(messageID)
+	if messageID == "" {
+		return app.NewCommandError(app.CommandErrorInvalidArgument, "message_id is required")
+	}
+
+	cancelled := false
+
+	c.mediaDownloadMu.Lock()
+	if state := c.mediaDownloads[messageID]; state != nil && state.cancel != nil {
+		state.cancel()
+		cancelled = true
+	}
+	c.mediaDownloadMu.Unlock()
+
+	c.mediaStreamMu.Lock()
+	_, streaming := c.mediaStreams[messageID]
+	c.mediaStreamMu.Unlock()
+	if streaming {
+		// Keeping the .part and its chunk index is what makes a cancelled
+		// stream resumable rather than wasted bandwidth.
+		c.dropMediaStream(messageID, false)
+		cancelled = true
+		// A stream has no download goroutine to close out the transfer row, so
+		// the cancel has to do it or the bubble spins forever.
+		if message, err := c.store.GetMessage(ctx, messageID); err == nil {
+			c.daemon.PublishMediaDownloadChanged(messageID, message.ChatID, false, "", 0, uint64(max(0, message.MediaSizeBytes)))
+		}
+	}
+
+	if !cancelled {
+		return app.NewCommandError(app.CommandErrorRejected, "no download is in progress for this message")
+	}
+	return nil
 }
 
 func (c *Client) DownloadMessageMedia(ctx context.Context, messageID string) (appstore.Message, error) {
@@ -57,7 +102,9 @@ func (c *Client) DownloadMessageMedia(ctx context.Context, messageID string) (ap
 			return appstore.Message{}, ctx.Err()
 		}
 	}
-	state := &mediaDownloadState{done: make(chan struct{})}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	state := &mediaDownloadState{done: make(chan struct{}), cancel: cancel}
 	c.mediaDownloads[messageID] = state
 	c.mediaDownloadMu.Unlock()
 
@@ -89,6 +136,32 @@ func (c *Client) DownloadMessageMedia(ctx context.Context, messageID string) (ap
 			return message, nil
 		}
 	}
+	// Every exit path from here on has to reach the row. These rejections used
+	// to return before the publisher below was installed, so a media.download
+	// that could never succeed was completely invisible: no spinner, no error,
+	// nothing on the bubble to explain why tapping it did nothing.
+	var totalBytes uint64
+	started := false
+	defer func() {
+		errorText := ""
+		if state.err != nil {
+			errorText = state.err.Error()
+		}
+		if !started && errorText == "" {
+			// Resolved locally without a fetch: there is nothing to close out.
+			return
+		}
+		c.daemon.PublishMediaDownloadChanged(message.ID, message.ChatID, false, errorText, 0, totalBytes)
+		if errorText != "" {
+			updated, err := c.store.SetMessageMediaDownloadError(context.Background(), message.ID, errorText)
+			if err != nil {
+				c.log.Errorf("Persist media download error for %s: %v", message.ID, err)
+				return
+			}
+			c.daemon.PublishMessageUpdated(toDaemonMessage(updated))
+		}
+	}()
+
 	if len(message.MediaPayload) == 0 {
 		state.err = app.NewCommandError(app.CommandErrorRejected, "media is not available for download")
 		return appstore.Message{}, state.err
@@ -108,9 +181,9 @@ func (c *Client) DownloadMessageMedia(ctx context.Context, messageID string) (ap
 		return appstore.Message{}, state.err
 	}
 
-	totalBytes := media.GetFileLength()
-	if totalBytes > maxOutboundMediaBytes {
-		state.err = app.NewCommandError(app.CommandErrorRejected, "media size must be between 1 byte and %d MiB", maxOutboundMediaBytes/(1024*1024))
+	totalBytes = media.GetFileLength()
+	if totalBytes > maxInboundMediaBytes {
+		state.err = app.NewCommandError(app.CommandErrorRejected, "media size must be between 1 byte and %d MiB", maxInboundMediaBytes/(1024*1024))
 		return appstore.Message{}, state.err
 	}
 
@@ -124,22 +197,8 @@ func (c *Client) DownloadMessageMedia(ctx context.Context, messageID string) (ap
 		c.daemon.PublishMessageUpdated(toDaemonMessage(updated))
 	}
 
+	started = true
 	c.daemon.PublishMediaDownloadChanged(message.ID, message.ChatID, true, "", 0, totalBytes)
-	defer func() {
-		errorText := ""
-		if state.err != nil {
-			errorText = state.err.Error()
-		}
-		c.daemon.PublishMediaDownloadChanged(message.ID, message.ChatID, false, errorText, 0, totalBytes)
-		if errorText != "" {
-			updated, err := c.store.SetMessageMediaDownloadError(context.Background(), message.ID, errorText)
-			if err != nil {
-				c.log.Errorf("Persist media download error for %s: %v", message.ID, err)
-				return
-			}
-			c.daemon.PublishMessageUpdated(toDaemonMessage(updated))
-		}
-	}()
 
 	client := c.currentClient()
 	if client == nil || !client.IsLoggedIn() || !client.IsConnected() {
@@ -157,7 +216,7 @@ func (c *Client) DownloadMessageMedia(ctx context.Context, messageID string) (ap
 		return appstore.Message{}, state.err
 	}
 
-	fileName := safeMediaFileName(message.ID, mediaExtension(message.MediaMimeType))
+	fileName := safeMediaFileName(message.ID, mediaFileExtension(message))
 	if stickerKey != "" {
 		fileName = stickerKey + mediaExtension(message.MediaMimeType)
 	}
@@ -256,6 +315,7 @@ func (c *Client) DownloadMessageMedia(ctx context.Context, messageID string) (ap
 	}
 	state.message = updated
 	c.daemon.PublishMessageUpdated(toDaemonMessage(updated))
+	c.maybeDeriveVoiceWaveform(ctx, updated)
 	return updated, nil
 }
 
@@ -516,32 +576,33 @@ func refreshedMediaPayload(message appstore.Message, directPath string) ([]byte,
 		return nil, app.NewCommandError(app.CommandErrorRejected, "media retry response did not include a download path")
 	}
 
-	switch message.MediaKind {
-	case appstore.MediaKindSticker:
-		var sticker waE2E.StickerMessage
-		if err := proto.Unmarshal(message.MediaPayload, &sticker); err != nil {
-			return nil, app.NewCommandError(app.CommandErrorInternal, "decode sticker metadata: %v", err)
-		}
-		sticker.DirectPath = proto.String(directPath)
-		sticker.URL = nil
-		payload, err := proto.Marshal(&sticker)
-		if err != nil {
-			return nil, app.NewCommandError(app.CommandErrorInternal, "encode sticker metadata: %v", err)
-		}
-		return payload, nil
-	default:
-		var img waE2E.ImageMessage
-		if err := proto.Unmarshal(message.MediaPayload, &img); err != nil {
-			return nil, app.NewCommandError(app.CommandErrorInternal, "decode media metadata: %v", err)
-		}
-		img.DirectPath = proto.String(directPath)
-		img.URL = nil
-		payload, err := proto.Marshal(&img)
-		if err != nil {
-			return nil, app.NewCommandError(app.CommandErrorInternal, "encode media metadata: %v", err)
-		}
-		return payload, nil
+	decoded, err := mediaPayloadMessage(message)
+	if err != nil {
+		return nil, err
 	}
+	// The retry response supersedes the original location: point the payload at
+	// the new direct path and clear the stale URL so downloads resolve a host
+	// through the media connection.
+	switch m := decoded.(type) {
+	case *waE2E.StickerMessage:
+		m.DirectPath, m.URL = proto.String(directPath), nil
+	case *waE2E.VideoMessage:
+		m.DirectPath, m.URL = proto.String(directPath), nil
+	case *waE2E.AudioMessage:
+		m.DirectPath, m.URL = proto.String(directPath), nil
+	case *waE2E.DocumentMessage:
+		m.DirectPath, m.URL = proto.String(directPath), nil
+	case *waE2E.ImageMessage:
+		m.DirectPath, m.URL = proto.String(directPath), nil
+	default:
+		return nil, app.NewCommandError(app.CommandErrorInternal, "media kind %q cannot be refreshed", message.MediaKind)
+	}
+
+	payload, err := proto.Marshal(decoded.(proto.Message))
+	if err != nil {
+		return nil, app.NewCommandError(app.CommandErrorInternal, "encode media metadata: %v", err)
+	}
+	return payload, nil
 }
 
 func (c *Client) ResolveCachedStickerMedia(ctx context.Context, messages []appstore.Message) []appstore.Message {
@@ -625,8 +686,15 @@ func stickerCacheKey(message appstore.Message) (string, error) {
 	return key, nil
 }
 
+// mediaExtension picks the cache file's suffix. It only has to be honest
+// enough for players and external apps to sniff the file; the mime type on the
+// wire stays authoritative. A document keeps its own filename extension, since
+// that is what the user sees in a file manager after Save As.
 func mediaExtension(mimeType string) string {
-	switch strings.ToLower(strings.TrimSpace(mimeType)) {
+	// A mime type may carry parameters ("audio/ogg; codecs=opus"); only the
+	// type itself selects an extension.
+	base, _, _ := strings.Cut(strings.ToLower(strings.TrimSpace(mimeType)), ";")
+	switch strings.TrimSpace(base) {
 	case "application/was":
 		return ".zip"
 	case "image/gif":
@@ -635,9 +703,47 @@ func mediaExtension(mimeType string) string {
 		return ".png"
 	case "image/webp":
 		return ".webp"
+	case "video/mp4":
+		return ".mp4"
+	case "video/webm":
+		return ".webm"
+	case "video/3gpp":
+		return ".3gp"
+	case "video/quicktime":
+		return ".mov"
+	case "audio/ogg", "audio/opus":
+		return ".ogg"
+	case "audio/mpeg", "audio/mp3":
+		return ".mp3"
+	case "audio/mp4", "audio/aac", "audio/x-m4a":
+		return ".m4a"
+	case "audio/amr":
+		return ".amr"
+	case "audio/wav", "audio/x-wav":
+		return ".wav"
+	case "audio/flac":
+		return ".flac"
+	case "application/pdf":
+		return ".pdf"
 	default:
 		return ".jpg"
 	}
+}
+
+// mediaFileExtension is mediaExtension plus the document rule: a document is
+// stored under its own extension when it has one, so "report.pdf" does not land
+// in the cache as "report.jpg".
+func mediaFileExtension(message appstore.Message) string {
+	if message.MediaKind == appstore.MediaKindDocument {
+		if ext := strings.ToLower(filepath.Ext(strings.TrimSpace(message.MediaFileName))); ext != "" && len(ext) <= 16 {
+			return ext
+		}
+		if ext := mediaExtension(message.MediaMimeType); ext != ".jpg" {
+			return ext
+		}
+		return ".bin"
+	}
+	return mediaExtension(message.MediaMimeType)
 }
 
 func isWhatsAppAnimatedSticker(mimeType string) bool {
@@ -712,24 +818,45 @@ func extractLottieSticker(archivePath string) (string, error) {
 	return "", app.NewCommandError(app.CommandErrorRejected, "animated sticker archive does not contain animation.json")
 }
 
-func downloadableMediaMessage(message appstore.Message) (downloadableMedia, error) {
+// mediaPayloadMessage decodes a stored payload back into the waE2E message its
+// kind was ingested from. Each kind marshals exactly one sub-message, and video,
+// GIF and video notes all share VideoMessage, so the kind alone is enough to
+// pick the type back out. Getting this wrong is silent: the wrong type decodes
+// into garbage field numbers rather than an error, which is why every kind is
+// listed explicitly and the default stays image.
+func mediaPayloadMessage(message appstore.Message) (downloadableMedia, error) {
+	var decoded downloadableMedia
 	switch message.MediaKind {
 	case appstore.MediaKindSticker:
-		var sticker waE2E.StickerMessage
-		if err := proto.Unmarshal(message.MediaPayload, &sticker); err != nil {
-			return nil, app.NewCommandError(app.CommandErrorInternal, "decode sticker metadata: %v", err)
-		}
-		if sticker.GetDirectPath() != "" && isPlaceholderMediaURL(sticker.GetURL()) {
-			return stickerDownloadable{StickerMessage: &sticker}, nil
-		}
-		return &sticker, nil
+		decoded = &waE2E.StickerMessage{}
+	case appstore.MediaKindVideo, appstore.MediaKindGIF, appstore.MediaKindVideoNote:
+		decoded = &waE2E.VideoMessage{}
+	case appstore.MediaKindVoice, appstore.MediaKindAudio:
+		decoded = &waE2E.AudioMessage{}
+	case appstore.MediaKindDocument:
+		decoded = &waE2E.DocumentMessage{}
 	default:
-		var img waE2E.ImageMessage
-		if err := proto.Unmarshal(message.MediaPayload, &img); err != nil {
-			return nil, app.NewCommandError(app.CommandErrorInternal, "decode media metadata: %v", err)
-		}
-		return &img, nil
+		decoded = &waE2E.ImageMessage{}
 	}
+	if err := proto.Unmarshal(message.MediaPayload, decoded.(proto.Message)); err != nil {
+		return nil, app.NewCommandError(app.CommandErrorInternal, "decode media metadata: %v", err)
+	}
+	return decoded, nil
+}
+
+func downloadableMediaMessage(message appstore.Message) (downloadableMedia, error) {
+	decoded, err := mediaPayloadMessage(message)
+	if err != nil {
+		return nil, err
+	}
+	// A sticker whose URL is the a.whatsapp.net placeholder must be fetched by
+	// direct path instead, which whatsmeow decides by seeing an empty URL.
+	if sticker, ok := decoded.(*waE2E.StickerMessage); ok {
+		if sticker.GetDirectPath() != "" && isPlaceholderMediaURL(sticker.GetURL()) {
+			return stickerDownloadable{StickerMessage: sticker}, nil
+		}
+	}
+	return decoded, nil
 }
 
 type stickerDownloadable struct {

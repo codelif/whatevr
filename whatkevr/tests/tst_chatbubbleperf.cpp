@@ -73,6 +73,12 @@ QVariantMap baseProps()
         {QStringLiteral("mediaWidth"), 0},
         {QStringLiteral("mediaHeight"), 0},
         {QStringLiteral("mediaAnimated"), false},
+        {QStringLiteral("mediaSizeBytes"), 0.0},
+        {QStringLiteral("mediaDurationSecs"), 0},
+        {QStringLiteral("mediaFileName"), QString()},
+        {QStringLiteral("mediaPageCount"), 0},
+        {QStringLiteral("mediaWaveform"), QVariantList()},
+        {QStringLiteral("mediaPlayed"), false},
         {QStringLiteral("isRevoked"), false},
         {QStringLiteral("isEdited"), false},
         {QStringLiteral("isStarred"), false},
@@ -226,6 +232,25 @@ void ChatBubblePerf::delegateCost_data()
                    {{QStringLiteral("messageId"), QStringLiteral("m7")},
                     {QStringLiteral("mediaKind"), QStringLiteral("sticker")},
                     {QStringLiteral("mediaMimeType"), QStringLiteral("image/webp")}}), 152},
+        // A voice note and a video note are the two kinds whose layout is not a
+        // picture: one is a fixed-height row inside the bubble, the other a
+        // frameless circle with no bubble at all. Both are here so the cost of
+        // their subtrees is tracked, and because constructing them at all is
+        // what catches a delegate that silently renders nothing.
+        {"voice",
+         withProps(baseProps(),
+                   {{QStringLiteral("messageId"), QStringLiteral("m8")},
+                    {QStringLiteral("mediaKind"), QStringLiteral("voice")},
+                    {QStringLiteral("mediaMimeType"), QStringLiteral("audio/ogg")},
+                    {QStringLiteral("mediaDurationSecs"), 6}}), 135},
+        {"video-note",
+         withProps(baseProps(),
+                   {{QStringLiteral("messageId"), QStringLiteral("m9")},
+                    {QStringLiteral("mediaKind"), QStringLiteral("video_note")},
+                    {QStringLiteral("mediaMimeType"), QStringLiteral("video/mp4")},
+                    {QStringLiteral("mediaWidth"), 480},
+                    {QStringLiteral("mediaHeight"), 480},
+                    {QStringLiteral("mediaDurationSecs"), 11}}), 190},
     };
 
     for (const Sample &s : samples) {

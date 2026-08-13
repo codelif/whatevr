@@ -746,12 +746,18 @@ Kirigami.Page {
                 onMentionClicked: jid => contactInfoDialog.openFor({ isGroup: false, targetJid: jid })
                 onMentionAllClicked: root.openChatInfo()
                 onImageViewRequested: localPath => messageImageViewer.showImage(localPath)
+                onVideoViewRequested: (messageId, localPath, streamUrl, kind, durationSecs) =>
+                    messageImageViewer.showVideo(messageId, localPath, streamUrl, kind, durationSecs)
             }
 
-            // Full-screen viewer for message photos; ProfilePictureViewer is
-            // already a generic local-path lightbox.
-            ProfilePictureViewer {
+            // Full-screen viewer for message photos and video. Saving and
+            // forwarding go back through the conversation's own dialogs, so
+            // there is one Save As and one chat picker in the app.
+            MediaViewer {
                 id: messageImageViewer
+
+                onSaveRequested: (localPath, kind, fileName) => messageView.saveMedia(localPath, kind, fileName)
+                onForwardRequested: messageId => messageView.openForwardPicker([messageId])
             }
 
             BusyIndicator {

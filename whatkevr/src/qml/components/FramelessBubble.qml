@@ -82,8 +82,26 @@ Item {
            ? framelessRoot.row.width - width - framelessRoot.row.outerMargin
            : framelessRoot.row.outerMargin + framelessRoot.row.senderGutterWidth
         y: framelessRoot.row.messageBaseY + (stickerReplyPreviewLoader.active ? stickerReplyPreviewLoader.height + Kirigami.Units.smallSpacing : 0)
-        width: framelessRoot.row.isJumboEmoji ? jumboEmoji.implicitWidth : framelessRoot.row.stickerDisplayWidth
-        height: framelessRoot.row.isJumboEmoji ? jumboEmoji.implicitHeight : framelessRoot.row.stickerDisplayHeight
+        // A video note is square by definition, at a fixed diameter: the round
+        // recording carries no useful aspect metadata to size it from.
+        width: framelessRoot.row.isVideoNote
+            ? framelessRoot.row.videoNoteDiameter
+            : (framelessRoot.row.isJumboEmoji ? jumboEmoji.implicitWidth : framelessRoot.row.stickerDisplayWidth)
+        height: framelessRoot.row.isVideoNote
+            ? framelessRoot.row.videoNoteDiameter
+            : (framelessRoot.row.isJumboEmoji ? jumboEmoji.implicitHeight : framelessRoot.row.stickerDisplayHeight)
+
+        // The circle, its progress ring and its mute toggle: the same component
+        // the rectangular video bubbles use, which reads isVideoNote off the row
+        // and presents itself round.
+        Loader {
+            anchors.fill: parent
+            active: framelessRoot.row.isVideoNote
+
+            sourceComponent: VideoBubble {
+                row: framelessRoot.row
+            }
+        }
 
         Text {
             id: jumboEmoji

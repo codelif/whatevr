@@ -892,6 +892,43 @@ func quotedMessageForReply(reply appstore.MessageReply) *waE2E.Message {
 		}
 		return &waE2E.Message{ImageMessage: image}
 	}
+	// The quoted stub only has to be the right shape for the recipient's
+	// renderer; the bytes themselves are never fetched from a quote.
+	switch reply.MediaKind {
+	case appstore.MediaKindVideo, appstore.MediaKindGIF, appstore.MediaKindVideoNote:
+		video := &waE2E.VideoMessage{}
+		if reply.Text != "" {
+			video.Caption = proto.String(reply.Text)
+		}
+		if reply.MediaMimeType != "" {
+			video.Mimetype = proto.String(reply.MediaMimeType)
+		}
+		if reply.MediaKind == appstore.MediaKindGIF {
+			video.GifPlayback = proto.Bool(true)
+		}
+		if reply.MediaKind == appstore.MediaKindVideoNote {
+			return &waE2E.Message{PtvMessage: video}
+		}
+		return &waE2E.Message{VideoMessage: video}
+	case appstore.MediaKindVoice, appstore.MediaKindAudio:
+		audio := &waE2E.AudioMessage{}
+		if reply.MediaMimeType != "" {
+			audio.Mimetype = proto.String(reply.MediaMimeType)
+		}
+		if reply.MediaKind == appstore.MediaKindVoice {
+			audio.PTT = proto.Bool(true)
+		}
+		return &waE2E.Message{AudioMessage: audio}
+	case appstore.MediaKindDocument:
+		document := &waE2E.DocumentMessage{}
+		if reply.Text != "" {
+			document.FileName = proto.String(reply.Text)
+		}
+		if reply.MediaMimeType != "" {
+			document.Mimetype = proto.String(reply.MediaMimeType)
+		}
+		return &waE2E.Message{DocumentMessage: document}
+	}
 	if reply.Text != "" {
 		return &waE2E.Message{Conversation: proto.String(reply.Text)}
 	}
@@ -899,9 +936,23 @@ func quotedMessageForReply(reply appstore.MessageReply) *waE2E.Message {
 }
 
 func replyMediaSummary(mediaKind, mediaMimeType string) string {
-	switch {
-	case mediaKind == appstore.MediaKindSticker:
+	switch mediaKind {
+	case appstore.MediaKindSticker:
 		return "[Sticker]"
+	case appstore.MediaKindVideo:
+		return "[Video]"
+	case appstore.MediaKindGIF:
+		return "[GIF]"
+	case appstore.MediaKindVideoNote:
+		return "[Video message]"
+	case appstore.MediaKindVoice:
+		return "[Voice message]"
+	case appstore.MediaKindAudio:
+		return "[Audio]"
+	case appstore.MediaKindDocument:
+		return "[Document]"
+	}
+	switch {
 	case mediaKind == appstore.MediaKindImage || strings.HasPrefix(mediaMimeType, "image/"):
 		return "[Image]"
 	case strings.HasPrefix(mediaMimeType, "video/"):
@@ -1219,6 +1270,57 @@ func (c *Client) MarkChatReadUpTo(ctx context.Context, chatID, upToMessageID str
 		c.daemon.PublishChatUpdated(toDaemonChat(updatedChat))
 	}
 	return updatedChat, nil
+}
+
+// MarkMessagePlayed reports that the user listened to an inbound voice note.
+// WhatsApp models this as a read receipt with the "played" type, which is what
+// turns the sender's mic icon blue. The store flag makes it idempotent: the
+// receipt goes out once, however many times the bubble is replayed.
+func (c *Client) MarkMessagePlayed(ctx context.Context, messageID string) error {
+	messageID = strings.TrimSpace(messageID)
+	if messageID == "" {
+		return app.NewCommandError(app.CommandErrorInvalidArgument, "message_id is required")
+	}
+
+	message, err := c.store.GetMessage(ctx, messageID)
+	if err != nil {
+		return err
+	}
+	if message.MediaKind != appstore.MediaKindVoice {
+		return app.NewCommandError(app.CommandErrorRejected, "only voice messages can be marked played")
+	}
+	// Our own voice notes are played receipts we would be sending to ourselves.
+	if message.Direction == appstore.DirectionOutgoing {
+		return nil
+	}
+
+	updated, flipped, err := c.store.MarkMessageMediaPlayed(ctx, messageID)
+	if err != nil {
+		return err
+	}
+	if !flipped {
+		return nil
+	}
+	c.daemon.PublishMessageUpdated(toDaemonMessage(updated))
+
+	info, err := mediaRetryMessageInfo(updated)
+	if err != nil {
+		return err
+	}
+	client := c.currentClient()
+	if client == nil || !client.IsLoggedIn() {
+		// The local flag stands; the receipt is best-effort, exactly as an
+		// ordinary read receipt is when offline.
+		return nil
+	}
+	sender := info.Sender
+	if !info.IsGroup {
+		sender = types.EmptyJID
+	}
+	if err := client.MarkRead(ctx, []types.MessageID{info.ID}, time.Now(), info.Chat, sender, types.ReceiptTypePlayed); err != nil {
+		c.log.Warnf("Failed to send played receipt for %s: %v", messageID, err)
+	}
+	return nil
 }
 
 func (c *Client) sendReadReceipts(ctx context.Context, chat types.JID, chatID string, readCandidates []appstore.ReadCandidate) {

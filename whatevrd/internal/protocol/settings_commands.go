@@ -73,14 +73,15 @@ func knownPrivacyAudience(value string) bool {
 }
 
 type preferencesSetParams struct {
-	NotificationsEnabled  *bool `json:"notifications_enabled"`
-	NotificationSound     *bool `json:"notification_sound"`
-	NotificationPreview   *bool `json:"notification_preview"`
-	AutoDownloadPhotos    *bool `json:"auto_download_photos"`
-	AutoDownloadVideos    *bool `json:"auto_download_videos"`
-	AutoDownloadAudio     *bool `json:"auto_download_audio"`
-	AutoDownloadDocuments *bool `json:"auto_download_documents"`
-	AutoDownloadStickers  *bool `json:"auto_download_stickers"`
+	NotificationsEnabled  *bool  `json:"notifications_enabled"`
+	NotificationSound     *bool  `json:"notification_sound"`
+	NotificationPreview   *bool  `json:"notification_preview"`
+	AutoDownloadPhotos    *bool  `json:"auto_download_photos"`
+	AutoDownloadVideos    *bool  `json:"auto_download_videos"`
+	AutoDownloadAudio     *bool  `json:"auto_download_audio"`
+	AutoDownloadDocuments *bool  `json:"auto_download_documents"`
+	AutoDownloadStickers  *bool  `json:"auto_download_stickers"`
+	AutoDownloadMaxBytes  *int64 `json:"auto_download_max_bytes"`
 }
 
 func (h commandHandlers) preferencesSet(_ *conn, req request) (any, *Error) {
@@ -124,6 +125,9 @@ func applyPreferencesPatch(prefs *app.AppPreferences, p preferencesSetParams) {
 	}
 	if p.AutoDownloadStickers != nil {
 		prefs.AutoDownloadStickers = *p.AutoDownloadStickers
+	}
+	if p.AutoDownloadMaxBytes != nil {
+		prefs.AutoDownloadMaxBytes = max(0, *p.AutoDownloadMaxBytes)
 	}
 }
 

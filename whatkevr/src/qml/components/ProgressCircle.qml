@@ -12,13 +12,19 @@ Item {
     property real progress: 0
     property bool showLabel: true
     property real lineWidth: Math.max(2, Math.round(width / 14))
+    property color trackColor: Qt.alpha(Kirigami.Theme.textColor, 0.18)
+    property color fillColor: Kirigami.Theme.highlightColor
+    // Half the stroke sits outside the arc radius, so by default the ring is
+    // fully inside the item. A video note insets its picture instead and wants
+    // the ring on the very edge.
+    property real inset: lineWidth
 
     Shape {
         anchors.fill: parent
         preferredRendererType: Shape.CurveRenderer
 
         ShapePath {
-            strokeColor: Qt.alpha(Kirigami.Theme.textColor, 0.18)
+            strokeColor: root.trackColor
             strokeWidth: root.lineWidth
             fillColor: "transparent"
             capStyle: ShapePath.RoundCap
@@ -26,15 +32,15 @@ Item {
             PathAngleArc {
                 centerX: root.width / 2
                 centerY: root.height / 2
-                radiusX: root.width / 2 - root.lineWidth
-                radiusY: root.height / 2 - root.lineWidth
+                radiusX: root.width / 2 - root.inset
+                radiusY: root.height / 2 - root.inset
                 startAngle: 0
                 sweepAngle: 360
             }
         }
 
         ShapePath {
-            strokeColor: Kirigami.Theme.highlightColor
+            strokeColor: root.fillColor
             strokeWidth: root.lineWidth
             fillColor: "transparent"
             capStyle: ShapePath.RoundCap
@@ -42,8 +48,8 @@ Item {
             PathAngleArc {
                 centerX: root.width / 2
                 centerY: root.height / 2
-                radiusX: root.width / 2 - root.lineWidth
-                radiusY: root.height / 2 - root.lineWidth
+                radiusX: root.width / 2 - root.inset
+                radiusY: root.height / 2 - root.inset
                 startAngle: -90
                 sweepAngle: 360 * Math.max(0, Math.min(1, root.progress))
 

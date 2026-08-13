@@ -273,3 +273,20 @@ func (h commandHandlers) messageForward(_ *conn, req request) (any, *Error) {
 	}
 	return map[string]any{"message_ids": ids}, nil
 }
+
+// messageMarkPlayed reports that the user listened to an inbound voice note.
+// The visible effect is a played receipt on the sender's side and the row's
+// `media.played` flag; the wa layer makes a repeat call a no-op.
+func (h commandHandlers) messageMarkPlayed(ctx context.Context, _ *conn, req request) (any, *Error) {
+	if err := h.requireActions(); err != nil {
+		return nil, err
+	}
+	var p messageIDParams
+	if err := decodeParams(req.Params, &p); err != nil {
+		return nil, err
+	}
+	if err := p.valid(); err != nil {
+		return nil, err
+	}
+	return nil, mapCommandError(h.actions.MarkMessagePlayed(ctx, strings.TrimSpace(p.MessageID)))
+}

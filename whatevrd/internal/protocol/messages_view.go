@@ -497,6 +497,16 @@ type messageMedia struct {
 	ThumbnailPath string `json:"thumbnail_path,omitempty"`
 	Path          string `json:"path,omitempty"`
 	DownloadError string `json:"download_error,omitempty"`
+	SizeBytes     int64  `json:"size_bytes,omitempty"`
+	DurationSecs  int32  `json:"duration_secs,omitempty"`
+	Filename      string `json:"filename,omitempty"`
+	PageCount     int32  `json:"page_count,omitempty"`
+	// Waveform is the voice-note amplitude envelope: 64 buckets of 0-100. It
+	// is the one piece of media data that crosses the socket rather than
+	// living in a file, because it is tiny and the bubble needs it before any
+	// download happens.
+	Waveform []int `json:"waveform,omitempty"`
+	Played   bool  `json:"played,omitempty"`
 }
 
 func messageItemFromStore(m store.Message) messageItem {
@@ -542,19 +552,15 @@ func messageKind(m store.Message) string {
 	return mediaKindToWire(m.MediaKind)
 }
 
+// mediaKindToWire maps a stored kind to the wire `kind`. The store constants
+// are deliberately spelled the same as the protocol kinds (`image`, `video`,
+// `voice`, `document`, ...), so this is a passthrough with one special case: a
+// row carrying no media is a text message.
 func mediaKindToWire(mediaKind string) string {
-	switch mediaKind {
-	case "":
+	if mediaKind == "" {
 		return "text"
-	case store.MediaKindImage:
-		return "image"
-	case store.MediaKindSticker:
-		return "sticker"
-	case store.MediaKindUnsupported:
-		return "unsupported"
-	default:
-		return mediaKind
 	}
+	return mediaKind
 }
 
 // messageFallback is the one-line human rendering a frontend shows for any kind
@@ -564,28 +570,62 @@ func messageFallback(m store.Message, kind string) string {
 		return "This message was deleted"
 	}
 	caption := oneLine(m.Text)
+	withCaption := func(label string) string {
+		if caption != "" {
+			return caption
+		}
+		return label
+	}
 	switch kind {
-	case "image":
-		if caption != "" {
-			return caption
-		}
-		return "📷 Photo"
-	case "sticker":
+	case store.MediaKindImage:
+		return withCaption("📷 Photo")
+	case store.MediaKindSticker:
 		return "🎨 Sticker"
-	case "unsupported":
-		if caption != "" {
-			return caption
+	case store.MediaKindVideo:
+		return withCaption("🎥 Video" + durationSuffix(m.MediaDurationSecs))
+	case store.MediaKindGIF:
+		return withCaption("🎞️ GIF")
+	case store.MediaKindVideoNote:
+		return withCaption("📹 Video message" + durationSuffix(m.MediaDurationSecs))
+	case store.MediaKindVoice:
+		return withCaption("🎤 Voice message" + durationSuffix(m.MediaDurationSecs))
+	case store.MediaKindAudio:
+		return withCaption("🎵 Audio" + durationSuffix(m.MediaDurationSecs))
+	case store.MediaKindDocument:
+		// A document's own name beats its caption: it is what the recipient
+		// is looking for in a chat list full of attachments.
+		if name := oneLine(m.MediaFileName); name != "" {
+			return "📄 " + name
 		}
-		return "Unsupported message"
+		return withCaption("📄 Document")
+	case store.MediaKindUnsupported:
+		return withCaption("Unsupported message")
 	default: // text and unknown kinds
 		return caption
 	}
 }
 
+// durationSuffix renders " (0:12)" for a known duration and nothing for an
+// unknown one, so a fallback reads "🎤 Voice message (0:12)".
+func durationSuffix(seconds int32) string {
+	if seconds <= 0 {
+		return ""
+	}
+	return fmt.Sprintf(" (%d:%02d)", seconds/60, seconds%60)
+}
+
 func messageMediaFromStore(m store.Message) *messageMedia {
 	switch m.MediaKind {
-	case store.MediaKindImage, store.MediaKindSticker:
+	case store.MediaKindImage,
+		store.MediaKindSticker,
+		store.MediaKindVideo,
+		store.MediaKindGIF,
+		store.MediaKindVideoNote,
+		store.MediaKindVoice,
+		store.MediaKindAudio,
+		store.MediaKindDocument:
 	default:
+		// Unsupported tombstones and text rows carry no media object at all.
 		return nil
 	}
 	return &messageMedia{
@@ -596,7 +636,26 @@ func messageMediaFromStore(m store.Message) *messageMedia {
 		ThumbnailPath: m.MediaThumbnailLocalPath,
 		Path:          m.MediaLocalPath,
 		DownloadError: m.MediaDownloadError,
+		SizeBytes:     m.MediaSizeBytes,
+		DurationSecs:  m.MediaDurationSecs,
+		Filename:      m.MediaFileName,
+		PageCount:     m.MediaPageCount,
+		Waveform:      waveformToWire(m.MediaWaveform),
+		Played:        m.MediaPlayed,
 	}
+}
+
+// waveformToWire widens the stored bytes into JSON numbers. Frontends get a
+// plain array of 0-100 rather than base64 they would have to decode.
+func waveformToWire(waveform []byte) []int {
+	if len(waveform) == 0 {
+		return nil
+	}
+	out := make([]int, len(waveform))
+	for i, v := range waveform {
+		out[i] = int(v)
+	}
+	return out
 }
 
 func messageReactions(reactions []store.Reaction) []messageReaction {

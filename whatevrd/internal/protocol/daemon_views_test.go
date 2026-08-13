@@ -67,6 +67,10 @@ func (f *fakePendingCounter) ListPinnedMessages(context.Context, string) ([]stor
 	return nil, nil
 }
 
+func (f *fakePendingCounter) ListChatMediaMessages(context.Context, string, int, string) ([]store.Message, error) {
+	return nil, nil
+}
+
 func (f *fakePendingCounter) set(count int) {
 	f.mu.Lock()
 	f.count = count

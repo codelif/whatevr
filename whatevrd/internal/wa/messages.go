@@ -701,7 +701,224 @@ func (c *Client) mediaMessageInput(ctx context.Context, evt *events.Message, opt
 	if input, ok := c.stickerMessageInput(ctx, evt, opts); ok {
 		return input, true
 	}
+	if input, ok := c.videoMessageInput(ctx, evt, opts); ok {
+		return input, true
+	}
+	if input, ok := c.audioMessageInput(ctx, evt, opts); ok {
+		return input, true
+	}
+	if input, ok := c.documentMessageInput(ctx, evt, opts); ok {
+		return input, true
+	}
 	return c.unsupportedMessageInput(ctx, evt, opts)
+}
+
+// mediaInputBase builds the half of a media row that has nothing to do with the
+// media itself: identity, naming, direction, unread accounting and the reply
+// quote. The chat id comes back with it because callers need it for thumbnail
+// paths. ok=false means the event is not storable at all.
+func (c *Client) mediaInputBase(ctx context.Context, evt *events.Message, opts ingestOptions, text string, contextInfo *waE2E.ContextInfo) (appstore.TextMessageInput, string, bool) {
+	info := evt.Info
+	chatJID := c.normalizeJIDForChat(ctx, info.Chat)
+	chatID := chatJID.String()
+	if chatID == "" || info.ID == "" {
+		return appstore.TextMessageInput{}, "", false
+	}
+
+	direction, status := messageDirectionAndStatus(info, opts)
+	return appstore.TextMessageInput{
+		ID:             internalMessageIDForChat(chatID, info.ID),
+		ChatID:         chatID,
+		ChatName:       c.chatName(ctx, chatJID, info.IsGroup, opts.chatNameOverride, opts.chatNameSource),
+		ChatNameSource: c.chatNameSource(ctx, chatJID, info.IsGroup, opts.chatNameOverride, opts.chatNameSource),
+		SenderID:       senderID(info),
+		SenderName:     c.senderName(ctx, senderJID(info)),
+		Text:           text,
+		Timestamp:      messageTimestamp(info, opts, evt.SourceWebMsg),
+		Direction:      direction,
+		Status:         status,
+		IsGroup:        info.IsGroup,
+		CountUnread:    shouldCountUnread(evt, opts),
+		ReplyTo:        c.replyFromContextInfo(ctx, chatID, contextInfo),
+	}, chatID, true
+}
+
+// videoMessageInput covers all three video-shaped payloads, which share the
+// VideoMessage type on the wire: ordinary videos, GIFs (GifPlayback, rendered
+// muted and looping), and round video notes (PtvMessage).
+func (c *Client) videoMessageInput(ctx context.Context, evt *events.Message, opts ingestOptions) (appstore.MediaMessageInput, bool) {
+	if evt == nil || evt.Message == nil {
+		return appstore.MediaMessageInput{}, false
+	}
+	// View-once media is meant to be opened on the phone only; it falls
+	// through to the unsupported-message tombstone.
+	if evt.IsViewOnce {
+		return appstore.MediaMessageInput{}, false
+	}
+
+	var (
+		videoMsg *waE2E.VideoMessage
+		kind     string
+	)
+	switch {
+	case evt.Message.GetPtvMessage() != nil:
+		videoMsg = evt.Message.GetPtvMessage()
+		kind = appstore.MediaKindVideoNote
+	case evt.Message.GetVideoMessage() != nil:
+		videoMsg = evt.Message.GetVideoMessage()
+		kind = appstore.MediaKindVideo
+		if videoMsg.GetGifPlayback() {
+			kind = appstore.MediaKindGIF
+		}
+	default:
+		return appstore.MediaMessageInput{}, false
+	}
+
+	base, chatID, ok := c.mediaInputBase(ctx, evt, opts, videoMsg.GetCaption(), videoMsg.GetContextInfo())
+	if !ok {
+		return appstore.MediaMessageInput{}, false
+	}
+
+	payload, err := proto.Marshal(videoMsg)
+	if err != nil {
+		c.log.Warnf("Failed to serialize video metadata for message %s: %v", evt.Info.ID, err)
+		return appstore.MediaMessageInput{}, false
+	}
+	mimeType := videoMsg.GetMimetype()
+	if mimeType == "" {
+		mimeType = "video/mp4"
+	}
+
+	return appstore.MediaMessageInput{
+		TextMessageInput:        base,
+		MediaKind:               kind,
+		MediaMimeType:           mimeType,
+		MediaThumbnailLocalPath: c.saveMessageThumbnail(chatID, base.ID, videoMsg.GetJPEGThumbnail()),
+		MediaWidth:              int32(videoMsg.GetWidth()),
+		MediaHeight:             int32(videoMsg.GetHeight()),
+		MediaAnimated:           kind == appstore.MediaKindGIF,
+		MediaPayload:            payload,
+		MediaDurationSecs:       int32(videoMsg.GetSeconds()),
+		MediaSizeBytes:          int64(videoMsg.GetFileLength()),
+	}, true
+}
+
+// audioMessageInput covers recorded voice notes (PTT, which carry a waveform)
+// and shared audio files, which differ only by the PTT flag.
+func (c *Client) audioMessageInput(ctx context.Context, evt *events.Message, opts ingestOptions) (appstore.MediaMessageInput, bool) {
+	if evt == nil || evt.Message == nil {
+		return appstore.MediaMessageInput{}, false
+	}
+	if evt.IsViewOnce {
+		return appstore.MediaMessageInput{}, false
+	}
+
+	audioMsg := evt.Message.GetAudioMessage()
+	if audioMsg == nil {
+		return appstore.MediaMessageInput{}, false
+	}
+
+	kind := appstore.MediaKindAudio
+	if audioMsg.GetPTT() {
+		kind = appstore.MediaKindVoice
+	}
+
+	// AudioMessage has no caption field: the bubble is the waveform alone.
+	base, _, ok := c.mediaInputBase(ctx, evt, opts, "", audioMsg.GetContextInfo())
+	if !ok {
+		return appstore.MediaMessageInput{}, false
+	}
+
+	payload, err := proto.Marshal(audioMsg)
+	if err != nil {
+		c.log.Warnf("Failed to serialize audio metadata for message %s: %v", evt.Info.ID, err)
+		return appstore.MediaMessageInput{}, false
+	}
+	mimeType := audioMsg.GetMimetype()
+	if mimeType == "" {
+		mimeType = "audio/ogg; codecs=opus"
+	}
+
+	return appstore.MediaMessageInput{
+		TextMessageInput:  base,
+		MediaKind:         kind,
+		MediaMimeType:     mimeType,
+		MediaPayload:      payload,
+		MediaDurationSecs: int32(audioMsg.GetSeconds()),
+		MediaSizeBytes:    int64(audioMsg.GetFileLength()),
+		MediaWaveform:     normalizedWaveform(audioMsg.GetWaveform()),
+	}, true
+}
+
+func (c *Client) documentMessageInput(ctx context.Context, evt *events.Message, opts ingestOptions) (appstore.MediaMessageInput, bool) {
+	if evt == nil || evt.Message == nil {
+		return appstore.MediaMessageInput{}, false
+	}
+	if evt.IsViewOnce {
+		return appstore.MediaMessageInput{}, false
+	}
+
+	// DocumentWithCaptionMessage arrives already unwrapped (whatsmeow calls
+	// UnwrapRaw for both live messages and history), so the caption is on the
+	// inner DocumentMessage by the time we see it.
+	docMsg := evt.Message.GetDocumentMessage()
+	if docMsg == nil {
+		return appstore.MediaMessageInput{}, false
+	}
+
+	base, chatID, ok := c.mediaInputBase(ctx, evt, opts, docMsg.GetCaption(), docMsg.GetContextInfo())
+	if !ok {
+		return appstore.MediaMessageInput{}, false
+	}
+
+	payload, err := proto.Marshal(docMsg)
+	if err != nil {
+		c.log.Warnf("Failed to serialize document metadata for message %s: %v", evt.Info.ID, err)
+		return appstore.MediaMessageInput{}, false
+	}
+	mimeType := docMsg.GetMimetype()
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+	fileName := strings.TrimSpace(docMsg.GetFileName())
+	if fileName == "" {
+		fileName = strings.TrimSpace(docMsg.GetTitle())
+	}
+
+	return appstore.MediaMessageInput{
+		TextMessageInput:        base,
+		MediaKind:               appstore.MediaKindDocument,
+		MediaMimeType:           mimeType,
+		MediaThumbnailLocalPath: c.saveMessageThumbnail(chatID, base.ID, docMsg.GetJPEGThumbnail()),
+		MediaWidth:              int32(docMsg.GetThumbnailWidth()),
+		MediaHeight:             int32(docMsg.GetThumbnailHeight()),
+		MediaPayload:            payload,
+		MediaSizeBytes:          int64(docMsg.GetFileLength()),
+		MediaFileName:           fileName,
+		MediaPageCount:          int32(docMsg.GetPageCount()),
+	}, true
+}
+
+// waveformBuckets is the number of amplitude samples WhatsApp ships with a
+// voice note, and the number the bubble draws.
+const waveformBuckets = 64
+
+// normalizedWaveform keeps a wire waveform only when it is the shape the
+// renderer expects: 64 bytes of 0-100. Anything else (a sender that omitted it,
+// or a client that sized it differently) is dropped so the daemon can derive a
+// real one after download instead of drawing garbage.
+func normalizedWaveform(waveform []byte) []byte {
+	if len(waveform) != waveformBuckets {
+		return nil
+	}
+	out := make([]byte, waveformBuckets)
+	for i, v := range waveform {
+		if v > 100 {
+			v = 100
+		}
+		out[i] = v
+	}
+	return out
 }
 
 func (c *Client) imageMessageInput(ctx context.Context, evt *events.Message, opts ingestOptions) (appstore.MediaMessageInput, bool) {
@@ -885,27 +1102,6 @@ func unsupportedMessageLabel(evt *events.Message) (string, bool) {
 		return label
 	}
 	switch {
-	case msg.GetDocumentMessage() != nil:
-		doc := msg.GetDocumentMessage()
-		label := labelWithDetail("Document", doc.GetFileName())
-		if caption := strings.TrimSpace(doc.GetCaption()); caption != "" {
-			label += " — " + caption
-		}
-		return label, true
-	case msg.GetPtvMessage() != nil:
-		return "Video message", true
-	case msg.GetVideoMessage() != nil:
-		video := msg.GetVideoMessage()
-		label := "Video"
-		if video.GetGifPlayback() {
-			label = "GIF"
-		}
-		return labelWithDetail(label, video.GetCaption()), true
-	case msg.GetAudioMessage() != nil:
-		if msg.GetAudioMessage().GetPTT() {
-			return "Voice message", true
-		}
-		return "Audio", true
 	case msg.GetLocationMessage() != nil:
 		return labelWithDetail("Location", msg.GetLocationMessage().GetName()), true
 	case msg.GetLiveLocationMessage() != nil:
@@ -935,14 +1131,6 @@ func unsupportedMessageLabel(evt *events.Message) (string, bool) {
 // tombstone path covers, so quoted replies still show their preview.
 func unsupportedContextInfo(msg *waE2E.Message) *waE2E.ContextInfo {
 	switch {
-	case msg.GetDocumentMessage() != nil:
-		return msg.GetDocumentMessage().GetContextInfo()
-	case msg.GetPtvMessage() != nil:
-		return msg.GetPtvMessage().GetContextInfo()
-	case msg.GetVideoMessage() != nil:
-		return msg.GetVideoMessage().GetContextInfo()
-	case msg.GetAudioMessage() != nil:
-		return msg.GetAudioMessage().GetContextInfo()
 	case msg.GetLocationMessage() != nil:
 		return msg.GetLocationMessage().GetContextInfo()
 	case msg.GetContactMessage() != nil:
@@ -1106,6 +1294,18 @@ func contextInfoFromMessage(message *waE2E.Message) *waE2E.ContextInfo {
 	if sticker := message.GetStickerMessage(); sticker != nil {
 		return sticker.GetContextInfo()
 	}
+	if video := message.GetVideoMessage(); video != nil {
+		return video.GetContextInfo()
+	}
+	if ptv := message.GetPtvMessage(); ptv != nil {
+		return ptv.GetContextInfo()
+	}
+	if audio := message.GetAudioMessage(); audio != nil {
+		return audio.GetContextInfo()
+	}
+	if document := message.GetDocumentMessage(); document != nil {
+		return document.GetContextInfo()
+	}
 	return nil
 }
 
@@ -1191,7 +1391,40 @@ func quotedReplyPreview(message *waE2E.Message) (string, string, string) {
 		}
 		return "", appstore.MediaKindSticker, mimeType
 	}
+	if ptv := message.GetPtvMessage(); ptv != nil {
+		return "", appstore.MediaKindVideoNote, defaultMime(ptv.GetMimetype(), "video/mp4")
+	}
+	if video := message.GetVideoMessage(); video != nil {
+		kind := appstore.MediaKindVideo
+		if video.GetGifPlayback() {
+			kind = appstore.MediaKindGIF
+		}
+		return video.GetCaption(), kind, defaultMime(video.GetMimetype(), "video/mp4")
+	}
+	if audio := message.GetAudioMessage(); audio != nil {
+		kind := appstore.MediaKindAudio
+		if audio.GetPTT() {
+			kind = appstore.MediaKindVoice
+		}
+		return "", kind, defaultMime(audio.GetMimetype(), "audio/ogg; codecs=opus")
+	}
+	if document := message.GetDocumentMessage(); document != nil {
+		// A quoted document with no caption shows its filename, matching the
+		// chat-list preview.
+		text := document.GetCaption()
+		if strings.TrimSpace(text) == "" {
+			text = document.GetFileName()
+		}
+		return text, appstore.MediaKindDocument, defaultMime(document.GetMimetype(), "application/octet-stream")
+	}
 	return "", "", ""
+}
+
+func defaultMime(mimeType, fallback string) string {
+	if mimeType == "" {
+		return fallback
+	}
+	return mimeType
 }
 
 // maybeUpdateStatusFromHistory applies the status reported by history sync.

@@ -85,6 +85,17 @@ func (fixtureCommands) ForwardMessage(_ context.Context, _ string, chatIDs []str
 func (fixtureCommands) DownloadMessageMedia(context.Context, string) (appstore.Message, error) {
 	return appstore.Message{}, nil
 }
+func (fixtureCommands) CancelMessageMediaDownload(context.Context, string) error {
+	return nil
+}
+func (fixtureCommands) StreamMessageMedia(_ context.Context, messageID string) (app.MediaStream, error) {
+	return app.MediaStream{
+		URL:       "http://127.0.0.1:0/media/" + messageID + "?t=fixture",
+		Mime:      "video/mp4",
+		SizeBytes: 1 << 20,
+	}, nil
+}
+func (fixtureCommands) MarkMessagePlayed(context.Context, string) error { return nil }
 func (fixtureCommands) FetchProfilePicture(_ context.Context, jid string) (string, error) {
 	return "/cache/avatars/" + jid + ".jpg", nil
 }

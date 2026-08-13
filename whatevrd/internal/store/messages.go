@@ -16,9 +16,20 @@ const (
 
 	MediaKindImage   = "image"
 	MediaKindSticker = "sticker"
+	// MediaKindGIF is a VideoMessage with GifPlayback set: a muted, looping
+	// clip that WhatsApp presents as a GIF even though the wire carries video.
+	MediaKindGIF   = "gif"
+	MediaKindVideo = "video"
+	// MediaKindVideoNote is a PtvMessage: the round "instant video" recording.
+	MediaKindVideoNote = "video_note"
+	// MediaKindVoice is an AudioMessage with PTT set (a recorded voice note),
+	// as opposed to MediaKindAudio, which is a shared audio file.
+	MediaKindVoice    = "voice"
+	MediaKindAudio    = "audio"
+	MediaKindDocument = "document"
 	// MediaKindUnsupported marks a real message whose payload whatevr cannot
-	// render yet (document, voice note, video, poll, ...). The text column
-	// carries a human-readable label; there is no downloadable media.
+	// render yet (location, poll, contact card, ...). The text column carries a
+	// human-readable label; there is no downloadable media.
 	MediaKindUnsupported = "unsupported"
 
 	StatusPending   = "pending"
@@ -111,17 +122,28 @@ type Message struct {
 	MediaDownloadError      string
 	MediaPayload            []byte
 	MediaCacheKey           string
-	IsRevoked               bool
-	IsForwarded             bool
-	IsEdited                bool
-	IsStarred               bool
-	PinnedAt                int64
-	PinnedUntil             int64
-	SendAttempts            int32
-	LastSendError           string
-	NextSendAttempt         int64
-	ReplyTo                 MessageReply
-	Reactions               []Reaction
+	MediaDurationSecs       int32
+	MediaSizeBytes          int64
+	MediaFileName           string
+	MediaPageCount          int32
+	// MediaWaveform holds the 64 amplitude buckets (0-100) WhatsApp ships with
+	// a voice note, or the ones the daemon derived after download when the
+	// sender omitted them. Empty for every other kind.
+	MediaWaveform []byte
+	// MediaPlayed records that we already sent a played receipt for an inbound
+	// voice note, so marking it played twice is a no-op.
+	MediaPlayed     bool
+	IsRevoked       bool
+	IsForwarded     bool
+	IsEdited        bool
+	IsStarred       bool
+	PinnedAt        int64
+	PinnedUntil     int64
+	SendAttempts    int32
+	LastSendError   string
+	NextSendAttempt int64
+	ReplyTo         MessageReply
+	Reactions       []Reaction
 	// @-mentioned participants with names resolved at ingest. Empty for the
 	// vast majority of messages.
 	Mentions []MessageMention
@@ -148,6 +170,11 @@ type MediaMessageInput struct {
 	MediaAnimated           bool
 	MediaPayload            []byte
 	MediaCacheKey           string
+	MediaDurationSecs       int32
+	MediaSizeBytes          int64
+	MediaFileName           string
+	MediaPageCount          int32
+	MediaWaveform           []byte
 }
 
 type ReadCandidate struct {
@@ -357,6 +384,9 @@ func normalizeMediaMessageInput(input MediaMessageInput) (MediaMessageInput, err
 	if input.MediaPayload == nil {
 		input.MediaPayload = []byte{}
 	}
+	if input.MediaWaveform == nil {
+		input.MediaWaveform = []byte{}
+	}
 	// Sticker rows must carry their content cache key so the indexed
 	// DownloadedStickerPathByCacheKey lookup can reuse downloads; derive it
 	// here when the caller didn't. Underivable payloads keep an empty key.
@@ -395,7 +425,7 @@ func (db *DB) SaveMediaMessage(ctx context.Context, input MediaMessageInput) (Sa
 // saveMediaMessageTx stores one already-normalized media message inside the
 // caller's transaction.
 func saveMediaMessageTx(ctx context.Context, tx *sql.Tx, input MediaMessageInput) (SavedTextMessage, error) {
-	lastMessage := messageSummary(input.Text, input.MediaKind, input.MediaMimeType)
+	lastMessage := messageSummary(input.Text, input.MediaKind, input.MediaMimeType, input.MediaFileName)
 
 	if err := upsertChat(ctx, tx, input.TextMessageInput); err != nil {
 		return SavedTextMessage{}, err
@@ -405,11 +435,12 @@ func saveMediaMessageTx(ctx context.Context, tx *sql.Tx, input MediaMessageInput
 	}
 
 	result, err := tx.ExecContext(ctx, `
-		INSERT INTO messages (id, chat_id, sender_id, text, timestamp, direction, is_read, status, is_forwarded, mentioned_jids, media_kind, media_mime_type, media_local_path, media_thumbnail_local_path, media_width, media_height, media_animated, media_payload, media_cache_key, reply_to_message_id, reply_to_sender_id, reply_to_sender_name, reply_to_text, reply_to_media_kind, reply_to_media_mime_type, reply_to_direction)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO messages (id, chat_id, sender_id, text, timestamp, direction, is_read, status, is_forwarded, mentioned_jids, media_kind, media_mime_type, media_local_path, media_thumbnail_local_path, media_width, media_height, media_animated, media_payload, media_cache_key, media_duration_secs, media_size_bytes, media_file_name, media_page_count, media_waveform, reply_to_message_id, reply_to_sender_id, reply_to_sender_name, reply_to_text, reply_to_media_kind, reply_to_media_mime_type, reply_to_direction)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO NOTHING
 	`, input.ID, input.ChatID, input.SenderID, input.Text, input.Timestamp.Unix(), input.Direction,
 		boolToInt(!input.CountUnread), input.Status, boolToInt(input.IsForwarded), encodeMentions(input.Mentions), input.MediaKind, input.MediaMimeType, input.MediaLocalPath, input.MediaThumbnailLocalPath, input.MediaWidth, input.MediaHeight, boolToInt(input.MediaAnimated), input.MediaPayload, input.MediaCacheKey,
+		input.MediaDurationSecs, input.MediaSizeBytes, input.MediaFileName, input.MediaPageCount, input.MediaWaveform,
 		input.ReplyTo.MessageID, input.ReplyTo.SenderID, input.ReplyTo.SenderName, input.ReplyTo.Text, input.ReplyTo.MediaKind, input.ReplyTo.MediaMimeType, input.ReplyTo.Direction)
 	if err != nil {
 		return SavedTextMessage{}, err
@@ -535,18 +566,43 @@ func toTextutilMentions(mentions []MessageMention) []textutil.Mention {
 	return out
 }
 
-func messageSummary(text, mediaKind, mediaMimeType string) string {
+// messageSummary is the chat-list preview for one message: its own text when it
+// has any (a caption counts), otherwise a bracketed placeholder for the kind.
+// A document with no caption previews as its filename, which is what WhatsApp
+// shows and is far more useful than "[Document]".
+func messageSummary(text, mediaKind, mediaMimeType, mediaFileName string) string {
 	if text != "" {
 		return text
 	}
-	switch {
-	case mediaKind == MediaKindSticker:
+	switch mediaKind {
+	case MediaKindSticker:
 		return "[Sticker]"
-	case mediaMimeType == "image/jpeg" || mediaMimeType == "image/png" || mediaMimeType == "image/webp" || mediaMimeType == "image/gif":
+	case MediaKindImage:
 		return "[Image]"
-	case mediaMimeType == "video/mp4" || mediaMimeType == "video/webm":
+	case MediaKindVideo:
 		return "[Video]"
-	case mediaMimeType == "audio/ogg" || mediaMimeType == "audio/mpeg":
+	case MediaKindGIF:
+		return "[GIF]"
+	case MediaKindVideoNote:
+		return "[Video message]"
+	case MediaKindVoice:
+		return "[Voice message]"
+	case MediaKindAudio:
+		return "[Audio]"
+	case MediaKindDocument:
+		if name := strings.TrimSpace(mediaFileName); name != "" {
+			return name
+		}
+		return "[Document]"
+	}
+	// Older rows predate media_kind carrying anything but image/sticker, so
+	// keep sniffing the mime type for them.
+	switch {
+	case strings.HasPrefix(mediaMimeType, "image/"):
+		return "[Image]"
+	case strings.HasPrefix(mediaMimeType, "video/"):
+		return "[Video]"
+	case strings.HasPrefix(mediaMimeType, "audio/"):
 		return "[Audio]"
 	default:
 		return "[Media]"
@@ -700,7 +756,7 @@ func recomputeChatSummaryTx(ctx context.Context, tx *sql.Tx, chatID string) erro
 			Direction:  latest.Direction,
 			SenderName: latest.SenderName,
 			Mentions:   latest.Mentions,
-		}, messageSummary(latest.Text, latest.MediaKind, latest.MediaMimeType))
+		}, messageSummary(latest.Text, latest.MediaKind, latest.MediaMimeType, latest.MediaFileName))
 	}
 
 	_, err = tx.ExecContext(ctx, `
@@ -719,6 +775,7 @@ const messageSelectPrefix = `
 	       COALESCE(NULLIF(s.name, ''), NULLIF(c.name, ''), ''),
 	       COALESCE(NULLIF(sa.local_path, ''), NULLIF(ca.local_path, ''), NULLIF(s.avatar_local_path, ''), NULLIF(c.avatar_local_path, ''), ''),
 	       m.text, m.timestamp, m.rowid, m.direction, m.is_read, m.status, m.media_kind, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_animated, m.media_download_error,
+	       m.media_duration_secs, m.media_size_bytes, m.media_file_name, m.media_page_count, m.media_waveform, m.media_played,
 	       m.reply_to_message_id, m.reply_to_sender_id, m.reply_to_sender_name, m.reply_to_text, m.reply_to_media_kind, m.reply_to_media_mime_type, m.reply_to_direction,
 	       m.send_attempts, m.last_send_error, m.next_send_attempt, m.is_revoked, m.is_edited, m.is_starred, m.pinned_at, m.pinned_until, m.mentioned_jids
 	FROM messages m
@@ -734,18 +791,7 @@ func (db *DB) ListMessages(ctx context.Context, chatID string, limit int, before
 		limit = 50
 	}
 
-	query := `
-		SELECT m.id, m.chat_id, m.sender_id,
-		       COALESCE(NULLIF(s.name, ''), NULLIF(c.name, ''), ''),
-		       COALESCE(NULLIF(sa.local_path, ''), NULLIF(ca.local_path, ''), NULLIF(s.avatar_local_path, ''), NULLIF(c.avatar_local_path, ''), ''),
-		       m.text, m.timestamp, m.rowid, m.direction, m.is_read, m.status, m.media_kind, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_animated, m.media_download_error,
-		       m.reply_to_message_id, m.reply_to_sender_id, m.reply_to_sender_name, m.reply_to_text, m.reply_to_media_kind, m.reply_to_media_mime_type, m.reply_to_direction,
-		       m.send_attempts, m.last_send_error, m.next_send_attempt, m.is_revoked, m.is_edited, m.is_starred, m.pinned_at, m.pinned_until, m.mentioned_jids
-		FROM messages m
-		LEFT JOIN senders s ON s.id = m.sender_id
-		LEFT JOIN chats c ON c.id = m.sender_id
-		LEFT JOIN avatars sa ON sa.subject_kind = 'sender' AND sa.subject_id = m.sender_id
-		LEFT JOIN avatars ca ON ca.subject_kind = 'chat' AND ca.subject_id = m.sender_id
+	query := messageSelectPrefix + `
 		WHERE m.chat_id = ?
 	`
 	args := []any{chatID}
@@ -917,18 +963,7 @@ func (db *DB) listMessagesAroundSide(ctx context.Context, chatID string, timesta
 		order = `ORDER BY m.timestamp ASC, m.rowid ASC`
 	}
 
-	query := `
-		SELECT m.id, m.chat_id, m.sender_id,
-		       COALESCE(NULLIF(s.name, ''), NULLIF(c.name, ''), ''),
-		       COALESCE(NULLIF(sa.local_path, ''), NULLIF(ca.local_path, ''), NULLIF(s.avatar_local_path, ''), NULLIF(c.avatar_local_path, ''), ''),
-		       m.text, m.timestamp, m.rowid, m.direction, m.is_read, m.status, m.media_kind, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_animated, m.media_download_error,
-		       m.reply_to_message_id, m.reply_to_sender_id, m.reply_to_sender_name, m.reply_to_text, m.reply_to_media_kind, m.reply_to_media_mime_type, m.reply_to_direction,
-		       m.send_attempts, m.last_send_error, m.next_send_attempt, m.is_revoked, m.is_edited, m.is_starred, m.pinned_at, m.pinned_until, m.mentioned_jids
-		FROM messages m
-		LEFT JOIN senders s ON s.id = m.sender_id
-		LEFT JOIN chats c ON c.id = m.sender_id
-		LEFT JOIN avatars sa ON sa.subject_kind = 'sender' AND sa.subject_id = m.sender_id
-		LEFT JOIN avatars ca ON ca.subject_kind = 'chat' AND ca.subject_id = m.sender_id
+	query := messageSelectPrefix + `
 		WHERE m.chat_id = ?
 	` + comparison + `
 		` + order + `
@@ -1151,6 +1186,12 @@ func (db *DB) MarkMessageRevoked(ctx context.Context, id string) (Message, Chat,
 			media_download_error = '',
 			media_payload = x'',
 			media_cache_key = '',
+			media_duration_secs = 0,
+			media_size_bytes = 0,
+			media_file_name = '',
+			media_page_count = 0,
+			media_waveform = x'',
+			media_played = 0,
 			reply_to_message_id = '',
 			reply_to_sender_id = '',
 			reply_to_sender_name = '',
@@ -1380,6 +1421,66 @@ func (db *DB) ListPinnedMessages(ctx context.Context, chatID string) ([]Message,
 	defer rows.Close()
 
 	messages, err := scanMessageRows(rows, 8)
+	if err != nil {
+		return nil, err
+	}
+	if err := attachReactions(ctx, db.reader(), messages); err != nil {
+		return nil, err
+	}
+	return messages, nil
+}
+
+// GalleryMediaKinds are the kinds the per-chat media gallery shows: everything
+// with a visual or playable body, in the order a switch should test them.
+// Stickers and unsupported tombstones are deliberately absent.
+var GalleryMediaKinds = []string{
+	MediaKindImage,
+	MediaKindVideo,
+	MediaKindGIF,
+	MediaKindVideoNote,
+	MediaKindVoice,
+	MediaKindAudio,
+	MediaKindDocument,
+}
+
+// ListChatMediaMessages returns a chat's media messages newest first, for the
+// media gallery. beforeMessageID is a keyset cursor for paging older results,
+// matching ListStarredMessages.
+func (db *DB) ListChatMediaMessages(ctx context.Context, chatID string, limit int, beforeMessageID string) ([]Message, error) {
+	defer db.timeOp("ListChatMediaMessages", time.Now())
+	if limit <= 0 {
+		limit = 50
+	}
+
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(GalleryMediaKinds)), ",")
+	query := messageSelectPrefix + `
+		WHERE m.chat_id = ? AND m.is_revoked = 0 AND m.media_kind IN (` + placeholders + `)
+	`
+	args := []any{chatID}
+	for _, kind := range GalleryMediaKinds {
+		args = append(args, kind)
+	}
+	if beforeMessageID != "" {
+		beforeTimestamp, beforeSeq, err := db.messageCursor(ctx, beforeMessageID)
+		if err != nil {
+			return nil, err
+		}
+		query += ` AND (m.timestamp < ? OR (m.timestamp = ? AND m.rowid < ?))`
+		args = append(args, beforeTimestamp, beforeTimestamp, beforeSeq)
+	}
+	query += `
+		ORDER BY m.timestamp DESC, m.rowid DESC
+		LIMIT ?
+	`
+	args = append(args, limit)
+
+	rows, err := db.reader().QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	messages, err := scanMessageRows(rows, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1722,6 +1823,77 @@ func (db *DB) UpdateMessageMediaPayload(ctx context.Context, id string, payload 
 	return message, nil
 }
 
+// SetMessageMediaWaveform stores the amplitude buckets derived after download
+// for a voice note whose sender omitted them.
+func (db *DB) SetMessageMediaWaveform(ctx context.Context, id string, waveform []byte) (Message, error) {
+	tx, err := db.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return Message{}, err
+	}
+	defer tx.Rollback()
+
+	if waveform == nil {
+		waveform = []byte{}
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE messages
+		SET media_waveform = ?
+		WHERE id = ?
+	`, waveform, id); err != nil {
+		return Message{}, err
+	}
+
+	message, err := getMessageTx(ctx, tx, id)
+	if err != nil {
+		return Message{}, err
+	}
+	if err := attachReactionsOne(ctx, tx, &message); err != nil {
+		return Message{}, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return Message{}, err
+	}
+	return message, nil
+}
+
+// MarkMessageMediaPlayed flips the played flag for an inbound voice note and
+// reports whether this call was the one that flipped it, so the caller only
+// sends a played receipt the first time.
+func (db *DB) MarkMessageMediaPlayed(ctx context.Context, id string) (Message, bool, error) {
+	tx, err := db.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return Message{}, false, err
+	}
+	defer tx.Rollback()
+
+	result, err := tx.ExecContext(ctx, `
+		UPDATE messages
+		SET media_played = 1
+		WHERE id = ? AND media_played = 0
+	`, id)
+	if err != nil {
+		return Message{}, false, err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return Message{}, false, err
+	}
+
+	message, err := getMessageTx(ctx, tx, id)
+	if err != nil {
+		return Message{}, false, err
+	}
+	if err := attachReactionsOne(ctx, tx, &message); err != nil {
+		return Message{}, false, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return Message{}, false, err
+	}
+	return message, rowsAffected > 0, nil
+}
+
 func (db *DB) DownloadedStickerPathByCacheKey(ctx context.Context, excludedMessageID, cacheKey string) (string, error) {
 	if cacheKey == "" {
 		return "", nil
@@ -1984,6 +2156,7 @@ func getMessageRow(ctx context.Context, queryer interface {
 		       COALESCE(NULLIF(s.name, ''), NULLIF(c.name, ''), ''),
 		       COALESCE(NULLIF(sa.local_path, ''), NULLIF(ca.local_path, ''), NULLIF(s.avatar_local_path, ''), NULLIF(c.avatar_local_path, ''), ''),
 		       m.text, m.timestamp, m.rowid, m.direction, m.is_read, m.status, m.media_kind, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_animated, m.media_download_error, m.media_payload, m.media_cache_key,
+		       m.media_duration_secs, m.media_size_bytes, m.media_file_name, m.media_page_count, m.media_waveform, m.media_played,
 		       m.reply_to_message_id, m.reply_to_sender_id, m.reply_to_sender_name, m.reply_to_text, m.reply_to_media_kind, m.reply_to_media_mime_type, m.reply_to_direction,
 		       m.send_attempts, m.last_send_error, m.next_send_attempt, m.is_revoked, m.is_edited, m.is_starred, m.pinned_at, m.pinned_until, m.mentioned_jids
 		FROM messages m
@@ -2014,6 +2187,12 @@ func getMessageRow(ctx context.Context, queryer interface {
 		&message.MediaDownloadError,
 		&message.MediaPayload,
 		&message.MediaCacheKey,
+		&message.MediaDurationSecs,
+		&message.MediaSizeBytes,
+		&message.MediaFileName,
+		&message.MediaPageCount,
+		&message.MediaWaveform,
+		&message.MediaPlayed,
 		&message.ReplyTo.MessageID,
 		&message.ReplyTo.SenderID,
 		&message.ReplyTo.SenderName,
@@ -2187,6 +2366,12 @@ func scanMessageRows(rows *sql.Rows, capacity int) ([]Message, error) {
 			&message.MediaHeight,
 			&message.MediaAnimated,
 			&message.MediaDownloadError,
+			&message.MediaDurationSecs,
+			&message.MediaSizeBytes,
+			&message.MediaFileName,
+			&message.MediaPageCount,
+			&message.MediaWaveform,
+			&message.MediaPlayed,
 			&message.ReplyTo.MessageID,
 			&message.ReplyTo.SenderID,
 			&message.ReplyTo.SenderName,

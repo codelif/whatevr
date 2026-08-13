@@ -1000,6 +1000,12 @@ func (db *DB) ensureMediaColumns(ctx context.Context) error {
 		{"media_download_error", `ALTER TABLE messages ADD COLUMN media_download_error TEXT NOT NULL DEFAULT ''`},
 		{"media_payload", `ALTER TABLE messages ADD COLUMN media_payload BLOB NOT NULL DEFAULT x''`},
 		{"media_cache_key", `ALTER TABLE messages ADD COLUMN media_cache_key TEXT NOT NULL DEFAULT ''`},
+		{"media_duration_secs", `ALTER TABLE messages ADD COLUMN media_duration_secs INTEGER NOT NULL DEFAULT 0`},
+		{"media_size_bytes", `ALTER TABLE messages ADD COLUMN media_size_bytes INTEGER NOT NULL DEFAULT 0`},
+		{"media_file_name", `ALTER TABLE messages ADD COLUMN media_file_name TEXT NOT NULL DEFAULT ''`},
+		{"media_page_count", `ALTER TABLE messages ADD COLUMN media_page_count INTEGER NOT NULL DEFAULT 0`},
+		{"media_waveform", `ALTER TABLE messages ADD COLUMN media_waveform BLOB NOT NULL DEFAULT x''`},
+		{"media_played", `ALTER TABLE messages ADD COLUMN media_played INTEGER NOT NULL DEFAULT 0`},
 	}
 	for _, a := range alterations {
 		if existing[a.col] {

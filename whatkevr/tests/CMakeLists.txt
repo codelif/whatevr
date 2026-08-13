@@ -85,3 +85,56 @@ target_link_libraries(tst_protocolcontroller PRIVATE
 )
 
 add_test(NAME tst_protocolcontroller COMMAND tst_protocolcontroller)
+
+# Playback tests. They link libmpv directly (plus Settings, which AudioPlayer
+# consults for the resume/speed preferences) and drive a real decoder against a
+# generated WAV, which is the only way to catch an engine that silently fails to
+# start. Runs headless with mpv's null audio output.
+qt_add_executable(tst_mediaplayback
+    tst_mediaplayback.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/media/audioplayer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/media/audioplayer.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/media/mpvcore.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/media/mpvcore.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/app/settings.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/app/settings.h
+)
+
+target_include_directories(tst_mediaplayback PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/app
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/media
+)
+
+target_link_libraries(tst_mediaplayback PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Qml
+    Qt6::Test
+    KF6::ColorScheme
+    KF6::I18n
+    PkgConfig::Mpv
+)
+
+add_test(NAME tst_mediaplayback COMMAND tst_mediaplayback)
+
+# Waveform geometry. Pure scene-graph item, so it needs only Gui and Qml.
+qt_add_executable(tst_waveformitem
+    tst_waveformitem.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/ui/waveformitem.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/ui/waveformitem.h
+)
+
+target_include_directories(tst_waveformitem PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/ui
+)
+
+target_link_libraries(tst_waveformitem PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Qml
+    Qt6::Quick
+    Qt6::Test
+)
+
+add_test(NAME tst_waveformitem COMMAND tst_waveformitem)

@@ -144,7 +144,7 @@ jobs:
         run: |
           pacman -Syu --noconfirm --needed \
             git sudo base-devel go just cmake ninja ccache extra-cmake-modules zstd vulkan-headers \
-            qt6-base qt6-declarative qt6-shadertools \
+            qt6-base qt6-declarative qt6-multimedia qt6-shadertools mpv ffmpeg \
             kcoreaddons kdbusaddons ki18n kirigami kirigami-addons prison qqc2-desktop-style sqlite
           useradd -m -G wheel builduser
           printf 'builduser ALL=(ALL) NOPASSWD: ALL\n' >> /etc/sudoers

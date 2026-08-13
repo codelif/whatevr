@@ -82,6 +82,16 @@ type Client struct {
 	mediaRetryMu    sync.Mutex
 	mediaRetries    map[string]*mediaRetryState
 
+	// In-progress ranged fetches, keyed by message ID, plus the loopback
+	// server that serves them to players while they fill; see media_stream.go.
+	mediaStreamMu    sync.Mutex
+	mediaStreams     map[string]*mediaStreamEntry
+	mediaStreamHTTP  *http.Client
+	mediaServerMu    sync.Mutex
+	mediaServer      *http.Server
+	mediaServerAddr  string
+	mediaServerToken string
+
 	stickerMu            sync.Mutex
 	stickerDownloads     map[string]*stickerFileDownloadState
 	stickerDownloadSem   chan struct{}
@@ -144,6 +154,10 @@ type mediaDownloadState struct {
 	done    chan struct{}
 	message appstore.Message
 	err     error
+	// cancel aborts this fetch. A download runs on a detached context so it
+	// outlives the command that started it, which means the only way to stop a
+	// 400 MiB video is to hold on to its cancel here.
+	cancel context.CancelFunc
 }
 
 type mediaRetryState struct {

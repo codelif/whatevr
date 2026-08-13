@@ -53,6 +53,12 @@ public:
         MediaWidthRole,
         MediaHeightRole,
         MediaAnimatedRole,
+        MediaSizeBytesRole,
+        MediaDurationSecsRole,
+        MediaFileNameRole,
+        MediaPageCountRole,
+        MediaWaveformRole,
+        MediaPlayedRole,
         ShowSenderHeaderRole,
         ShowSenderAvatarRole,
         ShowSenderGutterRole,
@@ -103,6 +109,9 @@ public:
     Q_INVOKABLE bool expandMessageText(const QString &messageId);
     [[nodiscard]] Q_INVOKABLE QString copyTextForMessages(const QStringList &messageIds) const;
     [[nodiscard]] Q_INVOKABLE QVariantMap messageSnapshot(const QString &messageId) const;
+    /// The next downloaded voice note after messageId, for playing a run of
+    /// them back to back. Empty when there is none.
+    [[nodiscard]] Q_INVOKABLE QVariantMap nextVoiceMessage(const QString &messageId) const;
     [[nodiscard]] Q_INVOKABLE QStringList allMessageIds() const;
     [[nodiscard]] Q_INVOKABLE QStringList messageIdsForDay(const QString &messageId) const;
 

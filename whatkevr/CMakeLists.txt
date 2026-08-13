@@ -38,6 +38,7 @@ find_package(Qt6 ${QT_MIN_VERSION} REQUIRED COMPONENTS
     Core
     Gui
     Network
+    Multimedia
     Qml
     Quick
     QuickControls2
@@ -58,7 +59,13 @@ find_package(KF6 ${KF_MIN_VERSION} REQUIRED COMPONENTS
 find_package(KF6KirigamiAddons ${KIRIGAMI_ADDONS_MIN_VERSION} REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(RLottie REQUIRED IMPORTED_TARGET rlottie)
+# libmpv plays every media kind whatevr receives: hardware-decoded video and
+# pitch-corrected voice-note speed, both of which Qt Multimedia cannot do. Qt
+# Multimedia stays linked as the video fallback for scene graphs that are not
+# on OpenGL; see MediaBackend.
+pkg_check_modules(Mpv REQUIRED IMPORTED_TARGET mpv)
 
+ecm_find_qmlmodule(QtMultimedia REQUIRED)
 ecm_find_qmlmodule(org.kde.ki18n REQUIRED)
 ecm_find_qmlmodule(org.kde.desktop REQUIRED)
 ecm_find_qmlmodule(org.kde.kirigami REQUIRED)

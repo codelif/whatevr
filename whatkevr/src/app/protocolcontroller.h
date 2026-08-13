@@ -191,6 +191,13 @@ class ProtocolController final : public QObject
     Q_PROPERTY(bool starredMessagesLoading READ starredMessagesLoading NOTIFY starredMessagesChanged FINAL)
     Q_PROPERTY(bool starredMessagesExhausted READ starredMessagesExhausted NOTIFY starredMessagesChanged FINAL)
 
+    // Per-chat media gallery: the `chat_media` view, subscribed while the
+    // gallery page is open. Rows are ordinary `messages` items, so the gallery
+    // renders the same thumbnails and paths the conversation does.
+    Q_PROPERTY(QAbstractItemModel *chatMediaModel READ chatMediaModel CONSTANT FINAL)
+    Q_PROPERTY(bool chatMediaLoading READ chatMediaLoading NOTIFY chatMediaChanged FINAL)
+    Q_PROPERTY(bool chatMediaExhausted READ chatMediaExhausted NOTIFY chatMediaChanged FINAL)
+
     // Contact/group info card (D5): the `contact` object view, or the `group`
     // object view plus its `group_members` roster, subscribed for the lifetime
     // of the dialog. Two-phase enrichment (a contact's about text, a group's
@@ -378,6 +385,9 @@ public:
     [[nodiscard]] QAbstractItemModel *starredMessagesModel() const;
     [[nodiscard]] bool starredMessagesLoading() const;
     [[nodiscard]] bool starredMessagesExhausted() const;
+    [[nodiscard]] QAbstractItemModel *chatMediaModel() const;
+    [[nodiscard]] bool chatMediaLoading() const;
+    [[nodiscard]] bool chatMediaExhausted() const;
     // Subscribe/drop the `starred` view; chatId empty spans every chat. The
     // page's lifetime is the subscription's lifetime.
     Q_INVOKABLE void openStarredMessages(const QString &chatId);
@@ -440,6 +450,8 @@ public:
     Q_INVOKABLE void setPrivacyAudience(const QString &category, const QString &value);
     Q_INVOKABLE void setReadReceipts(bool enabled);
     Q_INVOKABLE void setAppPreference(const QString &key, bool value);
+    /// The ceiling above which nothing auto-downloads. 0 means no limit.
+    Q_INVOKABLE void setAutoDownloadLimit(qint64 maxBytes);
     Q_INVOKABLE void setProfileStatus(const QString &text);
     Q_INVOKABLE void logout();
 
@@ -469,6 +481,20 @@ public:
     // failure as the same row's durable `media.download_error` — so this call
     // keeps no per-message state and there is nothing to roll back.
     Q_INVOKABLE void downloadMessageMedia(const QString &messageId);
+    /**
+     * Asks the daemon for a URL that plays a message's media while it is still
+     * downloading. The answer arrives as mediaStreamReady, because the daemon
+     * has to start the fetch before it can say where to read it from.
+     */
+    Q_INVOKABLE void streamMessageMedia(const QString &messageId);
+    /// Stops an in-flight fetch. What has already landed is kept, so asking for
+    /// the media again resumes instead of starting over.
+    Q_INVOKABLE void cancelMessageMediaDownload(const QString &messageId);
+    /// Reports that the user listened to a voice note, which sends a played
+    /// receipt. Repeat calls are no-ops daemon-side.
+    Q_INVOKABLE void markMessagePlayed(const QString &messageId);
+    /// Hands a downloaded file to the system's default application.
+    Q_INVOKABLE bool openLocalFile(const QString &localPath);
 
     Q_INVOKABLE void sendReaction(const QString &messageId, const QString &emoji);
     Q_INVOKABLE void editMessage(const QString &messageId, const QString &newText);
@@ -529,7 +555,14 @@ public:
     // Local media utilities behind the message context menu. Failures surface
     // through messageActionFailed, like the `message.*` command errors.
     Q_INVOKABLE void copyImageToClipboard(const QString &localPath);
+    /// Puts a file on the clipboard as a URL, so it can be pasted into a file
+    /// manager or another application.
+    Q_INVOKABLE void copyFileToClipboard(const QString &localPath);
     Q_INVOKABLE bool saveMediaAs(const QString &localPath, const QUrl &destUrl);
+    /// Subscribes the per-chat media gallery; unsubscribing releases the window.
+    Q_INVOKABLE void openChatMedia(const QString &chatId);
+    Q_INVOKABLE void closeChatMedia();
+    Q_INVOKABLE void extendChatMedia(int count);
     // WhatsApp markup -> CommonMark, for "Copy as Markdown".
     [[nodiscard]] Q_INVOKABLE QString toCommonMark(const QString &text) const;
     // Start of the grapheme cluster before the cursor, so Backspace deletes a
@@ -566,6 +599,11 @@ Q_SIGNALS:
     void searchChanged();
     void chatSearchChanged();
     void starredMessagesChanged();
+    void chatMediaChanged();
+    /// Answer to streamMessageMedia: where a player can read this message from
+    /// while it is still downloading.
+    void mediaStreamReady(const QString &messageId, const QUrl &url);
+    void mediaStreamFailed(const QString &messageId, const QString &message);
     void infoCardChanged();
     void groupMembersChanged();
     void chatMembersChanged();
@@ -702,6 +740,7 @@ private:
     whatevr::proto::CollectionViewModel *m_forwardTargetsModel = nullptr;
     whatevr::proto::CollectionViewModel *m_transfersModel = nullptr;
     whatevr::proto::CollectionViewModel *m_starredModel = nullptr;
+    whatevr::proto::CollectionViewModel *m_chatMediaModel = nullptr;
     whatevr::proto::CollectionViewModel *m_groupMembersModel = nullptr;
     whatevr::proto::CollectionViewModel *m_chatMembersModel = nullptr;
     whatevr::proto::CollectionViewModel *m_blocklistModel = nullptr;
@@ -727,6 +766,7 @@ private:
     whatevr::proto::Subscription *m_forwardTargetsSub = nullptr;
     whatevr::proto::Subscription *m_transfersSub = nullptr;
     whatevr::proto::Subscription *m_starredSub = nullptr;
+    whatevr::proto::Subscription *m_chatMediaSub = nullptr;
     whatevr::proto::Subscription *m_infoCardSub = nullptr;
     whatevr::proto::Subscription *m_groupMembersSub = nullptr;
     whatevr::proto::Subscription *m_chatMembersSub = nullptr;

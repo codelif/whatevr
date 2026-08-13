@@ -130,6 +130,8 @@ Item {
     signal mentionClicked(string jid)
     signal mentionAllClicked()
     signal imageViewRequested(string localPath)
+    /// A video, GIF or video note asked to open full screen.
+    signal videoViewRequested(string messageId, string localPath, string streamUrl, string kind, int durationSecs)
 
     onLoadingOlderMessagesChanged: {
         if (loadingOlderMessages) {
@@ -323,6 +325,14 @@ Item {
         selectionRevision += 1
     }
 
+    // Select-all has existed as a function with no way to invoke it. In
+    // selection mode Ctrl+A is what everyone reaches for.
+    Shortcut {
+        sequences: [StandardKey.SelectAll]
+        enabled: root.selectionActive
+        onActivated: root.selectAllMessages()
+    }
+
     function selectAllMessages() {
         if (!list.model || typeof list.model.allMessageIds !== "function") {
             return
@@ -496,6 +506,12 @@ Item {
             }
         }
         return false
+    }
+
+    /// Opens Save As for a media file. Public so the full-screen viewer reuses
+    /// this dialog rather than growing one of its own.
+    function saveMedia(localPath, kind, fileName, timestampUnix) {
+        saveMediaDialog.openFor(localPath, kind, fileName, timestampUnix || 0)
     }
 
     function openForwardPicker(messageIds) {
@@ -1600,6 +1616,7 @@ Item {
             onReplyPreviewActivated: messageId => root.jumpToReplyTarget(messageId)
             onReadMoreRequested: messageId => root.openMessageContent(messageId)
             onImageActivated: localPath => root.imageViewRequested(localPath)
+            onVideoActivated: (messageId, localPath, streamUrl, kind, durationSecs) => root.videoViewRequested(messageId, localPath, streamUrl, kind, durationSecs)
             onMentionClicked: jid => root.mentionClicked(jid)
             onMentionAllClicked: root.mentionAllClicked()
             onContextMenuRequested: (posX, posY) => root.openContextMenu(messageDelegate, posX, posY)
@@ -1976,8 +1993,33 @@ Item {
         }
     }
 
+    // Voice notes chain: finishing one plays the next one down the chat, the
+    // way WhatsApp does, and switching chats stops whatever is playing.
+    Connections {
+        target: Whatevr.AudioPlayer
+
+        function onFinished(messageId) {
+            if (!Whatevr.Settings.advanceVoiceMessages) {
+                return
+            }
+            const next = Whatevr.ProtocolController.messageListModel.nextVoiceMessage(messageId)
+            if (!next || !next.messageId || next.localPath.length === 0) {
+                return
+            }
+            Whatevr.AudioPlayer.play(next.messageId,
+                                     Qt.resolvedUrl("file://" + next.localPath),
+                                     next.durationSecs)
+        }
+    }
+
     Connections {
         target: Whatevr.ProtocolController
+
+        function onSelectionChanged() {
+            // A voice note playing out of a chat you have left is nobody's
+            // intent; the bubble it belongs to is not even on screen.
+            Whatevr.AudioPlayer.stop()
+        }
 
         function onMessageActionFailed(errorText) {
             root.showNotification(errorText)
@@ -2028,6 +2070,20 @@ Item {
         readonly property bool ctxIsSticker: ctxMediaKind === "sticker"
         readonly property bool ctxIsImage: !ctxIsSticker && (ctxMediaKind === "image" || ctxMediaMimeType.startsWith("image/"))
         readonly property bool ctxHasMediaFile: ctxMediaLocalPath.length > 0
+        readonly property bool ctxIsDocument: ctxMediaKind === "document"
+        readonly property bool ctxIsPlayable: ctxMediaKind === "video" || ctxMediaKind === "gif"
+                                              || ctxMediaKind === "video_note" || ctxMediaKind === "voice"
+                                              || ctxMediaKind === "audio"
+        readonly property string ctxMediaFileName: ctxValid ? String(ctx.mediaFileName || "") : ""
+        readonly property real ctxTimestampUnix: ctxValid ? Number(ctx.timestampUnix || 0) : 0
+        readonly property bool ctxMediaDownloading: ctxValid && Boolean(ctx.mediaDownloading)
+        readonly property string ctxMediaDownloadError: ctxValid ? String(ctx.mediaDownloadError || "") : ""
+        // Anything with media that is not on disk and not already coming down.
+        readonly property bool ctxCanDownload: !ctxIsRevoked
+                                               && !ctxHasMediaFile
+                                               && !ctxMediaDownloading
+                                               && ctxMediaKind.length > 0
+                                               && ctxMediaKind !== "unsupported"
         readonly property bool ctxHasText: ctxText.length > 0 && !ctxIsRevoked
         readonly property bool ctxIsStarred: ctxValid && Boolean(ctx.isStarred)
         readonly property bool ctxIsPinned: ctxValid && Boolean(ctx.isPinned)
@@ -2184,9 +2240,13 @@ Item {
         }
 
         MenuSeparator {
+            // Any media at all opens the copy/open/save group below, not just
+            // images: a video or a document has the same actions.
             visible: messageContextMenu.ctxHasText
                      || messageContextMenu.ctxLinks.length > 0
-                     || (messageContextMenu.ctxHasMediaFile && (messageContextMenu.ctxIsImage || messageContextMenu.ctxIsSticker))
+                     || messageContextMenu.ctxHasMediaFile
+                     || messageContextMenu.ctxCanDownload
+                     || messageContextMenu.ctxMediaDownloading
         }
 
         MenuItem {
@@ -2273,14 +2333,76 @@ Item {
         }
 
         MenuItem {
+            icon.name: "edit-copy-symbolic"
+            text: Whatevr.I18n.i18nc("@action:inmenu", "Copy File")
+            // Puts the file itself on the clipboard, so it can be pasted into a
+            // file manager or another chat app.
+            visible: messageContextMenu.ctxHasMediaFile
+                     && !messageContextMenu.ctxIsImage
+                     && !messageContextMenu.ctxIsSticker
+            onTriggered: {
+                Whatevr.ProtocolController.copyFileToClipboard(messageContextMenu.ctxMediaLocalPath)
+                root.showNotification(Whatevr.I18n.i18nc("@info:status", "File copied"))
+            }
+        }
+
+        MenuItem {
+            icon.name: "document-open-symbolic"
+            text: Whatevr.I18n.i18nc("@action:inmenu", "Open")
+            // Playable kinds open in the app itself; anything else is the
+            // system's business.
+            visible: messageContextMenu.ctxHasMediaFile
+                     && !messageContextMenu.ctxIsImage
+                     && !messageContextMenu.ctxIsSticker
+                     && !messageContextMenu.ctxIsPlayable
+            onTriggered: Whatevr.ProtocolController.openLocalFile(messageContextMenu.ctxMediaLocalPath)
+        }
+
+        MenuItem {
+            icon.name: "document-open-symbolic"
+            text: Whatevr.I18n.i18nc("@action:inmenu", "Open Externally")
+            // For the kinds the app plays itself, opening in the desktop's own
+            // player is still worth offering.
+            visible: messageContextMenu.ctxHasMediaFile
+                     && (messageContextMenu.ctxIsPlayable || messageContextMenu.ctxIsImage)
+            onTriggered: Whatevr.ProtocolController.openLocalFile(messageContextMenu.ctxMediaLocalPath)
+        }
+
+        MenuItem {
             icon.name: "document-save-symbolic"
             text: Whatevr.I18n.i18nc("@action:inmenu", "Save As…")
             visible: messageContextMenu.ctxHasMediaFile
-            onTriggered: saveMediaDialog.openFor(messageContextMenu.ctxMediaLocalPath)
+            onTriggered: saveMediaDialog.openFor(messageContextMenu.ctxMediaLocalPath,
+                                                 messageContextMenu.ctxMediaKind,
+                                                 messageContextMenu.ctxMediaFileName,
+                                                 messageContextMenu.ctxTimestampUnix)
+        }
+
+        MenuItem {
+            icon.name: "folder-download-symbolic"
+            text: Whatevr.I18n.i18nc("@action:inmenu", "Download")
+            visible: messageContextMenu.ctxCanDownload && messageContextMenu.ctxMediaDownloadError.length === 0
+            onTriggered: Whatevr.ProtocolController.downloadMessageMedia(messageContextMenu.ctxMessageId)
+        }
+
+        MenuItem {
+            icon.name: "view-refresh-symbolic"
+            text: Whatevr.I18n.i18nc("@action:inmenu", "Retry Download")
+            // A failed fetch leaves a durable error on the row, and nothing in
+            // the menu used to be able to clear it.
+            visible: messageContextMenu.ctxCanDownload && messageContextMenu.ctxMediaDownloadError.length > 0
+            onTriggered: Whatevr.ProtocolController.downloadMessageMedia(messageContextMenu.ctxMessageId)
+        }
+
+        MenuItem {
+            icon.name: "process-stop-symbolic"
+            text: Whatevr.I18n.i18nc("@action:inmenu", "Cancel Download")
+            visible: messageContextMenu.ctxMediaDownloading
+            onTriggered: Whatevr.ProtocolController.cancelMessageMediaDownload(messageContextMenu.ctxMessageId)
         }
 
         MenuSeparator {
-            visible: messageContextMenu.ctxIsSticker && messageContextMenu.ctxMediaCacheKey.length > 0
+            visible: messageContextMenu.ctxIsSticker
         }
 
         MenuItem {
@@ -2288,7 +2410,10 @@ Item {
             text: messageContextMenu.ctxStickerFavorite
                   ? Whatevr.I18n.i18nc("@action:inmenu", "Remove from Favorite Stickers")
                   : Whatevr.I18n.i18nc("@action:inmenu", "Add to Favorite Stickers")
-            visible: messageContextMenu.ctxIsSticker && messageContextMenu.ctxMediaCacheKey.length > 0
+            // sticker.favorite takes a cache key or a message id; the wire
+            // carries no cache key for a message, so the id is what identifies
+            // it. Keying off the cache key made this entry unreachable.
+            visible: messageContextMenu.ctxIsSticker && messageContextMenu.ctxMessageId.length > 0
             onTriggered: Whatevr.ProtocolController.stickers.setStickerFavorite(messageContextMenu.ctxMediaCacheKey,
                                                                            messageContextMenu.ctxMessageId,
                                                                            !messageContextMenu.ctxStickerFavorite)
@@ -2383,10 +2508,49 @@ Item {
 
         fileMode: Platform.FileDialog.SaveFile
 
-        function openFor(path) {
+        // A document is saved under the name it was sent with, into Documents;
+        // only photos belong in Pictures. The cache filename is a message id,
+        // which is no use to anyone in a file manager.
+        function openFor(path, kind, fileName, timestampUnix) {
             sourcePath = path
-            const base = path.substring(path.lastIndexOf("/") + 1)
-            currentFile = Platform.StandardPaths.writableLocation(Platform.StandardPaths.PicturesLocation) + "/" + base
+            const cacheName = path.substring(path.lastIndexOf("/") + 1)
+            let base = (fileName && fileName.length > 0) ? fileName : cacheName
+            if (!fileName || fileName.length === 0) {
+                // Voice notes and video messages carry no name of their own, and
+                // the cache filename is a message id. A dated name is what makes
+                // the file findable later.
+                const prefixes = {
+                    "voice": "Voice message",
+                    "audio": "Audio",
+                    "video": "Video",
+                    "gif": "GIF",
+                    "video_note": "Video message",
+                    "image": "Photo"
+                }
+                const prefix = prefixes[kind]
+                if (prefix) {
+                    const dot = cacheName.lastIndexOf(".")
+                    const extension = dot > 0 ? cacheName.substring(dot) : ""
+                    const when = new Date((timestampUnix || 0) > 0
+                                          ? timestampUnix * 1000
+                                          : Date.now())
+                    base = prefix + " " + Qt.formatDateTime(when, "yyyy-MM-dd hh.mm.ss") + extension
+                }
+            }
+            let location = Platform.StandardPaths.PicturesLocation
+            if (kind === "video" || kind === "gif" || kind === "video_note") {
+                location = Platform.StandardPaths.MoviesLocation
+            } else if (kind === "voice" || kind === "audio") {
+                location = Platform.StandardPaths.MusicLocation
+            } else if (kind === "document") {
+                location = Platform.StandardPaths.DocumentsLocation
+            }
+            // A configured media folder wins over the per-kind XDG default.
+            const preferred = Whatevr.Settings.mediaSaveDirectory
+            const directory = preferred.length > 0
+                ? preferred
+                : Platform.StandardPaths.writableLocation(location)
+            currentFile = directory + "/" + base
             open()
         }
 

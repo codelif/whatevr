@@ -276,5 +276,125 @@ SettingsPage {
             checked: Whatevr.ProtocolController.appPreferences.auto_download_stickers ?? false
             onToggled: Whatevr.ProtocolController.setAppPreference("auto_download_stickers", checked)
         }
+
+        FormCard.FormDelegateSeparator {}
+
+        FormCard.FormComboBoxDelegate {
+            id: sizeLimitCombo
+            objectName: "chats.autoDownloadSizeLimit"
+            text: Whatevr.I18n.i18nc("@label:listbox", "Size limit")
+            description: Whatevr.I18n.i18nc("@info",
+                "Nothing larger downloads by itself, whatever the switches above say.")
+            textRole: "label"
+            valueRole: "bytes"
+            model: [
+                { label: Whatevr.I18n.i18nc("@item:inlistbox", "2 MiB"), bytes: 2 * 1024 * 1024 },
+                { label: Whatevr.I18n.i18nc("@item:inlistbox", "8 MiB"), bytes: 8 * 1024 * 1024 },
+                { label: Whatevr.I18n.i18nc("@item:inlistbox", "16 MiB"), bytes: 16 * 1024 * 1024 },
+                { label: Whatevr.I18n.i18nc("@item:inlistbox", "64 MiB"), bytes: 64 * 1024 * 1024 },
+                { label: Whatevr.I18n.i18nc("@item:inlistbox", "No limit"), bytes: 0 }
+            ]
+            currentIndex: {
+                const configured = Whatevr.ProtocolController.appPreferences.auto_download_max_bytes
+                    ?? (16 * 1024 * 1024)
+                for (let i = 0; i < model.length; ++i) {
+                    if (model[i].bytes === configured)
+                        return i
+                }
+                return 2
+            }
+            onActivated: index => Whatevr.ProtocolController.setAutoDownloadLimit(model[index].bytes)
+        }
+    }
+
+    FormCard.FormHeader {
+        title: Whatevr.I18n.i18nc("@title:group", "Media playback")
+    }
+
+    FormCard.FormCard {
+        FormCard.FormSwitchDelegate {
+            id: autoplaySwitch
+            objectName: "chats.autoplayInlineMedia"
+            text: Whatevr.I18n.i18nc("@option:check", "Autoplay GIFs and video messages")
+            description: Whatevr.I18n.i18nc("@info",
+                "Off shows a thumbnail with a play button instead, which uses less power.")
+            checked: Whatevr.Settings.autoplayInlineMedia
+            onToggled: Whatevr.Settings.autoplayInlineMedia = checked
+        }
+
+        FormCard.FormDelegateSeparator {}
+
+        FormCard.FormSwitchDelegate {
+            id: loopGifsSwitch
+            objectName: "chats.loopGifs"
+            text: Whatevr.I18n.i18nc("@option:check", "Loop GIFs")
+            checked: Whatevr.Settings.loopGifs
+            onToggled: Whatevr.Settings.loopGifs = checked
+        }
+
+        FormCard.FormDelegateSeparator {}
+
+        FormCard.FormSwitchDelegate {
+            id: advanceVoiceSwitch
+            objectName: "chats.advanceVoiceMessages"
+            text: Whatevr.I18n.i18nc("@option:check", "Continue to the next voice message")
+            checked: Whatevr.Settings.advanceVoiceMessages
+            onToggled: Whatevr.Settings.advanceVoiceMessages = checked
+        }
+
+        FormCard.FormDelegateSeparator {}
+
+        FormCard.FormSwitchDelegate {
+            id: rememberPositionSwitch
+            objectName: "chats.rememberPlaybackPosition"
+            text: Whatevr.I18n.i18nc("@option:check", "Remember where playback stopped")
+            description: Whatevr.I18n.i18nc("@info",
+                "A part-heard voice message picks up where you left it instead of at the start.")
+            checked: Whatevr.Settings.rememberPlaybackPosition
+            onToggled: Whatevr.Settings.rememberPlaybackPosition = checked
+        }
+
+        FormCard.FormDelegateSeparator {}
+
+        FormCard.FormComboBoxDelegate {
+            id: playbackSpeedCombo
+            objectName: "chats.defaultPlaybackSpeed"
+            text: Whatevr.I18n.i18nc("@label:listbox", "Voice message speed")
+            textRole: "label"
+            valueRole: "speed"
+            model: [
+                { label: Whatevr.I18n.i18nc("@item:inlistbox playback speed", "1x"), speed: 1.0 },
+                { label: Whatevr.I18n.i18nc("@item:inlistbox playback speed", "1.5x"), speed: 1.5 },
+                { label: Whatevr.I18n.i18nc("@item:inlistbox playback speed", "2x"), speed: 2.0 }
+            ]
+            currentIndex: {
+                const speed = Whatevr.Settings.defaultPlaybackSpeed
+                if (speed === 1.5)
+                    return 1
+                if (speed === 2.0)
+                    return 2
+                return 0
+            }
+            onActivated: index => Whatevr.Settings.defaultPlaybackSpeed = model[index].speed
+        }
+
+        FormCard.FormDelegateSeparator {}
+
+        FormCard.FormButtonDelegate {
+            id: saveFolderButton
+            objectName: "chats.mediaSaveDirectory"
+            text: Whatevr.I18n.i18nc("@action:button", "Save media to")
+            description: Whatevr.Settings.mediaSaveDirectory.length > 0
+                ? Whatevr.Settings.mediaSaveDirectory
+                : Whatevr.I18n.i18nc("@info", "Ask each time, starting in the folder for that kind of file.")
+            onClicked: mediaFolderDialog.open()
+        }
+    }
+
+    Platform.FolderDialog {
+        id: mediaFolderDialog
+
+        title: Whatevr.I18n.i18nc("@title:window", "Choose where media is saved")
+        onAccepted: Whatevr.Settings.mediaSaveDirectory = folder.toString()
     }
 }

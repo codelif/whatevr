@@ -301,6 +301,17 @@ type MediaDownloadEvent struct {
 	TotalBytes    uint64
 }
 
+// MediaStream is the answer to `media.stream`: where a player can read a
+// message's media from while the daemon is still fetching it. URL points at the
+// daemon's loopback range server and is only valid for the current daemon
+// process.
+type MediaStream struct {
+	URL          string
+	Mime         string
+	SizeBytes    uint64
+	DurationSecs int32
+}
+
 type Chat struct {
 	ID                   string
 	Name                 string
@@ -488,6 +499,10 @@ type AppPreferences struct {
 	AutoDownloadAudio     bool
 	AutoDownloadDocuments bool
 	AutoDownloadStickers  bool
+	// AutoDownloadMaxBytes caps what auto-download will fetch on its own. 0
+	// means no limit. It exists so a 200 MB video is a decision rather than a
+	// side effect of scrolling past it.
+	AutoDownloadMaxBytes int64
 }
 
 // DefaultAppPreferences are applied the first time the daemon runs, before the
@@ -498,6 +513,7 @@ func DefaultAppPreferences() AppPreferences {
 		NotificationsEnabled: true,
 		NotificationSound:    false,
 		NotificationPreview:  true,
+		AutoDownloadMaxBytes: 16 * 1024 * 1024,
 	}
 }
 

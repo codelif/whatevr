@@ -44,6 +44,12 @@ Item {
     required property int mediaWidth
     required property int mediaHeight
     required property bool mediaAnimated
+    required property double mediaSizeBytes
+    required property int mediaDurationSecs
+    required property string mediaFileName
+    required property int mediaPageCount
+    required property var mediaWaveform
+    required property bool mediaPlayed
     required property bool isRevoked
     required property bool isEdited
     required property bool isStarred
@@ -144,6 +150,9 @@ Item {
     signal readMoreRequested(string messageId)
     // A downloaded message photo was clicked: open it full screen.
     signal imageActivated(string localPath)
+    // A video, GIF or video note asked to open full screen. The path and
+    // duration ride along so the viewer needs no lookup.
+    signal videoActivated(string messageId, string localPath, string streamUrl, string kind, int durationSecs)
     // An @-mention link was clicked: open contact info for the JID, or the
     // group info dialog for an @all / @everyone mention.
     signal mentionClicked(string jid)
@@ -216,6 +225,18 @@ Item {
                                           && (mediaLocalPath.endsWith(".webp")
                                               || mediaThumbnailLocalPath.endsWith(".thumb.png")))
     readonly property bool isImage: mediaMimeType.startsWith("image/")
+    // Kinds that render like a photo: they span the bubble edge to edge and
+    // drive its width.
+    readonly property bool isVideo: mediaKind === "video"
+    readonly property bool isGif: mediaKind === "gif"
+    readonly property bool isVideoNote: mediaKind === "video_note"
+    readonly property bool isPlayableVideo: isVideo || isGif || isVideoNote
+    // Kinds that render as a fixed-height row inside the padded content, more
+    // like a line of text than a picture.
+    readonly property bool isVoice: mediaKind === "voice"
+    readonly property bool isAudioFile: mediaKind === "audio"
+    readonly property bool isDocument: mediaKind === "document"
+    readonly property bool isAttachmentBlock: isVoice || isAudioFile || isDocument
     // Real message whose payload the app can't render yet (document, voice
     // note, poll, ...). The daemon puts a short label in the body text; the
     // row renders like a revoked tombstone and never offers a download.
@@ -223,7 +244,10 @@ Item {
     // 1-3 emoji-only messages render large and frameless, like stickers. The single
     // emoji case is biggest; size steps down as the count rises.
     readonly property bool isJumboEmoji: displayEmojiOnlyCount > 0 && displayEmojiOnlyCount <= 3
-    readonly property bool frameless: isSticker || isJumboEmoji
+    // Rows that draw no plate: a bare slot over the wallpaper with a floating
+    // time/ticks pill under it. A video note is one of these, the same way
+    // WhatsApp draws a round instant video: a circle on the wallpaper, no box.
+    readonly property bool frameless: isSticker || isJumboEmoji || isVideoNote
     readonly property real jumboEmojiPixelSize: Kirigami.Units.gridUnit
         * (displayEmojiOnlyCount === 1 ? 2.8 : displayEmojiOnlyCount === 2 ? 2.2 : 1.8)
     readonly property bool isAnimatedSticker: isSticker && (mediaAnimated || mediaMimeType === "image/gif")
@@ -246,14 +270,31 @@ Item {
     readonly property bool mediaIsLocal: isSticker ? hasLocalSticker : mediaLocalPath.length > 0
     readonly property bool hasDownloadableMedia: !mediaIsLocal && !isUnsupported
         && (mediaMimeType.length > 0 || mediaCacheKey.length > 0 || mediaKind.length > 0)
+    // The user's ceiling, defaulting to 16 MiB: big enough for a voice note, a
+    // photo or a short clip, small enough that a scroll past a long video does
+    // not commit the connection. 0 means no limit.
+    readonly property real autoDownloadSizeCeiling: {
+        const configured = Whatevr.ProtocolController.appPreferences.auto_download_max_bytes
+        return configured === undefined ? 16 * 1024 * 1024 : configured
+    }
     readonly property bool autoDownloadWanted: {
         if (!hasDownloadableMedia)
             return false;
         const prefs = Whatevr.ProtocolController.appPreferences;
+        // Above this, nothing fetches itself: a 200 MB video is the user's
+        // decision, not a scroll's.
+        if (autoDownloadSizeCeiling > 0 && mediaSizeBytes > autoDownloadSizeCeiling)
+            return false;
         if (isSticker)
             return prefs.auto_download_stickers ?? false;
         if (isImage)
             return prefs.auto_download_photos ?? false;
+        if (isPlayableVideo)
+            return prefs.auto_download_videos ?? false;
+        if (isVoice || isAudioFile)
+            return prefs.auto_download_audio ?? false;
+        if (isDocument)
+            return prefs.auto_download_documents ?? false;
         if (mediaMimeType.startsWith("video/"))
             return prefs.auto_download_videos ?? false;
         if (mediaMimeType.startsWith("audio/"))
@@ -353,6 +394,16 @@ Item {
         reservedImageNaturalWidth = mediaWidth > 0 ? mediaWidth : fallbackImageWidth
     }
 
+    readonly property real videoNoteDiameter: Math.min(maxBubbleWidth, Kirigami.Units.gridUnit * 11)
+    // Voice notes, audio files and documents are rows, not pictures: a fixed
+    // height and a comfortable width that does not depend on decode.
+    readonly property real attachmentBlockWidth: Math.min(maxContentWidth, Kirigami.Units.gridUnit * 17)
+    // Two lines: the waveform (or the filename) and the line under it that now
+    // carries the timestamp too, so the block no longer reserves a third.
+    readonly property real attachmentBlockHeight: isDocument
+        ? Kirigami.Units.gridUnit * 2.9
+        : Kirigami.Units.gridUnit * 2.6
+
     readonly property int imageDecodeWidth: decodeWidthForAspect(imageDecodeWidthCap, imageDecodeHeightCap, reservedImageAspectRatio)
     readonly property int imageDecodeHeight: decodeHeightForAspect(imageDecodeWidthCap, imageDecodeHeightCap, reservedImageAspectRatio)
     readonly property int thumbnailDecodeWidth: decodeWidthForAspect(thumbnailDecodeCap, thumbnailDecodeCap, reservedImageAspectRatio)
@@ -369,6 +420,7 @@ Item {
         maybeAutoDownloadMedia()
     }
     onMediaMimeTypeChanged: resetReservedImageGeometry()
+    onMediaKindChanged: resetReservedImageGeometry()
     onMediaWidthChanged: resetReservedImageGeometry()
     onMediaHeightChanged: resetReservedImageGeometry()
     Component.onCompleted: {
@@ -377,7 +429,7 @@ Item {
     }
 
     readonly property real imageDisplayWidth: {
-        if (!isImage) {
+        if (!hasInlineMedia) {
             return 0
         }
 
@@ -390,7 +442,7 @@ Item {
     }
 
     readonly property real imageDisplayHeight: {
-        if (!isImage) {
+        if (!hasInlineMedia) {
             return 0
         }
 
@@ -462,7 +514,12 @@ Item {
     readonly property bool hasBody: body.length > 0
     readonly property bool showReadMore: textTruncated && !textExpanded && hasBody
     readonly property string readMoreLabelText: Whatevr.I18n.i18nc("@action:button expand long message", "Read more")
-    readonly property bool hasInlineMedia: isImage && !isSticker
+    // Kinds that fill the bubble edge to edge and drive its width. Video notes
+    // are not among them: they are a frameless slot of their own (see
+    // FramelessBubble), sized by videoNoteDiameter rather than by media
+    // metadata.
+    readonly property bool hasInlineMedia: (isImage || isVideo || isGif) && !isSticker
+    // Media flush to the bubble edges with the footer overlaid on it.
     readonly property bool imageOnly: hasInlineMedia && !hasBody
     // Captions inside an image bubble wrap to the (padded) image width; plain
     // text bubbles wrap to the full available content width.
@@ -471,13 +528,28 @@ Item {
     readonly property real naturalLastLineWidth: Math.min(textWrapWidth, lastLineWidth)
     readonly property bool canReserveInlineTntWidth: hasBody
                                                    && naturalLastLineWidth + inlineTntGap + tntWidth <= textWrapWidth
-    // Whether the time+ticks fit after the last line of body text. Both body
-    // components (Text and TextEdit) expose the end of their last laid-out
-    // line through the same lastLine* interface — see bodyTextLoader.
-    readonly property bool tntFitsInline: !showReadMore
+    // Where the time and ticks land. A row that already draws a line with room
+    // to spare takes them on that line; only a row with nothing to share pays
+    // for one of its own. Each predicate names the line it rides.
+    //
+    // After the last line of body text. Both body components (Text and
+    // TextEdit) expose the end of their last laid-out line through the same
+    // lastLine* interface (see bodyTextLoader).
+    readonly property bool tntFitsAfterBody: !showReadMore
                                          && hasBody
                                          && bodyTextLoader.item !== null
                                          && bodyTextLoader.item.lastLineEndX + inlineTntGap + tntWidth <= bodyTextLoader.width
+    // After a "Read more" button, which is a short label on a line of its own.
+    readonly property bool tntFitsAfterReadMore: showReadMore
+                                         && readMoreTextWidth + Kirigami.Units.smallSpacing * 2
+                                            + inlineTntGap + tntWidth <= textRegionWidth
+    // On the bottom line a voice note, audio file or document already draws
+    // (elapsed time, file size, page count). The block keeps tntReserveWidth
+    // clear at its right end for exactly this.
+    readonly property bool tntFitsInAttachment: isAttachmentBlock && !hasBody
+    // Space an attachment block leaves at the end of its bottom line so the
+    // footer has somewhere to sit without overlapping the block's own text.
+    readonly property real tntReserveWidth: tntFitsInAttachment ? tntWidth + inlineTntGap : 0
     readonly property real inlineTntReserve: 0
     readonly property real inlineTntYOffset: Kirigami.Units.smallSpacing / 2
     readonly property real blockTntReserve: tntHeight + tntGap
@@ -565,6 +637,9 @@ Item {
         }
         if (showReadMore) {
             w = Math.max(w, Math.min(maxContentWidth, readMoreTextWidth + Kirigami.Units.smallSpacing * 2))
+        }
+        if (isAttachmentBlock) {
+            w = Math.max(w, attachmentBlockWidth)
         }
         w = Math.max(w, Math.min(maxContentWidth, tntWidth))
         return Math.max(w, hasBody ? Kirigami.Units.gridUnit * 2 : Kirigami.Units.gridUnit * 4)
@@ -707,6 +782,14 @@ Item {
                     return Qt.IBeamCursor
                 }
             }
+            // Media is clickable, and owning the row's cursor without knowing
+            // that made every photo, clip and document feel inert.
+            if (mediaSlot.visible) {
+                const m = mapToItem(mediaSlot, mouseX, mouseY)
+                if (m.x >= 0 && m.y >= 0 && m.x <= mediaSlot.width && m.y <= mediaSlot.height) {
+                    return Qt.PointingHandCursor
+                }
+            }
             return Qt.ArrowCursor
         }
         z: 9
@@ -808,6 +891,10 @@ Item {
     Kirigami.ShadowedRectangle {
         id: bubble
 
+        // Frameless rows draw nothing here and build their content in
+        // FramelessBubble instead. This is a plain `visible`, so it takes the
+        // whole content column with it: nothing that a frameless row still
+        // needs may live inside this rectangle.
         visible: !root.frameless
 
         readonly property real bubbleRadius: Kirigami.Units.cornerRadius
@@ -848,11 +935,16 @@ Item {
                 if (root.imageOnly) {
                     return mediaSlot.y + mediaSlot.height
                 }
+                // An inline footer sits on a line some other region owns, so
+                // that region is what the bubble ends after.
+                if (root.tntFitsInAttachment) {
+                    return mediaSlot.y + mediaSlot.height + root.innerPadding
+                }
                 let bottom = 0
-                if (root.hasBody) {
-                    bottom = root.tntFitsInline
-                        ? bodyTextLoader.y + bodyTextLoader.height
-                        : footerSlot.y + footerSlot.height
+                if (root.tntFitsAfterBody) {
+                    bottom = bodyTextLoader.y + bodyTextLoader.height
+                } else if (root.tntFitsAfterReadMore) {
+                    bottom = readMoreLoader.y + readMoreLoader.height
                 } else {
                     bottom = footerSlot.y + footerSlot.height
                 }
@@ -883,20 +975,23 @@ Item {
             Item {
                 id: mediaSlot
 
-                visible: root.isImage && !root.isSticker
-                x: 0
-                y: root.contentOffsetBeforeMedia()
-                width: root.imageDisplayWidth
-                height: visible ? root.imageDisplayHeight : 0
-                clip: true
+                visible: (root.hasInlineMedia || root.isAttachmentBlock) && !root.isSticker
+                x: root.isAttachmentBlock ? root.innerPadding : 0
+                y: root.contentOffsetBeforeMedia() + (root.isAttachmentBlock ? root.innerPadding : 0)
+                width: root.isAttachmentBlock ? root.attachmentBlockWidth : root.imageDisplayWidth
+                height: visible ? (root.isAttachmentBlock ? root.attachmentBlockHeight : root.imageDisplayHeight) : 0
+                clip: !root.isAttachmentBlock
 
                 // Lazily instantiate the image stack (shader-effect images,
                 // backdrop, loading overlay) only for image messages. Text and
                 // sticker delegates skip it entirely — this is the bulk of the
                 // per-delegate node cost behind scroll-time instantiation spikes.
+                // One loader per media family, each gated on its own kind, so a
+                // voice note never instantiates the image stack and a photo
+                // never instantiates a player.
                 Loader {
                     anchors.fill: parent
-                    active: mediaSlot.visible
+                    active: mediaSlot.visible && root.isImage
                     sourceComponent: Component {
                       Item {
                         anchors.fill: parent
@@ -1114,12 +1209,40 @@ Item {
                       }
                     }
                 }
+
+                Loader {
+                    anchors.fill: parent
+                    active: mediaSlot.visible && root.isPlayableVideo
+                    sourceComponent: VideoBubble {
+                        row: root
+                        topLeftRadius: root.mediaTopLeftRadius
+                        topRightRadius: root.mediaTopRightRadius
+                        bottomLeftRadius: root.mediaBottomLeftRadius
+                        bottomRightRadius: root.mediaBottomRightRadius
+                    }
+                }
+
+                Loader {
+                    anchors.fill: parent
+                    active: mediaSlot.visible && (root.isVoice || root.isAudioFile)
+                    sourceComponent: VoiceBubble {
+                        row: root
+                    }
+                }
+
+                Loader {
+                    anchors.fill: parent
+                    active: mediaSlot.visible && root.isDocument
+                    sourceComponent: DocumentBubble {
+                        row: root
+                    }
+                }
             }
 
             // Plain bodies render with a cheap Text node; rich bodies (markup,
             // links, inline-enlarged emoji) need a QTextDocument and keep the
             // TextEdit. Both expose the end of their last laid-out line via the
-            // same lastLine* interface (tntFitsInline, footerSlot).
+            // same lastLine* interface (tntFitsAfterBody, footerSlot).
             Component {
                 id: plainBodyComponent
 
@@ -1333,16 +1456,31 @@ Item {
                 // Image-only: overlay on the media bottom-right (over the
                 // vignette). Otherwise sit at the right inner edge, inline with
                 // the last text line or on its own row.
-                x: root.imageOnly
-                   ? mediaSlot.x + mediaSlot.width - width - root.footerInset
-                   : Math.max(0, parent.width - root.footerInset - width)
+                x: {
+                    if (root.imageOnly) {
+                        return mediaSlot.x + mediaSlot.width - width - root.footerInset
+                    }
+                    // Flush with the block's own right edge rather than the
+                    // bubble's, so it lines up with the text above it.
+                    if (root.tntFitsInAttachment) {
+                        return mediaSlot.x + mediaSlot.width - width
+                    }
+                    return Math.max(0, parent.width - root.footerInset - width)
+                }
                 y: {
                     if (root.imageOnly) {
                         return mediaSlot.y + mediaSlot.height - height - root.footerInset
                     }
+                    if (root.tntFitsInAttachment) {
+                        // Sitting on the block's bottom line, not under it.
+                        return mediaSlot.y + mediaSlot.height - height
+                    }
                     const off = root.contentOffsetBeforeFooter()
+                    if (root.tntFitsAfterReadMore) {
+                        return readMoreLoader.y + Math.round((readMoreLoader.height - height) / 2)
+                    }
                     if (root.hasBody) {
-                        return root.tntFitsInline
+                        return root.tntFitsAfterBody
                             ? bodyTextLoader.y + bodyTextLoader.item.lastLineY + bodyTextLoader.item.lastLineHeight - height + root.inlineTntYOffset
                             : off + root.tntGap
                     }

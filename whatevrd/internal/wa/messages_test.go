@@ -580,44 +580,39 @@ func TestUnsupportedMessageLabel(t *testing.T) {
 		want   string
 		wantOK bool
 	}{
+		// Documents, audio, video, GIFs and video notes are no longer
+		// tombstoned: they have real builders and real bubbles, so the label
+		// whitelist must not claim them.
 		{
-			name: "document with filename",
+			name: "document is rendered, not tombstoned",
 			evt: &events.Message{Message: &waE2E.Message{
 				DocumentMessage: &waE2E.DocumentMessage{FileName: proto.String("report.pdf")},
 			}},
-			want:   "Document: report.pdf",
-			wantOK: true,
+			wantOK: false,
 		},
 		{
-			name: "captioned document",
-			evt: &events.Message{Message: &waE2E.Message{
-				DocumentMessage: &waE2E.DocumentMessage{FileName: proto.String("a.pdf"), Caption: proto.String("see this")},
-			}},
-			want:   "Document: a.pdf — see this",
-			wantOK: true,
-		},
-		{
-			name: "voice note",
+			name: "voice note is rendered, not tombstoned",
 			evt: &events.Message{Message: &waE2E.Message{
 				AudioMessage: &waE2E.AudioMessage{PTT: proto.Bool(true)},
 			}},
-			want:   "Voice message",
-			wantOK: true,
+			wantOK: false,
 		},
 		{
-			name: "audio file",
-			evt: &events.Message{Message: &waE2E.Message{
-				AudioMessage: &waE2E.AudioMessage{PTT: proto.Bool(false)},
-			}},
-			want:   "Audio",
-			wantOK: true,
-		},
-		{
-			name: "gif playback video",
+			name: "gif playback video is rendered, not tombstoned",
 			evt: &events.Message{Message: &waE2E.Message{
 				VideoMessage: &waE2E.VideoMessage{GifPlayback: proto.Bool(true)},
 			}},
-			want:   "GIF",
+			wantOK: false,
+		},
+		{
+			name: "view once video is still tombstoned",
+			evt: &events.Message{
+				IsViewOnce: true,
+				Message: &waE2E.Message{
+					VideoMessage: &waE2E.VideoMessage{},
+				},
+			},
+			want:   "View once video",
 			wantOK: true,
 		},
 		{
@@ -675,5 +670,216 @@ func TestUnsupportedMessageLabel(t *testing.T) {
 				t.Fatalf("unsupportedMessageLabel() = %q, %v; want %q, %v", got, ok, tc.want, tc.wantOK)
 			}
 		})
+	}
+}
+
+func newMediaIngestClient(t *testing.T) *Client {
+	t.Helper()
+	db, err := appstore.Open(context.Background(), filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	return &Client{
+		store:  db,
+		daemon: app.NewDaemon(app.Paths{}),
+		log:    waLog.Noop,
+		paths:  app.Paths{MediaCacheDir: t.TempDir()},
+	}
+}
+
+func mediaIngestEvent(id string, message *waE2E.Message) *events.Message {
+	return &events.Message{
+		Info: types.MessageInfo{
+			ID: types.MessageID(id),
+			MessageSource: types.MessageSource{
+				Chat:   types.JID{User: "5551234", Server: types.DefaultUserServer},
+				Sender: types.JID{User: "5551234", Server: types.DefaultUserServer},
+			},
+			Timestamp: time.Unix(1_700_000_000, 0),
+		},
+		Message: message,
+	}
+}
+
+// TestMediaMessageInputCoversPlayableKinds locks in that every kind whatevr can
+// now render takes a real media row rather than the unsupported tombstone.
+func TestMediaMessageInputCoversPlayableKinds(t *testing.T) {
+	client := newMediaIngestClient(t)
+
+	waveform := make([]byte, 64)
+	for i := range waveform {
+		waveform[i] = byte(i)
+	}
+
+	cases := []struct {
+		name          string
+		message       *waE2E.Message
+		wantKind      string
+		wantMime      string
+		wantText      string
+		wantDuration  int32
+		wantSize      int64
+		wantFileName  string
+		wantPageCount int32
+		wantWaveform  int
+		wantAnimated  bool
+	}{
+		{
+			name: "video with caption",
+			message: &waE2E.Message{VideoMessage: &waE2E.VideoMessage{
+				Mimetype:   proto.String("video/mp4"),
+				Caption:    proto.String("look at this"),
+				Seconds:    proto.Uint32(42),
+				FileLength: proto.Uint64(1 << 20),
+				Width:      proto.Uint32(1280),
+				Height:     proto.Uint32(720),
+			}},
+			wantKind:     appstore.MediaKindVideo,
+			wantMime:     "video/mp4",
+			wantText:     "look at this",
+			wantDuration: 42,
+			wantSize:     1 << 20,
+		},
+		{
+			name: "gif playback",
+			message: &waE2E.Message{VideoMessage: &waE2E.VideoMessage{
+				GifPlayback: proto.Bool(true),
+				Seconds:     proto.Uint32(3),
+			}},
+			wantKind:     appstore.MediaKindGIF,
+			wantMime:     "video/mp4",
+			wantDuration: 3,
+			wantAnimated: true,
+		},
+		{
+			name: "video note",
+			message: &waE2E.Message{PtvMessage: &waE2E.VideoMessage{
+				Seconds: proto.Uint32(7),
+			}},
+			wantKind:     appstore.MediaKindVideoNote,
+			wantMime:     "video/mp4",
+			wantDuration: 7,
+		},
+		{
+			name: "voice note with waveform",
+			message: &waE2E.Message{AudioMessage: &waE2E.AudioMessage{
+				PTT:        proto.Bool(true),
+				Seconds:    proto.Uint32(12),
+				FileLength: proto.Uint64(8192),
+				Waveform:   waveform,
+			}},
+			wantKind:     appstore.MediaKindVoice,
+			wantMime:     "audio/ogg; codecs=opus",
+			wantDuration: 12,
+			wantSize:     8192,
+			wantWaveform: 64,
+		},
+		{
+			name: "audio file",
+			message: &waE2E.Message{AudioMessage: &waE2E.AudioMessage{
+				Mimetype: proto.String("audio/mpeg"),
+				Seconds:  proto.Uint32(200),
+			}},
+			wantKind:     appstore.MediaKindAudio,
+			wantMime:     "audio/mpeg",
+			wantDuration: 200,
+		},
+		{
+			name: "document with caption and page count",
+			message: &waE2E.Message{DocumentMessage: &waE2E.DocumentMessage{
+				Mimetype:   proto.String("application/pdf"),
+				FileName:   proto.String("report.pdf"),
+				Caption:    proto.String("see page 3"),
+				PageCount:  proto.Uint32(11),
+				FileLength: proto.Uint64(4096),
+			}},
+			wantKind:      appstore.MediaKindDocument,
+			wantMime:      "application/pdf",
+			wantText:      "see page 3",
+			wantSize:      4096,
+			wantFileName:  "report.pdf",
+			wantPageCount: 11,
+		},
+	}
+
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			evt := mediaIngestEvent(types.MessageID(string(rune('A'+i))), tc.message)
+			input, ok := client.mediaMessageInput(context.Background(), evt, ingestOptions{})
+			if !ok {
+				t.Fatalf("mediaMessageInput() returned ok=false")
+			}
+			if input.MediaKind != tc.wantKind {
+				t.Errorf("kind = %q, want %q", input.MediaKind, tc.wantKind)
+			}
+			if input.MediaMimeType != tc.wantMime {
+				t.Errorf("mime = %q, want %q", input.MediaMimeType, tc.wantMime)
+			}
+			if input.Text != tc.wantText {
+				t.Errorf("text = %q, want %q", input.Text, tc.wantText)
+			}
+			if input.MediaDurationSecs != tc.wantDuration {
+				t.Errorf("duration = %d, want %d", input.MediaDurationSecs, tc.wantDuration)
+			}
+			if input.MediaSizeBytes != tc.wantSize {
+				t.Errorf("size = %d, want %d", input.MediaSizeBytes, tc.wantSize)
+			}
+			if input.MediaFileName != tc.wantFileName {
+				t.Errorf("filename = %q, want %q", input.MediaFileName, tc.wantFileName)
+			}
+			if input.MediaPageCount != tc.wantPageCount {
+				t.Errorf("page count = %d, want %d", input.MediaPageCount, tc.wantPageCount)
+			}
+			if len(input.MediaWaveform) != tc.wantWaveform {
+				t.Errorf("waveform length = %d, want %d", len(input.MediaWaveform), tc.wantWaveform)
+			}
+			if input.MediaAnimated != tc.wantAnimated {
+				t.Errorf("animated = %v, want %v", input.MediaAnimated, tc.wantAnimated)
+			}
+			if len(input.MediaPayload) == 0 {
+				t.Error("media payload is empty, so the message can never be downloaded")
+			}
+		})
+	}
+}
+
+// TestViewOnceMediaStaysTombstoned guards the one case that must keep falling
+// through to the unsupported path now that video and audio have builders.
+func TestViewOnceMediaStaysTombstoned(t *testing.T) {
+	client := newMediaIngestClient(t)
+
+	evt := mediaIngestEvent("VO1", &waE2E.Message{VideoMessage: &waE2E.VideoMessage{}})
+	evt.IsViewOnce = true
+
+	input, ok := client.mediaMessageInput(context.Background(), evt, ingestOptions{})
+	if !ok {
+		t.Fatal("mediaMessageInput() returned ok=false for view-once video")
+	}
+	if input.MediaKind != appstore.MediaKindUnsupported {
+		t.Fatalf("kind = %q, want %q", input.MediaKind, appstore.MediaKindUnsupported)
+	}
+	if input.Text != "View once video" {
+		t.Fatalf("label = %q, want %q", input.Text, "View once video")
+	}
+}
+
+// TestNormalizedWaveformRejectsWrongShapes keeps garbage out of the bubble: a
+// waveform is 64 buckets of 0-100 or it is not stored at all.
+func TestNormalizedWaveformRejectsWrongShapes(t *testing.T) {
+	if got := normalizedWaveform(nil); got != nil {
+		t.Errorf("nil waveform = %v, want nil", got)
+	}
+	if got := normalizedWaveform(make([]byte, 32)); got != nil {
+		t.Errorf("short waveform = %v, want nil", got)
+	}
+	oversized := make([]byte, waveformBuckets)
+	oversized[0] = 250
+	got := normalizedWaveform(oversized)
+	if len(got) != waveformBuckets {
+		t.Fatalf("length = %d, want %d", len(got), waveformBuckets)
+	}
+	if got[0] != 100 {
+		t.Errorf("clamped value = %d, want 100", got[0])
 	}
 }

@@ -33,6 +33,27 @@ func (h commandHandlers) mediaDownload(_ *conn, req request) (any, *Error) {
 	return nil, nil
 }
 
+// mediaCancelDownload stops an in-flight fetch. Whatever has already landed on
+// disk stays there, so asking again resumes rather than starting over.
+func (h commandHandlers) mediaCancelDownload(ctx context.Context, _ *conn, req request) (any, *Error) {
+	if err := h.requireActions(); err != nil {
+		return nil, err
+	}
+	var p messageIDParams
+	if err := decodeParams(req.Params, &p); err != nil {
+		return nil, err
+	}
+	if err := p.valid(); err != nil {
+		return nil, err
+	}
+	if err := h.actions.CancelMessageMediaDownload(ctx, strings.TrimSpace(p.MessageID)); err != nil {
+		if perr := mapCommandError(err); perr != nil {
+			return nil, perr
+		}
+	}
+	return nil, nil
+}
+
 type fetchProfilePictureParams struct {
 	JID string `json:"jid"`
 }
@@ -53,4 +74,32 @@ func (h commandHandlers) mediaFetchProfilePicture(ctx context.Context, _ *conn, 
 		return nil, perr
 	}
 	return map[string]any{"path": path}, nil
+}
+
+// mediaStream hands back a loopback URL the frontend's player can open while
+// the bytes are still arriving. Unlike media.download it is a query, not a
+// lifecycle: the daemon fetches ranges on demand behind the URL, and the
+// message row still upserts with `media.path` once the whole file has landed
+// and verified, after which the frontend should use the path instead.
+func (h commandHandlers) mediaStream(ctx context.Context, _ *conn, req request) (any, *Error) {
+	if err := h.requireActions(); err != nil {
+		return nil, err
+	}
+	var p messageIDParams
+	if err := decodeParams(req.Params, &p); err != nil {
+		return nil, err
+	}
+	if err := p.valid(); err != nil {
+		return nil, err
+	}
+	stream, err := h.actions.StreamMessageMedia(ctx, strings.TrimSpace(p.MessageID))
+	if perr := mapCommandError(err); perr != nil {
+		return nil, perr
+	}
+	return map[string]any{
+		"url":           stream.URL,
+		"mime":          stream.Mime,
+		"size_bytes":    stream.SizeBytes,
+		"duration_secs": stream.DurationSecs,
+	}, nil
 }

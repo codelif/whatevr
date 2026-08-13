@@ -257,6 +257,80 @@ private Q_SLOTS:
         QVERIFY(role(model, 0, ProtocolMessageModel::ReplyToSenderNameRole).toString().isEmpty());
         QVERIFY(role(model, 0, ProtocolMessageModel::ReplyToTextRole).toString().isEmpty());
     }
+
+    // The daemon sends a one-line `fallback` for the chat list, replies and
+    // notifications. A bubble that draws the media itself must not also print
+    // it: that is where "🎥 Video (0:11)" used to appear under every clip.
+    void mediaKindsShowTheirCaptionRatherThanTheFallback()
+    {
+        CollectionViewModel source;
+        ProtocolMessageModel model(&source);
+
+        const QStringList kinds{QStringLiteral("video"), QStringLiteral("gif"),
+                                QStringLiteral("video_note"), QStringLiteral("voice"),
+                                QStringLiteral("audio"), QStringLiteral("document"),
+                                QStringLiteral("image"), QStringLiteral("sticker")};
+        for (int i = 0; i < kinds.size(); ++i) {
+            QJsonObject item = message(QStringLiteral("m%1").arg(i), 1'700'000'000 + i);
+            item.insert(QStringLiteral("kind"), kinds.at(i));
+            item.insert(QStringLiteral("fallback"), QStringLiteral("FALLBACK"));
+            item.remove(QStringLiteral("text"));
+            item.insert(QStringLiteral("media"), QJsonObject{
+                {QStringLiteral("mime"), QStringLiteral("application/octet-stream")},
+            });
+            source.onUpsert(QStringLiteral("%1").arg(i, 4, 10, QLatin1Char('0')), item);
+        }
+
+        for (int i = 0; i < kinds.size(); ++i) {
+            QCOMPARE(role(model, i, ProtocolMessageModel::TextRole).toString(), QString());
+        }
+    }
+
+    void aCaptionOnMediaStillReachesTheBubble()
+    {
+        CollectionViewModel source;
+        ProtocolMessageModel model(&source);
+        QJsonObject item = message(QStringLiteral("m1"), 1'700'000'000);
+        item.insert(QStringLiteral("kind"), QStringLiteral("video"));
+        item.insert(QStringLiteral("fallback"), QStringLiteral("🎥 Video (0:11)"));
+        item.insert(QStringLiteral("text"), QStringLiteral("look at this"));
+        item.insert(QStringLiteral("media"), QJsonObject{
+            {QStringLiteral("mime"), QStringLiteral("video/mp4")},
+        });
+        source.onUpsert(QStringLiteral("0001"), item);
+
+        QCOMPARE(role(model, 0, ProtocolMessageModel::TextRole).toString(), QStringLiteral("look at this"));
+    }
+
+    // Tombstones and deletions have nothing to draw, so their label is all the
+    // bubble has.
+    void kindsWithoutMediaKeepTheirFallback()
+    {
+        CollectionViewModel source;
+        ProtocolMessageModel model(&source);
+
+        QJsonObject unsupported = message(QStringLiteral("m1"), 1'700'000'000);
+        unsupported.insert(QStringLiteral("kind"), QStringLiteral("unsupported"));
+        unsupported.insert(QStringLiteral("fallback"), QStringLiteral("Unsupported message"));
+        unsupported.remove(QStringLiteral("text"));
+
+        QJsonObject revoked = message(QStringLiteral("m2"), 1'700'000'001);
+        revoked.insert(QStringLiteral("kind"), QStringLiteral("video"));
+        revoked.insert(QStringLiteral("revoked"), true);
+        revoked.insert(QStringLiteral("fallback"), QStringLiteral("This message was deleted"));
+        revoked.insert(QStringLiteral("text"), QStringLiteral("stale caption"));
+        revoked.insert(QStringLiteral("media"), QJsonObject{
+            {QStringLiteral("mime"), QStringLiteral("video/mp4")},
+        });
+
+        source.onUpsert(QStringLiteral("0001"), unsupported);
+        source.onUpsert(QStringLiteral("0002"), revoked);
+
+        QCOMPARE(role(model, 0, ProtocolMessageModel::TextRole).toString(),
+                 QStringLiteral("Unsupported message"));
+        QCOMPARE(role(model, 1, ProtocolMessageModel::TextRole).toString(),
+                 QStringLiteral("This message was deleted"));
+    }
 };
 
 QTEST_MAIN(TestProtocolMessageModel)

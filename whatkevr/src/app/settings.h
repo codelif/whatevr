@@ -43,6 +43,36 @@ class Settings final : public QObject
     // Message-bubble font point size; 0 means "inherit the theme default".
     Q_PROPERTY(int messageFontSize READ messageFontSize WRITE setMessageFontSize NOTIFY messageFontSizeChanged FINAL)
     Q_PROPERTY(bool showAvatars READ showAvatars WRITE setShowAvatars NOTIFY showAvatarsChanged FINAL)
+
+    // --- Media playback (Advanced) ---
+    // Which engine plays video: "auto" (mpv when the scene graph allows it),
+    // "mpv", or "qt". Takes effect on restart, because the graphics API the mpv
+    // path needs is pinned during startup.
+    Q_PROPERTY(QString videoBackend READ videoBackend WRITE setVideoBackend NOTIFY videoBackendChanged FINAL)
+    // Hardware video decoding. The first thing to turn off when a driver
+    // misbehaves.
+    Q_PROPERTY(bool hardwareDecoding READ hardwareDecoding WRITE setHardwareDecoding NOTIFY hardwareDecodingChanged FINAL)
+    // How many inline video bubbles may hold a decoder at once. 0 means none:
+    // inline bubbles stay thumbnails and only the full-screen viewer plays.
+    Q_PROPERTY(int inlineVideoLimit READ inlineVideoLimit WRITE setInlineVideoLimit NOTIFY inlineVideoLimitChanged FINAL)
+    // Suspend inline playback during a fast fling.
+    Q_PROPERTY(bool pausePlaybackWhileScrolling READ pausePlaybackWhileScrolling WRITE setPausePlaybackWhileScrolling NOTIFY pausePlaybackWhileScrollingChanged FINAL)
+    // Play from the daemon's loopback range server while a file is still being
+    // fetched. Off forces the whole-file download path.
+    Q_PROPERTY(bool streamWhileDownloading READ streamWhileDownloading WRITE setStreamWhileDownloading NOTIFY streamWhileDownloadingChanged FINAL)
+
+    // --- Media playback (Chats) ---
+    // GIFs and video notes start playing by themselves once on screen.
+    Q_PROPERTY(bool autoplayInlineMedia READ autoplayInlineMedia WRITE setAutoplayInlineMedia NOTIFY autoplayInlineMediaChanged FINAL)
+    Q_PROPERTY(bool loopGifs READ loopGifs WRITE setLoopGifs NOTIFY loopGifsChanged FINAL)
+    // Play the next voice message in the chat when one finishes.
+    Q_PROPERTY(bool advanceVoiceMessages READ advanceVoiceMessages WRITE setAdvanceVoiceMessages NOTIFY advanceVoiceMessagesChanged FINAL)
+    // Resume a part-heard voice note where it stopped instead of at 0:00.
+    Q_PROPERTY(bool rememberPlaybackPosition READ rememberPlaybackPosition WRITE setRememberPlaybackPosition NOTIFY rememberPlaybackPositionChanged FINAL)
+    // Starting speed for voice notes and audio files (1.0, 1.5 or 2.0).
+    Q_PROPERTY(double defaultPlaybackSpeed READ defaultPlaybackSpeed WRITE setDefaultPlaybackSpeed NOTIFY defaultPlaybackSpeedChanged FINAL)
+    // Directory Save As starts in; empty means the per-kind XDG location.
+    Q_PROPERTY(QString mediaSaveDirectory READ mediaSaveDirectory WRITE setMediaSaveDirectory NOTIFY mediaSaveDirectoryChanged FINAL)
     // Conversation wallpaper preset id; empty is the plain default background.
     Q_PROPERTY(QString chatWallpaper READ chatWallpaper WRITE setChatWallpaper NOTIFY chatWallpaperChanged FINAL)
     // Doodle pattern drawn over the wallpaper background: "" none, "doodle" the
@@ -113,6 +143,28 @@ public:
     void setMessageFontSize(int points);
     [[nodiscard]] bool showAvatars() const;
     void setShowAvatars(bool show);
+    [[nodiscard]] QString videoBackend() const;
+    void setVideoBackend(const QString &backend);
+    [[nodiscard]] bool hardwareDecoding() const;
+    void setHardwareDecoding(bool enabled);
+    [[nodiscard]] int inlineVideoLimit() const;
+    void setInlineVideoLimit(int limit);
+    [[nodiscard]] bool pausePlaybackWhileScrolling() const;
+    void setPausePlaybackWhileScrolling(bool enabled);
+    [[nodiscard]] bool streamWhileDownloading() const;
+    void setStreamWhileDownloading(bool enabled);
+    [[nodiscard]] bool autoplayInlineMedia() const;
+    void setAutoplayInlineMedia(bool enabled);
+    [[nodiscard]] bool loopGifs() const;
+    void setLoopGifs(bool enabled);
+    [[nodiscard]] bool advanceVoiceMessages() const;
+    void setAdvanceVoiceMessages(bool enabled);
+    [[nodiscard]] bool rememberPlaybackPosition() const;
+    void setRememberPlaybackPosition(bool enabled);
+    [[nodiscard]] double defaultPlaybackSpeed() const;
+    void setDefaultPlaybackSpeed(double speed);
+    [[nodiscard]] QString mediaSaveDirectory() const;
+    void setMediaSaveDirectory(const QString &path);
     [[nodiscard]] QString chatWallpaper() const;
     void setChatWallpaper(const QString &wallpaperId);
     [[nodiscard]] QString chatWallpaperPattern() const;
@@ -180,6 +232,17 @@ Q_SIGNALS:
     void compactModeChanged();
     void messageFontSizeChanged();
     void showAvatarsChanged();
+    void videoBackendChanged();
+    void hardwareDecodingChanged();
+    void inlineVideoLimitChanged();
+    void pausePlaybackWhileScrollingChanged();
+    void streamWhileDownloadingChanged();
+    void autoplayInlineMediaChanged();
+    void loopGifsChanged();
+    void advanceVoiceMessagesChanged();
+    void rememberPlaybackPositionChanged();
+    void defaultPlaybackSpeedChanged();
+    void mediaSaveDirectoryChanged();
     void chatWallpaperChanged();
     void chatWallpaperPatternChanged();
     void chatWallpaperPathChanged();
@@ -206,6 +269,17 @@ private:
     int m_density = DensityStandard;
     int m_messageFontSize = 0;
     bool m_showAvatars = true;
+    QString m_videoBackend = QStringLiteral("auto");
+    bool m_hardwareDecoding = true;
+    int m_inlineVideoLimit = 3;
+    bool m_pausePlaybackWhileScrolling = true;
+    bool m_streamWhileDownloading = true;
+    bool m_autoplayInlineMedia = true;
+    bool m_loopGifs = true;
+    bool m_advanceVoiceMessages = true;
+    bool m_rememberPlaybackPosition = true;
+    double m_defaultPlaybackSpeed = 1.0;
+    QString m_mediaSaveDirectory;
     QString m_chatWallpaper;
     QString m_chatWallpaperPattern;
     QString m_chatWallpaperPath;

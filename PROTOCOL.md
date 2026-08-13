@@ -31,7 +31,12 @@ who internalizes this section can predict the rest of the document.
    removes, render.*
 4. **Media never crosses the wire.** The protocol traffics in file paths into
    the daemon's cache. Frontends read files; frontends hand the daemon paths
-   to send.
+   to send. The one addition: for playback that must start before a download
+   finishes, the daemon also exposes those same cache bytes over a
+   loopback-only HTTP range endpoint (`media.stream`). Nothing new travels
+   over the socket, the URL is bound to `127.0.0.1` with a per-process token,
+   and it stops being needed the moment the file is complete and `media.path`
+   is set.
 5. **Every message is renderable by every frontend.** Messages of kinds a
    frontend does not implement still carry a human-readable `fallback`
    string. Partial frontends are first-class citizens.
@@ -223,10 +228,11 @@ noted; this inventory fixes the shape of the protocol, not every field name.
 | `blocklist` | none | blocked contacts | |
 | `starred` | optional `chat_id`, `limit` | message rows + `chat_name` | windowed; syncs with stars made on other devices. Ordered by the message's own timestamp (newest first), not by when it was starred (the store records no star time), so starring an old message places it deep in the window rather than at the top |
 | `pinned` | `chat_id` | message rows | currently-pinned, unexpired; expiry produces `remove` |
+| `chat_media` | `chat_id`, `limit` | message rows, media kinds only | one chat's photos, videos, voice notes, audio and documents, newest first; windowed. Rows are ordinary `messages` items, so a download landing shows up here as the same upsert the conversation sees |
 | `stickers` | `source` (`recent`\|`favorite`\|`all`), `limit` | stickers | |
 | `sticker_packs` | none | packs | |
 | `sticker_pack` | `pack_id` | stickers | contents fetch is async; items land as they resolve |
-| `transfers` | none | active media transfers | `message_id`, `direction`, `received_bytes`, `total_bytes`, optional active `error`; `remove` on terminal success or failure: success itself is visible as the message row upserting with its new `media.path`, failure as the message row upserting with `media.download_error`. `direction` is `"download"` today; outbound uploads are not yet modelled here (a known gap) |
+| `transfers` | none | active media transfers | `message_id`, `direction`, `received_bytes`, `total_bytes`, optional active `error`; `remove` on terminal success or failure: success itself is visible as the message row upserting with its new `media.path`, failure as the message row upserting with `media.download_error`. `direction` is `"download"` today; outbound uploads are not yet modelled here (a known gap). A `media.stream` fetch reports through this view too, where `received_bytes` counts the chunks present rather than a sequential write head, so it can climb out of order as the viewer seeks |
 | `notifications` | none | notification records | **Reserved, not served in protocol 1**: subscribing errors `not_found`. What the daemon would notify about, for applets, relays, and headless setups; the daemon's own D-Bus notifier is unaffected. Its shape waits on a real consumer (see *Open questions*) |
 
 Avatar paths are embedded in chat/message/contact/member rows and refresh via
@@ -276,7 +282,10 @@ views.
 | `message.star` | `message_id`, `starred` | `{}` |
 | `message.pin` | `message_id`, `pinned`, `duration_secs` | `{}` |
 | `message.forward` | `message_id`, `chat_ids` | `{message_ids}` |
+| `message.mark_played` | `message_id` | `{}`: sends a played receipt for an inbound voice note; repeat calls are no-ops |
 | `media.download` | `message_id` | `{}`: progress in `transfers`, path lands via message upsert |
+| `media.stream` | `message_id` | `{url, mime, size_bytes, duration_secs}`: a loopback range URL that plays while the fetch is still running. The fetch continues to completion regardless, so the message still upserts with `media.path`, after which the path is what frontends should use. May fail `rejected` for media that cannot be streamed (no length or hash, a CDN that ignores ranges); the caller falls back to `media.download` |
+| `media.cancel_download` | `message_id` | `{}`: stops an in-flight `media.download` or `media.stream` fetch and closes the `transfers` row. Whatever has already landed on disk is kept, so a later `media.download` resumes rather than starting over. Fails `rejected` when nothing is in flight for that message |
 | `media.fetch_profile_picture` | `jid` | `{path}`: full resolution, for the avatar viewer |
 
 **Settings, contacts, stickers**
@@ -310,9 +319,9 @@ whole result inside the one response `result` object, under a named key:
 
 ## Messages on the wire
 
-A message item has a `kind` (`text`, `image`, `sticker`, and over time
-`video`, `voice`, `document`, `location`, `poll`, …), kind-specific fields,
-and always:
+A message item has a `kind` (`text`, `image`, `sticker`, `video`, `gif`,
+`voice`, `audio`, `document`, `video_note`, and over time `location`, `poll`,
+…), kind-specific fields, and always:
 
 - `fallback`: a human-readable one-line rendering ("🎤 Voice message (0:12)",
   "📊 Poll: dinner?"). A frontend renders `fallback` for any `kind` it does
@@ -323,8 +332,12 @@ and always:
   quote, `reactions`, `mentions`, `edited`, `revoked`, `starred`, `pinned_until`.
 
 Media-bearing kinds carry `media` (`mime`, dimensions, `thumbnail_path`,
-`path` which is empty until downloaded, optional `download_error`) and the
-download lifecycle is: `media.download` → active progress in `transfers` →
+`path` which is empty until downloaded, optional `download_error`) plus the
+optional per-kind facts: `size_bytes`, `duration_secs`, `filename`,
+`page_count`, `waveform` (voice notes: 64 amplitude buckets of 0-100, the one
+piece of media data that rides the socket rather than a file, because the
+bubble needs it before any download), and `played`. Captions ride the
+item-level `text`, for every kind. The download lifecycle is: `media.download` → active progress in `transfers` →
 `transfers` remove when the attempt ends → message upsert with `path` set on
 success or `download_error` set on failure. A retry clears `download_error` via
 another message upsert.
