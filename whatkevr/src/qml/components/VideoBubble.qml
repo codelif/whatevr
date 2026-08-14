@@ -82,9 +82,9 @@ Item {
     readonly property bool engaged: (wantsRun || intent === "paused") && onScreen && hasSource
 
     readonly property bool loops: isGif ? Whatevr.Settings.loopGifs : false
-    /// Only video notes use inline sound controls. Rectangular video and GIF
-    /// playback is always muted.
-    property bool userMuted: false
+    /// Ordinary rectangular video begins muted and remembers this choice.
+    /// Video notes keep their existing unmuted startup. GIFs stay muted.
+    property bool userMuted: !isVideoNote
 
     /// Where playback should pick up, refreshed from the arbiter rather than
     /// tracked here: the surface writes it down at the moment it lets go of the
@@ -94,10 +94,14 @@ Item {
     // The source chosen for a playback session never changes underneath the
     // decoder. Promotion to a local file takes effect on the next session.
     property url streamUrl
+    property string activeStreamId: ""
+    property string recoveredLocalPath: ""
     property url sessionSource
     readonly property url playbackSource: sessionSource.toString().length > 0
         ? sessionSource
-        : (hasFile ? Qt.resolvedUrl("file://" + row.mediaLocalPath) : streamUrl)
+        : (recoveredLocalPath.length > 0
+           ? Qt.resolvedUrl("file://" + recoveredLocalPath)
+           : (hasFile ? Qt.resolvedUrl("file://" + row.mediaLocalPath) : streamUrl))
 
     // Set synchronously before a protocol request is sent. This both makes the
     // first tap visible immediately and prevents a second request.
@@ -130,7 +134,7 @@ Item {
             return "buffering"
         if (engaged && surface.grantHeld)
             return "buffering"
-        if (row.mediaDownloading)
+        if (row.mediaDownloading && !hasSource)
             return "downloading"
         if (!hasSource && !row.mediaDownloading)
             return "needsDownload"
@@ -209,7 +213,9 @@ Item {
     function latchAvailableSource() {
         if (sessionSource.toString().length > 0)
             return
-        if (hasFile)
+        if (recoveredLocalPath.length > 0)
+            sessionSource = Qt.resolvedUrl("file://" + recoveredLocalPath)
+        else if (hasFile)
             sessionSource = Qt.resolvedUrl("file://" + row.mediaLocalPath)
         else if (streamUrl.toString().length > 0)
             sessionSource = streamUrl
@@ -226,11 +232,12 @@ Item {
      */
     function openFullScreen() {
         row.videoActivated(row.messageId,
-                           row.mediaLocalPath,
+                           root.recoveredLocalPath.length > 0 ? root.recoveredLocalPath : row.mediaLocalPath,
                            root.streamUrl.toString(),
+                           root.activeStreamId,
                            row.mediaKind,
                            row.mediaDurationSecs,
-                           surface.position)
+                           surface.handoffPosition())
     }
 
     /// Starts a stream if we have no file yet, falling back to an ordinary
@@ -259,12 +266,14 @@ Item {
     function resetForMessage() {
         intent = "stopped"
         streamUrl = ""
+        activeStreamId = ""
+        recoveredLocalPath = ""
         sessionSource = ""
         requestPending = false
         playAfterDownload = false
         retryDownloadOnly = false
         playbackFailed = false
-        userMuted = false
+        userMuted = !isVideoNote
         resumeAt = Whatevr.VideoPlayback.resumePosition(row.messageId)
 
         // Model role notifications do not have a useful ordering guarantee.
@@ -279,6 +288,7 @@ Item {
 
     onAutoWantsChanged: requestAutoplaySource()
     onOnScreenChanged: requestAutoplaySource()
+    onIsVideoNoteChanged: if (intent === "stopped") userMuted = !isVideoNote
     onIntentChanged: {
         if (intent === "stopped") {
             sessionSource = ""
@@ -306,10 +316,11 @@ Item {
     Connections {
         target: Whatevr.ProtocolController
 
-        function onMediaStreamReady(messageId, url) {
+        function onMediaStreamReady(messageId, streamId, url) {
             if (messageId !== root.row.messageId)
                 return
             root.streamUrl = url
+            root.activeStreamId = streamId
             root.requestPending = false
             if (root.intent === "playing" || root.autoWants)
                 root.latchAvailableSource()
@@ -322,6 +333,26 @@ Item {
             root.requestPending = true
             root.playbackRequestDispatched("download")
             Whatevr.ProtocolController.downloadMessageMedia(messageId)
+        }
+
+        function onMediaStreamUpdated(streamId, messageId, state, path, error) {
+            if (messageId !== root.row.messageId || streamId !== root.activeStreamId)
+                return
+            root.activeStreamId = ""
+            root.requestPending = false
+            if (state === "local" && path.length > 0) {
+                const at = surface.handoffPosition()
+                if (at > 0) {
+                    root.resumeAt = at
+                    Whatevr.VideoPlayback.setResumePosition(messageId, at)
+                }
+                root.sessionSource = Qt.resolvedUrl("file://" + path)
+                root.recoveredLocalPath = path
+                root.playbackFailed = false
+            } else if (state === "failed") {
+                root.playbackFailed = true
+                root.intent = "stopped"
+            }
         }
     }
 
@@ -349,6 +380,19 @@ Item {
         function onResumePositionChanged(messageId) {
             if (messageId === root.row.messageId)
                 root.resumeAt = Whatevr.VideoPlayback.resumePosition(messageId)
+        }
+
+        function onInlineHandoff(messageId, seconds, resumePlayback) {
+            if (messageId !== root.row.messageId)
+                return
+            root.resumeAt = Math.max(0, seconds)
+            root.sessionSource = ""
+            if (resumePlayback) {
+                root.latchAvailableSource()
+                root.intent = "playing"
+            } else {
+                root.intent = "stopped"
+            }
         }
     }
 
@@ -434,7 +478,7 @@ Item {
             lane: root.isGif ? Whatevr.VideoPlayback.Animated : Whatevr.VideoPlayback.Exclusive
             engaged: root.engaged
             playing: root.wantsRun
-            muted: root.isVideoNote ? root.userMuted : true
+            muted: root.isGif ? true : root.userMuted
             loop: root.loops
 
             // Something else took the exclusive lane. Stop wanting to play, or
@@ -726,16 +770,36 @@ Item {
         }
     }
 
-    MediaOverlayButton {
-        objectName: "videoBubble.fullscreenButton"
-        anchors.top: picture.top
-        anchors.right: picture.right
-        anchors.margins: Kirigami.Units.smallSpacing
-        visible: !root.isVideoNote && root.showsVideo && !root.row.selectionModeActive
-        diameter: Kirigami.Units.gridUnit * 1.6
-        iconName: "view-fullscreen-symbolic"
-        text: Whatevr.I18n.i18nc("@action:button", "Full screen")
-        onClicked: root.openFullScreen()
+    Loader {
+        anchors.fill: picture
+        active: !root.isVideoNote && root.showsTransport
+
+        sourceComponent: Item {
+            MediaOverlayButton {
+                objectName: "videoBubble.audioButton"
+                anchors.left: parent.left
+                anchors.bottom: parent.bottom
+                anchors.margins: Kirigami.Units.smallSpacing
+                visible: !root.isGif
+                diameter: Kirigami.Units.gridUnit * 1.6
+                iconName: root.userMuted ? "audio-volume-muted-symbolic" : "audio-volume-high-symbolic"
+                text: root.userMuted
+                    ? Whatevr.I18n.i18nc("@action:button", "Unmute")
+                    : Whatevr.I18n.i18nc("@action:button", "Mute")
+                onClicked: root.userMuted = !root.userMuted
+            }
+
+            MediaOverlayButton {
+                objectName: "videoBubble.fullscreenButton"
+                anchors.top: parent.top
+                anchors.right: parent.right
+                anchors.margins: Kirigami.Units.smallSpacing
+                diameter: Kirigami.Units.gridUnit * 1.6
+                iconName: "view-fullscreen-symbolic"
+                text: Whatevr.I18n.i18nc("@action:button", "Full screen")
+                onClicked: root.openFullScreen()
+            }
+        }
     }
 
     // A circle has no room for a strip, so its two buttons ride the rim, on the

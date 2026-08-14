@@ -212,6 +212,18 @@ ProtocolController::ProtocolController(QString socketPath, QObject *parent)
     connect(m_client, &ProtocolClient::ready, this, &ProtocolController::onClientReady);
     connect(m_client, &ProtocolClient::disconnected, this, &ProtocolController::onClientDisconnected);
     connect(m_client, &ProtocolClient::openChatRequested, this, &ProtocolController::openChatRequested);
+    connect(m_client, &ProtocolClient::mediaStreamUpdated, this,
+            [this](const QString &streamId,
+                   const QString &messageId,
+                   const QString &state,
+                   const QString &path,
+                   const QString &error) {
+                if (streamId.isEmpty() || m_mediaStreamMessages.value(streamId) != messageId) {
+                    return;
+                }
+                m_mediaStreamMessages.remove(streamId);
+                Q_EMIT mediaStreamUpdated(streamId, messageId, state, path, error);
+            });
     // Every failed connect attempt also lands here (the client funnels connect
     // errors through disconnected()); recomputing phase is idempotent.
 
@@ -1789,11 +1801,13 @@ void ProtocolController::streamMessageMedia(const QString &messageId)
                               return;
                           }
                           const QString url = result.value(QStringLiteral("url")).toString();
-                          if (url.isEmpty()) {
+                          const QString streamId = result.value(QStringLiteral("stream_id")).toString();
+                          if (url.isEmpty() || streamId.isEmpty()) {
                               Q_EMIT mediaStreamFailed(messageId, QString());
                               return;
                           }
-                          Q_EMIT mediaStreamReady(messageId, QUrl(url));
+                          m_mediaStreamMessages.insert(streamId, messageId);
+                          Q_EMIT mediaStreamReady(messageId, streamId, QUrl(url));
                       });
 }
 
@@ -3290,6 +3304,7 @@ void ProtocolController::onClientReady()
 void ProtocolController::onClientDisconnected()
 {
     m_clientReady = false;
+    m_mediaStreamMessages.clear();
     // The client reset the object-view sinks on drop; their valueChanged already
     // fired. Recompute the gate from the new phase.
     Q_EMIT stateChanged();

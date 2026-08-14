@@ -4,6 +4,8 @@ import (
 	"context"
 	"log"
 	"strings"
+
+	"whatevrd/internal/app"
 )
 
 func (h commandHandlers) mediaDownload(_ *conn, req request) (any, *Error) {
@@ -81,7 +83,7 @@ func (h commandHandlers) mediaFetchProfilePicture(ctx context.Context, _ *conn, 
 // lifecycle: the daemon fetches ranges on demand behind the URL, and the
 // message row still upserts with `media.path` once the whole file has landed
 // and verified, after which the frontend should use the path instead.
-func (h commandHandlers) mediaStream(ctx context.Context, _ *conn, req request) (any, *Error) {
+func (h commandHandlers) mediaStreamCommand(c *conn, req request) (any, *Error) {
 	if err := h.requireActions(); err != nil {
 		return nil, err
 	}
@@ -92,14 +94,36 @@ func (h commandHandlers) mediaStream(ctx context.Context, _ *conn, req request) 
 	if err := p.valid(); err != nil {
 		return nil, err
 	}
-	stream, err := h.actions.StreamMessageMedia(ctx, strings.TrimSpace(p.MessageID))
-	if perr := mapCommandError(err); perr != nil {
-		return nil, perr
-	}
-	return map[string]any{
-		"url":           stream.URL,
-		"mime":          stream.Mime,
-		"size_bytes":    stream.SizeBytes,
-		"duration_secs": stream.DurationSecs,
-	}, nil
+	messageID := strings.TrimSpace(p.MessageID)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), netCommandTimeout)
+		defer cancel()
+		updates := make(chan app.MediaStreamUpdate, 1)
+		stream, err := h.actions.StreamMessageMedia(ctx, messageID, func(update app.MediaStreamUpdate) {
+			select {
+			case updates <- update:
+			default:
+			}
+		})
+		if perr := mapCommandError(err); perr != nil {
+			c.respondError(req.ID, perr, false)
+			return
+		}
+		c.respondResult(req.ID, map[string]any{
+			"stream_id":     stream.StreamID,
+			"url":           stream.URL,
+			"mime":          stream.Mime,
+			"size_bytes":    stream.SizeBytes,
+			"duration_secs": stream.DurationSecs,
+		})
+
+		select {
+		case update := <-updates:
+			if update.State != "" {
+				c.enqueueMediaStreamUpdate(update)
+			}
+		case <-c.done:
+		}
+	}()
+	return responded{}, nil
 }

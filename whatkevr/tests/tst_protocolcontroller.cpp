@@ -100,6 +100,20 @@ public:
                                 {QStringLiteral("chat_id"), chatId}});
     }
 
+    void sendMediaStreamUpdate(const QString &streamId,
+                               const QString &messageId,
+                               const QString &state,
+                               const QString &path = {},
+                               const QString &error = {})
+    {
+        writeObject(QJsonObject{{QStringLiteral("event"), QStringLiteral("media_stream_update")},
+                                {QStringLiteral("stream_id"), streamId},
+                                {QStringLiteral("message_id"), messageId},
+                                {QStringLiteral("state"), state},
+                                {QStringLiteral("path"), path},
+                                {QStringLiteral("error"), error}});
+    }
+
     void resetMessages()
     {
         const int sub = m_subByView.value(QStringLiteral("messages"), -1);
@@ -386,6 +400,11 @@ private:
             lastCommandParams = params;
             if (method == QLatin1String("media.fetch_profile_picture")) {
                 reply(id, QJsonObject{{QStringLiteral("path"), m_profilePicturePath}});
+            } else if (method == QLatin1String("media.stream")) {
+                reply(id, QJsonObject{{QStringLiteral("stream_id"), QStringLiteral("test-stream")},
+                                      {QStringLiteral("url"), QStringLiteral("http://127.0.0.1:1/media/test")},
+                                      {QStringLiteral("mime"), QStringLiteral("video/mp4")},
+                                      {QStringLiteral("size_bytes"), 42}});
             } else {
                 reply(id, QJsonObject{});
             }
@@ -622,6 +641,37 @@ private Q_SLOTS:
         QVERIFY(!ctrl.loginRequired());
         QVERIFY(ctrl.daemonRunning());
         QCOMPARE(ctrl.connectionPhase(), QStringLiteral("connected"));
+    }
+
+    void mediaStreamUpdateRejectsStaleIds()
+    {
+        FakeDaemon daemon(m_path);
+        daemon.setItem(QStringLiteral("connection"), connectionItem(QStringLiteral("online")));
+
+        ProtocolController ctrl(m_path, nullptr);
+        ctrl.start();
+        QTRY_VERIFY(ctrl.shellVisible());
+
+        QSignalSpy readySpy(&ctrl, &ProtocolController::mediaStreamReady);
+        QSignalSpy updateSpy(&ctrl, &ProtocolController::mediaStreamUpdated);
+        ctrl.streamMessageMedia(QStringLiteral("video-1"));
+        QTRY_COMPARE(readySpy.count(), 1);
+        QCOMPARE(readySpy.first().at(0).toString(), QStringLiteral("video-1"));
+        QCOMPARE(readySpy.first().at(1).toString(), QStringLiteral("test-stream"));
+
+        daemon.sendMediaStreamUpdate(QStringLiteral("stale-stream"),
+                                     QStringLiteral("video-1"),
+                                     QStringLiteral("local"),
+                                     QStringLiteral("/cache/stale.mp4"));
+        QTest::qWait(25);
+        QCOMPARE(updateSpy.count(), 0);
+
+        daemon.sendMediaStreamUpdate(QStringLiteral("test-stream"),
+                                     QStringLiteral("video-1"),
+                                     QStringLiteral("local"),
+                                     QStringLiteral("/cache/video.mp4"));
+        QTRY_COMPARE(updateSpy.count(), 1);
+        QCOMPARE(updateSpy.first().at(3).toString(), QStringLiteral("/cache/video.mp4"));
     }
 
     // A logged-out daemon: the login gate trips and the QR (with countdown) is

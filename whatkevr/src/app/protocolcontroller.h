@@ -602,8 +602,13 @@ Q_SIGNALS:
     void chatMediaChanged();
     /// Answer to streamMessageMedia: where a player can read this message from
     /// while it is still downloading.
-    void mediaStreamReady(const QString &messageId, const QUrl &url);
+    void mediaStreamReady(const QString &messageId, const QString &streamId, const QUrl &url);
     void mediaStreamFailed(const QString &messageId, const QString &message);
+    void mediaStreamUpdated(const QString &streamId,
+                            const QString &messageId,
+                            const QString &state,
+                            const QString &path,
+                            const QString &error);
     void infoCardChanged();
     void groupMembersChanged();
     void chatMembersChanged();
@@ -788,6 +793,8 @@ private:
     QString m_pendingDeepLinkChatId;
     // chat id -> composer draft text.
     QHash<QString, QString> m_drafts;
+    // Active stream request ids, used to reject stale or misdirected updates.
+    QHash<QString, QString> m_mediaStreamMessages;
 
     QString m_selectedChatId;
     QString m_displayedMessagesChatId;

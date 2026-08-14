@@ -94,7 +94,7 @@ Kirigami.ScrollablePage {
                 if (cell.kind === "image") {
                     galleryViewer.showImage(cell.localPath)
                 } else if (cell.isVisual) {
-                    galleryViewer.showVideo(cell.item.id ?? "", cell.localPath, "", cell.kind,
+                    galleryViewer.showVideo(cell.item.id ?? "", cell.localPath, "", "", cell.kind,
                                             cell.media.duration_secs ?? 0,
                                             Whatevr.VideoPlayback.resumePosition(cell.item.id ?? ""))
                 } else {

@@ -306,10 +306,21 @@ type MediaDownloadEvent struct {
 // daemon's loopback range server and is only valid for the current daemon
 // process.
 type MediaStream struct {
+	StreamID     string
 	URL          string
 	Mime         string
 	SizeBytes    uint64
 	DurationSecs int32
+}
+
+// MediaStreamUpdate is the one terminal recovery result for a stream request.
+// It is delivered to the protocol connection that requested StreamID.
+type MediaStreamUpdate struct {
+	StreamID  string
+	MessageID string
+	State     string
+	Path      string
+	ErrorText string
 }
 
 type Chat struct {

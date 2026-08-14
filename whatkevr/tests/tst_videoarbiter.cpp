@@ -216,6 +216,23 @@ private Q_SLOTS:
         QCOMPARE(pool->resumePosition(QStringLiteral("clip-0")), 0.0);
         QCOMPARE(pool->resumePosition(QStringLiteral("clip-39")), 40.0);
     }
+
+    void fullScreenHandoffCarriesPositionAndPlayIntent()
+    {
+        VideoPlaybackArbiter *pool = arbiter();
+        QSignalSpy handoff(pool, &VideoPlaybackArbiter::inlineHandoff);
+
+        pool->handoffToInline(QStringLiteral("video"), 18.25, true);
+        QCOMPARE(pool->resumePosition(QStringLiteral("video")), 18.25);
+        QCOMPARE(handoff.count(), 1);
+        QCOMPARE(handoff.first().at(0).toString(), QStringLiteral("video"));
+        QCOMPARE(handoff.first().at(1).toDouble(), 18.25);
+        QCOMPARE(handoff.first().at(2).toBool(), true);
+
+        pool->handoffToInline(QStringLiteral("video"), 22.0, false);
+        QCOMPARE(handoff.count(), 2);
+        QCOMPARE(handoff.last().at(2).toBool(), false);
+    }
 };
 
 QTEST_GUILESS_MAIN(TestVideoArbiter)

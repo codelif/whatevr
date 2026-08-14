@@ -59,6 +59,7 @@ type fakeCommandActions struct {
 	forwardChats      []string
 	downloadMessage   string
 	streamMessage     string
+	streamUpdate      func(app.MediaStreamUpdate)
 	cancelledMessage  string
 	playedMessage     string
 	fetchJID          string
@@ -237,11 +238,12 @@ func (f *fakeCommandActions) DownloadMessageMedia(_ context.Context, messageID s
 	f.downloadMessage = messageID
 	return appstore.Message{ID: messageID}, f.err
 }
-func (f *fakeCommandActions) StreamMessageMedia(_ context.Context, messageID string) (app.MediaStream, error) {
+func (f *fakeCommandActions) StreamMessageMedia(_ context.Context, messageID string, update func(app.MediaStreamUpdate)) (app.MediaStream, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.streamMessage = messageID
-	return app.MediaStream{URL: "http://127.0.0.1:1/media/" + messageID, Mime: "video/mp4", SizeBytes: 42}, f.err
+	f.streamUpdate = update
+	return app.MediaStream{StreamID: "stream-" + messageID, URL: "http://127.0.0.1:1/media/" + messageID, Mime: "video/mp4", SizeBytes: 42}, f.err
 }
 func (f *fakeCommandActions) CancelMessageMediaDownload(_ context.Context, messageID string) error {
 	f.mu.Lock()
@@ -534,6 +536,72 @@ func TestC2MessageAndMediaCommands(t *testing.T) {
 	result = c.recv()["result"].(map[string]any)
 	if result["path"] != "/cache/avatar.jpg" || actions.fetchJID != "user@s.whatsapp.net" {
 		t.Fatalf("fetch profile result/action = %v/%q", result, actions.fetchJID)
+	}
+}
+
+func TestMediaStreamResponsePrecedesDirectedTerminalUpdate(t *testing.T) {
+	actions := &fakeCommandActions{}
+	socketPath, _ := startCommandTestServer(t, actions)
+	requester := dialTest(t, socketPath)
+	requester.hello()
+	other := dialTest(t, socketPath)
+	other.hello()
+
+	requester.sendLine(`{"id":2,"method":"media.stream","params":{"message_id":"m-video"}}`)
+	var notify func(app.MediaStreamUpdate)
+	deadline := time.Now().Add(time.Second)
+	for notify == nil && time.Now().Before(deadline) {
+		actions.mu.Lock()
+		notify = actions.streamUpdate
+		actions.mu.Unlock()
+		if notify == nil {
+			time.Sleep(time.Millisecond)
+		}
+	}
+	if notify == nil {
+		t.Fatal("media stream callback was not registered")
+	}
+	// Deliver immediately. The command goroutine must still put its response
+	// ahead of this event on the connection queue.
+	notify(app.MediaStreamUpdate{
+		StreamID:  "stream-m-video",
+		MessageID: "m-video",
+		State:     "local",
+		Path:      "/cache/video.mp4",
+	})
+
+	response := requester.recv()
+	result, ok := response["result"].(map[string]any)
+	if !ok || result["stream_id"] != "stream-m-video" {
+		t.Fatalf("first frame = %v, want stream response", response)
+	}
+	event := requester.recv()
+	if event["event"] != "media_stream_update" || event["state"] != "local" || event["path"] != "/cache/video.mp4" {
+		t.Fatalf("terminal event = %v", event)
+	}
+
+	_ = other.conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+	if line, err := other.r.ReadBytes('\n'); err == nil {
+		t.Fatalf("unrelated connection received %q", line)
+	}
+}
+
+func TestMediaStreamFailedTerminalUpdate(t *testing.T) {
+	actions := &fakeCommandActions{}
+	socketPath, _ := startCommandTestServer(t, actions)
+	c := dialTest(t, socketPath)
+	c.hello()
+	c.sendLine(`{"id":2,"method":"media.stream","params":{"message_id":"m-failed"}}`)
+	response := c.recv()
+	result := response["result"].(map[string]any)
+	streamID := result["stream_id"].(string)
+	actions.mu.Lock()
+	notify := actions.streamUpdate
+	actions.mu.Unlock()
+	notify(app.MediaStreamUpdate{StreamID: streamID, MessageID: "m-failed", State: "failed", ErrorText: "network down"})
+	event := c.recv()
+	if event["state"] != "failed" || event["error"] != "network down" {
+		t.Fatalf("failed event = %v", event)
 	}
 }
 

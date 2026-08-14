@@ -70,6 +70,8 @@ public:
     /// Forgets a position, so the next play starts from the beginning. What a
     /// clip that ran to its end does.
     Q_INVOKABLE void clearResumePosition(const QString &messageId);
+    /// Delivers a completed full-screen handoff to the matching inline bubble.
+    Q_INVOKABLE void handoffToInline(const QString &messageId, double seconds, bool resumePlayback);
 
     /// Testing hooks. The live limit is the user's setting; the tests set it
     /// directly so they do not depend on a QSettings store.
@@ -90,6 +92,7 @@ Q_SIGNALS:
     /// property change, in an order QML does not promise, so it would as often
     /// read the value from before the save.
     void resumePositionChanged(const QString &messageId);
+    void inlineHandoff(const QString &messageId, double seconds, bool resumePlayback);
 
 private:
     void offerAnimatedSlot();

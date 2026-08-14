@@ -131,7 +131,7 @@ Item {
     signal mentionAllClicked()
     signal imageViewRequested(string localPath)
     /// A video, GIF or video note asked to open full screen.
-    signal videoViewRequested(string messageId, string localPath, string streamUrl, string kind, int durationSecs, real startAt)
+    signal videoViewRequested(string messageId, string localPath, string streamUrl, string streamId, string kind, int durationSecs, real startAt)
 
     onLoadingOlderMessagesChanged: {
         if (loadingOlderMessages) {
@@ -1616,7 +1616,7 @@ Item {
             onReplyPreviewActivated: messageId => root.jumpToReplyTarget(messageId)
             onReadMoreRequested: messageId => root.openMessageContent(messageId)
             onImageActivated: localPath => root.imageViewRequested(localPath)
-            onVideoActivated: (messageId, localPath, streamUrl, kind, durationSecs, startAt) => root.videoViewRequested(messageId, localPath, streamUrl, kind, durationSecs, startAt)
+            onVideoActivated: (messageId, localPath, streamUrl, streamId, kind, durationSecs, startAt) => root.videoViewRequested(messageId, localPath, streamUrl, streamId, kind, durationSecs, startAt)
             onMentionClicked: jid => root.mentionClicked(jid)
             onMentionAllClicked: root.mentionAllClicked()
             onContextMenuRequested: (posX, posY) => root.openContextMenu(messageDelegate, posX, posY)

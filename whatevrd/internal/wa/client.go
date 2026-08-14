@@ -77,10 +77,12 @@ type Client struct {
 	groupParticipantsFresh    map[string]time.Time
 	groupParticipantsInFlight map[string]bool
 
-	mediaDownloadMu sync.Mutex
-	mediaDownloads  map[string]*mediaDownloadState
-	mediaRetryMu    sync.Mutex
-	mediaRetries    map[string]*mediaRetryState
+	mediaDownloadMu     sync.Mutex
+	mediaDownloads      map[string]*mediaDownloadState
+	messageStickerMu    sync.Mutex
+	messageStickerLocks map[string]*messageStickerKeyLock
+	mediaRetryMu        sync.Mutex
+	mediaRetries        map[string]*mediaRetryState
 
 	// In-progress ranged fetches, keyed by message ID, plus the loopback
 	// server that serves them to players while they fill; see media_stream.go.
@@ -167,6 +169,14 @@ type mediaDownloadState struct {
 	// outlives the command that started it, which means the only way to stop a
 	// 400 MiB video is to hold on to its cancel here.
 	cancel context.CancelFunc
+	// cancelled lets the command close this message's transfer immediately
+	// while shared sticker cache work continues for other waiters.
+	cancelled atomic.Bool
+}
+
+type messageStickerKeyLock struct {
+	token chan struct{}
+	refs  int
 }
 
 type mediaRetryState struct {

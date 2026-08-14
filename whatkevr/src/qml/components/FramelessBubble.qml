@@ -291,11 +291,16 @@ Item {
                 }
 
                 Button {
+                    objectName: "sticker.retryButton"
                     anchors.horizontalCenter: parent.horizontalCenter
                     visible: !framelessRoot.row.hasLocalSticker && !framelessRoot.row.mediaDownloading
                     flat: true
-                    icon.name: "folder-download-symbolic"
-                    text: Whatevr.I18n.i18nc("@action:button", "Load sticker")
+                    icon.name: framelessRoot.row.mediaDownloadError.length > 0
+                        ? "view-refresh-symbolic"
+                        : "folder-download-symbolic"
+                    text: framelessRoot.row.mediaDownloadError.length > 0
+                        ? Whatevr.I18n.i18nc("@action:button", "Try again")
+                        : Whatevr.I18n.i18nc("@action:button", "Load sticker")
                     enabled: framelessRoot.row.messageId.length > 0
                     onClicked: {
                         Whatevr.ProtocolController.downloadMessageMedia(framelessRoot.row.messageId)
@@ -304,6 +309,7 @@ Item {
                 }
 
                 Label {
+                    objectName: "sticker.downloadError"
                     anchors.horizontalCenter: parent.horizontalCenter
                     width: parent.width
                     visible: (staticSticker.status === Image.Error
@@ -320,7 +326,7 @@ Item {
                     anchors.horizontalCenter: parent.horizontalCenter
                     width: parent.width
                     visible: !framelessRoot.row.mediaDownloading && framelessRoot.row.mediaDownloadError.length > 0
-                    text: framelessRoot.row.mediaDownloadError
+                    text: Whatevr.I18n.i18nc("@info", "Sticker could not be downloaded")
                     color: Kirigami.Theme.negativeTextColor
                     font.pointSize: Kirigami.Theme.smallFont.pointSize
                     wrapMode: Text.Wrap

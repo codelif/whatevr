@@ -59,10 +59,16 @@ func (c *Client) CancelMessageMediaDownload(ctx context.Context, messageID strin
 
 	c.mediaDownloadMu.Lock()
 	if state := c.mediaDownloads[messageID]; state != nil && state.cancel != nil {
+		state.cancelled.Store(true)
 		state.cancel()
 		cancelled = true
 	}
 	c.mediaDownloadMu.Unlock()
+	if cancelled {
+		if message, err := c.store.GetMessage(ctx, messageID); err == nil {
+			c.daemon.PublishMediaDownloadChanged(messageID, message.ChatID, false, "", 0, uint64(max(0, message.MediaSizeBytes)))
+		}
+	}
 
 	c.mediaStreamMu.Lock()
 	_, streaming := c.mediaStreams[messageID]
@@ -143,8 +149,11 @@ func (c *Client) DownloadMessageMedia(ctx context.Context, messageID string) (ap
 	var totalBytes uint64
 	started := false
 	defer func() {
+		if state.cancelled.Load() {
+			return
+		}
 		errorText := ""
-		if state.err != nil {
+		if state.err != nil && !errors.Is(state.err, context.Canceled) {
 			errorText = state.err.Error()
 		}
 		if !started && errorText == "" {
@@ -182,8 +191,8 @@ func (c *Client) DownloadMessageMedia(ctx context.Context, messageID string) (ap
 	}
 
 	totalBytes = media.GetFileLength()
-	if totalBytes > maxInboundMediaBytes {
-		state.err = app.NewCommandError(app.CommandErrorRejected, "media size must be between 1 byte and %d MiB", maxInboundMediaBytes/(1024*1024))
+	if err := validateInboundMediaSizeIfKnown(int64(totalBytes)); err != nil {
+		state.err = err
 		return appstore.Message{}, state.err
 	}
 
@@ -209,6 +218,27 @@ func (c *Client) DownloadMessageMedia(ctx context.Context, messageID string) (ap
 	mediaDir := filepath.Join(c.paths.MediaCacheDir, "messages", message.ChatID)
 	stickerKey, _ := stickerCacheKey(message)
 	if message.MediaKind == appstore.MediaKindSticker && stickerKey != "" {
+		release, err := c.acquireMessageStickerKey(ctx, stickerKey)
+		if err != nil {
+			state.err = err
+			return appstore.Message{}, err
+		}
+		defer release()
+		// The canonical sticker fetch is cache work shared by every message with
+		// this key. Once this caller owns the key it must outlive cancellation of
+		// that one message so queued waiters do not restart the same download.
+		ctx = c.backgroundContext()
+		// Another message with the same content may have completed while this
+		// row waited. Reuse its verified canonical file and clear any stale row
+		// error through the ordinary path update.
+		if updated, ok, err := c.resolveCachedStickerMedia(ctx, message); err != nil {
+			state.err = err
+			return appstore.Message{}, err
+		} else if ok {
+			state.message = updated
+			c.daemon.PublishMessageUpdated(toDaemonMessage(updated))
+			return updated, nil
+		}
 		mediaDir = filepath.Join(c.paths.MediaCacheDir, "stickers")
 	}
 	if err := os.MkdirAll(mediaDir, 0o700); err != nil {
@@ -221,11 +251,19 @@ func (c *Client) DownloadMessageMedia(ctx context.Context, messageID string) (ap
 		fileName = stickerKey + mediaExtension(message.MediaMimeType)
 	}
 	localPath := filepath.Join(mediaDir, fileName)
-	partPath := localPath + ".part"
-
-	partFile, err := os.OpenFile(partPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o600)
+	// Each fetch owns a separate temporary file. A ranged stream may still have
+	// its sparse .part open when this whole-file fallback starts, and identical
+	// sticker messages may target the same canonical path.
+	partFile, err := os.CreateTemp(mediaDir, "."+fileName+".download-*.part")
 	if err != nil {
 		state.err = app.NewCommandError(app.CommandErrorInternal, "create media cache file: %v", err)
+		return appstore.Message{}, state.err
+	}
+	partPath := partFile.Name()
+	if err := partFile.Chmod(0o600); err != nil {
+		partFile.Close()
+		os.Remove(partPath)
+		state.err = app.NewCommandError(app.CommandErrorInternal, "secure media cache file: %v", err)
 		return appstore.Message{}, state.err
 	}
 	partOpen := true
@@ -274,8 +312,8 @@ func (c *Client) DownloadMessageMedia(ctx context.Context, messageID string) (ap
 		state.err = app.NewCommandError(app.CommandErrorInternal, "stat media cache file: %v", err)
 		return appstore.Message{}, state.err
 	}
-	if fileInfo.Size() == 0 || fileInfo.Size() > maxOutboundMediaBytes {
-		state.err = app.NewCommandError(app.CommandErrorRejected, "media size must be between 1 byte and %d MiB", maxOutboundMediaBytes/(1024*1024))
+	if err := validateInboundMediaSize(fileInfo.Size()); err != nil {
+		state.err = err
 		return appstore.Message{}, state.err
 	}
 	var mediaWidth, mediaHeight int32
@@ -318,6 +356,58 @@ func (c *Client) DownloadMessageMedia(ctx context.Context, messageID string) (ap
 	c.queueVideoPoster(updated, posterPriorityDownload)
 	c.maybeDeriveVoiceWaveform(ctx, updated)
 	return updated, nil
+}
+
+func validateInboundMediaSize(size int64) error {
+	if size <= 0 || size > maxInboundMediaBytes {
+		return app.NewCommandError(app.CommandErrorRejected, "media size must be between 1 byte and %d MiB", maxInboundMediaBytes/(1024*1024))
+	}
+	return nil
+}
+
+func validateInboundMediaSizeIfKnown(size int64) error {
+	if size == 0 {
+		return nil
+	}
+	return validateInboundMediaSize(size)
+}
+
+// acquireMessageStickerKey serializes inbound message downloads by canonical
+// cache key. Each message keeps its own transfer and cancellation context. A
+// cancelled waiter leaves the active owner and every other waiter untouched.
+func (c *Client) acquireMessageStickerKey(ctx context.Context, key string) (func(), error) {
+	c.messageStickerMu.Lock()
+	if c.messageStickerLocks == nil {
+		c.messageStickerLocks = make(map[string]*messageStickerKeyLock)
+	}
+	lock := c.messageStickerLocks[key]
+	if lock == nil {
+		lock = &messageStickerKeyLock{token: make(chan struct{}, 1)}
+		lock.token <- struct{}{}
+		c.messageStickerLocks[key] = lock
+	}
+	lock.refs++
+	c.messageStickerMu.Unlock()
+
+	select {
+	case <-lock.token:
+		return func() {
+			lock.token <- struct{}{}
+			c.releaseMessageStickerKey(key, lock)
+		}, nil
+	case <-ctx.Done():
+		c.releaseMessageStickerKey(key, lock)
+		return nil, ctx.Err()
+	}
+}
+
+func (c *Client) releaseMessageStickerKey(key string, lock *messageStickerKeyLock) {
+	c.messageStickerMu.Lock()
+	defer c.messageStickerMu.Unlock()
+	lock.refs--
+	if lock.refs == 0 && c.messageStickerLocks[key] == lock {
+		delete(c.messageStickerLocks, key)
+	}
 }
 
 // mediaProgressFile wraps the media cache file handed to whatsmeow's

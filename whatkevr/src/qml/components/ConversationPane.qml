@@ -746,8 +746,8 @@ Kirigami.Page {
                 onMentionClicked: jid => contactInfoDialog.openFor({ isGroup: false, targetJid: jid })
                 onMentionAllClicked: root.openChatInfo()
                 onImageViewRequested: localPath => messageImageViewer.showImage(localPath)
-                onVideoViewRequested: (messageId, localPath, streamUrl, kind, durationSecs, startAt) =>
-                    messageImageViewer.showVideo(messageId, localPath, streamUrl, kind, durationSecs, startAt)
+                onVideoViewRequested: (messageId, localPath, streamUrl, streamId, kind, durationSecs, startAt) =>
+                    messageImageViewer.showVideo(messageId, localPath, streamUrl, streamId, kind, durationSecs, startAt)
             }
 
             // Full-screen viewer for message photos and video. Saving and

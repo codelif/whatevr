@@ -409,9 +409,14 @@ void ChatBubblePerf::idleVideoDefersItsBackendAndUsesASharpPoster()
 
     QVERIFY(!bubble->findChild<QQuickItem *>(QStringLiteral("videoBubble.transportStrip")));
     QObject *fullscreen = bubble->findChild<QObject *>(QStringLiteral("videoBubble.fullscreenButton"));
+    QObject *audio = bubble->findChild<QObject *>(QStringLiteral("videoBubble.audioButton"));
     QVERIFY(fullscreen);
+    QVERIFY(audio);
     QVERIFY(fullscreen->property("visible").toBool());
+    QVERIFY(audio->property("visible").toBool());
     QCOMPARE(backend->property("muted").toBool(), true);
+    QVERIFY(QMetaObject::invokeMethod(audio, "clicked"));
+    QCOMPARE(backend->property("muted").toBool(), false);
 
     const QString screenshotPath = qEnvironmentVariable("WHATKEVR_DN20_SCREENSHOT");
     if (!screenshotPath.isEmpty()) {
@@ -457,6 +462,7 @@ void ChatBubblePerf::rectangularVideoStreamsOnceAndLatchesItsSource()
     const QUrl streamUrl(QStringLiteral("http://127.0.0.1:7777/media/video-stream?t=test"));
     QVERIFY(QMetaObject::invokeMethod(m_controller.get(), "mediaStreamReady", Qt::DirectConnection,
                                       Q_ARG(QString, QStringLiteral("video-stream")),
+                                      Q_ARG(QString, QStringLiteral("stream-video-stream")),
                                       Q_ARG(QUrl, streamUrl)));
     QCOMPARE(videoBubble->property("requestPending").toBool(), false);
     QCOMPARE(videoBubble->property("playbackSource").toUrl(), streamUrl);
@@ -567,7 +573,7 @@ void ChatBubblePerf::videoDelegateReuseClearsPlaybackState()
     QCOMPARE(videoBubble->property("playAfterDownload").toBool(), false);
     QCOMPARE(videoBubble->property("retryDownloadOnly").toBool(), false);
     QCOMPARE(videoBubble->property("playbackFailed").toBool(), false);
-    QCOMPARE(videoBubble->property("userMuted").toBool(), false);
+    QCOMPARE(videoBubble->property("userMuted").toBool(), true);
 }
 
 void ChatBubblePerf::endOfFileReturnsToThePosterAndCanReplay()

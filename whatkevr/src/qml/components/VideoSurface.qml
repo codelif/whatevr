@@ -49,6 +49,19 @@ Item {
     /// True once there is a decoded frame to show. This, not `active`, is what
     /// callers should swap their thumbnail out on.
     readonly property bool hasFrame: backend ? backend.surfaceHasFrame : false
+    // Decoder errors and source teardown can reset position to zero before the
+    // owner gets a chance to hand off. Keep the last meaningful value here.
+    property real lastUsablePosition: 0
+
+    function handoffPosition() {
+        return position > 0 ? position : lastUsablePosition
+    }
+
+    onPositionChanged: {
+        if (position > 0)
+            lastUsablePosition = position
+    }
+    onMessageIdChanged: lastUsablePosition = 0
 
     signal endOfFile
     /// Something else took the exclusive lane. The caller must stop wanting to
@@ -91,7 +104,7 @@ Item {
     function rememberPosition() {
         if (messageId.length === 0 || !grantHeld)
             return
-        const at = position
+        const at = handoffPosition()
         const total = duration
         // Not worth resuming at either end: a clip that barely started should
         // start, and one that ran to its end should not open on its last frame.

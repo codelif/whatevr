@@ -215,7 +215,7 @@ func TestEnsureMediaStreamDoesNotRelockStreamMutex(t *testing.T) {
 
 	result := make(chan error, 1)
 	go func() {
-		_, err := client.ensureMediaStream(message, server.URL)
+		_, err := client.ensureMediaStream(message, server.URL, "test-stream", nil)
 		result <- err
 	}()
 	select {

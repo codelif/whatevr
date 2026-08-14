@@ -171,6 +171,17 @@ void VideoPlaybackArbiter::clearResumePosition(const QString &messageId)
     Q_EMIT resumePositionChanged(messageId);
 }
 
+void VideoPlaybackArbiter::handoffToInline(const QString &messageId, double seconds, bool resumePlayback)
+{
+    if (messageId.isEmpty()) {
+        return;
+    }
+    if (seconds > 0.0) {
+        setResumePosition(messageId, seconds);
+    }
+    Q_EMIT inlineHandoff(messageId, seconds, resumePlayback);
+}
+
 void VideoPlaybackArbiter::rememberOrder(const QString &messageId)
 {
     m_positionOrder.removeAll(messageId);

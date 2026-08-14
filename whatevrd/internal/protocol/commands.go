@@ -97,7 +97,7 @@ type CommandActions interface {
 	PinMessage(context.Context, string, bool, uint32) (appstore.Message, error)
 	ForwardMessage(context.Context, string, []string) ([]appstore.SavedTextMessage, error)
 	DownloadMessageMedia(context.Context, string) (appstore.Message, error)
-	StreamMessageMedia(context.Context, string) (app.MediaStream, error)
+	StreamMessageMedia(context.Context, string, func(app.MediaStreamUpdate)) (app.MediaStream, error)
 	CancelMessageMediaDownload(context.Context, string) error
 	MarkMessagePlayed(context.Context, string) error
 	FetchProfilePicture(context.Context, string) (string, error)
@@ -147,7 +147,7 @@ func RegisterDaemonCommands(s *Server, actions CommandActions) {
 	s.RegisterCommand("message.forward", cmd.messageForward)
 	s.RegisterCommand("message.mark_played", backgroundNet(cmd.messageMarkPlayed, false))
 	s.RegisterCommand("media.download", cmd.mediaDownload)
-	s.RegisterCommand("media.stream", backgroundNet(cmd.mediaStream, false))
+	s.RegisterCommand("media.stream", cmd.mediaStreamCommand)
 	s.RegisterCommand("media.cancel_download", backgroundNet(cmd.mediaCancelDownload, false))
 	s.RegisterCommand("media.fetch_profile_picture", backgroundNet(cmd.mediaFetchProfilePicture, true))
 	// Phase C3 settings/contact/sticker commands and transient queries.

@@ -154,6 +154,12 @@ Q_SIGNALS:
     void errorOccurred(const QString &message);
     // A connection-directed `open_chat` event (notification click / URL).
     void openChatRequested(const QString &chatId);
+    // Terminal recovery for one media.stream request on this connection.
+    void mediaStreamUpdated(const QString &streamId,
+                            const QString &messageId,
+                            const QString &state,
+                            const QString &path,
+                            const QString &error);
 
 private:
     friend class Subscription;

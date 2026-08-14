@@ -3,6 +3,7 @@ package wa
 import (
 	"bytes"
 	"context"
+	"errors"
 	"image"
 	"image/png"
 	"io"
@@ -279,6 +280,55 @@ func TestMediaProgressFileCountsBytesThroughIoCopy(t *testing.T) {
 	}
 	if lastReported == 0 {
 		t.Fatal("progress was never reported during the copy")
+	}
+}
+
+func TestInboundVideoLargerThanOutboundLimitIsAccepted(t *testing.T) {
+	const inboundVideoSize = int64(27_750_968)
+	if inboundVideoSize <= maxOutboundMediaBytes {
+		t.Fatal("test input must exceed the outbound send limit")
+	}
+	if err := validateInboundMediaSize(inboundVideoSize); err != nil {
+		t.Fatalf("validate inbound video: %v", err)
+	}
+	if err := validateInboundMediaSize(maxInboundMediaBytes + 1); err == nil {
+		t.Fatal("media larger than the inbound limit was accepted")
+	}
+}
+
+func TestMessageStickerKeyCancellationDoesNotReleaseOwner(t *testing.T) {
+	client := &Client{}
+	releaseOwner, err := client.acquireMessageStickerKey(context.Background(), "same-sticker")
+	if err != nil {
+		t.Fatalf("acquire owner: %v", err)
+	}
+
+	cancelledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := client.acquireMessageStickerKey(cancelledCtx, "same-sticker"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled waiter error = %v", err)
+	}
+
+	acquired := make(chan func(), 1)
+	go func() {
+		release, err := client.acquireMessageStickerKey(context.Background(), "same-sticker")
+		if err == nil {
+			acquired <- release
+		}
+	}()
+	select {
+	case release := <-acquired:
+		release()
+		t.Fatal("waiter acquired while owner still held the key")
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	releaseOwner()
+	select {
+	case release := <-acquired:
+		release()
+	case <-time.After(time.Second):
+		t.Fatal("waiter did not acquire after owner released")
 	}
 }
 

@@ -88,8 +88,9 @@ func (fixtureCommands) DownloadMessageMedia(context.Context, string) (appstore.M
 func (fixtureCommands) CancelMessageMediaDownload(context.Context, string) error {
 	return nil
 }
-func (fixtureCommands) StreamMessageMedia(_ context.Context, messageID string) (app.MediaStream, error) {
+func (fixtureCommands) StreamMessageMedia(_ context.Context, messageID string, _ func(app.MediaStreamUpdate)) (app.MediaStream, error) {
 	return app.MediaStream{
+		StreamID:  "fixture-" + messageID,
 		URL:       "http://127.0.0.1:0/media/" + messageID + "?t=fixture",
 		Mime:      "video/mp4",
 		SizeBytes: 1 << 20,

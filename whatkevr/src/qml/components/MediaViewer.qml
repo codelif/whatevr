@@ -23,6 +23,7 @@ QQC2.Popup {
     property string localPath: ""
     /// Streaming URL, used when the file is not complete yet.
     property url streamUrl
+    property string activeStreamId: ""
     property string messageId: ""
     /// The message's media kind: image, video, gif, video_note.
     property string kind: "image"
@@ -33,6 +34,9 @@ QQC2.Popup {
     property real startAt: 0
     /// Suggested name when saving, for kinds that carry one.
     property string fileName: ""
+    property string returnMessageId: ""
+    property real returnPosition: 0
+    property bool returnPlaying: false
 
     readonly property bool isVideo: kind === "video" || kind === "gif" || kind === "video_note"
     readonly property bool isGif: kind === "gif"
@@ -74,16 +78,19 @@ QQC2.Popup {
         open()
     }
 
-    function showVideo(id, path, url, mediaKind, duration, at) {
+    function showVideo(id, path, url, streamId, mediaKind, duration, at) {
         kind = mediaKind && mediaKind.length > 0 ? mediaKind : "video"
         messageId = id
         localPath = path
         streamUrl = url
+        activeStreamId = streamId ?? ""
         durationSecs = duration
         fileName = ""
         // Before open(), so the surface engages with it already set: the start
         // position is read once, when the file is loaded.
         startAt = at ?? 0
+        surface.muted = false
+        surface.volume = 100
         surface.playbackWanted = true
         open()
     }
@@ -122,18 +129,40 @@ QQC2.Popup {
     z: 10002
     closePolicy: QQC2.Popup.CloseOnEscape
 
+    onAboutToHide: {
+        if (isVideo && messageId.length > 0) {
+            returnMessageId = messageId
+            returnPosition = surface.handoffPosition()
+            returnPlaying = surface.playbackWanted
+        }
+    }
+
     onClosed: {
         // Release the decoder as soon as the viewer goes away. Where the clip
         // got to is already written down by the surface as it lets go, so the
         // bubble underneath comes back showing that position rather than zero.
         streamUrl = ""
+        activeStreamId = ""
         localPath = ""
         messageId = ""
         kind = "image"
         startAt = 0
         surface.speed = 1.0
+        surface.volume = 100
+        surface.muted = false
         surface.playbackWanted = true
         playbackFailed = false
+        const id = returnMessageId
+        const at = returnPosition
+        const resume = returnPlaying
+        returnMessageId = ""
+        returnPosition = 0
+        returnPlaying = false
+        if (id.length > 0) {
+            Qt.callLater(function() {
+                Whatevr.VideoPlayback.handoffToInline(id, at, resume)
+            })
+        }
     }
 
     onOpened: {
@@ -152,6 +181,25 @@ QQC2.Popup {
     }
 
     onBufferingChanged: if (!buffering) playbackFailed = false
+
+    Connections {
+        target: Whatevr.ProtocolController
+
+        function onMediaStreamUpdated(streamId, messageId, state, path, error) {
+            if (streamId !== root.activeStreamId || messageId !== root.messageId)
+                return
+            root.activeStreamId = ""
+            if (state === "local" && path.length > 0) {
+                const at = surface.handoffPosition()
+                root.startAt = at
+                root.localPath = path
+                root.playbackFailed = false
+            } else if (state === "failed") {
+                surface.playbackWanted = false
+                root.playbackFailed = true
+            }
+        }
+    }
 
     Timer {
         id: chromeTimer

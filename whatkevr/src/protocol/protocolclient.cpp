@@ -272,6 +272,12 @@ void ProtocolClient::handleEvent(const QJsonObject &msg)
     if (!msg.contains(QStringLiteral("sub"))) {
         if (event == QLatin1String("open_chat")) {
             Q_EMIT openChatRequested(msg.value(QStringLiteral("chat_id")).toString());
+        } else if (event == QLatin1String("media_stream_update")) {
+            Q_EMIT mediaStreamUpdated(msg.value(QStringLiteral("stream_id")).toString(),
+                                      msg.value(QStringLiteral("message_id")).toString(),
+                                      msg.value(QStringLiteral("state")).toString(),
+                                      msg.value(QStringLiteral("path")).toString(),
+                                      msg.value(QStringLiteral("error")).toString());
         }
         return;
     }

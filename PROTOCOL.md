@@ -284,7 +284,7 @@ views.
 | `message.forward` | `message_id`, `chat_ids` | `{message_ids}` |
 | `message.mark_played` | `message_id` | `{}`: sends a played receipt for an inbound voice note; repeat calls are no-ops |
 | `media.download` | `message_id` | `{}`: progress in `transfers`, path lands via message upsert |
-| `media.stream` | `message_id` | `{url, mime, size_bytes, duration_secs}`: a loopback range URL that plays while the fetch is still running. The fetch continues to completion regardless, so the message still upserts with `media.path`, after which the path is what frontends should use. May fail `rejected` for media that cannot be streamed (no length or hash, a CDN that ignores ranges); the caller falls back to `media.download` |
+| `media.stream` | `message_id` | `{stream_id, url, mime, size_bytes, duration_secs}`: `stream_id` is opaque and identifies this request. The loopback range URL plays while the fetch is still running. The fetch continues to completion regardless, so the message still upserts with `media.path`, after which the path is what frontends should use. May fail `rejected` for media that cannot be streamed (no length or hash, a CDN that ignores ranges); the caller falls back to `media.download` |
 | `media.cancel_download` | `message_id` | `{}`: stops an in-flight `media.download` or `media.stream` fetch and closes the `transfers` row. Whatever has already landed on disk is kept, so a later `media.download` resumes rather than starting over. Fails `rejected` when nothing is in flight for that message |
 | `media.fetch_profile_picture` | `jid` | `{path}`: full resolution, for the avatar viewer |
 
@@ -344,11 +344,12 @@ another message upsert.
 
 ## Connection-directed events
 
-Events without `sub`, sent to specific connections. Currently exactly one:
+Events without `sub`, sent to specific connections:
 
 | event | data | meaning |
 | --- | --- | --- |
 | `open_chat` | `chat_id` | the user asked the system to surface a chat (notification click, `whatevr://chat/…` URL); sent to the most recently focused frontend (per `session.update`), which should raise its window and open the chat. If no frontend is currently focused, it falls back to the most recently active session, so a notification click raises an existing but unfocused window instead of cold-starting a duplicate |
+| `media_stream_update` | `stream_id`, `message_id`, `state`, plus `path` for `local` or `error` for `failed` | terminal recovery after a late failure of the matching `media.stream`. `local` means the daemon completed and verified a separate whole-file fallback, persisted `media.path`, and the player should replace its source with `path`. `failed` means that fallback also failed. The event is sent only to the connection that requested `stream_id`, after that command's response, and at most once for that id. No event is sent when ranged streaming completes normally |
 
 ## Example session
 

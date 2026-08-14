@@ -6,7 +6,7 @@ require (
 	github.com/godbus/dbus/v5 v5.2.2
 	github.com/mattn/go-sqlite3 v1.14.49
 	github.com/nyaruka/phonenumbers v1.8.1
-	go.mau.fi/whatsmeow v0.0.0-20260813204424-197e61747d53
+	go.mau.fi/whatsmeow v0.0.0-20260814123134-0dcf1f50f4b1
 	google.golang.org/protobuf v1.36.12
 )
 

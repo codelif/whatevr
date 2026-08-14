@@ -41,6 +41,7 @@ type mediaStreamEntry struct {
 	completedPath string
 	size          int64
 	mime          string
+	requesters    map[string]func(app.MediaStreamUpdate)
 }
 
 // StreamMessageMedia starts (or joins) a ranged fetch for a message's media and
@@ -48,7 +49,7 @@ type mediaStreamEntry struct {
 // completion in the background, so a message played once ends up as an ordinary
 // complete cache file, at which point the message row upserts with media.path.
 // The URL remains usable by a player that opened it before promotion.
-func (c *Client) StreamMessageMedia(ctx context.Context, messageID string) (app.MediaStream, error) {
+func (c *Client) StreamMessageMedia(ctx context.Context, messageID string, update func(app.MediaStreamUpdate)) (app.MediaStream, error) {
 	messageID = strings.TrimSpace(messageID)
 	if messageID == "" {
 		return app.MediaStream{}, app.NewCommandError(app.CommandErrorInvalidArgument, "message_id is required")
@@ -75,17 +76,30 @@ func (c *Client) StreamMessageMedia(ctx context.Context, messageID string) (app.
 		return app.MediaStream{}, err
 	}
 
-	entry, err := c.ensureMediaStream(message, url)
+	streamID, err := newMediaStreamID()
+	if err != nil {
+		return app.MediaStream{}, app.NewCommandError(app.CommandErrorInternal, "create media stream id: %v", err)
+	}
+	entry, err := c.ensureMediaStream(message, url, streamID, update)
 	if err != nil {
 		return app.MediaStream{}, err
 	}
 
 	return app.MediaStream{
+		StreamID:     streamID,
 		URL:          c.mediaStreamEndpoint(message.ID),
 		Mime:         entry.mime,
 		SizeBytes:    uint64(entry.size),
 		DurationSecs: message.MediaDurationSecs,
 	}, nil
+}
+
+func newMediaStreamID() (string, error) {
+	data := make([]byte, 18)
+	if _, err := rand.Read(data); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(data), nil
 }
 
 // mediaStreamURL resolves where the encrypted bytes live. The payload's own URL
@@ -142,7 +156,7 @@ func mediaStreamAppInfo(mediaKind string) whatsmeow.MediaType {
 
 // ensureMediaStream returns the live stream for a message, starting one if
 // needed. Two viewers of the same message share a single fetch.
-func (c *Client) ensureMediaStream(message appstore.Message, url string) (*mediaStreamEntry, error) {
+func (c *Client) ensureMediaStream(message appstore.Message, url, streamID string, update func(app.MediaStreamUpdate)) (*mediaStreamEntry, error) {
 	httpClient := c.mediaStreamClient()
 
 	c.mediaStreamMu.Lock()
@@ -152,6 +166,16 @@ func (c *Client) ensureMediaStream(message appstore.Message, url string) (*media
 		c.mediaStreams = make(map[string]*mediaStreamEntry)
 	}
 	if entry, ok := c.mediaStreams[message.ID]; ok {
+		if entry.completedPath != "" {
+			if update != nil {
+				update(app.MediaStreamUpdate{})
+			}
+			return entry, nil
+		}
+		if entry.requesters == nil {
+			entry.requesters = make(map[string]func(app.MediaStreamUpdate))
+		}
+		entry.requesters[streamID] = update
 		return entry, nil
 	}
 
@@ -202,11 +226,12 @@ func (c *Client) ensureMediaStream(message appstore.Message, url string) (*media
 	}
 
 	entry := &mediaStreamEntry{
-		stream:    stream,
-		partPath:  finalPath + ".part",
-		finalPath: finalPath,
-		size:      stream.Size(),
-		mime:      message.MediaMimeType,
+		stream:     stream,
+		partPath:   finalPath + ".part",
+		finalPath:  finalPath,
+		size:       stream.Size(),
+		mime:       message.MediaMimeType,
+		requesters: map[string]func(app.MediaStreamUpdate){streamID: update},
 	}
 	c.mediaStreams[message.ID] = entry
 	c.daemon.PublishMediaDownloadChanged(messageID, chatID, true, "", uint64(stream.ReadyBytes()), uint64(stream.Size()))
@@ -257,18 +282,13 @@ func (c *Client) finishMediaStream(messageID string, streamErr error) {
 			return
 		}
 		c.log.Warnf("Media stream for %s failed: %v", messageID, streamErr)
-		c.dropMediaStream(messageID, errors.Is(streamErr, mediastream.ErrRangeUnsupported))
-		// A stream that cannot work falls back to the whole-file download,
-		// which is also what surfaces the error on the message row.
-		if _, err := c.DownloadMessageMedia(ctx, messageID); err != nil {
-			c.log.Warnf("Fallback download for %s failed: %v", messageID, err)
-		}
+		c.recoverMediaStream(ctx, messageID, entry, errors.Is(streamErr, mediastream.ErrRangeUnsupported))
 		return
 	}
 
 	if err := os.Rename(entry.partPath, entry.finalPath); err != nil {
 		c.log.Warnf("Failed to promote streamed media for %s: %v", messageID, err)
-		c.dropMediaStream(messageID, true)
+		c.recoverMediaStream(ctx, messageID, entry, true)
 		return
 	}
 	os.Remove(entry.partPath + ".idx")
@@ -288,12 +308,44 @@ func (c *Client) finishMediaStream(messageID string, streamErr error) {
 	updated, err := c.store.UpdateMessageMediaLocalPath(ctx, messageID, entry.finalPath)
 	if err != nil {
 		c.log.Warnf("Failed to record streamed media path for %s: %v", messageID, err)
+		c.finishMediaStreamRequesters(entry, app.MediaStreamUpdate{})
 		return
 	}
 	c.daemon.PublishMediaDownloadChanged(messageID, updated.ChatID, false, "", uint64(entry.size), uint64(entry.size))
 	c.daemon.PublishMessageUpdated(toDaemonMessage(updated))
 	c.queueVideoPoster(updated, posterPriorityDownload)
 	c.maybeDeriveVoiceWaveform(ctx, updated)
+	c.finishMediaStreamRequesters(entry, app.MediaStreamUpdate{})
+}
+
+func (c *Client) recoverMediaStream(ctx context.Context, messageID string, entry *mediaStreamEntry, discardPartial bool) {
+	c.dropMediaStream(messageID, discardPartial)
+	// The whole-file fallback owns a distinct temporary file and persists the
+	// message path before any requester is told to replace its source.
+	updated, err := c.DownloadMessageMedia(ctx, messageID)
+	if err != nil {
+		c.log.Warnf("Fallback download for %s failed: %v", messageID, err)
+		c.finishMediaStreamRequesters(entry, app.MediaStreamUpdate{MessageID: messageID, State: "failed", ErrorText: err.Error()})
+		return
+	}
+	c.finishMediaStreamRequesters(entry, app.MediaStreamUpdate{MessageID: messageID, State: "local", Path: updated.MediaLocalPath})
+}
+
+func (c *Client) finishMediaStreamRequesters(entry *mediaStreamEntry, update app.MediaStreamUpdate) {
+	if entry == nil {
+		return
+	}
+	c.mediaStreamMu.Lock()
+	requesters := entry.requesters
+	entry.requesters = nil
+	c.mediaStreamMu.Unlock()
+	for streamID, notify := range requesters {
+		if notify == nil {
+			continue
+		}
+		update.StreamID = streamID
+		notify(update)
+	}
 }
 
 // dropMediaStream stops and forgets a stream. discardPartial also removes the
