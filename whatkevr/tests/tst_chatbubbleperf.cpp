@@ -14,6 +14,7 @@
 
 #include <QApplication>
 #include <QElapsedTimer>
+#include <QImage>
 #include <QQmlComponent>
 #include <QQmlEngine>
 #include <QQuickItem>
@@ -134,6 +135,8 @@ private Q_SLOTS:
     void cleanupTestCase();
     void delegateCost_data();
     void delegateCost();
+    void idleVideoDefersItsBackendAndUsesASharpPoster();
+    void endOfFileReturnsToThePosterAndCanReplay();
 
 private:
     QQuickWindow *m_window = nullptr;
@@ -227,6 +230,14 @@ void ChatBubblePerf::delegateCost_data()
                     {QStringLiteral("mediaMimeType"), QStringLiteral("image/jpeg")},
                     {QStringLiteral("mediaWidth"), 1280},
                     {QStringLiteral("mediaHeight"), 720}}), 122},
+        {"video",
+         withProps(baseProps(),
+                   {{QStringLiteral("messageId"), QStringLiteral("m6-video")},
+                    {QStringLiteral("mediaKind"), QStringLiteral("video")},
+                    {QStringLiteral("mediaMimeType"), QStringLiteral("video/mp4")},
+                    {QStringLiteral("mediaWidth"), 1280},
+                    {QStringLiteral("mediaHeight"), 720},
+                    {QStringLiteral("mediaDurationSecs"), 12}}), 135},
         {"sticker",
          withProps(baseProps(),
                    {{QStringLiteral("messageId"), QStringLiteral("m7")},
@@ -331,6 +342,133 @@ void ChatBubblePerf::delegateCost()
                             .arg(QLatin1StringView(QTest::currentDataTag()))
                             .arg(objects)
                             .arg(maxObjects)));
+}
+
+void ChatBubblePerf::idleVideoDefersItsBackendAndUsesASharpPoster()
+{
+    QTemporaryDir mediaDir;
+    QVERIFY(mediaDir.isValid());
+    QImage thumbnail(1280, 720, QImage::Format_RGB32);
+    for (int y = 0; y < thumbnail.height(); ++y) {
+        const int green = 55 + (y * 150 / thumbnail.height());
+        for (int x = 0; x < thumbnail.width(); ++x) {
+            const int red = 35 + (x * 180 / thumbnail.width());
+            thumbnail.setPixelColor(x, y, QColor(red, green, 190));
+        }
+    }
+    const QString thumbnailPath = mediaDir.filePath(QStringLiteral("video-poster.png"));
+    QVERIFY(thumbnail.save(thumbnailPath));
+
+    QVariantMap props = withProps(
+        baseProps(),
+        {{QStringLiteral("messageId"), QStringLiteral("video-idle")},
+         {QStringLiteral("mediaKind"), QStringLiteral("video")},
+         {QStringLiteral("mediaMimeType"), QStringLiteral("video/mp4")},
+         {QStringLiteral("mediaLocalPath"), QStringLiteral("/tmp/whatkevr-video.mp4")},
+         {QStringLiteral("mediaThumbnailLocalPath"), thumbnailPath},
+         {QStringLiteral("mediaWidth"), 1280},
+         {QStringLiteral("mediaHeight"), 720},
+         {QStringLiteral("mediaDurationSecs"), 12}});
+
+    QQmlComponent component(
+        m_engine, QUrl(QStringLiteral("qrc:/qt/qml/Whatevr/qml/components/ChatBubble.qml")));
+    QVERIFY2(!component.isError(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> bubble(component.createWithInitialProperties(props));
+    QVERIFY2(bubble, qPrintable(component.errorString()));
+    qobject_cast<QQuickItem *>(bubble.get())->setParentItem(m_host);
+
+    QObject *videoBubble = bubble->findChild<QObject *>(QStringLiteral("videoBubble"));
+    QObject *backendLoader = bubble->findChild<QObject *>(QStringLiteral("videoSurface.backendLoader"));
+    QObject *poster = bubble->findChild<QObject *>(QStringLiteral("videoBubble.poster"));
+    QVERIFY(videoBubble);
+    QVERIFY(backendLoader);
+    QVERIFY(poster);
+
+    QCOMPARE(videoBubble->property("phase").toString(), QStringLiteral("idle"));
+    QVERIFY(backendLoader->property("item").value<QObject *>() == nullptr);
+
+    const QSize posterDecode = poster->property("sourceSize").toSize();
+    QCOMPARE(posterDecode.width(), bubble->property("imageDecodeWidth").toInt());
+    QCOMPARE(posterDecode.height(), bubble->property("imageDecodeHeight").toInt());
+    QVERIFY(posterDecode.width() > bubble->property("thumbnailDecodeWidth").toInt());
+
+    // Image-only media overlays its timestamp at the bottom right. The inline
+    // transport must stop before that reserved footer area begins.
+    QVERIFY(videoBubble->property("transportRightMargin").toReal()
+            >= bubble->property("tntWidth").toReal() + bubble->property("footerInset").toReal());
+
+    // Materialize the playing chrome without needing a codec fixture. The
+    // backend interface is deliberately writable, so the test can report the
+    // same first-frame boundary that mpv and Qt Multimedia report at runtime.
+    QVERIFY(QMetaObject::invokeMethod(videoBubble, "beginPlayback"));
+    QObject *backend = backendLoader->property("item").value<QObject *>();
+    QVERIFY(backend);
+    QVERIFY(backend->setProperty("surfaceDuration", 12.0));
+    QVERIFY(backend->setProperty("surfacePosition", 4.0));
+    QVERIFY(backend->setProperty("surfaceHasFrame", true));
+    QTRY_COMPARE(videoBubble->property("phase").toString(), QStringLiteral("playing"));
+
+    auto *transport = bubble->findChild<QQuickItem *>(QStringLiteral("videoBubble.transportStrip"));
+    auto *footer = bubble->findChild<QQuickItem *>(QStringLiteral("chatBubble.footerSlot"));
+    QVERIFY(transport);
+    QVERIFY(footer);
+    const QRectF transportRect = transport->mapRectToItem(m_host, transport->boundingRect());
+    const QRectF footerRect = footer->mapRectToItem(m_host, footer->boundingRect());
+    QVERIFY2(!transportRect.intersects(footerRect),
+             qPrintable(QStringLiteral("transport %1,%2 %3x%4 overlaps footer %5,%6 %7x%8")
+                            .arg(transportRect.x()).arg(transportRect.y())
+                            .arg(transportRect.width()).arg(transportRect.height())
+                            .arg(footerRect.x()).arg(footerRect.y())
+                            .arg(footerRect.width()).arg(footerRect.height())));
+
+    const QString screenshotPath = qEnvironmentVariable("WHATKEVR_DN20_SCREENSHOT");
+    if (!screenshotPath.isEmpty()) {
+        m_window->show();
+        QTest::qWait(100);
+        QVERIFY(m_window->grabWindow().save(screenshotPath));
+    }
+}
+
+void ChatBubblePerf::endOfFileReturnsToThePosterAndCanReplay()
+{
+    QVariantMap props = withProps(
+        baseProps(),
+        {{QStringLiteral("messageId"), QStringLiteral("video-replay")},
+         {QStringLiteral("mediaKind"), QStringLiteral("video_note")},
+         {QStringLiteral("mediaMimeType"), QStringLiteral("video/mp4")},
+         {QStringLiteral("mediaLocalPath"), QStringLiteral("/tmp/whatkevr-video-note.mp4")},
+         {QStringLiteral("mediaWidth"), 480},
+         {QStringLiteral("mediaHeight"), 480},
+         {QStringLiteral("mediaDurationSecs"), 5}});
+
+    QQmlComponent component(
+        m_engine, QUrl(QStringLiteral("qrc:/qt/qml/Whatevr/qml/components/ChatBubble.qml")));
+    QVERIFY2(!component.isError(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> bubble(component.createWithInitialProperties(props));
+    QVERIFY2(bubble, qPrintable(component.errorString()));
+    qobject_cast<QQuickItem *>(bubble.get())->setParentItem(m_host);
+
+    QObject *videoBubble = bubble->findChild<QObject *>(QStringLiteral("videoBubble"));
+    QObject *surface = bubble->findChild<QObject *>(QStringLiteral("videoBubble.surface"));
+    QObject *backendLoader = bubble->findChild<QObject *>(QStringLiteral("videoSurface.backendLoader"));
+    QVERIFY(videoBubble);
+    QVERIFY(surface);
+    QVERIFY(backendLoader);
+
+    QVERIFY(QMetaObject::invokeMethod(videoBubble, "beginPlayback"));
+    QCOMPARE(videoBubble->property("intent").toString(), QStringLiteral("playing"));
+    QVERIFY(backendLoader->property("item").value<QObject *>() != nullptr);
+
+    // Signal the same boundary both playback engines report. EOF must release
+    // and destroy the exhausted backend, then expose an ordinary Play state.
+    QVERIFY(QMetaObject::invokeMethod(surface, "endOfFile"));
+    QCOMPARE(videoBubble->property("intent").toString(), QStringLiteral("stopped"));
+    QCOMPARE(videoBubble->property("phase").toString(), QStringLiteral("idle"));
+    QVERIFY(backendLoader->property("item").value<QObject *>() == nullptr);
+
+    QVERIFY(QMetaObject::invokeMethod(videoBubble, "activate"));
+    QCOMPARE(videoBubble->property("intent").toString(), QStringLiteral("playing"));
+    QVERIFY(backendLoader->property("item").value<QObject *>() != nullptr);
 }
 
 int main(int argc, char *argv[])

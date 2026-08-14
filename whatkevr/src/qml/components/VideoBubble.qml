@@ -30,6 +30,7 @@ import "MediaFormat.js" as MediaFormat
 Item {
     id: root
 
+    objectName: "videoBubble"
     required property ChatBubble row
 
     property real topLeftRadius: 0
@@ -113,7 +114,11 @@ Item {
             return "downloading"
         if (playbackFailed)
             return "failed"
-        if (surface.hasFrame)
+        // A backend may retain its last decoded frame until its teardown lands.
+        // That frame is presentation only, not playback state. Once the clip is
+        // stopped, return to the poster and let the next tap create a fresh
+        // backend instead of trying to resume a decoder already sitting at EOF.
+        if (engaged && surface.hasFrame)
             return wantsRun ? "playing" : "paused"
         if (engaged && surface.grantHeld)
             return "buffering"
@@ -128,6 +133,9 @@ Item {
     /// a hover, and it is the point: there is one set of controls, in one place,
     /// that you do not have to discover.
     readonly property bool showsTransport: showsVideo && !row.selectionModeActive
+    readonly property real transportRightMargin: row.imageOnly
+        ? row.tntWidth + row.footerInset + Kirigami.Units.smallSpacing
+        : Kirigami.Units.smallSpacing
 
     Timer {
         id: failureTimer
@@ -289,16 +297,29 @@ Item {
         Image {
             id: poster
 
+            objectName: "videoBubble.poster"
+            property bool everDecoded: false
+            readonly property string targetPath: root.row.mediaThumbnailLocalPath
+            onTargetPathChanged: everDecoded = false
+            onStatusChanged: if (status === Image.Ready) everDecoded = true
+
             anchors.fill: parent
             visible: false
+            // Do not begin a texture upload in the middle of a fast fling. An
+            // already-decoded poster remains available, while a new one waits
+            // for the list to settle. This is the same policy as photo rows.
             source: root.hasThumbnail && !root.row.pooled
+                    && (!root.row.fastFlicking || everDecoded)
                 ? Qt.resolvedUrl("file://" + root.row.mediaThumbnailLocalPath)
                 : ""
             fillMode: Image.PreserveAspectCrop
             asynchronous: true
             cache: true
-            sourceSize.width: root.row.thumbnailDecodeWidth
-            sourceSize.height: root.row.thumbnailDecodeHeight
+            // The generic thumbnail cap is deliberately tiny and exists to
+            // make a blurred photo placeholder. A video poster is the final
+            // idle artwork, so decode it at the stable media display size.
+            sourceSize.width: root.row.imageDecodeWidth
+            sourceSize.height: root.row.imageDecodeHeight
         }
 
         RoundedImage {
@@ -327,6 +348,7 @@ Item {
         VideoSurface {
             id: surface
 
+            objectName: "videoBubble.surface"
             anchors.fill: parent
             // Underneath the poster and the placeholder plate. It has to be
             // visible to render at all (below), but until it has frames it is
@@ -609,13 +631,19 @@ Item {
     // up rather than fading on a timer, because a control you have to make
     // reappear is a control you have to know about first.
     Loader {
+        id: transportLoader
+
+        objectName: "videoBubble.transportLoader"
         anchors.left: picture.left
         anchors.right: picture.right
         anchors.bottom: picture.bottom
-        anchors.margins: Kirigami.Units.smallSpacing
+        anchors.leftMargin: Kirigami.Units.smallSpacing
+        anchors.rightMargin: root.transportRightMargin
+        anchors.bottomMargin: Kirigami.Units.smallSpacing
         active: root.showsTransport && !root.isVideoNote
 
         sourceComponent: Rectangle {
+            objectName: "videoBubble.transportStrip"
             height: stripRow.implicitHeight + Kirigami.Units.smallSpacing
             radius: Kirigami.Units.cornerRadius
             color: Qt.alpha("black", 0.55)

@@ -134,7 +134,14 @@ Item {
     Loader {
         id: loader
 
+        objectName: "videoSurface.backendLoader"
         anchors.fill: parent
+        // An idle bubble is only a poster. Do not create QQuickFramebufferObject
+        // render state or a Qt Multimedia MediaPlayer merely because the row
+        // entered ListView's cache band. The backend is rebuilt for each real
+        // playback session, which also guarantees that replay after EOF starts
+        // with a fresh engine rather than an exhausted one.
+        active: root.grantHeld
         // Reading usingMpv is what resolves the engine, so this binding is
         // already correct the first time it runs: there is no startup default
         // to build a decoder on and tear down a tick later, and no flag to be

@@ -1455,6 +1455,7 @@ Item {
             Item {
                 id: footerSlot
 
+                objectName: "chatBubble.footerSlot"
                 // Image-only: overlay on the media bottom-right (over the
                 // vignette). Otherwise sit at the right inner edge, inline with
                 // the last text line or on its own row.
@@ -1490,6 +1491,15 @@ Item {
                 }
                 width: root.tntWidth
                 height: root.tntHeight
+
+                Rectangle {
+                    anchors.fill: parent
+                    anchors.margins: -root.tntSpacing
+                    visible: root.imageOnly && root.isPlayableVideo
+                    z: -1
+                    radius: height / 2
+                    color: Qt.alpha("black", 0.55)
+                }
 
                 // Delivery status, built only for rows that show one — i.e.
                 // never for incoming messages. The single/double forms share

@@ -60,10 +60,10 @@ SettingsPage {
         FormCard.FormDelegateSeparator {}
 
         FormCard.FormComboBoxDelegate {
-            id: inlineVideoCombo
-            objectName: "advanced.inlineVideoLimit"
-            text: Whatevr.I18n.i18nc("@label:listbox", "Videos playing at once")
-            description: Whatevr.I18n.i18nc("@info", "Each one holds a decoder. \"None\" keeps every bubble a thumbnail and plays only in the full-screen viewer.")
+            id: gifPlayerCombo
+            objectName: "advanced.gifPlayerLimit"
+            text: Whatevr.I18n.i18nc("@label:listbox", "GIFs playing at once")
+            description: Whatevr.I18n.i18nc("@info", "Each one holds a decoder. \"None\" keeps GIF bubbles as still thumbnails.")
             textRole: "label"
             valueRole: "limit"
             model: [
@@ -72,8 +72,8 @@ SettingsPage {
                 { label: Whatevr.I18n.i18nc("@item:inlistbox", "2"), limit: 2 },
                 { label: Whatevr.I18n.i18nc("@item:inlistbox", "3"), limit: 3 }
             ]
-            currentIndex: Math.max(0, Math.min(3, Whatevr.Settings.inlineVideoLimit))
-            onActivated: index => Whatevr.Settings.inlineVideoLimit = model[index].limit
+            currentIndex: Math.max(0, Math.min(3, Whatevr.Settings.gifPlayerLimit))
+            onActivated: index => Whatevr.Settings.gifPlayerLimit = model[index].limit
         }
 
         FormCard.FormDelegateSeparator {}
