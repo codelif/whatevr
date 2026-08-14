@@ -89,10 +89,9 @@ QString TestMediaPlayback::writeSilentWav(double seconds)
 
 void TestMediaPlayback::coreIsValidUnderTheApplicationLocale()
 {
-    MpvCore core(MpvCore::Mode::Audio);
+    MpvCore core;
     QVERIFY2(core.isValid(),
              "mpv_create() failed: LC_NUMERIC is probably not \"C\" (see MpvCore::ensureNumericLocale)");
-    QVERIFY(core.handle() != nullptr);
 }
 
 void TestMediaPlayback::loadingAFileReportsItsDuration()
@@ -100,7 +99,7 @@ void TestMediaPlayback::loadingAFileReportsItsDuration()
     const QString path = writeSilentWav(0.4);
     QVERIFY(!path.isEmpty());
 
-    MpvCore core(MpvCore::Mode::Audio);
+    MpvCore core;
     QVERIFY(core.isValid());
 
     QSignalSpy durations(&core, &MpvCore::durationChanged);

@@ -92,6 +92,15 @@ type Client struct {
 	mediaServerAddr  string
 	mediaServerToken string
 
+	// One ffmpeg worker handles derived posters. New downloads sit ahead of
+	// startup backfill work, and the map prevents duplicate queued decodes.
+	posterMu        sync.Mutex
+	posterHigh      []appstore.Message
+	posterLow       []appstore.Message
+	posterQueued    map[string]posterPriority
+	posterWake      chan struct{}
+	posterExtractor func(context.Context, string, string) error
+
 	stickerMu            sync.Mutex
 	stickerDownloads     map[string]*stickerFileDownloadState
 	stickerDownloadSem   chan struct{}
@@ -189,6 +198,8 @@ func New(ctx context.Context, paths app.Paths, daemon *app.Daemon, store *appsto
 		frontendSessions: make(map[string]frontendSession),
 		mediaDownloads:   make(map[string]*mediaDownloadState),
 		mediaRetries:     make(map[string]*mediaRetryState),
+		posterQueued:     make(map[string]posterPriority),
+		posterWake:       make(chan struct{}, 1),
 		sendQueueWake:    make(chan struct{}, 1),
 		reconnectCh:      make(chan struct{}, 1),
 		stickerDownloads: make(map[string]*stickerFileDownloadState),
@@ -217,6 +228,7 @@ func (c *Client) Start(ctx context.Context) {
 	runCtx := c.replaceRunContextLocked(ctx)
 	c.startRunGoroutine(func() { c.runConnectionSupervisor(runCtx) })
 	c.startRunGoroutine(func() { c.runSendQueue(runCtx) })
+	c.startRunGoroutine(func() { c.runVideoPosterWorker(runCtx) })
 	c.startRunGoroutine(c.repairCachedWebPAlphaFlags)
 	c.startAvatarWorker(runCtx)
 }

@@ -5,11 +5,16 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	waLog "go.mau.fi/whatsmeow/util/log"
+	"google.golang.org/protobuf/proto"
+
+	waE2E "go.mau.fi/whatsmeow/proto/waE2E"
 
 	"whatevrd/internal/app"
 	"whatevrd/internal/mediastream"
@@ -146,6 +151,81 @@ func TestMediaServerNotFoundForUnknownMessage(t *testing.T) {
 	resp := get(t, client.mediaStreamEndpoint("missing"), nil)
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestMediaServerKeepsURLAfterPromotion(t *testing.T) {
+	client := newMediaServerClient(t)
+	plaintext := bytes.Repeat([]byte("completed-video"), 20000)
+	registerFakeStream(t, client, "promoted", plaintext)
+	url := client.mediaStreamEndpoint("promoted")
+
+	finalPath := filepath.Join(t.TempDir(), "promoted.mp4")
+	if err := os.WriteFile(finalPath, plaintext, 0o600); err != nil {
+		t.Fatalf("write promoted file: %v", err)
+	}
+	client.mediaStreamMu.Lock()
+	entry := client.mediaStreams["promoted"]
+	entry.completedPath = finalPath
+	entry.size = int64(len(plaintext))
+	client.mediaStreamMu.Unlock()
+
+	resp := get(t, url, http.Header{"Range": {"bytes=1234-1333"}})
+	if resp.StatusCode != http.StatusPartialContent {
+		t.Fatalf("promoted range status = %d, want 206", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read promoted range: %v", err)
+	}
+	if !bytes.Equal(body, plaintext[1234:1334]) {
+		t.Fatal("promoted URL did not serve the completed local file")
+	}
+}
+
+func TestEnsureMediaStreamDoesNotRelockStreamMutex(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	payload, err := proto.Marshal(&waE2E.VideoMessage{
+		URL:        proto.String(server.URL),
+		MediaKey:   bytes.Repeat([]byte{1}, 32),
+		FileLength: proto.Uint64(1024),
+		FileSHA256: bytes.Repeat([]byte{2}, 32),
+		Mimetype:   proto.String("video/mp4"),
+	})
+	if err != nil {
+		t.Fatalf("marshal video payload: %v", err)
+	}
+
+	client := &Client{
+		daemon: app.NewDaemon(app.Paths{}),
+		log:    waLog.Noop,
+		paths:  app.Paths{MediaCacheDir: t.TempDir()},
+	}
+	message := appstore.Message{
+		ID:            "first-stream",
+		ChatID:        "chat-1",
+		MediaKind:     appstore.MediaKindVideo,
+		MediaMimeType: "video/mp4",
+		MediaPayload:  payload,
+	}
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := client.ensureMediaStream(message, server.URL)
+		result <- err
+	}()
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatalf("ensure media stream: %v", err)
+		}
+		client.dropMediaStream(message.ID, false)
+	case <-time.After(time.Second):
+		t.Fatal("ensureMediaStream deadlocked while initializing its HTTP client")
 	}
 }
 

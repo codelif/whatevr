@@ -370,3 +370,31 @@ func TestCiphertextLenAlwaysPads(t *testing.T) {
 		}
 	}
 }
+
+func TestFinishCallbackMayCloseStream(t *testing.T) {
+	partPath := filepath.Join(t.TempDir(), "callback.part")
+	file, err := OpenSparseFile(partPath, 1)
+	if err != nil {
+		t.Fatalf("open sparse file: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	stream := &Stream{
+		file:     file,
+		partPath: partPath,
+		ctx:      ctx,
+		cancel:   cancel,
+		finished: make(chan struct{}),
+	}
+	done := make(chan struct{})
+	stream.done = func(error) {
+		stream.Close()
+		close(done)
+	}
+
+	go stream.finish(nil)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("finish callback deadlocked while closing its stream")
+	}
+}

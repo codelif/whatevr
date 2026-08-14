@@ -45,13 +45,6 @@ class Settings final : public QObject
     Q_PROPERTY(bool showAvatars READ showAvatars WRITE setShowAvatars NOTIFY showAvatarsChanged FINAL)
 
     // --- Media playback (Advanced) ---
-    // Which engine plays video: "auto" (mpv when the scene graph allows it),
-    // "mpv", or "qt". Takes effect on restart, because the graphics API the mpv
-    // path needs is pinned during startup.
-    Q_PROPERTY(QString videoBackend READ videoBackend WRITE setVideoBackend NOTIFY videoBackendChanged FINAL)
-    // Hardware video decoding. The first thing to turn off when a driver
-    // misbehaves.
-    Q_PROPERTY(bool hardwareDecoding READ hardwareDecoding WRITE setHardwareDecoding NOTIFY hardwareDecodingChanged FINAL)
     // How many GIFs may loop at once. Videos and video notes are not counted:
     // exactly one of those plays anywhere, which is not a tunable. 0 means GIFs
     // stay thumbnails and play only when opened full screen.
@@ -145,10 +138,6 @@ public:
     void setMessageFontSize(int points);
     [[nodiscard]] bool showAvatars() const;
     void setShowAvatars(bool show);
-    [[nodiscard]] QString videoBackend() const;
-    void setVideoBackend(const QString &backend);
-    [[nodiscard]] bool hardwareDecoding() const;
-    void setHardwareDecoding(bool enabled);
     [[nodiscard]] int gifPlayerLimit() const;
     void setGifPlayerLimit(int limit);
     [[nodiscard]] bool pausePlaybackWhileScrolling() const;
@@ -234,8 +223,6 @@ Q_SIGNALS:
     void compactModeChanged();
     void messageFontSizeChanged();
     void showAvatarsChanged();
-    void videoBackendChanged();
-    void hardwareDecodingChanged();
     void gifPlayerLimitChanged();
     void pausePlaybackWhileScrollingChanged();
     void streamWhileDownloadingChanged();
@@ -271,8 +258,6 @@ private:
     int m_density = DensityStandard;
     int m_messageFontSize = 0;
     bool m_showAvatars = true;
-    QString m_videoBackend = QStringLiteral("auto");
-    bool m_hardwareDecoding = true;
     int m_gifPlayerLimit = 3;
     bool m_pausePlaybackWhileScrolling = true;
     bool m_streamWhileDownloading = true;

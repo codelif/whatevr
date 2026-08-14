@@ -18,7 +18,7 @@ constexpr double resumeTailSeconds = 1.0;
 
 AudioPlayer::AudioPlayer(QObject *parent)
     : QObject(parent)
-    , m_core(new MpvCore(MpvCore::Mode::Audio, this))
+    , m_core(new MpvCore(this))
 {
     connect(m_core, &MpvCore::playingChanged, this, [this] {
         if (m_core->playing() && !m_startedReported && !m_messageId.isEmpty()) {
@@ -206,4 +206,3 @@ void AudioPlayer::rememberPosition()
         m_resumePositions.remove(m_messageId);
     }
 }
-

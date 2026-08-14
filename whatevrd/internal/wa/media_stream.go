@@ -29,27 +29,25 @@ import (
 // whatsmeow's media connection hands back in practice.
 const mediaStreamHost = "mmg.whatsapp.net"
 
-// mediaStreamIdleTimeout is how long a finished stream stays resident before
-// its file handle is released. Long enough that pausing and resuming a video
-// costs nothing, short enough that a browsed-through gallery does not pin a
-// handle per item.
-const mediaStreamIdleTimeout = 2 * time.Minute
-
 type mediaStreamEntry struct {
-	stream   *mediastream.Stream
-	partPath string
+	stream *mediastream.Stream
+	// activeRequests counts handlers that started while the sparse stream was
+	// still live. Once they finish after promotion, the sparse reader can close.
+	activeRequests int
+	partPath       string
 	// finalPath is where the file is renamed once every chunk has landed and
 	// the hash checks out.
-	finalPath string
-	mime      string
-	idleTimer *time.Timer
+	finalPath     string
+	completedPath string
+	size          int64
+	mime          string
 }
 
 // StreamMessageMedia starts (or joins) a ranged fetch for a message's media and
 // returns a loopback URL a player can open immediately. The fetch continues to
 // completion in the background, so a message played once ends up as an ordinary
-// complete cache file, at which point the message row upserts with media.path
-// and this URL stops being needed.
+// complete cache file, at which point the message row upserts with media.path.
+// The URL remains usable by a player that opened it before promotion.
 func (c *Client) StreamMessageMedia(ctx context.Context, messageID string) (app.MediaStream, error) {
 	messageID = strings.TrimSpace(messageID)
 	if messageID == "" {
@@ -85,7 +83,7 @@ func (c *Client) StreamMessageMedia(ctx context.Context, messageID string) (app.
 	return app.MediaStream{
 		URL:          c.mediaStreamEndpoint(message.ID),
 		Mime:         entry.mime,
-		SizeBytes:    uint64(entry.stream.Size()),
+		SizeBytes:    uint64(entry.size),
 		DurationSecs: message.MediaDurationSecs,
 	}, nil
 }
@@ -145,6 +143,8 @@ func mediaStreamAppInfo(mediaKind string) whatsmeow.MediaType {
 // ensureMediaStream returns the live stream for a message, starting one if
 // needed. Two viewers of the same message share a single fetch.
 func (c *Client) ensureMediaStream(message appstore.Message, url string) (*mediaStreamEntry, error) {
+	httpClient := c.mediaStreamClient()
+
 	c.mediaStreamMu.Lock()
 	defer c.mediaStreamMu.Unlock()
 
@@ -152,10 +152,6 @@ func (c *Client) ensureMediaStream(message appstore.Message, url string) (*media
 		c.mediaStreams = make(map[string]*mediaStreamEntry)
 	}
 	if entry, ok := c.mediaStreams[message.ID]; ok {
-		if entry.idleTimer != nil {
-			entry.idleTimer.Stop()
-			entry.idleTimer = nil
-		}
 		return entry, nil
 	}
 
@@ -193,7 +189,7 @@ func (c *Client) ensureMediaStream(message appstore.Message, url string) (*media
 	stream, err := mediastream.New(
 		source,
 		finalPath+".part",
-		c.mediaStreamClient(),
+		httpClient,
 		func(received, total int64) {
 			c.daemon.PublishMediaDownloadChanged(messageID, chatID, true, "", uint64(received), uint64(total))
 		},
@@ -209,6 +205,7 @@ func (c *Client) ensureMediaStream(message appstore.Message, url string) (*media
 		stream:    stream,
 		partPath:  finalPath + ".part",
 		finalPath: finalPath,
+		size:      stream.Size(),
 		mime:      message.MediaMimeType,
 	}
 	c.mediaStreams[message.ID] = entry
@@ -244,8 +241,8 @@ func (c *Client) mediaStreamClient() *http.Client {
 
 // finishMediaStream promotes a completed stream into an ordinary cache entry:
 // the partial file becomes the real file and the message row upserts with its
-// path, after which nothing consults the stream again. A failed stream keeps
-// whatever it fetched (so a retry resumes) but records the error.
+// path. Existing stream URLs keep serving the completed file. A failed stream
+// keeps whatever it fetched (so a retry resumes) but records the error.
 func (c *Client) finishMediaStream(messageID string, streamErr error) {
 	c.mediaStreamMu.Lock()
 	entry, ok := c.mediaStreams[messageID]
@@ -276,35 +273,27 @@ func (c *Client) finishMediaStream(messageID string, streamErr error) {
 	}
 	os.Remove(entry.partPath + ".idx")
 
+	c.mediaStreamMu.Lock()
+	entry.completedPath = entry.finalPath
+	var streamToClose *mediastream.Stream
+	if entry.activeRequests == 0 && entry.stream != nil {
+		streamToClose = entry.stream
+		entry.stream = nil
+	}
+	c.mediaStreamMu.Unlock()
+	if streamToClose != nil {
+		streamToClose.Close()
+	}
+
 	updated, err := c.store.UpdateMessageMediaLocalPath(ctx, messageID, entry.finalPath)
 	if err != nil {
 		c.log.Warnf("Failed to record streamed media path for %s: %v", messageID, err)
-		c.dropMediaStream(messageID, false)
 		return
 	}
-	c.daemon.PublishMediaDownloadChanged(messageID, updated.ChatID, false, "", uint64(entry.stream.Size()), uint64(entry.stream.Size()))
+	c.daemon.PublishMediaDownloadChanged(messageID, updated.ChatID, false, "", uint64(entry.size), uint64(entry.size))
 	c.daemon.PublishMessageUpdated(toDaemonMessage(updated))
+	c.queueVideoPoster(updated, posterPriorityDownload)
 	c.maybeDeriveVoiceWaveform(ctx, updated)
-
-	// Keep the entry briefly so a player mid-request can finish reading, then
-	// let it go: the file is on disk and future plays use the path.
-	c.scheduleMediaStreamRelease(messageID)
-}
-
-// scheduleMediaStreamRelease drops a finished stream after an idle period.
-func (c *Client) scheduleMediaStreamRelease(messageID string) {
-	c.mediaStreamMu.Lock()
-	defer c.mediaStreamMu.Unlock()
-	entry, ok := c.mediaStreams[messageID]
-	if !ok {
-		return
-	}
-	if entry.idleTimer != nil {
-		entry.idleTimer.Stop()
-	}
-	entry.idleTimer = time.AfterFunc(mediaStreamIdleTimeout, func() {
-		c.dropMediaStream(messageID, false)
-	})
 }
 
 // dropMediaStream stops and forgets a stream. discardPartial also removes the
@@ -315,19 +304,20 @@ func (c *Client) dropMediaStream(messageID string, discardPartial bool) {
 	entry, ok := c.mediaStreams[messageID]
 	if ok {
 		delete(c.mediaStreams, messageID)
-		if entry.idleTimer != nil {
-			entry.idleTimer.Stop()
-		}
 	}
 	c.mediaStreamMu.Unlock()
 	if !ok {
 		return
 	}
 	if discardPartial {
-		entry.stream.Discard()
+		if entry.stream != nil {
+			entry.stream.Discard()
+		}
 		return
 	}
-	entry.stream.Close()
+	if entry.stream != nil {
+		entry.stream.Close()
+	}
 }
 
 // closeMediaStreams stops every in-flight stream, for daemon shutdown.
@@ -340,10 +330,9 @@ func (c *Client) closeMediaStreams() {
 	}
 	c.mediaStreamMu.Unlock()
 	for _, entry := range streams {
-		if entry.idleTimer != nil {
-			entry.idleTimer.Stop()
+		if entry.stream != nil {
+			entry.stream.Close()
 		}
-		entry.stream.Close()
 	}
 }
 
@@ -437,6 +426,13 @@ func (c *Client) serveMediaStream(w http.ResponseWriter, r *http.Request) {
 
 	c.mediaStreamMu.Lock()
 	entry, ok := c.mediaStreams[messageID]
+	completedPath := ""
+	if ok {
+		completedPath = entry.completedPath
+		if completedPath == "" {
+			entry.activeRequests++
+		}
+	}
 	c.mediaStreamMu.Unlock()
 	if !ok {
 		http.NotFound(w, r)
@@ -446,6 +442,23 @@ func (c *Client) serveMediaStream(w http.ResponseWriter, r *http.Request) {
 	if entry.mime != "" {
 		w.Header().Set("Content-Type", entry.mime)
 	}
+	if completedPath != "" {
+		file, err := os.Open(completedPath)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		defer file.Close()
+		info, err := file.Stat()
+		if err != nil {
+			http.Error(w, "could not stat media", http.StatusInternalServerError)
+			return
+		}
+		http.ServeContent(w, r, filepath.Base(completedPath), info.ModTime(), file)
+		return
+	}
+
+	defer c.releaseMediaStreamRequest(messageID, entry)
 	// http.ServeContent handles range parsing, 206 responses and Content-Range;
 	// the reader below is what makes those ranges wait for bytes that have not
 	// arrived yet.
@@ -453,6 +466,27 @@ func (c *Client) serveMediaStream(w http.ResponseWriter, r *http.Request) {
 		stream: entry.stream,
 		ctx:    r.Context(),
 	})
+}
+
+func (c *Client) releaseMediaStreamRequest(messageID string, requested *mediaStreamEntry) {
+	c.mediaStreamMu.Lock()
+	entry, ok := c.mediaStreams[messageID]
+	if !ok || entry != requested {
+		c.mediaStreamMu.Unlock()
+		return
+	}
+	if entry.activeRequests > 0 {
+		entry.activeRequests--
+	}
+	var streamToClose *mediastream.Stream
+	if entry.activeRequests == 0 && entry.completedPath != "" && entry.stream != nil {
+		streamToClose = entry.stream
+		entry.stream = nil
+	}
+	c.mediaStreamMu.Unlock()
+	if streamToClose != nil {
+		streamToClose.Close()
+	}
 }
 
 // mediaStreamReader is a seekable view over an in-progress stream. A read of

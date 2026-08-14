@@ -4,7 +4,7 @@ pragma ComponentBehavior: Bound
 import QtQuick
 
 /**
- * The interface both playback engines present to the rest of the app.
+ * The interface Qt video playback presents to the rest of the app.
  *
  * Declaring it as a real type (rather than duck-typing whatever a Loader
  * produced) is what lets VideoSurface hand out typed, compiled property

@@ -19,14 +19,8 @@ set(WHATKEVR_SOURCES
     models/protocolsearchmodel.h
     media/audioplayer.cpp
     media/audioplayer.h
-    media/mediabackend.cpp
-    media/mediabackend.h
     media/mpvcore.cpp
     media/mpvcore.h
-    media/mpvpool.cpp
-    media/mpvpool.h
-    media/mpvvideoitem.cpp
-    media/mpvvideoitem.h
     media/videoarbiter.cpp
     media/videoarbiter.h
     protocol/protocolclient.cpp
@@ -123,7 +117,6 @@ set(WHATKEVR_QML_FILES
     qml/components/DocumentBubble.qml
     qml/components/MediaViewer.qml
     qml/components/VideoBubble.qml
-    qml/components/MpvVideoSurface.qml
     qml/components/QtVideoSurface.qml
     qml/components/VideoSurface.qml
     qml/components/VideoSurfaceBackend.qml

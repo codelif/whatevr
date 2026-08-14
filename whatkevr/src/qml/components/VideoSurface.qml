@@ -6,18 +6,15 @@ import QtQuick
 import Whatevr as Whatevr
 
 /**
- * The seam between the two playback engines, and the only place that asks
+ * The lazy Qt Multimedia video surface and the only place that asks
  * permission to play.
  *
  * Everything above this file (VideoBubble, MediaViewer) treats video as one
- * thing: a source, a playing flag, a position. Underneath it is either libmpv
- * or Qt Multimedia, chosen once at startup by MediaBackend, and both present
- * the same VideoSurfaceBackend interface.
+ * thing: a source, a playing flag, a position. The decoder is instantiated
+ * only after arbitration grants this surface a slot.
  *
- * Permission belongs here rather than in either engine. Expressed inside
- * MpvPool it did not exist at all on the Qt Multimedia path, where each bubble
- * builds its own MediaPlayer and every clip in the conversation played at once.
- * Asking once, above the Loader, makes the rule true of both by construction.
+ * Permission belongs here rather than inside the player. That keeps decoder
+ * limits and exclusive playback consistent for every caller.
  */
 Item {
     id: root
@@ -136,17 +133,12 @@ Item {
 
         objectName: "videoSurface.backendLoader"
         anchors.fill: parent
-        // An idle bubble is only a poster. Do not create QQuickFramebufferObject
-        // render state or a Qt Multimedia MediaPlayer merely because the row
-        // entered ListView's cache band. The backend is rebuilt for each real
-        // playback session, which also guarantees that replay after EOF starts
-        // with a fresh engine rather than an exhausted one.
+        // An idle bubble is only a poster. Do not create a MediaPlayer merely
+        // because the row entered ListView's cache band. The backend is rebuilt
+        // for each real playback session, which also guarantees that replay
+        // after EOF starts with a fresh engine rather than an exhausted one.
         active: root.grantHeld
-        // Reading usingMpv is what resolves the engine, so this binding is
-        // already correct the first time it runs: there is no startup default
-        // to build a decoder on and tear down a tick later, and no flag to be
-        // stuck false and leave the surface without a backend at all.
-        sourceComponent: Whatevr.MediaBackend.usingMpv ? mpvComponent : qtComponent
+        sourceComponent: qtComponent
 
         // Both the connect and the disconnect live here: a Loader can replace
         // or drop its item at any time, and a stale relay would deliver
@@ -165,27 +157,6 @@ Item {
 
     /// The surface the endOfFile relay is currently attached to.
     property VideoSurfaceBackend relayedBackend: null
-
-    Component {
-        id: mpvComponent
-
-        MpvVideoSurface {
-            messageId: root.messageId
-            // Gated on the grant, so a decoder only ever exists for a surface
-            // that was allowed one. That is what keeps the number of live
-            // decoders inside MpvPool's ceiling without the pool having to
-            // refuse anyone, which is where the never-ending spinner came from.
-            source: root.grantHeld ? root.source : ""
-            startPosition: root.startPosition
-            // The grant, not the request: this is the single point where "may
-            // play" turns into "is playing", for either engine.
-            playing: root.playing && root.grantHeld
-            muted: root.muted
-            loop: root.loop
-            speed: root.speed
-            volume: root.volume
-        }
-    }
 
     Component {
         id: qtComponent

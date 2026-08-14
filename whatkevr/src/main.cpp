@@ -4,8 +4,6 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickStyle>
-#include <QQuickWindow>
-#include <QSGRendererInterface>
 #include <QTimer>
 
 #include <KAboutData>
@@ -15,7 +13,6 @@
 
 #include "app/protocolcontroller.h"
 #include "app/settings.h"
-#include "media/mediabackend.h"
 #include "media/mpvcore.h"
 #include "version.h"
 
@@ -55,14 +52,6 @@ int main(int argc, char *argv[])
     g_previousMessageHandler = qInstallMessageHandler(filterKirigamiNullPropertyWarnings);
     KLocalizedString::setApplicationDomain("whatkevr");
     QQuickStyle::setStyle(QStringLiteral("org.kde.desktop"));
-    // libmpv renders video through OpenGL, so the scene graph has to be on its
-    // OpenGL backend for MpvVideo items to draw at all. On Linux this is what
-    // Qt Quick picks anyway; pinning it makes the app deterministic rather than
-    // dependent on a platform default. If this ever cannot be honoured,
-    // MediaBackend notices and video falls back to Qt Multimedia.
-    if (qEnvironmentVariableIsEmpty("QSG_RHI_BACKEND")) {
-        QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
-    }
     // Some incoming media carries malformed ICC profile descriptions; Qt warns
     // on every decode and there is nothing we can do about the files.
     QString loggingRules = QStringLiteral("qt.gui.icc.warning=false\n");
@@ -191,12 +180,6 @@ int main(int argc, char *argv[])
     // otherwise come up as the system dark theme on restart.
     QTimer::singleShot(0, &settings, [&settings] {
         settings.applyColorScheme();
-    });
-
-    // Resolve the video engine once a window exists, since the scene graph's
-    // graphics API is only knowable then.
-    QTimer::singleShot(0, &app, [] {
-        MediaBackend::instance()->resolve();
     });
 
     // Process the URL this instance was launched with, if any.

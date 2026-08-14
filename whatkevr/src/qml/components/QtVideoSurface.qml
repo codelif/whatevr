@@ -4,9 +4,8 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtMultimedia
 
-// The fallback engine, used when the scene graph is not on OpenGL and mpv
-// therefore cannot draw into our items. Everything here is expressed in the
-// same terms as the mpv path, so nothing above VideoSurface can tell them apart.
+// Qt Multimedia video playback, exposed through the small interface shared by
+// the inline bubble and full-screen viewer.
 VideoSurfaceBackend {
     id: root
 
@@ -18,11 +17,11 @@ VideoSurfaceBackend {
     // with PlayingState made pause indistinguishable from stopped.
     surfaceActive: player.playbackState !== MediaPlayer.StoppedState
     // hasVideo goes true when the media has been probed and a video track is
-    // being decoded, which is Qt's equivalent of mpv's dwidth landing. Paused
-    // counts: this asks whether there is a picture on screen, and a paused clip
-    // is showing one. Requiring PlayingState meant every paused clip reported
-    // no picture, fell back to the bubble's buffering phase, and sat under a
-    // spinner that then timed out into a failure it had not had.
+    // being decoded. Paused counts: this asks whether there is a picture on
+    // screen, and a paused clip is showing one. Requiring PlayingState meant
+    // every paused clip reported no picture, fell back to the bubble's
+    // buffering phase, and sat under a spinner that then timed out into a
+    // failure it had not had.
     surfaceHasFrame: player.hasVideo
                      && (player.playbackState === MediaPlayer.PlayingState
                          || player.playbackState === MediaPlayer.PausedState)
@@ -61,11 +60,10 @@ VideoSurfaceBackend {
 
         anchors.fill: parent
         fillMode: VideoOutput.PreserveAspectFit
-        // Hidden until it has something to show. Unlike mpv, whose decoding is
-        // driven by the scene graph rendering its item, Qt Multimedia decodes
-        // into the sink whether or not this is painted, so hiding it costs
-        // nothing. Painted while empty it is a black rectangle, which on a
-        // video note showed as black corners around the circle.
+        // Hidden until it has something to show. Qt Multimedia decodes into the
+        // sink whether or not this is painted, so hiding it costs nothing.
+        // Painted while empty it is a black rectangle, which on a video note
+        // showed as black corners around the circle.
         visible: root.surfaceHasFrame
     }
 

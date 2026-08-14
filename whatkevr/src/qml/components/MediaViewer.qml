@@ -11,11 +11,11 @@ import "MediaFormat.js" as MediaFormat
 // Full-screen media viewer: a photo, or a video with transport controls.
 //
 // It is the same shell as the profile-picture lightbox, grown a player. Video
-// goes through VideoSurface, so the viewer does not know or care which engine
-// is live, and it takes the exclusive playback lane like anything else: opening
-// it stops whatever was playing in the conversation behind, which is the point
-// rather than something to work around. It used to run on a decoder reserved
-// for it, so a clip opened full screen played twice over, from two positions.
+// goes through VideoSurface and takes the exclusive playback lane like anything
+// else: opening it stops whatever was playing in the conversation behind, which
+// is the point rather than something to work around. It used to run on a decoder
+// reserved for it, so a clip opened full screen played twice over, from two
+// positions.
 QQC2.Popup {
     id: root
 
@@ -272,9 +272,8 @@ QQC2.Popup {
                 running: visible
             }
 
-            // What a black rectangle used to say nothing about. The engine is
-            // named because it is the first thing worth knowing, and the
-            // external opener is the way out that always works.
+            // What a black rectangle used to say nothing about. The external
+            // opener is the way out that always works.
             ColumnLayout {
                 anchors.centerIn: parent
                 width: Math.min(parent.width - Kirigami.Units.gridUnit * 2, Kirigami.Units.gridUnit * 24)
@@ -295,15 +294,6 @@ QQC2.Popup {
                     color: "white"
                     horizontalAlignment: Text.AlignHCenter
                     wrapMode: Text.Wrap
-                }
-
-                QQC2.Label {
-                    Layout.fillWidth: true
-                    text: Whatevr.MediaBackend.description
-                    color: Qt.rgba(1, 1, 1, 0.7)
-                    horizontalAlignment: Text.AlignHCenter
-                    wrapMode: Text.Wrap
-                    font.pointSize: Kirigami.Theme.smallFont.pointSize
                 }
 
                 QQC2.Button {

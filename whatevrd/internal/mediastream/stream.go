@@ -413,9 +413,16 @@ func (s *Stream) verifyComplete() error {
 }
 
 func (s *Stream) finish(err error) {
+	finishedNow := false
 	s.finishOnce.Do(func() {
 		s.finishErr = err
 		close(s.finished)
-		s.done(err)
+		finishedNow = true
 	})
+	// Run the owner's callback after sync.Once has released its lock. The owner
+	// may close or discard this stream from the callback, which calls finish
+	// again and would otherwise deadlock inside sync.Once.
+	if finishedNow {
+		s.done(err)
+	}
 }

@@ -3,7 +3,6 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Controls as Controls
-import QtQuick.Layouts
 
 import org.kde.kirigami as Kirigami
 
@@ -15,11 +14,11 @@ import "MediaFormat.js" as MediaFormat
  * Video, GIF and video-note bubbles.
  *
  * All three are the same thing on the wire and differ only in presentation: a
- * video and a video note wait to be asked and play with sound, a video note in
- * a circle with a progress ring; a GIF is a silent loop that starts by itself.
- * Playback goes through VideoSurface so neither this file nor MediaViewer knows
- * which engine is live, and so that only one clip with sound plays anywhere in
- * the app.
+ * video and a video note wait to be asked, with a video note shown in a circle
+ * with a progress ring. Rectangular media is silent inline; a GIF is a silent
+ * loop that starts by itself. Playback goes through VideoSurface so arbitration
+ * and decoder lifetime stay consistent between bubbles and the full-screen
+ * viewer.
  *
  * Everything on screen is chosen by one `phase`, and every phase has exactly
  * one thing in the middle of the bubble and one meaning for a tap. That is
@@ -83,8 +82,8 @@ Item {
     readonly property bool engaged: (wantsRun || intent === "paused") && onScreen && hasSource
 
     readonly property bool loops: isGif ? Whatevr.Settings.loopGifs : false
-    /// GIFs are silent by definition. Everything else plays out loud, because
-    /// the user asked for it by tapping, and can be muted from the strip.
+    /// Only video notes use inline sound controls. Rectangular video and GIF
+    /// playback is always muted.
     property bool userMuted: false
 
     /// Where playback should pick up, refreshed from the arbiter rather than
@@ -92,11 +91,20 @@ Item {
     /// decoder, which is the only moment the position is still true.
     property real resumeAt: 0
 
-    // Local file first; while it is still downloading the daemon can stream it.
+    // The source chosen for a playback session never changes underneath the
+    // decoder. Promotion to a local file takes effect on the next session.
     property url streamUrl
-    readonly property url playbackSource: hasFile
-        ? Qt.resolvedUrl("file://" + row.mediaLocalPath)
-        : streamUrl
+    property url sessionSource
+    readonly property url playbackSource: sessionSource.toString().length > 0
+        ? sessionSource
+        : (hasFile ? Qt.resolvedUrl("file://" + row.mediaLocalPath) : streamUrl)
+
+    // Set synchronously before a protocol request is sent. This both makes the
+    // first tap visible immediately and prevents a second request.
+    property bool requestPending: false
+    property bool playAfterDownload: false
+    property bool retryDownloadOnly: false
+    signal playbackRequestDispatched(string method)
 
     /// Long enough with a decoder and no picture that something is wrong rather
     /// than slow. Before this existed a bubble that never got a frame span its
@@ -110,32 +118,27 @@ Item {
      * overlay below is allowed to test.
      */
     readonly property string phase: {
-        if (row.mediaDownloading)
-            return "downloading"
-        if (playbackFailed)
-            return "failed"
         // A backend may retain its last decoded frame until its teardown lands.
         // That frame is presentation only, not playback state. Once the clip is
         // stopped, return to the poster and let the next tap create a fresh
         // backend instead of trying to resume a decoder already sitting at EOF.
         if (engaged && surface.hasFrame)
             return wantsRun ? "playing" : "paused"
+        if (playbackFailed || (row.mediaDownloadError.length > 0 && !hasFile))
+            return "failed"
+        if (requestPending)
+            return "buffering"
         if (engaged && surface.grantHeld)
             return "buffering"
+        if (row.mediaDownloading)
+            return "downloading"
         if (!hasSource && !row.mediaDownloading)
             return "needsDownload"
         return "idle"
     }
 
     readonly property bool showsVideo: phase === "playing" || phase === "paused"
-    /// The transport belongs to any clip that has a picture up, GIFs included.
-    /// A GIF showing the same strip as a video is noisier than hiding it behind
-    /// a hover, and it is the point: there is one set of controls, in one place,
-    /// that you do not have to discover.
     readonly property bool showsTransport: showsVideo && !row.selectionModeActive
-    readonly property real transportRightMargin: row.imageOnly
-        ? row.tntWidth + row.footerInset + Kirigami.Units.smallSpacing
-        : Kirigami.Units.smallSpacing
 
     Timer {
         id: failureTimer
@@ -172,7 +175,12 @@ Item {
             return
         case "failed":
             playbackFailed = false
-            beginPlayback()
+            if (hasSource) {
+                beginPlayback()
+            } else {
+                requestPlayback()
+                intent = "playing"
+            }
             return
         case "playing":
             intent = "paused"
@@ -194,7 +202,17 @@ Item {
 
     function beginPlayback() {
         resumeAt = Whatevr.VideoPlayback.resumePosition(row.messageId)
+        latchAvailableSource()
         intent = "playing"
+    }
+
+    function latchAvailableSource() {
+        if (sessionSource.toString().length > 0)
+            return
+        if (hasFile)
+            sessionSource = Qt.resolvedUrl("file://" + row.mediaLocalPath)
+        else if (streamUrl.toString().length > 0)
+            sessionSource = streamUrl
     }
 
     /**
@@ -215,26 +233,19 @@ Item {
                            surface.position)
     }
 
-    /// Below this, fetching the whole file beats streaming it: the download
-    /// finishes in about the time the range server takes to warm up, and unlike
-    /// a stream it leaves something on disk.
-    readonly property int streamingThresholdBytes: 4 * 1024 * 1024
-    /// A clip small enough that streaming it is all cost and no benefit. Video
-    /// notes are the case that matters: a one-second, quarter-megabyte
-    /// recording was re-fetched and re-decrypted on every scroll past, because
-    /// streaming never writes mediaLocalPath and so never counts as downloaded.
-    readonly property bool prefersDownload: isVideoNote
-        || (row.mediaSizeBytes > 0 && row.mediaSizeBytes <= streamingThresholdBytes)
-
     /// Starts a stream if we have no file yet, falling back to an ordinary
     /// download when the daemon says this message cannot be streamed.
     function requestPlayback() {
-        if (hasFile || row.mediaDownloading)
+        if (hasFile || row.mediaDownloading || requestPending)
             return
-        if (!Whatevr.Settings.streamWhileDownloading || prefersDownload) {
+        requestPending = true
+        playAfterDownload = true
+        if (!Whatevr.Settings.streamWhileDownloading || isVideoNote || retryDownloadOnly) {
+            playbackRequestDispatched("download")
             Whatevr.ProtocolController.downloadMessageMedia(row.messageId)
             return
         }
+        playbackRequestDispatched("stream")
         Whatevr.ProtocolController.streamMessageMedia(row.messageId)
     }
 
@@ -245,8 +256,45 @@ Item {
             requestPlayback()
     }
 
+    function resetForMessage() {
+        intent = "stopped"
+        streamUrl = ""
+        sessionSource = ""
+        requestPending = false
+        playAfterDownload = false
+        retryDownloadOnly = false
+        playbackFailed = false
+        userMuted = false
+        resumeAt = Whatevr.VideoPlayback.resumePosition(row.messageId)
+
+        // Model role notifications do not have a useful ordering guarantee.
+        // Wait until this event turn has applied the new kind and media paths
+        // before deciding whether the replacement row is an autoplaying GIF.
+        const replacementId = row.messageId
+        Qt.callLater(function() {
+            if (root.row.messageId === replacementId)
+                root.requestAutoplaySource()
+        })
+    }
+
     onAutoWantsChanged: requestAutoplaySource()
     onOnScreenChanged: requestAutoplaySource()
+    onIntentChanged: {
+        if (intent === "stopped") {
+            sessionSource = ""
+            playAfterDownload = false
+        }
+    }
+    onHasFileChanged: {
+        if (!hasFile)
+            return
+        requestPending = false
+        retryDownloadOnly = false
+        if (playAfterDownload || intent === "playing" || autoWants) {
+            latchAvailableSource()
+            playAfterDownload = false
+        }
+    }
     // A row already in the viewport when its delegate is built has these true
     // from the first binding evaluation, so waiting for a change signal alone
     // is waiting for something that may never come.
@@ -262,14 +310,36 @@ Item {
             if (messageId !== root.row.messageId)
                 return
             root.streamUrl = url
+            root.requestPending = false
+            if (root.intent === "playing" || root.autoWants)
+                root.latchAvailableSource()
         }
 
         function onMediaStreamFailed(messageId) {
             if (messageId !== root.row.messageId)
                 return
-            // Streaming is an optimisation, not a requirement: fall back to
-            // fetching the whole file and playing it from disk.
+            root.retryDownloadOnly = true
+            root.requestPending = true
+            root.playbackRequestDispatched("download")
             Whatevr.ProtocolController.downloadMessageMedia(messageId)
+        }
+    }
+
+    Connections {
+        target: root.row
+
+        function onMessageIdChanged() {
+            root.resetForMessage()
+        }
+
+        function onMediaDownloadingChanged() {
+            if (root.row.mediaDownloading)
+                root.requestPending = false
+        }
+
+        function onMediaDownloadErrorChanged() {
+            if (root.row.mediaDownloadError.length > 0)
+                root.requestPending = false
         }
     }
 
@@ -350,18 +420,13 @@ Item {
 
             objectName: "videoBubble.surface"
             anchors.fill: parent
-            // Underneath the poster and the placeholder plate. It has to be
-            // visible to render at all (below), but until it has frames it is
-            // an empty black rectangle, and covering the thumbnail with one
-            // while the decoder opens is worse than showing nothing new.
+            // Underneath the poster and placeholder plate. Until it has frames
+            // it is an empty black rectangle, so keep the thumbnail above it
+            // while the decoder opens.
             z: -1
-            // Visible from the moment a decoder is wanted, not from the moment
-            // there is a frame. An invisible QQuickFramebufferObject is never
-            // rendered, so it never creates mpv's render context, so mpv never
-            // decodes, so there is never a frame: gating this on the frame
-            // deadlocks the two against each other. There is nothing to see
-            // during the gap anyway, because the surface has no frames to draw.
-            // Hiding it once it does is the ShaderEffectSource's job below.
+            // Visible from the moment a decoder is wanted. The poster remains
+            // above it until the first frame is ready, then the layer below
+            // presents that frame with the bubble's rounded corners.
             visible: root.engaged
             messageId: root.row.messageId
             source: root.playbackSource
@@ -369,7 +434,7 @@ Item {
             lane: root.isGif ? Whatevr.VideoPlayback.Animated : Whatevr.VideoPlayback.Exclusive
             engaged: root.engaged
             playing: root.wantsRun
-            muted: root.isGif || root.userMuted
+            muted: root.isVideoNote ? root.userMuted : true
             loop: root.loops
 
             // Something else took the exclusive lane. Stop wanting to play, or
@@ -460,22 +525,38 @@ Item {
     // the eye already goes. The old bubble had a play glyph in the middle and a
     // download button in a corner, both visible at once on a clip that was
     // neither playable nor downloading.
-    MediaOverlayButton {
+    Item {
         id: primaryButton
 
         anchors.centerIn: parent
         visible: !root.row.selectionModeActive
                  && (root.phase === "idle" || root.phase === "needsDownload")
-        diameter: Kirigami.Units.gridUnit * 2.6
-        iconName: root.phase === "needsDownload"
-            ? "folder-download-symbolic"
-            : "media-playback-start-symbolic"
-        text: root.phase === "needsDownload"
-            ? Whatevr.I18n.i18nc("@action:button", "Download")
-            : (root.resumeAt > 0
-               ? Whatevr.I18n.i18nc("@action:button", "Resume")
-               : Whatevr.I18n.i18nc("@action:button", "Play"))
-        onClicked: root.activate()
+        width: Kirigami.Units.gridUnit * 2.6
+        height: width
+
+        Rectangle {
+            anchors.fill: parent
+            radius: width / 2
+            color: Qt.alpha("black", 0.45)
+        }
+
+        Kirigami.Icon {
+            anchors.centerIn: parent
+            width: parent.width * 0.5
+            height: width
+            source: root.phase === "needsDownload"
+                ? "folder-download-symbolic"
+                : "media-playback-start-symbolic"
+            color: "white"
+            isMask: true
+        }
+
+        // Keep the video-note button behavior unchanged. Rectangular media has
+        // no handler here because the whole surface owns its tap.
+        TapHandler {
+            enabled: root.isVideoNote
+            onTapped: root.activate()
+        }
     }
 
     // The size of what a tap is about to fetch, under the download button, so
@@ -553,6 +634,7 @@ Item {
                 }
 
                 MediaOverlayButton {
+                    visible: root.isVideoNote
                     anchors.verticalCenter: parent.verticalCenter
                     diameter: Kirigami.Units.gridUnit * 1.5
                     iconName: "view-refresh-symbolic"
@@ -574,16 +656,13 @@ Item {
 
     // ---- Chips ----
 
-    // Duration and kind chip, the way WhatsApp labels a clip before you open it.
-    // It steps aside once the transport strip is up, which carries the clock.
+    // Duration and kind chip, retained throughout rectangular playback.
     Rectangle {
         anchors.left: parent.left
         anchors.top: parent.top
         anchors.margins: Kirigami.Units.smallSpacing
-        // The GIF label stays put; the clock steps aside once the strip is up,
-        // because the strip carries one of its own.
         visible: !root.isVideoNote
-                 && (root.isGif || (root.totalSeconds > 0 && !root.showsTransport))
+                 && (root.isGif || root.totalSeconds > 0)
         width: chipLabel.implicitWidth + Kirigami.Units.smallSpacing * 2
         height: chipLabel.implicitHeight + Kirigami.Units.smallSpacing
         radius: Kirigami.Units.cornerRadius
@@ -624,98 +703,39 @@ Item {
         }
     }
 
-    // ---- Transport ----
+    // A paused rectangular clip keeps its frame and shows one centered hint.
+    Item {
+        anchors.centerIn: parent
+        visible: !root.isVideoNote && root.phase === "paused" && !root.row.selectionModeActive
+        width: Kirigami.Units.gridUnit * 2.6
+        height: width
 
-    // A rectangular clip gets a strip along the bottom: where it is, how much
-    // is left, sound, and the way to full screen. Always on while the clip is
-    // up rather than fading on a timer, because a control you have to make
-    // reappear is a control you have to know about first.
-    Loader {
-        id: transportLoader
-
-        objectName: "videoBubble.transportLoader"
-        anchors.left: picture.left
-        anchors.right: picture.right
-        anchors.bottom: picture.bottom
-        anchors.leftMargin: Kirigami.Units.smallSpacing
-        anchors.rightMargin: root.transportRightMargin
-        anchors.bottomMargin: Kirigami.Units.smallSpacing
-        active: root.showsTransport && !root.isVideoNote
-
-        sourceComponent: Rectangle {
-            objectName: "videoBubble.transportStrip"
-            height: stripRow.implicitHeight + Kirigami.Units.smallSpacing
-            radius: Kirigami.Units.cornerRadius
-            color: Qt.alpha("black", 0.55)
-
-            RowLayout {
-                id: stripRow
-
-                anchors.fill: parent
-                anchors.leftMargin: Kirigami.Units.smallSpacing
-                anchors.rightMargin: Kirigami.Units.smallSpacing
-                spacing: Kirigami.Units.smallSpacing
-
-                MediaOverlayButton {
-                    diameter: Kirigami.Units.gridUnit * 1.4
-                    iconName: root.phase === "playing"
-                        ? "media-playback-pause-symbolic"
-                        : "media-playback-start-symbolic"
-                    text: root.phase === "playing"
-                        ? Whatevr.I18n.i18nc("@action:button", "Pause")
-                        : Whatevr.I18n.i18nc("@action:button", "Play")
-                    onClicked: root.activate()
-                }
-
-                Controls.Slider {
-                    id: inlineSeek
-
-                    Layout.fillWidth: true
-                    from: 0
-                    to: Math.max(root.totalSeconds, 1)
-                    // Seek on release rather than on every pixel of the drag:
-                    // an absolute seek per mouse move makes the decoder thrash.
-                    onPressedChanged: if (!pressed) surface.seek(value)
-
-                    // Written as a Binding rather than the self-referential
-                    // `value: pressed ? value : surface.position`, which reads
-                    // its own value and is a binding loop.
-                    Binding {
-                        target: inlineSeek
-                        property: "value"
-                        value: surface.position
-                        when: !inlineSeek.pressed
-                        restoreMode: Binding.RestoreNone
-                    }
-                }
-
-                Controls.Label {
-                    text: MediaFormat.clockTime(root.remainingSeconds)
-                    color: "white"
-                    font.pointSize: Kirigami.Theme.smallFont.pointSize
-                }
-
-                MediaOverlayButton {
-                    // A GIF is silent by definition, so there is nothing here
-                    // to toggle. The slot closes rather than showing a dead
-                    // control.
-                    visible: !root.isGif
-                    diameter: Kirigami.Units.gridUnit * 1.4
-                    iconName: root.userMuted ? "audio-volume-muted-symbolic" : "audio-volume-high-symbolic"
-                    text: root.userMuted
-                        ? Whatevr.I18n.i18nc("@action:button", "Unmute")
-                        : Whatevr.I18n.i18nc("@action:button", "Mute")
-                    onClicked: root.userMuted = !root.userMuted
-                }
-
-                MediaOverlayButton {
-                    diameter: Kirigami.Units.gridUnit * 1.4
-                    iconName: "view-fullscreen-symbolic"
-                    text: Whatevr.I18n.i18nc("@action:button", "Full screen")
-                    onClicked: root.openFullScreen()
-                }
-            }
+        Rectangle {
+            anchors.fill: parent
+            radius: width / 2
+            color: Qt.alpha("black", 0.45)
         }
+
+        Kirigami.Icon {
+            anchors.centerIn: parent
+            width: parent.width * 0.5
+            height: width
+            source: "media-playback-start-symbolic"
+            color: "white"
+            isMask: true
+        }
+    }
+
+    MediaOverlayButton {
+        objectName: "videoBubble.fullscreenButton"
+        anchors.top: picture.top
+        anchors.right: picture.right
+        anchors.margins: Kirigami.Units.smallSpacing
+        visible: !root.isVideoNote && root.showsVideo && !root.row.selectionModeActive
+        diameter: Kirigami.Units.gridUnit * 1.6
+        iconName: "view-fullscreen-symbolic"
+        text: Whatevr.I18n.i18nc("@action:button", "Full screen")
+        onClicked: root.openFullScreen()
     }
 
     // A circle has no room for a strip, so its two buttons ride the rim, on the

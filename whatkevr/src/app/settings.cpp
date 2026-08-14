@@ -31,8 +31,6 @@ constexpr auto kChatWallpaperOpacity = "settings/chatWallpaperOpacity";
 constexpr auto kChatWallpaperTint = "settings/chatWallpaperTint";
 constexpr auto kMessageFontSize = "settings/messageFontSize";
 constexpr auto kShowAvatars = "settings/showAvatars";
-constexpr auto kVideoBackend = "settings/videoBackend";
-constexpr auto kHardwareDecoding = "settings/hardwareDecoding";
 constexpr auto kGifPlayerLimit = "settings/gifPlayerLimit";
 constexpr auto kPausePlaybackWhileScrolling = "settings/pausePlaybackWhileScrolling";
 constexpr auto kStreamWhileDownloading = "settings/streamWhileDownloading";
@@ -121,8 +119,6 @@ void Settings::load()
     m_chatWallpaperTint = settings.value(QLatin1String(kChatWallpaperTint)).toString();
     m_messageFontSize = settings.value(QLatin1String(kMessageFontSize), 0).toInt();
     m_showAvatars = settings.value(QLatin1String(kShowAvatars), true).toBool();
-    m_videoBackend = settings.value(QLatin1String(kVideoBackend), QStringLiteral("auto")).toString();
-    m_hardwareDecoding = settings.value(QLatin1String(kHardwareDecoding), true).toBool();
     m_gifPlayerLimit = std::clamp(settings.value(QLatin1String(kGifPlayerLimit), 3).toInt(), 0, 3);
     m_pausePlaybackWhileScrolling = settings.value(QLatin1String(kPausePlaybackWhileScrolling), true).toBool();
     m_streamWhileDownloading = settings.value(QLatin1String(kStreamWhileDownloading), true).toBool();
@@ -380,39 +376,6 @@ void Settings::setShowAvatars(bool show)
     m_showAvatars = show;
     QSettings().setValue(QLatin1String(kShowAvatars), m_showAvatars);
     Q_EMIT showAvatarsChanged();
-}
-
-QString Settings::videoBackend() const
-{
-    return m_videoBackend;
-}
-
-void Settings::setVideoBackend(const QString &backend)
-{
-    // Anything unrecognised means automatic, so a hand-edited config cannot
-    // leave the app with no way to play video.
-    const QString normalized = (backend == QLatin1String("mpv") || backend == QLatin1String("qt")) ? backend : QStringLiteral("auto");
-    if (m_videoBackend == normalized) {
-        return;
-    }
-    m_videoBackend = normalized;
-    QSettings().setValue(QLatin1String(kVideoBackend), m_videoBackend);
-    Q_EMIT videoBackendChanged();
-}
-
-bool Settings::hardwareDecoding() const
-{
-    return m_hardwareDecoding;
-}
-
-void Settings::setHardwareDecoding(bool enabled)
-{
-    if (m_hardwareDecoding == enabled) {
-        return;
-    }
-    m_hardwareDecoding = enabled;
-    QSettings().setValue(QLatin1String(kHardwareDecoding), m_hardwareDecoding);
-    Q_EMIT hardwareDecodingChanged();
 }
 
 int Settings::gifPlayerLimit() const

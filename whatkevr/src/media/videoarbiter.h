@@ -11,12 +11,8 @@
 /**
  * VideoPlaybackArbiter decides what is allowed to be playing, app-wide.
  *
- * This is deliberately above the engine seam rather than inside MpvPool. The
- * pool bounds *decoders*, which is not the same question, and it does not exist
- * at all on the Qt Multimedia path: QtVideoSurface instantiates a MediaPlayer
- * per bubble, so with the rule expressed down there every video in the
- * conversation played at once whenever WHATKEVR_VIDEO_BACKEND=qt. VideoSurface
- * asks here, once, whichever backend it loads.
+ * This sits above QtVideoSurface so decoder limits and exclusive playback are
+ * decided before a MediaPlayer is instantiated.
  *
  * Two lanes, because two kinds of clip want opposite things:
  *
@@ -46,8 +42,7 @@ public:
     };
     Q_ENUM(Lane)
 
-    // Not defaulted, for the same reason as MediaBackend's: a
-    // default-constructible QML_SINGLETON is built by the engine itself rather
+    // Not defaulted because a default-constructible QML_SINGLETON is built by the engine itself rather
     // than through create(), which would fork the QML-visible object off from
     // the one C++ and the tests hold.
     explicit VideoPlaybackArbiter(QObject *parent);

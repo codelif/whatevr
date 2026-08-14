@@ -344,6 +344,107 @@ func TestUpdateMessageMediaLocalPathWithDimensionsKeepsReactions(t *testing.T) {
 	}
 }
 
+func TestUpdateMessageMediaThumbnailLocalPathPreservesMessage(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	if _, err := db.SaveMediaMessage(ctx, MediaMessageInput{
+		TextMessageInput: TextMessageInput{
+			ID:          "chat-1:video-1",
+			ChatID:      "chat-1",
+			ChatName:    "Test Chat",
+			SenderID:    "sender-1",
+			SenderName:  "Alice",
+			Text:        "caption",
+			Timestamp:   time.Unix(100, 0),
+			Direction:   DirectionIncoming,
+			Status:      StatusRead,
+			IsForwarded: true,
+		},
+		MediaKind:               MediaKindVideo,
+		MediaMimeType:           "video/mp4",
+		MediaLocalPath:          "/cache/video.mp4",
+		MediaThumbnailLocalPath: "/cache/sender-thumb.jpg",
+		MediaWidth:              1920,
+		MediaHeight:             1080,
+		MediaDurationSecs:       42,
+		MediaSizeBytes:          123456,
+		MediaFileName:           "clip.mp4",
+	}); err != nil {
+		t.Fatalf("save video: %v", err)
+	}
+	if _, _, changed, err := db.SaveReaction(ctx, "chat-1:video-1", "sender-2", "Bob", "👍", 150, false); err != nil {
+		t.Fatalf("save reaction: %v", err)
+	} else if !changed {
+		t.Fatal("expected reaction to change the message")
+	}
+
+	before, err := db.GetMessage(ctx, "chat-1:video-1")
+	if err != nil {
+		t.Fatalf("get message before update: %v", err)
+	}
+	updated, err := db.UpdateMessageMediaThumbnailLocalPath(ctx, before.ID, "/cache/video.mp4.poster.jpg")
+	if err != nil {
+		t.Fatalf("UpdateMessageMediaThumbnailLocalPath() error = %v", err)
+	}
+	want := before
+	want.MediaThumbnailLocalPath = "/cache/video.mp4.poster.jpg"
+	if !reflect.DeepEqual(updated, want) {
+		t.Fatalf("thumbnail-only update changed other fields\n got: %#v\nwant: %#v", updated, want)
+	}
+}
+
+func TestListVideoPosterCandidatesNewestFirst(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	for _, tc := range []struct {
+		id        string
+		kind      string
+		localPath string
+		at        int64
+	}{
+		{"old-video", MediaKindVideo, "/cache/old.mp4", 100},
+		{"new-gif", MediaKindGIF, "/cache/new.mp4", 300},
+		{"video-note", MediaKindVideoNote, "/cache/note.mp4", 400},
+		{"not-downloaded", MediaKindVideo, "", 500},
+		{"image", MediaKindImage, "/cache/image.jpg", 600},
+	} {
+		if _, err := db.SaveMediaMessage(ctx, MediaMessageInput{
+			TextMessageInput: TextMessageInput{
+				ID:        "chat-1:" + tc.id,
+				ChatID:    "chat-1",
+				SenderID:  "sender-1",
+				Timestamp: time.Unix(tc.at, 0),
+			},
+			MediaKind:      tc.kind,
+			MediaMimeType:  "video/mp4",
+			MediaLocalPath: tc.localPath,
+		}); err != nil {
+			t.Fatalf("save %s: %v", tc.id, err)
+		}
+	}
+
+	candidates, err := db.ListVideoPosterCandidates(ctx)
+	if err != nil {
+		t.Fatalf("ListVideoPosterCandidates() error = %v", err)
+	}
+	if len(candidates) != 2 {
+		t.Fatalf("candidate count = %d, want 2: %+v", len(candidates), candidates)
+	}
+	if candidates[0].ID != "chat-1:new-gif" || candidates[1].ID != "chat-1:old-video" {
+		t.Fatalf("candidate order = [%s, %s], want newest GIF then old video", candidates[0].ID, candidates[1].ID)
+	}
+}
+
 func TestMarkMessageRevokedClearsReplyContext(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))

@@ -270,7 +270,7 @@ Item {
                     font.pointSize: Kirigami.Theme.smallFont.pointSize
                     elide: Text.ElideRight
 
-                    Controls.ToolTip.text: Whatevr.MediaBackend.description
+                    Controls.ToolTip.text: Whatevr.I18n.i18nc("@info", "The mpv audio engine could not be initialized")
                     Controls.ToolTip.visible: playbackError.visible && errorHover.hovered
                     Controls.ToolTip.delay: Kirigami.Units.toolTipDelay
 

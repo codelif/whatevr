@@ -315,6 +315,7 @@ func (c *Client) DownloadMessageMedia(ctx context.Context, messageID string) (ap
 	}
 	state.message = updated
 	c.daemon.PublishMessageUpdated(toDaemonMessage(updated))
+	c.queueVideoPoster(updated, posterPriorityDownload)
 	c.maybeDeriveVoiceWaveform(ctx, updated)
 	return updated, nil
 }

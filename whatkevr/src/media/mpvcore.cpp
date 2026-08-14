@@ -3,7 +3,6 @@
 
 #include <QDebug>
 #include <QMetaObject>
-#include <QSize>
 #include <QStringList>
 #include <QVariant>
 
@@ -30,22 +29,6 @@ void setOption(mpv_handle *mpv, const char *name, const char *value)
 
 }
 
-MpvHandleOwner::MpvHandleOwner(mpv_handle *handle)
-    : handle(handle)
-{
-}
-
-MpvHandleOwner::~MpvHandleOwner()
-{
-    if (handle) {
-        // terminate_destroy rather than destroy: it blocks until the core has
-        // actually shut down, which is what makes the teardown order between
-        // this and the render context observable rather than hopeful.
-        mpv_terminate_destroy(handle);
-        handle = nullptr;
-    }
-}
-
 void MpvCore::ensureNumericLocale()
 {
     if (const char *numeric = std::setlocale(LC_NUMERIC, nullptr);
@@ -55,15 +38,11 @@ void MpvCore::ensureNumericLocale()
     std::setlocale(LC_NUMERIC, "C");
 }
 
-MpvCore::MpvCore(Mode mode, QObject *parent)
+MpvCore::MpvCore(QObject *parent)
     : QObject(parent)
-    , m_mode(mode)
 {
     ensureNumericLocale();
-    if (mpv_handle *created = mpv_create()) {
-        m_handle = std::make_shared<MpvHandleOwner>(created);
-        m_mpv = created;
-    }
+    m_mpv = mpv_create();
     if (!m_mpv) {
         // The usual cause is a non-C LC_NUMERIC, which main.cpp resets right
         // after the QApplication constructor puts the user's locale back.
@@ -105,15 +84,8 @@ MpvCore::MpvCore(Mode mode, QObject *parent)
     // open, and it is already authenticated by its token.
     setOption(m_mpv, "network-timeout", "30");
 
-    if (m_mode == Mode::Audio) {
-        setOption(m_mpv, "vid", "no");
-        setOption(m_mpv, "audio-display", "no");
-    } else {
-        // The scene graph owns the window; mpv renders into a texture we give
-        // it, so it must not try to create output of its own.
-        setOption(m_mpv, "vo", "libmpv");
-        setOption(m_mpv, "hwdec", "auto-safe");
-    }
+    setOption(m_mpv, "vid", "no");
+    setOption(m_mpv, "audio-display", "no");
 
     // Tests run without an audio device; everything else takes mpv's own pick.
     if (const QByteArray ao = qgetenv("WHATKEVR_MPV_AO"); !ao.isEmpty()) {
@@ -122,7 +94,7 @@ MpvCore::MpvCore(Mode mode, QObject *parent)
 
     if (const int status = mpv_initialize(m_mpv); status < 0) {
         qWarning("whatkevr: could not initialize mpv: %s", mpv_error_string(status));
-        m_handle.reset();
+        mpv_terminate_destroy(m_mpv);
         m_mpv = nullptr;
         return;
     }
@@ -135,12 +107,9 @@ MpvCore::~MpvCore()
 {
     if (m_mpv) {
         mpv_set_wakeup_callback(m_mpv, nullptr, nullptr);
+        mpv_terminate_destroy(m_mpv);
         m_mpv = nullptr;
     }
-    // Dropping the reference is all this does. If a render context on the
-    // render thread still holds one, the handle stays alive until that context
-    // has been freed there, which is the only order libmpv accepts.
-    m_handle.reset();
 }
 
 void MpvCore::observeProperties()
@@ -154,10 +123,6 @@ void MpvCore::observeProperties()
     // MPV_EVENT_END_FILE never arrives for a clean finish. This property is how
     // the end is actually observable.
     mpv_observe_property(m_mpv, 0, "eof-reached", MPV_FORMAT_FLAG);
-    if (m_mode == Mode::Video) {
-        mpv_observe_property(m_mpv, 0, "dwidth", MPV_FORMAT_INT64);
-        mpv_observe_property(m_mpv, 0, "dheight", MPV_FORMAT_INT64);
-    }
 }
 
 void MpvCore::command(const QStringList &args)
@@ -215,7 +180,6 @@ void MpvCore::load(const QUrl &source, bool autoplay, double startSeconds)
     m_source = source;
     m_position = startSeconds > 0.0 ? startSeconds : 0.0;
     m_duration = 0.0;
-    m_videoSize = QSize();
     Q_EMIT positionChanged();
     Q_EMIT durationChanged();
 
@@ -290,14 +254,6 @@ void MpvCore::setVolume(double volume)
     setProperty(QStringLiteral("volume"), qBound(0.0, volume, 100.0));
 }
 
-void MpvCore::setHardwareDecoding(bool enabled)
-{
-    if (m_mode != Mode::Video) {
-        return;
-    }
-    setProperty(QStringLiteral("hwdec"), enabled ? QStringLiteral("auto-safe") : QStringLiteral("no"));
-}
-
 void MpvCore::handleEventsFromMpv()
 {
     if (!m_mpv) {
@@ -335,12 +291,6 @@ void MpvCore::handleEventsFromMpv()
                 if (reached && !m_looping) {
                     Q_EMIT endOfFile();
                 }
-            } else if (name == QLatin1StringView("dwidth") && property->format == MPV_FORMAT_INT64) {
-                m_videoSize.setWidth(int(*static_cast<int64_t *>(property->data)));
-                Q_EMIT videoSizeChanged();
-            } else if (name == QLatin1StringView("dheight") && property->format == MPV_FORMAT_INT64) {
-                m_videoSize.setHeight(int(*static_cast<int64_t *>(property->data)));
-                Q_EMIT videoSizeChanged();
             }
             break;
         }
@@ -363,4 +313,3 @@ void MpvCore::handleEventsFromMpv()
         }
     }
 }
-

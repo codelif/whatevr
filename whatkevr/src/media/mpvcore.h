@@ -2,57 +2,27 @@
 #pragma once
 
 #include <QObject>
-#include <QSize>
 #include <QString>
 #include <QUrl>
-
-#include <memory>
 
 struct mpv_handle;
 
 /**
- * Shared ownership of one mpv_handle.
- *
- * The render context is built from a handle on the scene graph's render thread
- * and freed there; the core that created the handle lives on the GUI thread and
- * can be destroyed at any time. Without a shared owner the GUI thread wins that
- * race and tears the handle down while a live render context still points at
- * it. MpvQt solves it the same way (MpvHandleManager), and this is where the
- * idea comes from.
- */
-struct MpvHandleOwner {
-    explicit MpvHandleOwner(mpv_handle *handle);
-    ~MpvHandleOwner();
-
-    MpvHandleOwner(const MpvHandleOwner &) = delete;
-    MpvHandleOwner &operator=(const MpvHandleOwner &) = delete;
-
-    mpv_handle *handle = nullptr;
-};
-
-/**
- * MpvCore is a thin RAII wrapper around one libmpv instance.
+ * MpvCore is a thin audio-only RAII wrapper around one libmpv instance.
  *
  * libmpv delivers events on its own thread through a wakeup callback; this
  * class funnels those onto the GUI thread with a queued signal, so every
  * property below is safe to read and every slot safe to call from QML.
  *
- * It deliberately knows nothing about bubbles or messages: AudioPlayer owns one
- * of these for voice notes, and MpvPool hands them to video items.
+ * It deliberately knows nothing about bubbles or messages. AudioPlayer owns
+ * one instance for voice notes and shared audio files.
  */
 class MpvCore : public QObject
 {
     Q_OBJECT
 
 public:
-    /// Video cores create a render context; audio-only cores never touch the
-    /// scene graph and are correspondingly cheap.
-    enum class Mode {
-        Audio,
-        Video,
-    };
-
-    explicit MpvCore(Mode mode, QObject *parent = nullptr);
+    explicit MpvCore(QObject *parent = nullptr);
 
     /**
      * Pins LC_NUMERIC to "C", which libmpv requires and refuses to run without.
@@ -68,16 +38,6 @@ public:
     bool isValid() const
     {
         return m_mpv != nullptr;
-    }
-    mpv_handle *handle() const
-    {
-        return m_mpv;
-    }
-    /// A reference the render thread can hold, so the handle outlives any
-    /// render context built from it however the two are torn down.
-    std::shared_ptr<MpvHandleOwner> handleOwner() const
-    {
-        return m_handle;
     }
 
     QUrl source() const
@@ -108,12 +68,6 @@ public:
     {
         return m_looping;
     }
-    /// Video size, or a null size until the first frame is decoded.
-    QSize videoSize() const
-    {
-        return m_videoSize;
-    }
-
     /// Loads a file or URL, optionally opening it partway in. Passing an empty
     /// URL stops playback and unloads.
     void load(const QUrl &source, bool autoplay, double startSeconds = 0.0);
@@ -127,9 +81,6 @@ public:
     void setLooping(bool looping);
     void setVolume(double volume);
 
-    /// Applies the user's hardware-decoding preference. Video only.
-    void setHardwareDecoding(bool enabled);
-
 public Q_SLOTS:
     /// Drains mpv's event queue. Called on the GUI thread in response to
     /// libmpv's wakeup callback, never directly.
@@ -141,9 +92,6 @@ Q_SIGNALS:
     void durationChanged();
     void speedChanged();
     void mutedChanged();
-    void videoSizeChanged();
-    /// A new frame is ready; MpvVideoItem turns this into update().
-    void frameReady();
     /// Playback reached the end of the file (not emitted while looping).
     void endOfFile();
     void errorOccurred(const QString &message);
@@ -153,10 +101,7 @@ private:
     void command(const QStringList &args);
     void setProperty(const QString &name, const QVariant &value);
 
-    std::shared_ptr<MpvHandleOwner> m_handle;
-    /// m_handle->handle, cached: every call below reaches for it.
     mpv_handle *m_mpv = nullptr;
-    Mode m_mode = Mode::Audio;
 
     QUrl m_source;
     bool m_playing = false;
@@ -165,6 +110,4 @@ private:
     double m_speed = 1.0;
     bool m_muted = false;
     bool m_looping = false;
-    QSize m_videoSize;
 };
-

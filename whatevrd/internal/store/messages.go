@@ -832,6 +832,28 @@ func (db *DB) ListMessages(ctx context.Context, chatID string, limit int, before
 	return messages, nil
 }
 
+// ListVideoPosterCandidates returns downloaded rectangular videos and GIFs
+// newest first. Video notes deliberately keep their sender-supplied thumbnail
+// and circular presentation.
+func (db *DB) ListVideoPosterCandidates(ctx context.Context) ([]Message, error) {
+	defer db.timeOp("ListVideoPosterCandidates", time.Now())
+	rows, err := db.reader().QueryContext(ctx, messageSelectPrefix+`
+		WHERE m.media_kind IN (?, ?)
+		  AND m.media_local_path != ''
+		ORDER BY m.timestamp DESC, m.rowid DESC
+	`, MediaKindVideo, MediaKindGIF)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	messages, err := scanMessageRows(rows, 0)
+	if err != nil {
+		return nil, err
+	}
+	return messages, nil
+}
+
 // OldestStoredMessage returns the chat's oldest stored message with only the
 // fields an on-demand history request needs (id, sender, direction,
 // timestamp); ok=false when the chat has no messages.
@@ -1719,6 +1741,37 @@ func (db *DB) DeleteMessageForMe(ctx context.Context, id string) (Message, Chat,
 
 func (db *DB) UpdateMessageMediaLocalPath(ctx context.Context, id, localPath string) (Message, error) {
 	return db.UpdateMessageMediaLocalPathWithDimensions(ctx, id, localPath, 0, 0)
+}
+
+// UpdateMessageMediaThumbnailLocalPath changes only the derived thumbnail
+// path. It returns the complete message, including reactions, so publishing
+// the resulting upsert cannot erase state held in related tables.
+func (db *DB) UpdateMessageMediaThumbnailLocalPath(ctx context.Context, id, thumbnailPath string) (Message, error) {
+	tx, err := db.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return Message{}, err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE messages
+		SET media_thumbnail_local_path = ?
+		WHERE id = ?
+	`, thumbnailPath, id); err != nil {
+		return Message{}, err
+	}
+
+	message, err := getMessageTx(ctx, tx, id)
+	if err != nil {
+		return Message{}, err
+	}
+	if err := attachReactionsOne(ctx, tx, &message); err != nil {
+		return Message{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Message{}, err
+	}
+	return message, nil
 }
 
 func (db *DB) UpdateMessageMediaLocalPathWithDimensions(ctx context.Context, id, localPath string, mediaWidth, mediaHeight int32) (Message, error) {

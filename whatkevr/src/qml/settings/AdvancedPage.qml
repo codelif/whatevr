@@ -9,56 +9,11 @@ SettingsPage {
 
     title: Whatevr.I18n.i18nc("@title settings category", "Advanced")
 
-    readonly property var backendValues: ["auto", "mpv", "qt"]
-
     FormCard.FormHeader {
         title: Whatevr.I18n.i18nc("@title:group", "Video playback")
     }
 
     FormCard.FormCard {
-        FormCard.FormComboBoxDelegate {
-            objectName: "advanced.videoBackend"
-            text: Whatevr.I18n.i18nc("@label", "Playback engine")
-            description: Whatevr.I18n.i18nc("@info", "Takes effect after a restart. Automatic uses mpv where the system supports it, and Qt Multimedia otherwise.")
-            model: [
-                Whatevr.I18n.i18nc("@item playback engine", "Automatic"),
-                Whatevr.I18n.i18nc("@item playback engine", "mpv"),
-                Whatevr.I18n.i18nc("@item playback engine", "Qt Multimedia")
-            ]
-            currentIndex: Math.max(0, page.backendValues.indexOf(Whatevr.Settings.videoBackend))
-            onActivated: index => {
-                Whatevr.Settings.videoBackend = page.backendValues[index]
-            }
-        }
-
-        FormCard.FormDelegateSeparator {}
-
-        FormCard.FormTextDelegate {
-            objectName: "advanced.activeBackend"
-            text: Whatevr.I18n.i18nc("@label", "Currently in use")
-            // Worth showing plainly: it turns "video is broken" into a report
-            // that says which engine was live and why it was picked.
-            description: Whatevr.MediaBackend.description
-
-            leading: Kirigami.Icon {
-                source: "video-x-generic"
-                implicitWidth: Kirigami.Units.iconSizes.medium
-                implicitHeight: Kirigami.Units.iconSizes.medium
-            }
-        }
-
-        FormCard.FormDelegateSeparator {}
-
-        FormCard.FormSwitchDelegate {
-            objectName: "advanced.hardwareDecoding"
-            text: Whatevr.I18n.i18nc("@option:check", "Hardware decoding")
-            description: Whatevr.I18n.i18nc("@info", "Decode video on the GPU. Turn this off if video tears, stutters or shows artefacts.")
-            checked: Whatevr.Settings.hardwareDecoding
-            onToggled: Whatevr.Settings.hardwareDecoding = checked
-        }
-
-        FormCard.FormDelegateSeparator {}
-
         FormCard.FormComboBoxDelegate {
             id: gifPlayerCombo
             objectName: "advanced.gifPlayerLimit"
