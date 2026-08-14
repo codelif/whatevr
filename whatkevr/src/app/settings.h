@@ -52,9 +52,10 @@ class Settings final : public QObject
     // Hardware video decoding. The first thing to turn off when a driver
     // misbehaves.
     Q_PROPERTY(bool hardwareDecoding READ hardwareDecoding WRITE setHardwareDecoding NOTIFY hardwareDecodingChanged FINAL)
-    // How many inline video bubbles may hold a decoder at once. 0 means none:
-    // inline bubbles stay thumbnails and only the full-screen viewer plays.
-    Q_PROPERTY(int inlineVideoLimit READ inlineVideoLimit WRITE setInlineVideoLimit NOTIFY inlineVideoLimitChanged FINAL)
+    // How many GIFs may loop at once. Videos and video notes are not counted:
+    // exactly one of those plays anywhere, which is not a tunable. 0 means GIFs
+    // stay thumbnails and play only when opened full screen.
+    Q_PROPERTY(int gifPlayerLimit READ gifPlayerLimit WRITE setGifPlayerLimit NOTIFY gifPlayerLimitChanged FINAL)
     // Suspend inline playback during a fast fling.
     Q_PROPERTY(bool pausePlaybackWhileScrolling READ pausePlaybackWhileScrolling WRITE setPausePlaybackWhileScrolling NOTIFY pausePlaybackWhileScrollingChanged FINAL)
     // Play from the daemon's loopback range server while a file is still being
@@ -62,7 +63,8 @@ class Settings final : public QObject
     Q_PROPERTY(bool streamWhileDownloading READ streamWhileDownloading WRITE setStreamWhileDownloading NOTIFY streamWhileDownloadingChanged FINAL)
 
     // --- Media playback (Chats) ---
-    // GIFs and video notes start playing by themselves once on screen.
+    // GIFs start looping by themselves once on screen. Videos and video notes
+    // never do: they carry sound and wait to be asked.
     Q_PROPERTY(bool autoplayInlineMedia READ autoplayInlineMedia WRITE setAutoplayInlineMedia NOTIFY autoplayInlineMediaChanged FINAL)
     Q_PROPERTY(bool loopGifs READ loopGifs WRITE setLoopGifs NOTIFY loopGifsChanged FINAL)
     // Play the next voice message in the chat when one finishes.
@@ -147,8 +149,8 @@ public:
     void setVideoBackend(const QString &backend);
     [[nodiscard]] bool hardwareDecoding() const;
     void setHardwareDecoding(bool enabled);
-    [[nodiscard]] int inlineVideoLimit() const;
-    void setInlineVideoLimit(int limit);
+    [[nodiscard]] int gifPlayerLimit() const;
+    void setGifPlayerLimit(int limit);
     [[nodiscard]] bool pausePlaybackWhileScrolling() const;
     void setPausePlaybackWhileScrolling(bool enabled);
     [[nodiscard]] bool streamWhileDownloading() const;
@@ -234,7 +236,7 @@ Q_SIGNALS:
     void showAvatarsChanged();
     void videoBackendChanged();
     void hardwareDecodingChanged();
-    void inlineVideoLimitChanged();
+    void gifPlayerLimitChanged();
     void pausePlaybackWhileScrollingChanged();
     void streamWhileDownloadingChanged();
     void autoplayInlineMediaChanged();
@@ -271,7 +273,7 @@ private:
     bool m_showAvatars = true;
     QString m_videoBackend = QStringLiteral("auto");
     bool m_hardwareDecoding = true;
-    int m_inlineVideoLimit = 3;
+    int m_gifPlayerLimit = 3;
     bool m_pausePlaybackWhileScrolling = true;
     bool m_streamWhileDownloading = true;
     bool m_autoplayInlineMedia = true;

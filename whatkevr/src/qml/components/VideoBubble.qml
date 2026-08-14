@@ -3,23 +3,29 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Controls as Controls
+import QtQuick.Layouts
 
 import org.kde.kirigami as Kirigami
 
 import Whatevr as Whatevr
 
+import "MediaFormat.js" as MediaFormat
+
 /**
  * Video, GIF and video-note bubbles.
  *
- * All three are the same thing on the wire and differ only in presentation:
- * a video plays inline and opens full screen on a second tap, a GIF loops muted
- * on its own, and a video note is a bare circle with a progress ring. Playback
- * goes through VideoSurface so neither this file nor MediaViewer knows which
- * engine is live.
+ * All three are the same thing on the wire and differ only in presentation: a
+ * video and a video note wait to be asked and play with sound, a video note in
+ * a circle with a progress ring; a GIF is a silent loop that starts by itself.
+ * Playback goes through VideoSurface so neither this file nor MediaViewer knows
+ * which engine is live, and so that only one clip with sound plays anywhere in
+ * the app.
  *
- * A bubble only holds a decoder while it is actually playing; otherwise it is
- * the thumbnail the message arrived with, which is also what it shows while a
- * fling is in progress or when the player pool is exhausted.
+ * Everything on screen is chosen by one `phase`, and every phase has exactly
+ * one thing in the middle of the bubble and one meaning for a tap. That is
+ * deliberate: this file used to compute six overlapping `visible:` conditions
+ * independently, which is how a video note ended up showing a spinner on top of
+ * a thumbnail next to a play glyph, forever, with no way out.
  */
 Item {
     id: root
@@ -47,23 +53,43 @@ Item {
     readonly property real cornerBottomLeft: isVideoNote ? circleRadius : bottomLeftRadius
     readonly property real cornerBottomRight: isVideoNote ? circleRadius : bottomRightRadius
 
-    // GIFs and video notes play by themselves once they are on screen and the
-    // list has settled; a full video waits to be asked.
-    readonly property bool wantsAutoplay: (isGif || isVideoNote)
-                                          && Whatevr.Settings.autoplayInlineMedia
-                                          && row.activeInViewport
-                                          && !(row.fastFlicking && Whatevr.Settings.pausePlaybackWhileScrolling)
-                                          && !row.pooled
-                                          && !userPaused
-    /// A plain video the user started here, in the bubble.
-    property bool userStarted: false
-    /// A looping kind the user tapped to stop.
-    property bool userPaused: false
-    /// Video notes and GIFs loop silently until the user asks for sound.
-    property bool userUnmuted: false
-    readonly property bool loops: isGif ? Whatevr.Settings.loopGifs : isVideoNote
-    readonly property bool shouldPlay: (wantsAutoplay || userStarted) && playbackSource.toString().length > 0
-    readonly property bool playingInline: surface.showingVideo
+    // ---- Intent ----
+
+    /**
+     * What the user has asked of this clip: "stopped", "playing" or "paused".
+     *
+     * One value rather than the three overlapping flags this file used to carry
+     * (userStarted, userPaused, userUnmuted), which between them could describe
+     * states that made no sense and disagreed about what a tap should do.
+     */
+    property string intent: "stopped"
+
+    /// A GIF runs on its own; nothing else does. Videos and video notes carry
+    /// sound and wait to be asked.
+    readonly property bool autoWants: isGif && Whatevr.Settings.autoplayInlineMedia
+
+    /// Playback of every kind stops when the bubble leaves the viewport, not
+    /// just autoplay: a clip the user started used to keep its decoder and keep
+    /// running several screens away, heard but not seen.
+    readonly property bool onScreen: row.activeInViewport
+                                     && !row.pooled
+                                     && !(row.fastFlicking && Whatevr.Settings.pausePlaybackWhileScrolling)
+
+    readonly property bool hasSource: playbackSource.toString().length > 0
+    readonly property bool wantsRun: (intent === "playing" || (intent === "stopped" && autoWants))
+                                     && onScreen && hasSource
+    /// Paused keeps the decoder so the frame stays on screen; stopped does not.
+    readonly property bool engaged: (wantsRun || intent === "paused") && onScreen && hasSource
+
+    readonly property bool loops: isGif ? Whatevr.Settings.loopGifs : false
+    /// GIFs are silent by definition. Everything else plays out loud, because
+    /// the user asked for it by tapping, and can be muted from the strip.
+    property bool userMuted: false
+
+    /// Where playback should pick up, refreshed from the arbiter rather than
+    /// tracked here: the surface writes it down at the moment it lets go of the
+    /// decoder, which is the only moment the position is still true.
+    property real resumeAt: 0
 
     // Local file first; while it is still downloading the daemon can stream it.
     property url streamUrl
@@ -71,66 +97,154 @@ Item {
         ? Qt.resolvedUrl("file://" + row.mediaLocalPath)
         : streamUrl
 
+    /// Long enough with a decoder and no picture that something is wrong rather
+    /// than slow. Before this existed a bubble that never got a frame span its
+    /// spinner for the rest of the session.
+    property bool playbackFailed: false
+
+    // ---- Phase ----
+
     /**
-     * A single tap.
+     * The single answer to "what is this bubble doing", and the only thing any
+     * overlay below is allowed to test.
+     */
+    readonly property string phase: {
+        if (row.mediaDownloading)
+            return "downloading"
+        if (playbackFailed)
+            return "failed"
+        if (surface.hasFrame)
+            return wantsRun ? "playing" : "paused"
+        if (engaged && surface.grantHeld)
+            return "buffering"
+        if (!hasSource && !row.mediaDownloading)
+            return "needsDownload"
+        return "idle"
+    }
+
+    readonly property bool showsVideo: phase === "playing" || phase === "paused"
+    /// The transport belongs to any clip that has a picture up, GIFs included.
+    /// A GIF showing the same strip as a video is noisier than hiding it behind
+    /// a hover, and it is the point: there is one set of controls, in one place,
+    /// that you do not have to discover.
+    readonly property bool showsTransport: showsVideo && !row.selectionModeActive
+
+    Timer {
+        id: failureTimer
+
+        interval: 6000
+        running: root.phase === "buffering"
+        onTriggered: root.playbackFailed = true
+    }
+
+    onPhaseChanged: {
+        if (phase === "playing" || phase === "paused")
+            playbackFailed = false
+    }
+
+    // ---- Actions ----
+
+    /**
+     * A single tap, which means the same thing on every kind: start what is
+     * stopped, stop what is running.
      *
-     * A looping kind (GIF, video note) toggles sound and pause where it sits,
-     * because it is already playing and opening it full screen on every stray
-     * tap would be hostile. A plain video starts inline on the first tap and
-     * goes full screen on the next one, so one gesture escalates.
+     * There is no second-tap escalation to full screen and no double tap. Both
+     * were invisible, and the escalation left the inline copy running behind
+     * the viewer. Full screen is a button now.
      */
     function activate() {
         if (row.messageId.length === 0)
             return
-        // Nothing to play yet, whatever the kind: the first tap fetches it.
-        // Without this a video note that autoplay never reached had no way to
-        // be asked for at all, since the branch below only toggles sound.
-        if (!hasFile && !playingInline) {
+        switch (phase) {
+        case "downloading":
+            return
+        case "needsDownload":
             requestPlayback()
+            intent = "playing"
             return
-        }
-        if (isVideoNote || isGif) {
-            if (!userUnmuted && !userPaused) {
-                userUnmuted = true
-                return
-            }
-            userPaused = !userPaused
-            if (!userPaused)
-                userUnmuted = true
+        case "failed":
+            playbackFailed = false
+            beginPlayback()
             return
-        }
-        if (playingInline) {
-            openFullScreen()
+        case "playing":
+            intent = "paused"
             return
+        case "paused":
+            // The decoder is still attached and still where it was left, so
+            // this is a resume rather than a fresh start.
+            intent = "playing"
+            return
+        case "buffering":
+            // Acts as a stop: the spinner is the only thing on screen, so the
+            // only useful thing a tap can mean is "never mind".
+            intent = "stopped"
+            return
+        default:
+            beginPlayback()
         }
-        userStarted = true
     }
 
-    /// Hands the message to the full-screen viewer, streaming URL and all, so a
-    /// clip that is still downloading can still be opened.
+    function beginPlayback() {
+        resumeAt = Whatevr.VideoPlayback.resumePosition(row.messageId)
+        intent = "playing"
+    }
+
+    /**
+     * Hands the clip to the full-screen viewer at the second it reached here.
+     *
+     * Nothing stops playback from in here. The viewer takes the exclusive lane
+     * as it opens, which revokes this bubble through onRevoked below, so one
+     * mechanism decides what is playing rather than two that can disagree about
+     * it. This is also what stops the viewer and the bubble running the same
+     * clip at once, which is what the second tap used to do.
+     */
     function openFullScreen() {
         row.videoActivated(row.messageId,
                            row.mediaLocalPath,
                            root.streamUrl.toString(),
                            row.mediaKind,
-                           row.mediaDurationSecs)
+                           row.mediaDurationSecs,
+                           surface.position)
     }
+
+    /// Below this, fetching the whole file beats streaming it: the download
+    /// finishes in about the time the range server takes to warm up, and unlike
+    /// a stream it leaves something on disk.
+    readonly property int streamingThresholdBytes: 4 * 1024 * 1024
+    /// A clip small enough that streaming it is all cost and no benefit. Video
+    /// notes are the case that matters: a one-second, quarter-megabyte
+    /// recording was re-fetched and re-decrypted on every scroll past, because
+    /// streaming never writes mediaLocalPath and so never counts as downloaded.
+    readonly property bool prefersDownload: isVideoNote
+        || (row.mediaSizeBytes > 0 && row.mediaSizeBytes <= streamingThresholdBytes)
 
     /// Starts a stream if we have no file yet, falling back to an ordinary
     /// download when the daemon says this message cannot be streamed.
     function requestPlayback() {
         if (hasFile || row.mediaDownloading)
             return
-        if (!Whatevr.Settings.streamWhileDownloading) {
+        if (!Whatevr.Settings.streamWhileDownloading || prefersDownload) {
             Whatevr.ProtocolController.downloadMessageMedia(row.messageId)
             return
         }
         Whatevr.ProtocolController.streamMessageMedia(row.messageId)
     }
 
-    onWantsAutoplayChanged: {
-        if (wantsAutoplay && !hasFile && streamUrl.toString().length === 0)
+    /// A GIF that is on screen and has nothing to play asks for its bytes; a
+    /// video or a video note waits to be tapped.
+    function requestAutoplaySource() {
+        if (autoWants && onScreen && !hasFile && streamUrl.toString().length === 0)
             requestPlayback()
+    }
+
+    onAutoWantsChanged: requestAutoplaySource()
+    onOnScreenChanged: requestAutoplaySource()
+    // A row already in the viewport when its delegate is built has these true
+    // from the first binding evaluation, so waiting for a change signal alone
+    // is waiting for something that may never come.
+    Component.onCompleted: {
+        resumeAt = Whatevr.VideoPlayback.resumePosition(row.messageId)
+        requestAutoplaySource()
     }
 
     Connections {
@@ -140,8 +254,6 @@ Item {
             if (messageId !== root.row.messageId)
                 return
             root.streamUrl = url
-            if (!root.isGif && !root.isVideoNote)
-                root.userStarted = true
         }
 
         function onMediaStreamFailed(messageId) {
@@ -150,6 +262,15 @@ Item {
             // Streaming is an optimisation, not a requirement: fall back to
             // fetching the whole file and playing it from disk.
             Whatevr.ProtocolController.downloadMessageMedia(messageId)
+        }
+    }
+
+    Connections {
+        target: Whatevr.VideoPlayback
+
+        function onResumePositionChanged(messageId) {
+            if (messageId === root.row.messageId)
+                root.resumeAt = Whatevr.VideoPlayback.resumePosition(messageId)
         }
     }
 
@@ -182,7 +303,7 @@ Item {
 
         RoundedImage {
             anchors.fill: parent
-            visible: root.hasThumbnail && !root.playingInline && poster.status === Image.Ready
+            visible: root.hasThumbnail && !root.showsVideo && poster.status === Image.Ready
             source: poster
             topLeftRadius: root.cornerTopLeft
             topRightRadius: root.cornerTopRight
@@ -194,7 +315,7 @@ Item {
         // never a hole in the wallpaper.
         Kirigami.ShadowedRectangle {
             anchors.fill: parent
-            visible: !root.playingInline
+            visible: !root.showsVideo
                      && !(root.hasThumbnail && poster.status === Image.Ready)
             color: Qt.alpha(Kirigami.Theme.textColor, 0.08)
             corners.topLeftRadius: root.cornerTopLeft
@@ -207,25 +328,44 @@ Item {
             id: surface
 
             anchors.fill: parent
-            // The live frames go through the rounding shader below, so the
-            // surface must not also draw into the scene. Hiding it is the
-            // ShaderEffectSource's job (hideSource), not a `visible: false`
-            // here: an item that is invisible on its own account has no reason
-            // to keep a decoder attached, and both engines have been known to
-            // read that as "nothing to draw".
-            visible: root.playingInline
+            // Underneath the poster and the placeholder plate. It has to be
+            // visible to render at all (below), but until it has frames it is
+            // an empty black rectangle, and covering the thumbnail with one
+            // while the decoder opens is worse than showing nothing new.
+            z: -1
+            // Visible from the moment a decoder is wanted, not from the moment
+            // there is a frame. An invisible QQuickFramebufferObject is never
+            // rendered, so it never creates mpv's render context, so mpv never
+            // decodes, so there is never a frame: gating this on the frame
+            // deadlocks the two against each other. There is nothing to see
+            // during the gap anyway, because the surface has no frames to draw.
+            // Hiding it once it does is the ShaderEffectSource's job below.
+            visible: root.engaged
             messageId: root.row.messageId
-            source: root.shouldPlay ? root.playbackSource : ""
-            playing: root.shouldPlay
-            muted: (root.isGif || root.isVideoNote) && !root.userUnmuted
+            source: root.playbackSource
+            startPosition: root.resumeAt
+            lane: root.isGif ? Whatevr.VideoPlayback.Animated : Whatevr.VideoPlayback.Exclusive
+            engaged: root.engaged
+            playing: root.wantsRun
+            muted: root.isGif || root.userMuted
             loop: root.loops
-            readonly property bool showingVideo: active && playing
+
+            // Something else took the exclusive lane. Stop wanting to play, or
+            // the bubble would sit showing transport controls over a surface
+            // that is never going to produce another frame.
+            onRevoked: root.intent = "stopped"
+            // A clip that ran out is finished, not paused partway: back to the
+            // poster, and forget the position so the next tap starts it over.
+            onEndOfFile: {
+                root.intent = "stopped"
+                Whatevr.VideoPlayback.clearResumePosition(root.row.messageId)
+            }
         }
 
         // One layer, alive only while this bubble is actually decoding.
         Loader {
             anchors.fill: parent
-            active: root.playingInline
+            active: root.showsVideo
 
             sourceComponent: Item {
                 anchors.fill: parent
@@ -252,7 +392,28 @@ Item {
         }
     }
 
-    // ---- Video-note chrome ----
+    // ---- Times ----
+
+    /// Total length: the decoder's answer once it has one, since a sender's
+    /// declared duration is frequently rounded or simply wrong.
+    readonly property real totalSeconds: surface.duration > 0
+        ? surface.duration
+        : root.row.mediaDurationSecs
+    /// What the chips show: how much is left, counting down while playing, and
+    /// the full length before it starts. Every other client counts down.
+    readonly property real remainingSeconds: root.showsVideo
+        ? Math.max(0, totalSeconds - surface.position)
+        : totalSeconds
+    /// How far through, for the ring and the inline scrubber. Falls back to the
+    /// remembered position so a stopped clip still shows where it got to.
+    readonly property real progressFraction: {
+        if (totalSeconds <= 0)
+            return 0
+        const at = root.showsVideo ? surface.position : root.resumeAt
+        return Math.min(1, Math.max(0, at / totalSeconds))
+    }
+
+    // ---- Video-note ring ----
 
     // The ring doubles as the progress arc, which is the only progress
     // indication a circle has room for.
@@ -264,72 +425,143 @@ Item {
         // Centred on the gap between the item edge and the picture, so the ring
         // frames the circle instead of sitting on top of it.
         inset: root.ringInset / 2
-        progress: surface.duration > 0
-            ? Math.min(1, surface.position / surface.duration)
-            : 0
+        progress: root.progressFraction
         // Read against the wallpaper, not just against the picture: the note
         // draws no plate, so a fainter track disappeared into the doodle.
         trackColor: Qt.alpha(Kirigami.Theme.textColor, 0.38)
         fillColor: Whatevr.Palette.highlight
     }
 
-    Controls.ToolButton {
-        id: muteButton
+    // ---- The one button in the middle ----
 
-        // Only while it is actually running: on a still circle there is no
-        // sound to toggle, and the button read as a smudge on the rim.
-        visible: root.isVideoNote && root.playingInline && !root.row.selectionModeActive
-        // On the circle's lower-right diagonal rather than the corner of its
-        // bounding box, which for a circle is empty space outside the picture.
-        anchors.horizontalCenter: picture.horizontalCenter
-        anchors.verticalCenter: picture.verticalCenter
-        anchors.horizontalCenterOffset: Math.round(root.circleRadius * 0.56)
-        anchors.verticalCenterOffset: Math.round(root.circleRadius * 0.56)
-        implicitWidth: Kirigami.Units.gridUnit * 1.6
-        implicitHeight: implicitWidth
-        display: Controls.AbstractButton.IconOnly
-        icon.name: root.userUnmuted ? "audio-volume-high-symbolic" : "audio-volume-muted-symbolic"
-        text: root.userUnmuted
-            ? Whatevr.I18n.i18nc("@action:button", "Mute")
-            : Whatevr.I18n.i18nc("@action:button", "Unmute")
-        Controls.ToolTip.text: text
-        Controls.ToolTip.visible: hovered
-        Controls.ToolTip.delay: Kirigami.Units.toolTipDelay
-        Accessible.name: text
-        onClicked: root.userUnmuted = !root.userUnmuted
+    // Play, resume or download, whichever this phase means, in the one place
+    // the eye already goes. The old bubble had a play glyph in the middle and a
+    // download button in a corner, both visible at once on a clip that was
+    // neither playable nor downloading.
+    MediaOverlayButton {
+        id: primaryButton
 
-        background: Rectangle {
-            radius: width / 2
-            color: Qt.alpha("black", muteButton.hovered ? 0.6 : 0.45)
-        }
-    }
-
-    // ---- Shared chrome ----
-
-    // Play affordance, hidden once something is actually playing.
-    Rectangle {
         anchors.centerIn: parent
-        visible: !root.playingInline && !root.row.mediaDownloading
-        width: Kirigami.Units.gridUnit * 2.6
-        height: width
-        radius: width / 2
-        color: Qt.alpha("black", 0.45)
+        visible: !root.row.selectionModeActive
+                 && (root.phase === "idle" || root.phase === "needsDownload")
+        diameter: Kirigami.Units.gridUnit * 2.6
+        iconName: root.phase === "needsDownload"
+            ? "folder-download-symbolic"
+            : "media-playback-start-symbolic"
+        text: root.phase === "needsDownload"
+            ? Whatevr.I18n.i18nc("@action:button", "Download")
+            : (root.resumeAt > 0
+               ? Whatevr.I18n.i18nc("@action:button", "Resume")
+               : Whatevr.I18n.i18nc("@action:button", "Play"))
+        onClicked: root.activate()
+    }
 
-        Kirigami.Icon {
-            anchors.centerIn: parent
-            width: Kirigami.Units.iconSizes.medium
-            height: width
-            source: "media-playback-start-symbolic"
-            color: "white"
+    // The size of what a tap is about to fetch, under the download button, so
+    // the decision is informed rather than a surprise.
+    Controls.Label {
+        anchors.horizontalCenter: primaryButton.horizontalCenter
+        anchors.top: primaryButton.bottom
+        anchors.topMargin: Kirigami.Units.smallSpacing
+        visible: primaryButton.visible && root.phase === "needsDownload" && text.length > 0
+        text: MediaFormat.humanSize(root.row.mediaSizeBytes)
+        color: "white"
+        font.pointSize: Kirigami.Theme.smallFont.pointSize
+        style: Text.Outline
+        styleColor: Qt.alpha("black", 0.6)
+    }
+
+    // Everything below is built only for the phase that needs it. A chat is
+    // mostly rows that are doing nothing, and a delegate that instantiates its
+    // transport, its spinner and its failure plate whether or not they are on
+    // screen is what the DN9 object budget exists to catch.
+
+    Loader {
+        anchors.centerIn: parent
+        active: root.phase === "buffering"
+                || (root.phase === "downloading" && root.row.mediaDownloadProgress < 0)
+
+        sourceComponent: Controls.BusyIndicator {
+            running: true
         }
     }
+
+    Loader {
+        anchors.centerIn: parent
+        active: root.phase === "downloading" && root.row.mediaDownloadProgress >= 0
+
+        sourceComponent: ProgressCircle {
+            progress: Math.max(0, root.row.mediaDownloadProgress)
+            width: Kirigami.Units.gridUnit * 2
+            height: width
+        }
+    }
+
+    // A clip that asked for a decoder and never drew anything says so, and
+    // offers the two ways out. This is what the endless spinner became.
+    Loader {
+        anchors.centerIn: parent
+        active: root.phase === "failed"
+
+        sourceComponent: Rectangle {
+            width: Math.min(root.width - Kirigami.Units.largeSpacing * 2,
+                            failureRow.implicitWidth + Kirigami.Units.largeSpacing * 2)
+            height: failureRow.implicitHeight + Kirigami.Units.largeSpacing
+            radius: Kirigami.Units.cornerRadius
+            color: Qt.alpha("black", 0.7)
+
+            Row {
+                id: failureRow
+
+                anchors.centerIn: parent
+                spacing: Kirigami.Units.smallSpacing
+
+                Kirigami.Icon {
+                    anchors.verticalCenter: parent.verticalCenter
+                    source: "dialog-error-symbolic"
+                    color: "white"
+                    width: Kirigami.Units.iconSizes.small
+                    height: width
+                }
+
+                Controls.Label {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: Whatevr.I18n.i18nc("@info", "Could not play")
+                    color: "white"
+                    font.pointSize: Kirigami.Theme.smallFont.pointSize
+                }
+
+                MediaOverlayButton {
+                    anchors.verticalCenter: parent.verticalCenter
+                    diameter: Kirigami.Units.gridUnit * 1.5
+                    iconName: "view-refresh-symbolic"
+                    text: Whatevr.I18n.i18nc("@action:button", "Try again")
+                    onClicked: root.activate()
+                }
+
+                MediaOverlayButton {
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: root.hasFile
+                    diameter: Kirigami.Units.gridUnit * 1.5
+                    iconName: "document-open-symbolic"
+                    text: Whatevr.I18n.i18nc("@action:button", "Open externally")
+                    onClicked: Whatevr.ProtocolController.openLocalFile(root.row.mediaLocalPath)
+                }
+            }
+        }
+    }
+
+    // ---- Chips ----
 
     // Duration and kind chip, the way WhatsApp labels a clip before you open it.
+    // It steps aside once the transport strip is up, which carries the clock.
     Rectangle {
         anchors.left: parent.left
         anchors.top: parent.top
         anchors.margins: Kirigami.Units.smallSpacing
-        visible: !root.isVideoNote && (root.isGif || root.row.mediaDurationSecs > 0)
+        // The GIF label stays put; the clock steps aside once the strip is up,
+        // because the strip carries one of its own.
+        visible: !root.isVideoNote
+                 && (root.isGif || (root.totalSeconds > 0 && !root.showsTransport))
         width: chipLabel.implicitWidth + Kirigami.Units.smallSpacing * 2
         height: chipLabel.implicitHeight + Kirigami.Units.smallSpacing
         radius: Kirigami.Units.cornerRadius
@@ -339,60 +571,157 @@ Item {
             id: chipLabel
 
             anchors.centerIn: parent
-            text: {
-                if (root.isGif)
-                    return Whatevr.I18n.i18nc("@label animated image", "GIF")
-                const whole = Math.max(0, Math.floor(root.row.mediaDurationSecs))
-                const minutes = Math.floor(whole / 60)
-                const rest = whole % 60
-                return minutes + ":" + (rest < 10 ? "0" : "") + rest
-            }
+            text: root.isGif
+                ? Whatevr.I18n.i18nc("@label animated image", "GIF")
+                : MediaFormat.clockTime(root.remainingSeconds)
             color: "white"
             font.pointSize: Kirigami.Theme.smallFont.pointSize
         }
     }
 
-    // A clip that has to be fetched before it can play says so, rather than
-    // hiding a download behind a play glyph.
-    Controls.ToolButton {
-        id: downloadButton
+    // The same clock for a video note, which has no corner to put a chip in:
+    // centred just inside the bottom of the circle. The ring shows progress but
+    // never says how much of it is left.
+    Rectangle {
+        anchors.horizontalCenter: picture.horizontalCenter
+        anchors.bottom: picture.bottom
+        anchors.bottomMargin: Math.round(root.circleRadius * 0.16)
+        visible: root.isVideoNote && root.totalSeconds > 0 && root.phase !== "downloading"
+        width: noteTimeLabel.implicitWidth + Kirigami.Units.smallSpacing * 2
+        height: noteTimeLabel.implicitHeight + Kirigami.Units.smallSpacing / 2
+        radius: height / 2
+        color: Qt.alpha("black", 0.55)
 
-        // A circle has no corner to put this in, and the centred play glyph is
-        // already the affordance there: tapping a video note fetches it.
-        visible: !root.isVideoNote && !root.hasFile
-                 && !root.row.mediaDownloading && !root.row.selectionModeActive
-        anchors.right: parent.right
-        anchors.top: parent.top
-        anchors.margins: Kirigami.Units.smallSpacing
-        implicitWidth: Kirigami.Units.gridUnit * 1.8
-        implicitHeight: implicitWidth
-        display: Controls.AbstractButton.IconOnly
-        icon.name: "folder-download-symbolic"
-        text: Whatevr.I18n.i18nc("@action:button", "Download")
-        Controls.ToolTip.text: text
-        Controls.ToolTip.visible: hovered
-        Controls.ToolTip.delay: Kirigami.Units.toolTipDelay
-        Accessible.name: text
-        onClicked: Whatevr.ProtocolController.downloadMessageMedia(root.row.messageId)
+        Controls.Label {
+            id: noteTimeLabel
 
-        background: Rectangle {
-            radius: width / 2
-            color: Qt.alpha("black", downloadButton.hovered ? 0.6 : 0.45)
+            anchors.centerIn: parent
+            text: MediaFormat.clockTime(root.remainingSeconds)
+            color: "white"
+            font.pointSize: Kirigami.Theme.smallFont.pointSize
         }
     }
 
-    ProgressCircle {
-        anchors.centerIn: parent
-        visible: root.row.mediaDownloading && root.row.mediaDownloadProgress >= 0
-        progress: Math.max(0, root.row.mediaDownloadProgress)
-        width: Kirigami.Units.gridUnit * 2
-        height: width
+    // ---- Transport ----
+
+    // A rectangular clip gets a strip along the bottom: where it is, how much
+    // is left, sound, and the way to full screen. Always on while the clip is
+    // up rather than fading on a timer, because a control you have to make
+    // reappear is a control you have to know about first.
+    Loader {
+        anchors.left: picture.left
+        anchors.right: picture.right
+        anchors.bottom: picture.bottom
+        anchors.margins: Kirigami.Units.smallSpacing
+        active: root.showsTransport && !root.isVideoNote
+
+        sourceComponent: Rectangle {
+            height: stripRow.implicitHeight + Kirigami.Units.smallSpacing
+            radius: Kirigami.Units.cornerRadius
+            color: Qt.alpha("black", 0.55)
+
+            RowLayout {
+                id: stripRow
+
+                anchors.fill: parent
+                anchors.leftMargin: Kirigami.Units.smallSpacing
+                anchors.rightMargin: Kirigami.Units.smallSpacing
+                spacing: Kirigami.Units.smallSpacing
+
+                MediaOverlayButton {
+                    diameter: Kirigami.Units.gridUnit * 1.4
+                    iconName: root.phase === "playing"
+                        ? "media-playback-pause-symbolic"
+                        : "media-playback-start-symbolic"
+                    text: root.phase === "playing"
+                        ? Whatevr.I18n.i18nc("@action:button", "Pause")
+                        : Whatevr.I18n.i18nc("@action:button", "Play")
+                    onClicked: root.activate()
+                }
+
+                Controls.Slider {
+                    id: inlineSeek
+
+                    Layout.fillWidth: true
+                    from: 0
+                    to: Math.max(root.totalSeconds, 1)
+                    // Seek on release rather than on every pixel of the drag:
+                    // an absolute seek per mouse move makes the decoder thrash.
+                    onPressedChanged: if (!pressed) surface.seek(value)
+
+                    // Written as a Binding rather than the self-referential
+                    // `value: pressed ? value : surface.position`, which reads
+                    // its own value and is a binding loop.
+                    Binding {
+                        target: inlineSeek
+                        property: "value"
+                        value: surface.position
+                        when: !inlineSeek.pressed
+                        restoreMode: Binding.RestoreNone
+                    }
+                }
+
+                Controls.Label {
+                    text: MediaFormat.clockTime(root.remainingSeconds)
+                    color: "white"
+                    font.pointSize: Kirigami.Theme.smallFont.pointSize
+                }
+
+                MediaOverlayButton {
+                    // A GIF is silent by definition, so there is nothing here
+                    // to toggle. The slot closes rather than showing a dead
+                    // control.
+                    visible: !root.isGif
+                    diameter: Kirigami.Units.gridUnit * 1.4
+                    iconName: root.userMuted ? "audio-volume-muted-symbolic" : "audio-volume-high-symbolic"
+                    text: root.userMuted
+                        ? Whatevr.I18n.i18nc("@action:button", "Unmute")
+                        : Whatevr.I18n.i18nc("@action:button", "Mute")
+                    onClicked: root.userMuted = !root.userMuted
+                }
+
+                MediaOverlayButton {
+                    diameter: Kirigami.Units.gridUnit * 1.4
+                    iconName: "view-fullscreen-symbolic"
+                    text: Whatevr.I18n.i18nc("@action:button", "Full screen")
+                    onClicked: root.openFullScreen()
+                }
+            }
+        }
     }
 
-    Controls.BusyIndicator {
-        anchors.centerIn: parent
-        visible: root.row.mediaDownloading && root.row.mediaDownloadProgress < 0
-        running: visible
+    // A circle has no room for a strip, so its two buttons ride the rim, on the
+    // lower diagonal where the bounding box is empty anyway. Full screen sits
+    // on the right on both shapes.
+    Loader {
+        anchors.fill: picture
+        active: root.isVideoNote && root.showsTransport
+
+        sourceComponent: Item {
+            MediaOverlayButton {
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.horizontalCenterOffset: -Math.round(root.circleRadius * 0.56)
+                anchors.verticalCenterOffset: Math.round(root.circleRadius * 0.56)
+                diameter: Kirigami.Units.gridUnit * 1.6
+                iconName: root.userMuted ? "audio-volume-muted-symbolic" : "audio-volume-high-symbolic"
+                text: root.userMuted
+                    ? Whatevr.I18n.i18nc("@action:button", "Unmute")
+                    : Whatevr.I18n.i18nc("@action:button", "Mute")
+                onClicked: root.userMuted = !root.userMuted
+            }
+
+            MediaOverlayButton {
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.horizontalCenterOffset: Math.round(root.circleRadius * 0.56)
+                anchors.verticalCenterOffset: Math.round(root.circleRadius * 0.56)
+                diameter: Kirigami.Units.gridUnit * 1.6
+                iconName: "view-fullscreen-symbolic"
+                text: Whatevr.I18n.i18nc("@action:button", "Full screen")
+                onClicked: root.openFullScreen()
+            }
+        }
     }
 
     MediaDragArea {
@@ -404,16 +733,9 @@ Item {
 
     TapHandler {
         enabled: !root.row.selectionModeActive
-        exclusiveSignals: TapHandler.SingleTap | TapHandler.DoubleTap
-        onSingleTapped: {
+        onTapped: {
             root.activate()
             root.row.conversationFocusRequested()
-        }
-        // A looping kind has no second-tap escalation, so the double tap is how
-        // it reaches the viewer.
-        onDoubleTapped: {
-            if (root.isGif || root.isVideoNote)
-                root.openFullScreen()
         }
     }
 }

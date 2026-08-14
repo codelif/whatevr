@@ -9,6 +9,8 @@ import org.kde.kirigami as Kirigami
 
 import Whatevr as Whatevr
 
+import "MediaFormat.js" as MediaFormat
+
 /**
  * A document: MIME icon, filename, and the facts that decide whether you want
  * to open it (size, page count, type).
@@ -26,22 +28,9 @@ Item {
         ? row.mediaFileName
         : Whatevr.I18n.i18nc("@label unnamed attachment", "Document")
 
-    function humanSize(bytes) {
-        if (!bytes || bytes <= 0)
-            return ""
-        const units = ["B", "kB", "MB", "GB"]
-        let value = bytes
-        let unit = 0
-        while (value >= 1024 && unit < units.length - 1) {
-            value /= 1024
-            unit++
-        }
-        return (unit === 0 ? value.toFixed(0) : value.toFixed(1)) + " " + units[unit]
-    }
-
     readonly property string detailText: {
         const parts = []
-        const size = humanSize(row.mediaSizeBytes)
+        const size = MediaFormat.humanSize(row.mediaSizeBytes)
         if (size.length > 0)
             parts.push(size)
         if (row.mediaPageCount > 0)

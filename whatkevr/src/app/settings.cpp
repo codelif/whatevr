@@ -33,7 +33,7 @@ constexpr auto kMessageFontSize = "settings/messageFontSize";
 constexpr auto kShowAvatars = "settings/showAvatars";
 constexpr auto kVideoBackend = "settings/videoBackend";
 constexpr auto kHardwareDecoding = "settings/hardwareDecoding";
-constexpr auto kInlineVideoLimit = "settings/inlineVideoLimit";
+constexpr auto kGifPlayerLimit = "settings/gifPlayerLimit";
 constexpr auto kPausePlaybackWhileScrolling = "settings/pausePlaybackWhileScrolling";
 constexpr auto kStreamWhileDownloading = "settings/streamWhileDownloading";
 constexpr auto kAutoplayInlineMedia = "settings/autoplayInlineMedia";
@@ -123,7 +123,7 @@ void Settings::load()
     m_showAvatars = settings.value(QLatin1String(kShowAvatars), true).toBool();
     m_videoBackend = settings.value(QLatin1String(kVideoBackend), QStringLiteral("auto")).toString();
     m_hardwareDecoding = settings.value(QLatin1String(kHardwareDecoding), true).toBool();
-    m_inlineVideoLimit = std::clamp(settings.value(QLatin1String(kInlineVideoLimit), 3).toInt(), 0, 3);
+    m_gifPlayerLimit = std::clamp(settings.value(QLatin1String(kGifPlayerLimit), 3).toInt(), 0, 3);
     m_pausePlaybackWhileScrolling = settings.value(QLatin1String(kPausePlaybackWhileScrolling), true).toBool();
     m_streamWhileDownloading = settings.value(QLatin1String(kStreamWhileDownloading), true).toBool();
     m_autoplayInlineMedia = settings.value(QLatin1String(kAutoplayInlineMedia), true).toBool();
@@ -415,22 +415,22 @@ void Settings::setHardwareDecoding(bool enabled)
     Q_EMIT hardwareDecodingChanged();
 }
 
-int Settings::inlineVideoLimit() const
+int Settings::gifPlayerLimit() const
 {
-    return m_inlineVideoLimit;
+    return m_gifPlayerLimit;
 }
 
-void Settings::setInlineVideoLimit(int limit)
+void Settings::setGifPlayerLimit(int limit)
 {
     // Above three, a chat full of clips spends more on decoders than on the
     // conversation; below zero is meaningless.
     const int clamped = std::clamp(limit, 0, 3);
-    if (m_inlineVideoLimit == clamped) {
+    if (m_gifPlayerLimit == clamped) {
         return;
     }
-    m_inlineVideoLimit = clamped;
-    QSettings().setValue(QLatin1String(kInlineVideoLimit), m_inlineVideoLimit);
-    Q_EMIT inlineVideoLimitChanged();
+    m_gifPlayerLimit = clamped;
+    QSettings().setValue(QLatin1String(kGifPlayerLimit), m_gifPlayerLimit);
+    Q_EMIT gifPlayerLimitChanged();
 }
 
 bool Settings::pausePlaybackWhileScrolling() const

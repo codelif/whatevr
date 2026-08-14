@@ -118,6 +118,34 @@ target_link_libraries(tst_mediaplayback PRIVATE
 
 add_test(NAME tst_mediaplayback COMMAND tst_mediaplayback)
 
+# Who is allowed to be playing. Pure bookkeeping over plain QObjects: no
+# window, no decoder and no libmpv, which is the point of the arbiter living
+# above the engine seam rather than inside the mpv pool.
+qt_add_executable(tst_videoarbiter
+    tst_videoarbiter.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/media/videoarbiter.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/media/videoarbiter.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/app/settings.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/app/settings.h
+)
+
+target_include_directories(tst_videoarbiter PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/app
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/media
+)
+
+target_link_libraries(tst_videoarbiter PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Qml
+    Qt6::Test
+    KF6::ColorScheme
+    KF6::I18n
+)
+
+add_test(NAME tst_videoarbiter COMMAND tst_videoarbiter)
+
 # Waveform geometry. Pure scene-graph item, so it needs only Gui and Qml.
 qt_add_executable(tst_waveformitem
     tst_waveformitem.cpp

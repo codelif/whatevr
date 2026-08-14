@@ -30,6 +30,22 @@ void setOption(mpv_handle *mpv, const char *name, const char *value)
 
 }
 
+MpvHandleOwner::MpvHandleOwner(mpv_handle *handle)
+    : handle(handle)
+{
+}
+
+MpvHandleOwner::~MpvHandleOwner()
+{
+    if (handle) {
+        // terminate_destroy rather than destroy: it blocks until the core has
+        // actually shut down, which is what makes the teardown order between
+        // this and the render context observable rather than hopeful.
+        mpv_terminate_destroy(handle);
+        handle = nullptr;
+    }
+}
+
 void MpvCore::ensureNumericLocale()
 {
     if (const char *numeric = std::setlocale(LC_NUMERIC, nullptr);
@@ -44,7 +60,10 @@ MpvCore::MpvCore(Mode mode, QObject *parent)
     , m_mode(mode)
 {
     ensureNumericLocale();
-    m_mpv = mpv_create();
+    if (mpv_handle *created = mpv_create()) {
+        m_handle = std::make_shared<MpvHandleOwner>(created);
+        m_mpv = created;
+    }
     if (!m_mpv) {
         // The usual cause is a non-C LC_NUMERIC, which main.cpp resets right
         // after the QApplication constructor puts the user's locale back.
@@ -58,8 +77,28 @@ MpvCore::MpvCore(Mode mode, QObject *parent)
     setOption(m_mpv, "keep-open", "yes");
     setOption(m_mpv, "idle", "yes");
     setOption(m_mpv, "cache", "yes");
-    setOption(m_mpv, "msg-level", "all=error");
-    setOption(m_mpv, "terminal", "no");
+    // Errors from mpv itself, and mpv's own account of the libav* libraries
+    // underneath it, which is chatty about its hardware-decoding probe.
+    //
+    // Note that this does not reach the bare "Cannot load libcuda.so.1" lines
+    // an Intel or AMD box gets on every decoder start. Those come out of the
+    // ffnvcodec loader compiled into libmpv, and they escape mpv's log system
+    // entirely: neither msg-level=all=no, nor terminal=no, nor libavutil's own
+    // av_log_set_level suppresses them (all three were tried). They are noise,
+    // not a failure: the probe is meant to walk the list, and the driver that
+    // answers is the result, which on this machine is vaapi.
+    //
+    // Overridable, because when playback does not work the first question is
+    // always what mpv thought it was doing, and the answer is otherwise thrown
+    // away: WHATKEVR_MPV_LOG=v (or =debug, or =ffmpeg/video=trace) puts it
+    // back. That switch is what found the "No render context set" bug that
+    // stopped every video from playing.
+    const QByteArray logOverride = qgetenv("WHATKEVR_MPV_LOG");
+    const QByteArray msgLevel = logOverride.isEmpty()
+        ? QByteArray("all=error,ffmpeg=no")
+        : (logOverride.contains('=') ? logOverride : QByteArray("all=") + logOverride);
+    setOption(m_mpv, "msg-level", msgLevel.constData());
+    setOption(m_mpv, "terminal", logOverride.isEmpty() ? "no" : "yes");
     setOption(m_mpv, "config", "no");
     setOption(m_mpv, "ytdl", "no");
     // The daemon's loopback range server is the only network source we ever
@@ -83,7 +122,7 @@ MpvCore::MpvCore(Mode mode, QObject *parent)
 
     if (const int status = mpv_initialize(m_mpv); status < 0) {
         qWarning("whatkevr: could not initialize mpv: %s", mpv_error_string(status));
-        mpv_destroy(m_mpv);
+        m_handle.reset();
         m_mpv = nullptr;
         return;
     }
@@ -96,9 +135,12 @@ MpvCore::~MpvCore()
 {
     if (m_mpv) {
         mpv_set_wakeup_callback(m_mpv, nullptr, nullptr);
-        mpv_destroy(m_mpv);
         m_mpv = nullptr;
     }
+    // Dropping the reference is all this does. If a render context on the
+    // render thread still holds one, the handle stays alive until that context
+    // has been freed there, which is the only order libmpv accepts.
+    m_handle.reset();
 }
 
 void MpvCore::observeProperties()
@@ -165,13 +207,13 @@ void MpvCore::setProperty(const QString &name, const QVariant &value)
     }
 }
 
-void MpvCore::load(const QUrl &source, bool autoplay)
+void MpvCore::load(const QUrl &source, bool autoplay, double startSeconds)
 {
     if (!m_mpv) {
         return;
     }
     m_source = source;
-    m_position = 0.0;
+    m_position = startSeconds > 0.0 ? startSeconds : 0.0;
     m_duration = 0.0;
     m_videoSize = QSize();
     Q_EMIT positionChanged();
@@ -182,6 +224,12 @@ void MpvCore::load(const QUrl &source, bool autoplay)
         return;
     }
 
+    // Where the file opens, as mpv's own --start option rather than a seek
+    // issued once it is playing: a seek races the first frame, so resuming a
+    // clip flashed its opening frame before jumping. Set every time, including
+    // back to zero, because it is a persistent option and would otherwise carry
+    // into whatever this core is reused for next.
+    setProperty(QStringLiteral("start"), startSeconds > 0.0 ? QString::number(startSeconds, 'f', 3) : QStringLiteral("0"));
     // Pause state is set before loading so a bubble that only wants a first
     // frame does not briefly play audio.
     setProperty(QStringLiteral("pause"), !autoplay);

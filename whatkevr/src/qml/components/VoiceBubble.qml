@@ -291,17 +291,28 @@ Item {
 
                 // The speed pill only appears while this note is the one
                 // playing: it is a control for the current stream, not a
-                // per-message setting.
+                // per-message setting. Its width is held even when it is
+                // hidden, so pressing play does not shove the elapsed time
+                // sideways at the moment you are reading it.
                 Controls.AbstractButton {
                     id: speedPill
 
-                    visible: root.isCurrent
+                    // Faded rather than hidden: a Layout skips an invisible
+                    // item outright, so `visible` would give the width back and
+                    // reintroduce the shift this is here to stop.
+                    opacity: root.isCurrent ? 1 : 0
+                    enabled: root.isCurrent
                     hoverEnabled: true
                     implicitWidth: speedLabel.implicitWidth + Kirigami.Units.smallSpacing * 2
                     implicitHeight: speedLabel.implicitHeight + Kirigami.Units.smallSpacing / 2
                     Layout.alignment: Qt.AlignVCenter
+
+                    Behavior on opacity {
+                        NumberAnimation { duration: Kirigami.Units.shortDuration }
+                    }
                     text: Whatevr.I18n.i18nc("@action:button", "Playback speed")
                     Accessible.name: text
+                    Accessible.ignored: !root.isCurrent
                     Controls.ToolTip.text: text
                     Controls.ToolTip.visible: hovered
                     Controls.ToolTip.delay: Kirigami.Units.toolTipDelay

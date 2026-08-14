@@ -151,8 +151,10 @@ Item {
     // A downloaded message photo was clicked: open it full screen.
     signal imageActivated(string localPath)
     // A video, GIF or video note asked to open full screen. The path and
-    // duration ride along so the viewer needs no lookup.
-    signal videoActivated(string messageId, string localPath, string streamUrl, string kind, int durationSecs)
+    // duration ride along so the viewer needs no lookup, and startAt carries
+    // the second the inline copy had reached, so opening full screen continues
+    // a clip instead of restarting it.
+    signal videoActivated(string messageId, string localPath, string streamUrl, string kind, int durationSecs, real startAt)
     // An @-mention link was clicked: open contact info for the JID, or the
     // group info dialog for an @all / @everyone mention.
     signal mentionClicked(string jid)

@@ -65,7 +65,20 @@ int main(int argc, char *argv[])
     }
     // Some incoming media carries malformed ICC profile descriptions; Qt warns
     // on every decode and there is nothing we can do about the files.
-    QLoggingCategory::setFilterRules(QStringLiteral("qt.gui.icc.warning=false"));
+    QString loggingRules = QStringLiteral("qt.gui.icc.warning=false\n");
+    // Qt Multimedia's FFmpeg backend routes libav's own output through these
+    // categories, and libav is chatty at info level: every clip opened prints
+    // av_dump_format's full stream banner, and its hardware-acceleration probe
+    // prints one error per device type it cannot load ("Cannot load
+    // libcuda.so.1" on a machine that has no CUDA at all). None of it is
+    // actionable and all of it drowns our own log. Skipped when the user is
+    // already filtering multimedia themselves, since setFilterRules is applied
+    // after QT_LOGGING_RULES and would otherwise silently override it.
+    if (!qEnvironmentVariable("QT_LOGGING_RULES").contains(QLatin1String("multimedia"))) {
+        loggingRules += QStringLiteral("qt.multimedia.ffmpeg*.info=false\n"
+                                       "qt.multimedia.ffmpeg*.debug=false\n");
+    }
+    QLoggingCategory::setFilterRules(loggingRules);
 
     QApplication app(argc, argv);
     // QApplication's constructor calls setlocale(LC_ALL, "") and libmpv refuses

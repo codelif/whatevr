@@ -36,6 +36,20 @@ Kirigami.ScrollablePage {
         cellHeight: cellWidth
         cacheBuffer: cellHeight * 2
 
+        // The grid was mouse-only: no way to reach a tile from the keyboard and
+        // nothing on screen to say which one was current.
+        focus: true
+        keyNavigationEnabled: true
+        activeFocusOnTab: true
+        highlightMoveDuration: Kirigami.Units.shortDuration
+        highlight: Rectangle {
+            color: "transparent"
+            radius: Kirigami.Units.cornerRadius
+            border.width: 2
+            border.color: Kirigami.Theme.highlightColor
+        }
+
+
         // The window grows into older media as the grid nears its end, the
         // same "extend older" a live-edge window always uses.
         onContentYChanged: {
@@ -59,6 +73,57 @@ Kirigami.ScrollablePage {
 
             width: grid.cellWidth
             height: grid.cellHeight
+
+            // A GridView hands focus to whichever delegate declares it, which
+            // is what puts the key handlers below on the current tile. Doing it
+            // here rather than reaching back through itemAtIndex also keeps the
+            // call typed: the view only knows its delegates as QQuickItem.
+            focus: true
+            Keys.onReturnPressed: cell.activate()
+            Keys.onEnterPressed: cell.activate()
+            Keys.onSpacePressed: cell.activate()
+
+            /// Opening a tile: fetch it if we do not have it, otherwise show it
+            /// the way its kind wants to be shown. Shared by the tap handler
+            /// and the keyboard, so the two can never drift apart.
+            function activate() {
+                if (cell.localPath.length === 0) {
+                    Whatevr.ProtocolController.downloadMessageMedia(cell.item.id ?? "")
+                    return
+                }
+                if (cell.kind === "image") {
+                    galleryViewer.showImage(cell.localPath)
+                } else if (cell.isVisual) {
+                    galleryViewer.showVideo(cell.item.id ?? "", cell.localPath, "", cell.kind,
+                                            cell.media.duration_secs ?? 0,
+                                            Whatevr.VideoPlayback.resumePosition(cell.item.id ?? ""))
+                } else {
+                    Whatevr.ProtocolController.openLocalFile(cell.localPath)
+                }
+            }
+
+            Accessible.role: Accessible.Button
+            Accessible.name: {
+                if (cell.item.fallback && cell.item.fallback.length > 0)
+                    return cell.item.fallback
+                switch (cell.kind) {
+                case "image":
+                    return Whatevr.I18n.i18nc("@info:whatsthis gallery tile", "Photo")
+                case "video":
+                    return Whatevr.I18n.i18nc("@info:whatsthis gallery tile", "Video")
+                case "gif":
+                    return Whatevr.I18n.i18nc("@info:whatsthis gallery tile", "GIF")
+                case "video_note":
+                    return Whatevr.I18n.i18nc("@info:whatsthis gallery tile", "Instant video")
+                case "voice":
+                    return Whatevr.I18n.i18nc("@info:whatsthis gallery tile", "Voice message")
+                case "audio":
+                    return Whatevr.I18n.i18nc("@info:whatsthis gallery tile", "Audio")
+                default:
+                    return Whatevr.I18n.i18nc("@info:whatsthis gallery tile", "Document")
+                }
+            }
+            Accessible.onPressAction: cell.activate()
 
             Rectangle {
                 anchors.fill: parent
@@ -125,17 +190,11 @@ Kirigami.ScrollablePage {
 
                 TapHandler {
                     onTapped: {
-                        if (cell.localPath.length === 0) {
-                            Whatevr.ProtocolController.downloadMessageMedia(cell.item.id ?? "")
-                            return
-                        }
-                        if (cell.kind === "image") {
-                            galleryViewer.showImage(cell.localPath)
-                        } else if (cell.isVisual) {
-                            galleryViewer.showVideo(cell.item.id ?? "", cell.localPath, "", cell.kind, cell.media.duration_secs ?? 0)
-                        } else {
-                            Whatevr.ProtocolController.openLocalFile(cell.localPath)
-                        }
+                        // Move the keyboard's idea of "current" to whatever was
+                        // clicked, so arrowing on from here starts in the right
+                        // place.
+                        grid.currentIndex = cell.model.index
+                        cell.activate()
                     }
                 }
             }

@@ -6,12 +6,16 @@ import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 import Whatevr as Whatevr
 
+import "MediaFormat.js" as MediaFormat
+
 // Full-screen media viewer: a photo, or a video with transport controls.
 //
 // It is the same shell as the profile-picture lightbox, grown a player. Video
 // goes through VideoSurface, so the viewer does not know or care which engine
-// is live, and it plays on the pool's reserved decoder so opening a video full
-// screen never evicts one from the conversation behind it.
+// is live, and it takes the exclusive playback lane like anything else: opening
+// it stops whatever was playing in the conversation behind, which is the point
+// rather than something to work around. It used to run on a decoder reserved
+// for it, so a clip opened full screen played twice over, from two positions.
 QQC2.Popup {
     id: root
 
@@ -23,6 +27,10 @@ QQC2.Popup {
     /// The message's media kind: image, video, gif, video_note.
     property string kind: "image"
     property real durationSecs: 0
+    /// Where to open the clip, in seconds: the second the inline bubble had
+    /// reached when it handed over. Read at load, so it is set before the
+    /// surface engages.
+    property real startAt: 0
     /// Suggested name when saving, for kinds that carry one.
     property string fileName: ""
 
@@ -36,6 +44,24 @@ QQC2.Popup {
         : streamUrl
     readonly property bool hasFile: localPath.length > 0
 
+    /// Playback was asked for and there is still nothing on screen. Split from
+    /// the failure below because the first second of it is entirely normal.
+    readonly property bool buffering: isVideo && surface.playbackWanted && !surface.hasFrame
+    /// Long enough with no frame that something is wrong rather than slow. The
+    /// viewer used to show a black rectangle here and say nothing at all, which
+    /// is indistinguishable from a video that is simply very dark.
+    property bool playbackFailed: false
+
+    /// Whether the chrome is on screen. A full-screen player that permanently
+    /// covers a strip of the video with its own transport bar is not
+    /// full-screen; it comes back on any pointer movement or key.
+    property bool chromeVisible: true
+
+    function wakeChrome() {
+        chromeVisible = true
+        chromeTimer.restart()
+    }
+
     signal forwardRequested(string messageId)
 
     function showImage(path) {
@@ -44,24 +70,26 @@ QQC2.Popup {
         streamUrl = ""
         messageId = ""
         fileName = ""
+        startAt = 0
         open()
     }
 
-    function showVideo(id, path, url, mediaKind, duration) {
+    function showVideo(id, path, url, mediaKind, duration, at) {
         kind = mediaKind && mediaKind.length > 0 ? mediaKind : "video"
         messageId = id
         localPath = path
         streamUrl = url
         durationSecs = duration
         fileName = ""
+        // Before open(), so the surface engages with it already set: the start
+        // position is read once, when the file is loaded.
+        startAt = at ?? 0
+        surface.playbackWanted = true
         open()
     }
 
     function formatTime(seconds) {
-        const whole = Math.max(0, Math.floor(seconds))
-        const minutes = Math.floor(whole / 60)
-        const rest = whole % 60
-        return minutes + ":" + (rest < 10 ? "0" : "") + rest
+        return MediaFormat.clockTime(seconds)
     }
 
     function skip(seconds) {
@@ -95,13 +123,45 @@ QQC2.Popup {
     closePolicy: QQC2.Popup.CloseOnEscape
 
     onClosed: {
-        // Release the decoder as soon as the viewer goes away; a paused video
-        // holding a core is the one thing the pool cannot afford.
+        // Release the decoder as soon as the viewer goes away. Where the clip
+        // got to is already written down by the surface as it lets go, so the
+        // bubble underneath comes back showing that position rather than zero.
         streamUrl = ""
         localPath = ""
         messageId = ""
         kind = "image"
+        startAt = 0
         surface.speed = 1.0
+        surface.playbackWanted = true
+        playbackFailed = false
+    }
+
+    onOpened: {
+        playbackFailed = false
+        wakeChrome()
+    }
+
+    // Restarted from scratch whenever what we are waiting on changes, so a
+    // seek or a second file never inherits an older verdict.
+    Timer {
+        id: failureTimer
+
+        interval: 2500
+        running: root.visible && root.buffering
+        onTriggered: root.playbackFailed = true
+    }
+
+    onBufferingChanged: if (!buffering) playbackFailed = false
+
+    Timer {
+        id: chromeTimer
+
+        interval: 2500
+        // Only a video that is actually running hides its controls. On a
+        // paused clip, an image, or a failure, the chrome is the whole point.
+        running: root.visible && root.isVideo && surface.hasFrame
+                 && surface.playbackWanted && !root.playbackFailed
+        onTriggered: root.chromeVisible = false
     }
 
     background: Rectangle {
@@ -112,9 +172,16 @@ QQC2.Popup {
         id: viewerContent
 
         // Tapping the backdrop closes; tapping the media itself toggles play,
-        // which is what every video player does.
+        // which is what every video player does. The chrome bars carry their
+        // own handlers so that a tap on the bar's background (as opposed to one
+        // of its buttons) does not fall through to here and shut the viewer.
         TapHandler {
             onTapped: root.close()
+        }
+
+        // Any pointer movement anywhere brings the controls back.
+        HoverHandler {
+            onPointChanged: root.wakeChrome()
         }
 
         Image {
@@ -151,15 +218,100 @@ QQC2.Popup {
                 // attached and the frames flowing into the texture.
                 messageId: root.messageId
                 source: root.visible && root.isVideo ? root.mediaSource : ""
+                startPosition: root.startAt
+                // Engaged for as long as the viewer is open, playing only when
+                // it should be running. Pausing here keeps the decoder and so
+                // keeps the frame; a bubble does the opposite and goes back to
+                // its thumbnail.
+                engaged: root.visible && root.isVideo
                 playing: root.isVideo && playbackWanted
                 muted: false
-                loop: root.isGif || root.isVideoNote
-                reserved: true
+                loop: root.isGif
 
                 property bool playbackWanted: true
 
+                // Nothing else can take the exclusive lane while the viewer is
+                // up, since it is modal, but if it ever did the viewer must not
+                // sit there claiming to play.
+                onRevoked: surface.playbackWanted = false
+                // A clip that ran out is finished. Rewind rather than sit on
+                // the last frame with the transport still saying "pause". A GIF
+                // never gets here: it loops.
+                onEndOfFile: {
+                    surface.playbackWanted = false
+                    surface.seek(0)
+                }
+
                 TapHandler {
-                    onTapped: surface.playbackWanted = !surface.playbackWanted
+                    onTapped: {
+                        surface.playbackWanted = !surface.playbackWanted
+                        root.wakeChrome()
+                    }
+                }
+            }
+
+            // A paused full-screen video used to show a still frame and nothing
+            // else, which is indistinguishable from a video that has stopped
+            // working. One obvious way back in.
+            MediaOverlayButton {
+                anchors.centerIn: parent
+                visible: root.isVideo && !surface.playbackWanted && !root.playbackFailed
+                diameter: Kirigami.Units.gridUnit * 4
+                iconName: "media-playback-start-symbolic"
+                text: Whatevr.I18n.i18nc("@action:button", "Play")
+                onClicked: {
+                    surface.playbackWanted = true
+                    root.wakeChrome()
+                }
+            }
+
+            // Opening a file, claiming a decoder, or waiting behind one.
+            QQC2.BusyIndicator {
+                anchors.centerIn: parent
+                visible: root.buffering && !root.playbackFailed
+                running: visible
+            }
+
+            // What a black rectangle used to say nothing about. The engine is
+            // named because it is the first thing worth knowing, and the
+            // external opener is the way out that always works.
+            ColumnLayout {
+                anchors.centerIn: parent
+                width: Math.min(parent.width - Kirigami.Units.gridUnit * 2, Kirigami.Units.gridUnit * 24)
+                visible: root.playbackFailed
+                spacing: Kirigami.Units.largeSpacing
+
+                Kirigami.Icon {
+                    Layout.alignment: Qt.AlignHCenter
+                    source: "dialog-error-symbolic"
+                    implicitWidth: Kirigami.Units.iconSizes.large
+                    implicitHeight: Kirigami.Units.iconSizes.large
+                    color: "white"
+                }
+
+                QQC2.Label {
+                    Layout.fillWidth: true
+                    text: Whatevr.I18n.i18nc("@info", "This video could not be played")
+                    color: "white"
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.Wrap
+                }
+
+                QQC2.Label {
+                    Layout.fillWidth: true
+                    text: Whatevr.MediaBackend.description
+                    color: Qt.rgba(1, 1, 1, 0.7)
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.Wrap
+                    font.pointSize: Kirigami.Theme.smallFont.pointSize
+                }
+
+                QQC2.Button {
+                    Layout.alignment: Qt.AlignHCenter
+                    visible: root.hasFile
+                    icon.name: "document-open-symbolic"
+                    text: Whatevr.I18n.i18nc("@action:button", "Open Externally")
+                    onClicked: Whatevr.ProtocolController.openLocalFile(root.localPath)
                 }
             }
 
@@ -200,6 +352,11 @@ QQC2.Popup {
             anchors.top: parent.top
             anchors.right: parent.right
             anchors.margins: Kirigami.Units.largeSpacing
+            opacity: root.chromeVisible ? 1 : 0
+            visible: opacity > 0
+            Behavior on opacity {
+                NumberAnimation { duration: Kirigami.Units.longDuration }
+            }
             icon.name: "window-close-symbolic"
             text: Whatevr.I18n.i18nc("@action:button", "Close")
             display: QQC2.AbstractButton.IconOnly
@@ -216,11 +373,21 @@ QQC2.Popup {
             anchors.top: parent.top
             anchors.left: parent.left
             anchors.margins: Kirigami.Units.largeSpacing
-            visible: root.hasFile
+            opacity: root.chromeVisible ? 1 : 0
+            visible: root.hasFile && opacity > 0
+            Behavior on opacity {
+                NumberAnimation { duration: Kirigami.Units.longDuration }
+            }
             width: actions.implicitWidth + Kirigami.Units.smallSpacing * 2
             height: actions.implicitHeight + Kirigami.Units.smallSpacing
             radius: Kirigami.Units.cornerRadius
             color: Qt.rgba(0, 0, 0, 0.6)
+
+            // Swallows taps on the bar's own background, which would otherwise
+            // reach the backdrop handler and close the viewer.
+            TapHandler {
+                onTapped: root.wakeChrome()
+            }
 
             RowLayout {
                 id: actions
@@ -285,11 +452,21 @@ QQC2.Popup {
             anchors.bottom: parent.bottom
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.bottomMargin: Kirigami.Units.gridUnit
-            visible: root.isVideo
+            opacity: root.chromeVisible ? 1 : 0
+            visible: root.isVideo && opacity > 0
+            Behavior on opacity {
+                NumberAnimation { duration: Kirigami.Units.longDuration }
+            }
             width: Math.min(parent.width - Kirigami.Units.gridUnit * 2, Kirigami.Units.gridUnit * 42)
             height: controls.implicitHeight + Kirigami.Units.largeSpacing
             radius: Kirigami.Units.cornerRadius
             color: Qt.rgba(0, 0, 0, 0.6)
+
+            // Same as the action bar: a tap on the bar itself must not fall
+            // through to the backdrop's close handler.
+            TapHandler {
+                onTapped: root.wakeChrome()
+            }
 
             RowLayout {
                 id: controls
@@ -349,10 +526,22 @@ QQC2.Popup {
                     Layout.fillWidth: true
                     from: 0
                     to: Math.max(surface.duration, root.durationSecs, 1)
-                    // While dragging, the bar follows the finger; otherwise it
-                    // follows playback.
-                    value: pressed ? value : surface.position
-                    onMoved: surface.seek(value)
+                    // Seek on release rather than on every pixel of the drag:
+                    // an absolute seek per mouse move makes the decoder thrash
+                    // and the picture stutter while scrubbing.
+                    onPressedChanged: if (!pressed) surface.seek(value)
+
+                    // The bar follows playback except while it is being
+                    // dragged, when it follows the finger. Written as a Binding
+                    // rather than `value: pressed ? value : surface.position`,
+                    // which reads its own value and is a binding loop.
+                    Binding {
+                        target: seekBar
+                        property: "value"
+                        value: surface.position
+                        when: !seekBar.pressed
+                        restoreMode: Binding.RestoreNone
+                    }
 
                     QQC2.ToolTip.text: root.formatTime(seekBar.value)
                     QQC2.ToolTip.visible: seekBar.pressed
@@ -433,6 +622,10 @@ QQC2.Popup {
 
         // Keyboard transport, matching what a video player is expected to do.
         Keys.onPressed: event => {
+            // Any key counts as "the user is here", the same as moving the
+            // pointer; driving by keyboard alone must not leave the controls
+            // hidden.
+            root.wakeChrome()
             switch (event.key) {
             case Qt.Key_Space:
                 surface.playbackWanted = !surface.playbackWanted

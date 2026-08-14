@@ -27,6 +27,8 @@ set(WHATKEVR_SOURCES
     media/mpvpool.h
     media/mpvvideoitem.cpp
     media/mpvvideoitem.h
+    media/videoarbiter.cpp
+    media/videoarbiter.h
     protocol/protocolclient.cpp
     protocol/protocolclient.h
     protocol/collectionviewmodel.cpp
@@ -125,6 +127,8 @@ set(WHATKEVR_QML_FILES
     qml/components/QtVideoSurface.qml
     qml/components/VideoSurface.qml
     qml/components/VideoSurfaceBackend.qml
+    qml/components/MediaFormat.js
+    qml/components/MediaOverlayButton.qml
     qml/components/MediaDragArea.qml
     qml/components/VoiceBubble.qml
         qml/components/FramelessBubble.qml

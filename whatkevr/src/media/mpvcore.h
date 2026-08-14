@@ -6,7 +6,29 @@
 #include <QString>
 #include <QUrl>
 
+#include <memory>
+
 struct mpv_handle;
+
+/**
+ * Shared ownership of one mpv_handle.
+ *
+ * The render context is built from a handle on the scene graph's render thread
+ * and freed there; the core that created the handle lives on the GUI thread and
+ * can be destroyed at any time. Without a shared owner the GUI thread wins that
+ * race and tears the handle down while a live render context still points at
+ * it. MpvQt solves it the same way (MpvHandleManager), and this is where the
+ * idea comes from.
+ */
+struct MpvHandleOwner {
+    explicit MpvHandleOwner(mpv_handle *handle);
+    ~MpvHandleOwner();
+
+    MpvHandleOwner(const MpvHandleOwner &) = delete;
+    MpvHandleOwner &operator=(const MpvHandleOwner &) = delete;
+
+    mpv_handle *handle = nullptr;
+};
 
 /**
  * MpvCore is a thin RAII wrapper around one libmpv instance.
@@ -51,6 +73,12 @@ public:
     {
         return m_mpv;
     }
+    /// A reference the render thread can hold, so the handle outlives any
+    /// render context built from it however the two are torn down.
+    std::shared_ptr<MpvHandleOwner> handleOwner() const
+    {
+        return m_handle;
+    }
 
     QUrl source() const
     {
@@ -86,8 +114,9 @@ public:
         return m_videoSize;
     }
 
-    /// Loads a file or URL. Passing an empty URL stops playback and unloads.
-    void load(const QUrl &source, bool autoplay);
+    /// Loads a file or URL, optionally opening it partway in. Passing an empty
+    /// URL stops playback and unloads.
+    void load(const QUrl &source, bool autoplay, double startSeconds = 0.0);
     void play();
     void pause();
     void togglePlaying();
@@ -124,6 +153,8 @@ private:
     void command(const QStringList &args);
     void setProperty(const QString &name, const QVariant &value);
 
+    std::shared_ptr<MpvHandleOwner> m_handle;
+    /// m_handle->handle, cached: every call below reaches for it.
     mpv_handle *m_mpv = nullptr;
     Mode m_mode = Mode::Audio;
 

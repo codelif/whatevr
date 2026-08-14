@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 #include "mpvpool.h"
 
-#include <algorithm>
-
-#include "app/settings.h"
 #include "mpvcore.h"
 #include "mpvvideoitem.h"
 
@@ -22,16 +19,6 @@ MpvCore *MpvPool::acquire(MpvVideoItem *item)
 {
     if (!item) {
         return nullptr;
-    }
-
-    // The full-screen viewer gets its own core so opening it never steals one
-    // from the conversation behind it.
-    if (item == m_reservedItem) {
-        if (!m_reservedCore) {
-            m_reservedCore = new MpvCore(MpvCore::Mode::Video, this);
-            m_reservedCore->setHardwareDecoding(m_hardwareDecoding);
-        }
-        return m_reservedCore->isValid() ? m_reservedCore : nullptr;
     }
 
     for (Slot &slot : m_slots) {
@@ -53,19 +40,12 @@ MpvCore *MpvPool::acquire(MpvVideoItem *item)
 
 MpvCore *MpvPool::takeFreeCore()
 {
-    // The user can cap inline decoding, down to none at all, in which case
-    // bubbles stay thumbnails and only the full-screen viewer plays.
-    const Settings *settings = Settings::instance();
-    const int limit = settings ? std::clamp(settings->inlineVideoLimit(), 0, inlineCoreLimit) : inlineCoreLimit;
-    if (limit == 0) {
-        return nullptr;
-    }
     for (Slot &slot : m_slots) {
         if (!slot.owner) {
             return slot.core;
         }
     }
-    if (m_slots.size() >= limit) {
+    if (m_slots.size() >= coreLimit) {
         return nullptr;
     }
     auto *core = new MpvCore(MpvCore::Mode::Video, this);
@@ -83,10 +63,6 @@ void MpvPool::release(MpvVideoItem *item, MpvCore *core)
     if (!core) {
         return;
     }
-    if (core == m_reservedCore) {
-        core->stop();
-        return;
-    }
     for (Slot &slot : m_slots) {
         if (slot.core == core && slot.owner == item) {
             // Stopping rather than destroying is the point of the pool: the
@@ -98,11 +74,6 @@ void MpvPool::release(MpvVideoItem *item, MpvCore *core)
     }
 }
 
-void MpvPool::setReservedItem(MpvVideoItem *item)
-{
-    m_reservedItem = item;
-}
-
 void MpvPool::setHardwareDecoding(bool enabled)
 {
     if (m_hardwareDecoding == enabled) {
@@ -112,8 +83,4 @@ void MpvPool::setHardwareDecoding(bool enabled)
     for (Slot &slot : m_slots) {
         slot.core->setHardwareDecoding(enabled);
     }
-    if (m_reservedCore) {
-        m_reservedCore->setHardwareDecoding(enabled);
-    }
 }
-

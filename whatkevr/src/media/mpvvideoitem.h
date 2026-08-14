@@ -40,9 +40,11 @@ class MpvVideoItem : public QQuickFramebufferObject
     /// Playback speed and volume, for the full-screen viewer's transport.
     Q_PROPERTY(double speed READ speed WRITE setSpeed NOTIFY speedChanged)
     Q_PROPERTY(double volume READ volume WRITE setVolume NOTIFY volumeChanged)
-    /// Claims the pool's reserved decoder, so opening the viewer never evicts a
-    /// core from the conversation behind it.
-    Q_PROPERTY(bool reserved READ reserved WRITE setReserved NOTIFY reservedChanged)
+    /// Where the file should open, in seconds. Applied as mpv's --start at load
+    /// rather than as a seek afterwards, so resuming does not flash the opening
+    /// frame first. Set it before playing; changing it later has no effect
+    /// until the next load.
+    Q_PROPERTY(double startPosition READ startPosition WRITE setStartPosition NOTIFY startPositionChanged)
     Q_PROPERTY(int videoWidth READ videoWidth NOTIFY videoSizeChanged)
     Q_PROPERTY(int videoHeight READ videoHeight NOTIFY videoSizeChanged)
 
@@ -89,11 +91,11 @@ public:
         return m_volume;
     }
     void setVolume(double volume);
-    bool reserved() const
+    double startPosition() const
     {
-        return m_reserved;
+        return m_startPosition;
     }
-    void setReserved(bool reserved);
+    void setStartPosition(double seconds);
     bool active() const
     {
         return m_core != nullptr;
@@ -105,6 +107,18 @@ public:
     Q_INVOKABLE void togglePlaying();
     /// Gives the core back to the pool and returns to showing a thumbnail.
     Q_INVOKABLE void release();
+
+    /**
+     * The renderer telling us mpv's render context now exists.
+     *
+     * Nothing may be loaded before this. mpv initializes the video output when
+     * it opens a file, and with `vo=libmpv` and no render context yet it logs
+     * "No render context set", reports "Video: no video", and plays the file
+     * through to eof with the video track disabled. The context arriving a
+     * frame later does not undo that: the decision is made per file, at load.
+     * MpvQt has the same handshake, as MpvAbstractItem::ready().
+     */
+    Q_INVOKABLE void notifyRendererReady();
 
     MpvCore *core() const
     {
@@ -123,7 +137,7 @@ Q_SIGNALS:
     void videoSizeChanged();
     void speedChanged();
     void volumeChanged();
-    void reservedChanged();
+    void startPositionChanged();
     void endOfFile();
 
 private:
@@ -134,10 +148,14 @@ private:
     MpvCore *m_core = nullptr;
     QUrl m_source;
     QString m_messageId;
+    /// Whether mpv's render context exists, and whether the current core has
+    /// actually been given the file yet. See notifyRendererReady().
+    bool m_rendererReady = false;
+    bool m_loadedIntoCore = false;
     bool m_wantPlaying = false;
     bool m_muted = false;
     bool m_loop = false;
-    bool m_reserved = false;
+    double m_startPosition = 0.0;
     double m_speed = 1.0;
     double m_volume = 100.0;
 };
