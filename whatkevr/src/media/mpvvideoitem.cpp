@@ -95,6 +95,19 @@ public:
             return;
         }
 
+        // Qt renders this item whenever the window renders: on every scroll
+        // frame, every hover, every animation elsewhere in the app. Drawing
+        // the same video frame again each time is a full GPU pass for nothing,
+        // so ask mpv whether there is anything new and leave the last frame in
+        // the framebuffer when there is not. A framebuffer Qt just replaced
+        // has nothing in it to leave, so that one is always drawn.
+        const bool targetIsNew = target->handle() != m_lastTarget;
+        const bool hasNewFrame = (mpv_render_context_update(m_renderContext) & MPV_RENDER_UPDATE_FRAME) != 0;
+        if (!hasNewFrame && !targetIsNew) {
+            return;
+        }
+        m_lastTarget = target->handle();
+
         mpv_opengl_fbo fbo{
             static_cast<int>(target->handle()),
             target->width(),
@@ -118,6 +131,9 @@ public:
             window->beginExternalCommands();
         }
         mpv_render_context_render(m_renderContext, params);
+        // Advanced control expects to be told the frame reached the screen; it
+        // is what mpv times the next one against.
+        mpv_render_context_report_swap(m_renderContext);
         if (window) {
             window->endExternalCommands();
         }
@@ -168,12 +184,16 @@ private:
         }
 #endif
 
-        // No MPV_RENDER_PARAM_ADVANCED_CONTROL. It opts into driving
-        // mpv_render_context_update() ourselves, which we never did; setting it
-        // without honouring it is a misuse, and MpvQt does not set it either.
+        // Advanced control, which is what lets render() above skip a pass when
+        // there is no new frame. It is a contract: mpv may now call the update
+        // callback without a frame behind it, and the answer has to come from
+        // mpv_render_context_update(). Honouring it is also what enables mpv's
+        // direct rendering, saving a copy per frame.
+        int advancedControl = 1;
         mpv_render_param params[] = {
             {MPV_RENDER_PARAM_API_TYPE, const_cast<char *>(MPV_RENDER_API_TYPE_OPENGL)},
             {MPV_RENDER_PARAM_OPENGL_INIT_PARAMS, &glInit},
+            {MPV_RENDER_PARAM_ADVANCED_CONTROL, &advancedControl},
             display,
             {MPV_RENDER_PARAM_INVALID, nullptr},
         };
@@ -201,15 +221,17 @@ private:
         // context that was built from it.
         m_handle = std::move(owner);
 
-        // Only now may a file be loaded into this core. Queued, because we are
-        // on the render thread with the GUI thread blocked.
-        QMetaObject::invokeMethod(videoItem, "notifyRendererReady", Qt::QueuedConnection);
-
-        // Every new frame becomes an item update, which is what drives render()
-        // above.
+        // Before anything else: under advanced control the core can block
+        // waiting to be asked for a frame, and it is this callback that starts
+        // the asking. Every update becomes an item update, which is what drives
+        // render() above.
         m_frameTarget = std::make_unique<FrameCallbackTarget>();
         m_frameTarget->item = videoItem;
         mpv_render_context_set_update_callback(m_renderContext, onMpvFrame, m_frameTarget.get());
+
+        // Only now may a file be loaded into this core. Queued, because we are
+        // on the render thread with the GUI thread blocked.
+        QMetaObject::invokeMethod(videoItem, "notifyRendererReady", Qt::QueuedConnection);
     }
 
     void releaseContext()
@@ -230,6 +252,9 @@ private:
 
     QPointer<MpvVideoItem> m_item;
     mpv_render_context *m_renderContext = nullptr;
+    /// The framebuffer the last frame went into. Qt hands out a new one on
+    /// resize, and a new one is empty until something is drawn into it.
+    uint m_lastTarget = 0;
     std::shared_ptr<MpvHandleOwner> m_handle;
     std::unique_ptr<FrameCallbackTarget> m_frameTarget;
     int m_retries = 0;

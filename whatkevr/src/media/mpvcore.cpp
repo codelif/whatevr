@@ -122,6 +122,29 @@ MpvCore::MpvCore(Mode mode, QObject *parent)
         // it, so it must not go looking for output of its own.
         setOption(m_mpv, "vo", "libmpv");
         setOption(m_mpv, "hwdec", "auto-safe");
+        // WhatsApp encodes for compatibility, so most clips are H.264 Baseline,
+        // and drivers advertise Constrained Baseline only. mpv reads that as
+        // "hardware decoding of this stream is unsupported" and quietly falls
+        // back to software for the majority of what this app plays. The check
+        // is a profile string comparison, not a capability test: a decoder that
+        // fails anyway falls back on its own.
+        setOption(m_mpv, "vd-lavc-check-hw-profile", "no");
+        // The one option standing between this app and a smooth chat list.
+        // By default mpv hands out a frame early and then blocks inside
+        // mpv_render_context_render() until its display time, which is Qt's
+        // render thread held for most of a frame interval, every frame: the
+        // whole window ends up paced by the video and scrolling stutters.
+        // With no offset the frame is handed over when it is due and the
+        // render call returns immediately. Measured on a 30 fps status clip:
+        // 4.9 seconds of blocked render thread per 6 seconds, down to 0.18.
+        setOption(m_mpv, "video-timing-offset", "0");
+        // Take stills on the core rather than through the render context.
+        // Under advanced control a GPU screenshot is serviced by the render
+        // thread, and the render thread is periodically blocked behind the GUI
+        // thread that asked for it: the two waited for each other and the app
+        // stopped. Software conversion of the frame mpv already has is both
+        // deadlock-free and exactly the picture we want.
+        setOption(m_mpv, "screenshot-sw", "yes");
         // Land scrubs where the user let go rather than on the nearest
         // keyframe, which on a WhatsApp video can be several seconds away.
         setOption(m_mpv, "hr-seek", "yes");
