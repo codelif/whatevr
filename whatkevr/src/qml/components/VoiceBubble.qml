@@ -31,12 +31,35 @@ Item {
             return Whatevr.AudioPlayer.duration
         return row.mediaDurationSecs
     }
-    readonly property real elapsedSeconds: {
-        if (isCurrent)
-            return Whatevr.AudioPlayer.position
-        // A note stopped halfway keeps its place, so the bar does not lie about
-        // where you left off.
-        return Whatevr.AudioPlayer.resumePosition(row.messageId)
+    readonly property real elapsedSeconds: isCurrent ? Whatevr.AudioPlayer.position : rememberedSeconds
+
+    /// A note stopped halfway keeps its place, so the bar does not lie about
+    /// where you left off. Assigned rather than bound: resumePosition() is a
+    /// plain call with nothing to notify on, so a binding through it went
+    /// stale the moment another bubble took the player.
+    property real rememberedSeconds: 0
+
+    function refreshRemembered() {
+        rememberedSeconds = Whatevr.AudioPlayer.resumePosition(row.messageId)
+    }
+
+    Component.onCompleted: refreshRemembered()
+
+    Connections {
+        target: Whatevr.AudioPlayer
+
+        function onResumePositionChanged(messageId) {
+            if (messageId === root.row.messageId)
+                root.refreshRemembered()
+        }
+    }
+
+    Connections {
+        target: root.row
+
+        function onMessageIdChanged() {
+            root.refreshRemembered()
+        }
     }
     readonly property real progress: totalSeconds > 0
         ? Math.min(1, Math.max(0, elapsedSeconds / totalSeconds))

@@ -552,6 +552,9 @@ Item {
             // the bubble would sit showing transport controls over a surface
             // that is never going to produce another frame.
             onRevoked: root.intent = "stopped"
+            // A voice note took the audio focus: the clip stays where it is,
+            // paused, exactly as if the user had paused it.
+            onExternallyPaused: root.intent = "paused"
             // A clip that ran out is finished, not paused partway: back to the
             // poster, and forget the position so the next tap starts it over.
             onEndOfFile: {

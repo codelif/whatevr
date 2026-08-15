@@ -84,6 +84,10 @@ Item {
     /// play; leaving `playing` true would show transport controls over a
     /// surface that is not going to produce a frame.
     signal revoked
+    /// The session was paused from outside this surface (a voice note took
+    /// the audio focus). The owner must stop wanting playback, or its
+    /// transport keeps claiming a clip is running that is not.
+    signal externallyPaused
 
     function seek(seconds) {
         if (backend) {
@@ -132,11 +136,14 @@ Item {
             return
         }
         rememberPlaybackState()
+        // The reference goes before the release: releasing pauses the session,
+        // and a surface still watching it would report that teardown pause as
+        // an external one.
+        session = null
         // Unconditional, even when nothing is held: it is also how a surface
         // gives up its place in the animated queue, which a bubble scrolled out
         // of view has to do or it is handed a slot it no longer wants.
         Whatevr.VideoPlayback.release(root)
-        session = null
         grantHeld = false
     }
 
@@ -171,7 +178,21 @@ Item {
     Component.onCompleted: syncGrant()
     Component.onDestruction: {
         rememberPlaybackState()
+        session = null
         Whatevr.VideoPlayback.release(root)
+    }
+
+    // The session pausing while this surface still wants to play can only be
+    // someone else's doing (the voice-note player taking the audio focus);
+    // every path this surface initiates drops the reference first.
+    Connections {
+        target: root.session
+
+        function onPlayingChanged() {
+            if (root.session && !root.session.playing && root.playing && root.grantHeld) {
+                root.externallyPaused()
+            }
+        }
     }
 
     Connections {

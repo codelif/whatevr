@@ -37,8 +37,15 @@ class AudioPlayer : public QObject
     Q_PROPERTY(QString error READ error NOTIFY errorChanged)
 
 public:
-    explicit AudioPlayer(QObject *parent = nullptr);
+    // Not defaulted for the same reason as VideoPlaybackArbiter: a
+    // default-constructible QML_SINGLETON is built by the engine itself rather
+    // than through create(), which would fork the QML-visible object off from
+    // the one C++ holds.
+    explicit AudioPlayer(QObject *parent);
     ~AudioPlayer() override;
+
+    static AudioPlayer *instance();
+    static AudioPlayer *create(QQmlEngine *qmlEngine, QJSEngine *jsEngine);
 
     QString messageId() const
     {
@@ -88,6 +95,10 @@ Q_SIGNALS:
     /// Emitted the first time a message actually starts playing, which is when
     /// a played receipt is owed.
     void started(const QString &messageId);
+    /// The remembered resume point for this message changed. resumePosition()
+    /// is a plain call with nothing to notify on, so a bubble that is not the
+    /// current one binds through this instead of showing a stale mark.
+    void resumePositionChanged(const QString &messageId);
 
 private:
     void rememberPosition();

@@ -338,6 +338,9 @@ QQC2.Popup {
                 // up, since it is modal, but if it ever did the viewer must not
                 // sit there claiming to play.
                 onRevoked: surface.playbackWanted = false
+                // A voice note took the audio focus; show the paused state
+                // honestly rather than a transport that claims playback.
+                onExternallyPaused: surface.playbackWanted = false
                 // A clip that ran out is finished: stop wanting playback and
                 // leave the last frame on screen. The old seek(0) here ran
                 // against a player Qt had already stopped, which parked a

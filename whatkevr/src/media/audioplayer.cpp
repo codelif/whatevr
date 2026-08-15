@@ -16,6 +16,19 @@ constexpr double playbackSpeeds[] = {1.0, 1.5, 2.0};
 constexpr double resumeTailSeconds = 1.0;
 }
 
+AudioPlayer *AudioPlayer::instance()
+{
+    static AudioPlayer player(nullptr);
+    return &player;
+}
+
+AudioPlayer *AudioPlayer::create(QQmlEngine *, QJSEngine *)
+{
+    // The engine would otherwise take ownership of a statically-stored object.
+    QQmlEngine::setObjectOwnership(instance(), QQmlEngine::CppOwnership);
+    return instance();
+}
+
 AudioPlayer::AudioPlayer(QObject *parent)
     : QObject(parent)
     , m_core(new MpvCore(this))
@@ -196,6 +209,7 @@ void AudioPlayer::rememberPosition()
     const Settings *settings = Settings::instance();
     if (settings && !settings->rememberPlaybackPosition()) {
         m_resumePositions.remove(m_messageId);
+        Q_EMIT resumePositionChanged(m_messageId);
         return;
     }
     const double at = m_core->position();
@@ -205,4 +219,5 @@ void AudioPlayer::rememberPosition()
     } else {
         m_resumePositions.remove(m_messageId);
     }
+    Q_EMIT resumePositionChanged(m_messageId);
 }

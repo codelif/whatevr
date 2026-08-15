@@ -115,7 +115,7 @@ void TestMediaPlayback::audioPlayerReportsFinishedAtEndOfFile()
     const QString path = writeSilentWav(0.4);
     QVERIFY(!path.isEmpty());
 
-    AudioPlayer player;
+    AudioPlayer player(nullptr);
     QVERIFY2(player.available(), "AudioPlayer has no usable mpv instance");
 
     QSignalSpy finished(&player, &AudioPlayer::finished);
@@ -136,7 +136,7 @@ void TestMediaPlayback::audioPlayerReportsFinishedAtEndOfFile()
 
 void TestMediaPlayback::audioPlayerRefusesToPlayNothing()
 {
-    AudioPlayer player;
+    AudioPlayer player(nullptr);
     QSignalSpy started(&player, &AudioPlayer::started);
     player.play(QString(), QUrl::fromLocalFile(QStringLiteral("/nonexistent.wav")), 0);
     QVERIFY(player.messageId().isEmpty());

@@ -13,6 +13,7 @@
 
 #include "app/protocolcontroller.h"
 #include "app/settings.h"
+#include "media/audioplayer.h"
 #include "media/mpvcore.h"
 #include "media/videoarbiter.h"
 #include "media/videoframeprovider.h"
@@ -164,6 +165,16 @@ int main(int argc, char *argv[])
                              VideoPlaybackArbiter::instance()->promoteStreamedSource(messageId, path);
                          }
                      });
+
+    // Voice notes (libmpv) and videos (Qt Multimedia) are separate engines
+    // with no idea of each other; without this a note and a video played
+    // sound at the same time. Muted GIFs never trip either direction.
+    QObject::connect(AudioPlayer::instance(), &AudioPlayer::playingChanged, VideoPlaybackArbiter::instance(), []() {
+        if (AudioPlayer::instance()->playing()) {
+            VideoPlaybackArbiter::instance()->pauseAudibleSessions();
+        }
+    });
+    QObject::connect(VideoPlaybackArbiter::instance(), &VideoPlaybackArbiter::audiblePlaybackStarted, AudioPlayer::instance(), &AudioPlayer::pause);
 
     // Single-instance: a second launch (e.g. clicking a notification, which runs
     // `whatkevr whatevr://chat/<id>` via the desktop scheme handler) forwards its
