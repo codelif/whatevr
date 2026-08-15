@@ -255,6 +255,7 @@ void PlaybackSession::attachView(QQuickItem *container)
         disconnect(m_container, nullptr, this, nullptr);
     }
     m_container = container;
+    m_window = container->window();
     connect(container, &QQuickItem::widthChanged, this, &PlaybackSession::syncItemGeometry);
     connect(container, &QQuickItem::heightChanged, this, &PlaybackSession::syncItemGeometry);
 
@@ -280,6 +281,7 @@ void PlaybackSession::attachView(QQuickItem *container)
         });
     }
     m_item->setParentItem(container);
+    m_item->setVisible(true);
     syncItemGeometry();
     loadIfReady();
 }
@@ -294,15 +296,32 @@ void PlaybackSession::detachView(QQuickItem *container)
     // Leaving the scene, not just this container: the scene graph destroys the
     // renderer, which frees mpv's render context, which switches the video
     // track of the playing file off. In a handoff the next view attaches later
-    // in the same turn, so give it that turn before pulling the item out.
+    // in the same turn, so give it that turn before moving the item out.
     QMetaObject::invokeMethod(
         this,
         [this]() {
-            if (!m_container && m_item) {
+            if (m_container || !m_item) {
+                return;
+            }
+            // Parked out of sight but still in the scene, so the render context
+            // and everything mpv built on it survive. A conversation scrolled
+            // through rebuilt that context per bubble otherwise, and building
+            // one is GPU work on the render thread: exactly the frame the
+            // scroll cannot spare. Invisible items are not drawn, which is all
+            // a paused session needs.
+            m_item->setVisible(false);
+            if (QQuickItem *holder = parkingHolder()) {
+                m_item->setParentItem(holder);
+            } else {
                 m_item->setParentItem(nullptr);
             }
         },
         Qt::QueuedConnection);
+}
+
+QQuickItem *PlaybackSession::parkingHolder() const
+{
+    return m_window ? m_window->contentItem() : nullptr;
 }
 
 void PlaybackSession::syncItemGeometry()

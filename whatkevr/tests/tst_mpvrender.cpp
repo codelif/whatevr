@@ -198,6 +198,41 @@ private Q_SLOTS:
         QTRY_VERIFY_WITH_TIMEOUT(hasBrightPixels(window.grabWindow()), 15000);
     }
 
+    void aViewComingBackDoesNotRebuildTheRenderContext()
+    {
+        QQuickWindow window;
+        window.resize(frameWidth, frameHeight);
+        auto *container = new QQuickItem(window.contentItem());
+        container->setSize(QSizeF(frameWidth, frameHeight));
+        window.show();
+        if (!QTest::qWaitForWindowExposed(&window)) {
+            QSKIP("no exposed window on this platform");
+        }
+        if (window.rendererInterface()->graphicsApi() != QSGRendererInterface::OpenGL) {
+            QSKIP("scene graph is not on OpenGL here");
+        }
+
+        PlaybackSession session;
+        session.attachView(container);
+        session.setMuted(true);
+        session.configure(QStringLiteral("clip"), QUrl::fromLocalFile(m_fixture), 0.0);
+        session.setPlaying(true);
+        QTRY_VERIFY_WITH_TIMEOUT(session.hasVideo(), 15000);
+
+        // A bubble scrolling out of the viewport and back. Rebuilding mpv's
+        // render context each time is GPU work on the render thread, which is
+        // the frame the scroll cannot spare, so the item waits out of sight in
+        // the same scene instead of leaving it.
+        session.setPlaying(false);
+        session.detachView(container);
+        QTest::qWait(200);
+        session.attachView(container);
+        session.setPlaying(true);
+
+        QVERIFY(session.hasVideo());
+        QTRY_VERIFY_WITH_TIMEOUT(hasBrightPixels(window.grabWindow()), 15000);
+    }
+
 private:
     QTemporaryDir m_dir;
     QString m_fixture;

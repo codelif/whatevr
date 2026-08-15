@@ -6,6 +6,7 @@
 #include <QPointer>
 #include <QQmlEngine>
 #include <QQuickItem>
+#include <QQuickWindow>
 #include <QString>
 #include <QTimer>
 #include <QUrl>
@@ -180,6 +181,9 @@ private:
     void resetSeekState();
     void maybeAnnounceAudible();
     void syncItemGeometry();
+    /// Where the video item waits while no view is showing it: somewhere in the
+    /// same scene, so its render context is not rebuilt on the way back.
+    [[nodiscard]] QQuickItem *parkingHolder() const;
 
     /// mpv seeks exactly, so a landing is a landing; the slack is for the frame
     /// or two of playback that can pass before the position is reported.
@@ -190,6 +194,9 @@ private:
     /// the session and moved between views.
     MpvVideoItem *m_item = nullptr;
     QPointer<QQuickItem> m_container;
+    /// The window the last view lived in, which is the scene the item is parked
+    /// in between views.
+    QPointer<QQuickWindow> m_window;
 
     QString m_messageId;
     QUrl m_source;
