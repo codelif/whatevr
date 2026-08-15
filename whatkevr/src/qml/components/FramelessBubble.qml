@@ -153,7 +153,7 @@ Item {
             // (which defers the full sticker decode) still has a placeholder.
             visible: framelessRoot.row.isSticker && framelessRoot.row.hasThumbnailImage && !parent.stickerContentReady
             opacity: status === Image.Ready ? 0.7 : 0
-            source: framelessRoot.row.mediaSourceActive && stickerSlot.visible && visible ? Qt.resolvedUrl("file://" + framelessRoot.row.mediaThumbnailLocalPath) : ""
+            source: framelessRoot.row.mediaSourceActive && stickerSlot.visible && visible ? Whatevr.ProtocolController.localFileUrl(framelessRoot.row.mediaThumbnailLocalPath) : ""
             fillMode: Image.PreserveAspectFit
             asynchronous: true
             cache: true
@@ -180,7 +180,7 @@ Item {
             // Defer the decode while flinging unless it is already decoded.
             source: framelessRoot.row.mediaSourceActive && stickerSlot.visible && visible
                     && (!framelessRoot.row.fastFlicking || everDecoded)
-                    ? Qt.resolvedUrl("file://" + framelessRoot.row.mediaLocalPath) : ""
+                    ? Whatevr.ProtocolController.localFileUrl(framelessRoot.row.mediaLocalPath) : ""
             fillMode: Image.PreserveAspectFit
             asynchronous: true
             cache: true
@@ -205,7 +205,7 @@ Item {
             // Defer the (heavy, multi-frame) decode while flinging unless ready.
             source: framelessRoot.row.mediaSourceActive && stickerSlot.visible && visible
                     && (!framelessRoot.row.fastFlicking || everDecoded)
-                    ? Qt.resolvedUrl("file://" + framelessRoot.row.mediaLocalPath) : ""
+                    ? Whatevr.ProtocolController.localFileUrl(framelessRoot.row.mediaLocalPath) : ""
             fillMode: Image.PreserveAspectFit
             asynchronous: true
             cache: false
@@ -229,7 +229,7 @@ Item {
             // Defer the JSON load + first rasterisation while flinging unless ready.
             source: framelessRoot.row.mediaSourceActive && stickerSlot.visible && visible
                     && (!framelessRoot.row.fastFlicking || everDecoded)
-                    ? Qt.resolvedUrl("file://" + framelessRoot.row.mediaLocalPath) : ""
+                    ? Whatevr.ProtocolController.localFileUrl(framelessRoot.row.mediaLocalPath) : ""
             playing: framelessRoot.row.animationActive && visible
             // Rasterise at device resolution (capped) rather than a fixed 2.5×;
             // the sticker is ~144 px so 2× is already crisp and halves the

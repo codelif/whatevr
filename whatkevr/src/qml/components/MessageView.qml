@@ -2034,7 +2034,7 @@ Item {
                 return
             }
             Whatevr.AudioPlayer.play(next.messageId,
-                                     Qt.resolvedUrl("file://" + next.localPath),
+                                     Whatevr.ProtocolController.localFileUrl(next.localPath),
                                      next.durationSecs)
         }
     }

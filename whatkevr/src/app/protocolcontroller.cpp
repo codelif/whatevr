@@ -1869,6 +1869,11 @@ bool ProtocolController::openLocalFile(const QString &localPath)
     return QDesktopServices::openUrl(QUrl::fromLocalFile(localPath));
 }
 
+QUrl ProtocolController::localFileUrl(const QString &localPath) const
+{
+    return localPath.isEmpty() ? QUrl() : QUrl::fromLocalFile(localPath);
+}
+
 void ProtocolController::forwardMessage(const QString &messageId, const QStringList &chatIds)
 {
     if (messageId.isEmpty() || chatIds.isEmpty()) {

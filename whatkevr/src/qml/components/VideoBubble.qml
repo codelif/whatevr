@@ -127,8 +127,8 @@ Item {
     readonly property url playbackSource: sessionSource.toString().length > 0
         ? sessionSource
         : (recoveredLocalPath.length > 0
-           ? Qt.resolvedUrl("file://" + recoveredLocalPath)
-           : (hasFile ? Qt.resolvedUrl("file://" + row.mediaLocalPath) : streamUrl))
+           ? Whatevr.ProtocolController.localFileUrl(recoveredLocalPath)
+           : (hasFile ? Whatevr.ProtocolController.localFileUrl(row.mediaLocalPath) : streamUrl))
 
     // Set synchronously before a protocol request is sent. This both makes the
     // first tap visible immediately and prevents a second request.
@@ -254,9 +254,9 @@ Item {
         if (sessionSource.toString().length > 0)
             return
         if (recoveredLocalPath.length > 0)
-            sessionSource = Qt.resolvedUrl("file://" + recoveredLocalPath)
+            sessionSource = Whatevr.ProtocolController.localFileUrl(recoveredLocalPath)
         else if (hasFile)
-            sessionSource = Qt.resolvedUrl("file://" + row.mediaLocalPath)
+            sessionSource = Whatevr.ProtocolController.localFileUrl(row.mediaLocalPath)
         else if (streamUrl.toString().length > 0)
             sessionSource = streamUrl
     }
@@ -472,7 +472,7 @@ Item {
             readonly property url targetSource: root.hasStill
                 ? root.stillSource
                 : (root.hasPosterFile
-                   ? Qt.resolvedUrl("file://" + root.row.mediaThumbnailLocalPath)
+                   ? Whatevr.ProtocolController.localFileUrl(root.row.mediaThumbnailLocalPath)
                    : "")
             onTargetSourceChanged: everDecoded = false
             onStatusChanged: if (status === Image.Ready) everDecoded = true
@@ -485,7 +485,12 @@ Item {
             source: !root.row.pooled && (!root.row.fastFlicking || everDecoded)
                 ? targetSource
                 : ""
-            fillMode: Image.PreserveAspectCrop
+            // Fit, not crop: the video below draws PreserveAspectFit, and a
+            // cropped poster visibly reframed to letterboxed the instant the
+            // first frame landed. The slot is sized to the media's aspect
+            // ratio anyway, so fit and crop only differ when the metadata was
+            // wrong, which is exactly when the jump was worst.
+            fillMode: Image.PreserveAspectFit
             asynchronous: true
             // A provider url is answered from a store that changes underneath
             // it; the revision in the url is what makes a new capture reload,
@@ -720,8 +725,8 @@ Item {
         active: root.phase === "failed"
 
         sourceComponent: Rectangle {
-            width: Math.min(root.width - Kirigami.Units.largeSpacing * 2,
-                            failureRow.implicitWidth + Kirigami.Units.largeSpacing * 2)
+            width: Math.max(0, Math.min(root.width - Kirigami.Units.largeSpacing * 2,
+                                        failureRow.implicitWidth + Kirigami.Units.largeSpacing * 2))
             height: failureRow.implicitHeight + Kirigami.Units.largeSpacing
             radius: Kirigami.Units.cornerRadius
             color: Qt.alpha("black", 0.7)

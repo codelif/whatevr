@@ -700,7 +700,7 @@ Kirigami.Page {
                     switch (Whatevr.Settings.chatWallpaperPattern) {
                     case "doodle": return "qrc:/data/wallpapers/doodle.svg";
                     case "custom": return Whatevr.Settings.chatWallpaperPath.length > 0
-                        ? Qt.resolvedUrl("file://" + Whatevr.Settings.chatWallpaperPath)
+                        ? Whatevr.ProtocolController.localFileUrl(Whatevr.Settings.chatWallpaperPath)
                         : "";
                     default: return "";
                     }

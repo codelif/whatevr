@@ -135,9 +135,9 @@ Kirigami.ScrollablePage {
                     visible: cell.isVisual && source.toString().length > 0
                     source: {
                         if (cell.localPath.length > 0 && cell.kind === "image")
-                            return Qt.resolvedUrl("file://" + cell.localPath)
+                            return Whatevr.ProtocolController.localFileUrl(cell.localPath)
                         if (cell.thumbnailPath.length > 0)
-                            return Qt.resolvedUrl("file://" + cell.thumbnailPath)
+                            return Whatevr.ProtocolController.localFileUrl(cell.thumbnailPath)
                         return ""
                     }
                     fillMode: Image.PreserveAspectCrop

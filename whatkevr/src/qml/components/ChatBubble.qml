@@ -226,13 +226,17 @@ Item {
                                           && mediaMimeType === "image/webp"
                                           && (mediaLocalPath.endsWith(".webp")
                                               || mediaThumbnailLocalPath.endsWith(".thumb.png")))
-    readonly property bool isImage: mediaMimeType.startsWith("image/")
     // Kinds that render like a photo: they span the bubble edge to edge and
     // drive its width.
     readonly property bool isVideo: mediaKind === "video"
     readonly property bool isGif: mediaKind === "gif"
     readonly property bool isVideoNote: mediaKind === "video_note"
     readonly property bool isPlayableVideo: isVideo || isGif || isVideoNote
+    // Kind wins over mime: a gif arrives as a VideoMessage whose mime can
+    // still say image/gif, and deriving this from mime alone built the image
+    // stack and the video stack on top of each other, two download buttons
+    // included.
+    readonly property bool isImage: !isPlayableVideo && !isSticker && mediaMimeType.startsWith("image/")
     // Kinds that render as a fixed-height row inside the padded content, more
     // like a line of text than a picture.
     readonly property bool isVoice: mediaKind === "voice"
@@ -1040,7 +1044,7 @@ Item {
 
                         anchors.fill: parent
                         visible: false
-                        source: root.mediaSourceActive && mediaSlot.visible && roundedThumb.visible ? Qt.resolvedUrl("file://" + root.mediaThumbnailLocalPath) : ""
+                        source: root.mediaSourceActive && mediaSlot.visible && roundedThumb.visible ? Whatevr.ProtocolController.localFileUrl(root.mediaThumbnailLocalPath) : ""
                         asynchronous: true
                         cache: true
                         sourceSize.width: root.thumbnailDecodeWidth
@@ -1088,7 +1092,7 @@ Item {
                         // already decoded), letting the thumbnail carry the scroll.
                         source: root.mediaSourceActive && mediaSlot.visible && root.hasLocalImage
                                 && (!root.fastFlicking || img.everDecoded)
-                                ? Qt.resolvedUrl("file://" + root.mediaLocalPath) : ""
+                                ? Whatevr.ProtocolController.localFileUrl(root.mediaLocalPath) : ""
                         asynchronous: true
                         cache: true
                         sourceSize.width: root.imageDecodeWidth

@@ -119,7 +119,13 @@ Item {
     /// because nothing was asked for, or because the animated lane is full and
     /// this surface is queued for the next slot.
     property bool grantHeld: false
-    readonly property bool wantsGrant: engaged && source.toString().length > 0
+    /// The full-screen viewer claims its lane even before it knows a source:
+    /// arbitration is what silences the inline copy of the clip, and a viewer
+    /// that waited for a source left it audibly playing under the modal.
+    property bool claimWithoutSource: false
+    readonly property bool wantsGrant: engaged
+                                       && (source.toString().length > 0
+                                           || (claimWithoutSource && messageId.length > 0))
 
     /// The engine the arbiter handed this surface. If a session for this
     /// message was already live somewhere (the same clip inline while the

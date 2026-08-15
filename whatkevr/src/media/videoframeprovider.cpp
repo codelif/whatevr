@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BSD-3-Clause
 #include "videoframeprovider.h"
 
+#include <QUrl>
+
 #include "videoarbiter.h"
 
 VideoFrameImageProvider::VideoFrameImageProvider()
@@ -17,6 +19,9 @@ QImage VideoFrameImageProvider::requestImage(const QString &id, QSize *size, con
     if (query >= 0) {
         messageId.truncate(query);
     }
+    // Callers build the url with encodeURIComponent, so an id carrying '/',
+    // '+' or '=' arrives percent-escaped and would miss the store unescaped.
+    messageId = QUrl::fromPercentEncoding(messageId.toUtf8());
 
     QImage image = VideoPlaybackArbiter::instance()->frameImage(messageId);
     if (image.isNull()) {

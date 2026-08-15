@@ -501,6 +501,9 @@ public:
     Q_INVOKABLE void markMessagePlayed(const QString &messageId);
     /// Hands a downloaded file to the system's default application.
     Q_INVOKABLE bool openLocalFile(const QString &localPath);
+    /// A local path as a properly encoded file URL. QML used to concatenate
+    /// "file://" + path, which breaks on any path containing '#', '?' or '%'.
+    Q_INVOKABLE QUrl localFileUrl(const QString &localPath) const;
 
     Q_INVOKABLE void sendReaction(const QString &messageId, const QString &emoji);
     Q_INVOKABLE void editMessage(const QString &messageId, const QString &newText);

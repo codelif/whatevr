@@ -44,7 +44,7 @@ QQC2.Popup {
     /// A looping kind has no meaningful timeline: it is a moving picture.
     readonly property bool hasTimeline: isVideo && !isGif
     readonly property url mediaSource: localPath.length > 0
-        ? Qt.resolvedUrl("file://" + localPath)
+        ? Whatevr.ProtocolController.localFileUrl(localPath)
         : streamUrl
     readonly property bool hasFile: localPath.length > 0
 
@@ -276,14 +276,71 @@ QQC2.Popup {
         }
 
         Image {
+            id: photo
+
+            // Fit the viewport in both directions, upscaling a small image to
+            // something viewable instead of leaving it postage-stamp sized in
+            // the middle of a black screen, but no further than 2x: beyond
+            // that it is only blur.
+            readonly property real fitScale: implicitWidth > 0 && implicitHeight > 0
+                ? Math.min((parent.width - Kirigami.Units.gridUnit * 2) / implicitWidth,
+                           (parent.height - Kirigami.Units.gridUnit * 2) / implicitHeight,
+                           2)
+                : 1
+
             anchors.centerIn: parent
             visible: !root.isVideo
             source: root.isVideo ? "" : root.mediaSource
             fillMode: Image.PreserveAspectFit
             asynchronous: true
             cache: true
-            width: Math.min(implicitWidth, parent.width - Kirigami.Units.gridUnit * 2)
-            height: Math.min(implicitHeight, parent.height - Kirigami.Units.gridUnit * 2)
+            width: implicitWidth * fitScale
+            height: implicitHeight * fitScale
+
+            // Takes the tap that would otherwise reach the backdrop handler:
+            // a click on the photo itself must not dismiss the viewer.
+            TapHandler {
+                onTapped: root.wakeChrome()
+            }
+        }
+
+        // A slow decode showed a black screen with nothing on it, and a
+        // missing or corrupt file showed the same black screen forever.
+        QQC2.BusyIndicator {
+            anchors.centerIn: parent
+            visible: !root.isVideo && photo.status === Image.Loading
+            running: visible
+        }
+
+        ColumnLayout {
+            anchors.centerIn: parent
+            visible: !root.isVideo && photo.status === Image.Error
+            width: Math.min(parent.width - Kirigami.Units.gridUnit * 2, Kirigami.Units.gridUnit * 24)
+            spacing: Kirigami.Units.smallSpacing
+
+            Kirigami.Icon {
+                Layout.alignment: Qt.AlignHCenter
+                source: "dialog-error-symbolic"
+                color: "white"
+                implicitWidth: Kirigami.Units.iconSizes.large
+                implicitHeight: implicitWidth
+            }
+
+            QQC2.Label {
+                Layout.fillWidth: true
+                text: Whatevr.I18n.i18nc("@info", "Image could not be displayed")
+                color: "white"
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.Wrap
+            }
+
+            QQC2.Button {
+                Layout.alignment: Qt.AlignHCenter
+                visible: root.hasFile
+                icon.name: "document-open-symbolic"
+                text: Whatevr.I18n.i18nc("@action:button", "Open Externally")
+                onClicked: Whatevr.ProtocolController.openLocalFile(root.localPath)
+            }
         }
 
         // A video note stays round full screen: it is a face on a video call,
@@ -322,6 +379,7 @@ QQC2.Popup {
                 // attached and the frames flowing into the texture.
                 messageId: root.messageId
                 source: root.visible && root.isVideo ? root.mediaSource : ""
+                claimWithoutSource: root.visible && root.isVideo
                 startPosition: root.startAt
                 // Engaged for as long as the viewer is open, playing only when
                 // it should be running. Pausing here keeps the decoder and so

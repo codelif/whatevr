@@ -76,7 +76,7 @@ Item {
         const fraction = waveform.fractionAt(x)
         if (!isCurrent) {
             Whatevr.AudioPlayer.play(row.messageId,
-                                     Qt.resolvedUrl("file://" + row.mediaLocalPath),
+                                     Whatevr.ProtocolController.localFileUrl(row.mediaLocalPath),
                                      row.mediaDurationSecs)
         }
         Whatevr.AudioPlayer.seek(fraction * totalSeconds)
@@ -95,7 +95,7 @@ Item {
         if (row.messageId.length === 0)
             return
         if (hasFile) {
-            Whatevr.AudioPlayer.toggle(row.messageId, Qt.resolvedUrl("file://" + row.mediaLocalPath), row.mediaDurationSecs)
+            Whatevr.AudioPlayer.toggle(row.messageId, Whatevr.ProtocolController.localFileUrl(row.mediaLocalPath), row.mediaDurationSecs)
             return
         }
         if (row.mediaDownloading)

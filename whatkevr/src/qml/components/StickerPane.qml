@@ -146,7 +146,7 @@ Item {
             visible: tile.iconPath.length > 0
             width: Kirigami.Units.gridUnit * 1.5
             height: Kirigami.Units.gridUnit * 1.5
-            source: tile.iconPath.length > 0 ? Qt.resolvedUrl("file://" + tile.iconPath) : ""
+            source: tile.iconPath.length > 0 ? Whatevr.ProtocolController.localFileUrl(tile.iconPath) : ""
             sourceSize.width: Math.round(Kirigami.Units.gridUnit * 1.5 * Screen.devicePixelRatio)
             sourceSize.height: Math.round(Kirigami.Units.gridUnit * 1.5 * Screen.devicePixelRatio)
             fillMode: Image.PreserveAspectFit
@@ -384,7 +384,7 @@ Item {
                         anchors.margins: Kirigami.Units.smallSpacing
                         visible: !stickerTile.isLottie && !stickerTile.isAnimatedImage
                         source: visible
-                                ? Qt.resolvedUrl("file://" + stickerTile.localPath)
+                                ? Whatevr.ProtocolController.localFileUrl(stickerTile.localPath)
                                 : ""
                         sourceSize.width: pane.stickerDecodeSize
                         sourceSize.height: pane.stickerDecodeSize
@@ -401,7 +401,7 @@ Item {
                         anchors.margins: Kirigami.Units.smallSpacing
                         visible: stickerTile.isAnimatedImage
                         source: visible
-                                ? Qt.resolvedUrl("file://" + stickerTile.localPath)
+                                ? Whatevr.ProtocolController.localFileUrl(stickerTile.localPath)
                                 : ""
                         playing: stickerHover.hovered && status === AnimatedImage.Ready
                         sourceSize.width: pane.stickerDecodeSize
@@ -416,7 +416,7 @@ Item {
                         anchors.margins: Kirigami.Units.smallSpacing
                         visible: stickerTile.isLottie
                         source: visible
-                                ? Qt.resolvedUrl("file://" + stickerTile.localPath)
+                                ? Whatevr.ProtocolController.localFileUrl(stickerTile.localPath)
                                 : ""
                         // First frame renders at rest; animate on hover only so a
                         // full grid of Lottie stickers stays cheap.
@@ -558,7 +558,7 @@ Item {
                             Image {
                                 Layout.preferredWidth: Kirigami.Units.gridUnit * 2
                                 Layout.preferredHeight: Kirigami.Units.gridUnit * 2
-                                source: packRow.trayPath.length > 0 ? Qt.resolvedUrl("file://" + packRow.trayPath) : ""
+                                source: packRow.trayPath.length > 0 ? Whatevr.ProtocolController.localFileUrl(packRow.trayPath) : ""
                                 sourceSize.width: Math.round(Kirigami.Units.gridUnit * 2 * Screen.devicePixelRatio)
                                 sourceSize.height: Math.round(Kirigami.Units.gridUnit * 2 * Screen.devicePixelRatio)
                                 fillMode: Image.PreserveAspectFit

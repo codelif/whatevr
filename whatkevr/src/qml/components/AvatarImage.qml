@@ -3,6 +3,8 @@ import QtQuick.Controls
 import org.kde.kirigami as Kirigami
 import org.kde.kirigamiaddons.components as KirigamiAddons
 
+import Whatevr as Whatevr
+
 Item {
     id: root
 
@@ -10,7 +12,7 @@ Item {
     property string initials: "?"
     property color backgroundColor: Qt.alpha(activePalette.highlight, 0.14)
     property color foregroundColor: activePalette.highlight
-    readonly property string avatarSource: avatarLocalPath.length > 0 ? "file://" + avatarLocalPath : ""
+    readonly property url avatarSource: Whatevr.ProtocolController.localFileUrl(avatarLocalPath)
     readonly property bool avatarBroken: statusProbe.status === Image.Error
     readonly property bool hasUsableAvatar: avatarLocalPath.length > 0 && !avatarBroken
     readonly property bool initialsAreAlphabetic: /^[A-Za-z]+$/.test(initials)

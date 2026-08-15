@@ -12,7 +12,7 @@ QQC2.Popup {
     id: root
 
     property string localPath: ""
-    readonly property string imageSource: localPath.length > 0 ? "file://" + localPath : ""
+    readonly property url imageSource: Whatevr.ProtocolController.localFileUrl(localPath)
 
     function showImage(path) {
         localPath = path
@@ -47,17 +47,27 @@ QQC2.Popup {
         }
 
         Image {
+            id: picture
+
+            // Fit the viewport, upscaling a small avatar to something
+            // viewable, but no further than 2x: beyond that it is only blur.
+            readonly property real fitScale: implicitWidth > 0 && implicitHeight > 0
+                ? Math.min((parent.width - Kirigami.Units.gridUnit * 2) / implicitWidth,
+                           (parent.height - Kirigami.Units.gridUnit * 2) / implicitHeight,
+                           2)
+                : 1
+
             anchors.centerIn: parent
             source: root.imageSource
             fillMode: Image.PreserveAspectFit
             asynchronous: true
             cache: true
-            width: Math.min(implicitWidth, parent.width - Kirigami.Units.gridUnit * 2)
-            height: Math.min(implicitHeight, parent.height - Kirigami.Units.gridUnit * 2)
+            width: implicitWidth * fitScale
+            height: implicitHeight * fitScale
 
             QQC2.BusyIndicator {
                 anchors.centerIn: parent
-                running: parent.status === Image.Loading
+                running: picture.status === Image.Loading
                 visible: running
             }
         }

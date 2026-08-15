@@ -3,6 +3,8 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 
+import Whatevr as Whatevr
+
 /**
  * Drags a downloaded media file out into a file manager or another app.
  *
@@ -24,7 +26,7 @@ Item {
     Drag.dragType: Drag.Automatic
     Drag.supportedActions: Qt.CopyAction
     Drag.mimeData: ({
-        "text/uri-list": "file://" + root.localPath
+        "text/uri-list": Whatevr.ProtocolController.localFileUrl(root.localPath).toString()
     })
 
     DragHandler {
