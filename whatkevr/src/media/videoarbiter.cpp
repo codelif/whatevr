@@ -200,6 +200,7 @@ PlaybackSession *VideoPlaybackArbiter::obtainParkedSession()
     auto *session = new PlaybackSession(this);
     QQmlEngine::setObjectOwnership(session, QQmlEngine::CppOwnership);
     connect(session, &PlaybackSession::audiblePlaybackStarted, this, &VideoPlaybackArbiter::audiblePlaybackStarted);
+    connect(session, &PlaybackSession::stillGrabbed, this, &VideoPlaybackArbiter::captureImage);
     m_sessions.append(session);
     return session;
 }
@@ -377,29 +378,21 @@ void VideoPlaybackArbiter::rememberOrder(const QString &messageId)
     }
 }
 
-void VideoPlaybackArbiter::captureFrame(const QString &messageId, const QVideoFrame &frame)
+void VideoPlaybackArbiter::captureImage(const QString &messageId, const QImage &source)
 {
-    if (messageId.isEmpty() || !frame.isValid()) {
+    if (messageId.isEmpty() || source.isNull()) {
         return;
     }
-    QImage image = frame.toImage();
-    if (image.isNull()) {
-        return;
-    }
-    // A decoder that has opened a file but not produced a picture yet hands out
-    // a frame of the right size filled with nothing. Storing that would replace
-    // a good still with a black rectangle, which is the failure this whole
-    // mechanism exists to avoid.
+    QImage image = source;
+    // A decoder that has opened a file but not produced a picture yet answers
+    // with an empty frame. Storing that would replace a good still with a black
+    // rectangle, which is the failure this whole mechanism exists to avoid.
     if (image.width() <= 0 || image.height() <= 0) {
         return;
     }
     if (image.width() > frameMaxEdge || image.height() > frameMaxEdge) {
         image = image.scaled(frameMaxEdge, frameMaxEdge, Qt::KeepAspectRatio, Qt::SmoothTransformation);
     }
-    // detach(): toImage() may hand back a view onto the frame's own buffer,
-    // which the decoder reuses for the next frame.
-    image.detach();
-
     {
         QMutexLocker locker(&m_frameMutex);
         m_frames.insert(messageId, image);

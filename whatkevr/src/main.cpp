@@ -4,6 +4,8 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickStyle>
+#include <QQuickWindow>
+#include <QSGRendererInterface>
 #include <QTimer>
 
 #include <KAboutData>
@@ -55,22 +57,17 @@ int main(int argc, char *argv[])
     g_previousMessageHandler = qInstallMessageHandler(filterKirigamiNullPropertyWarnings);
     KLocalizedString::setApplicationDomain("whatkevr");
     QQuickStyle::setStyle(QStringLiteral("org.kde.desktop"));
+    // libmpv renders video through OpenGL, so the scene graph has to be on its
+    // OpenGL backend for video to draw at all. On Linux this is what Qt Quick
+    // picks anyway; pinning it makes the app deterministic rather than
+    // dependent on a platform default, and an explicit QSG_RHI_BACKEND still
+    // wins so the choice remains debuggable.
+    if (qEnvironmentVariableIsEmpty("QSG_RHI_BACKEND")) {
+        QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
+    }
     // Some incoming media carries malformed ICC profile descriptions; Qt warns
     // on every decode and there is nothing we can do about the files.
-    QString loggingRules = QStringLiteral("qt.gui.icc.warning=false\n");
-    // Qt Multimedia's FFmpeg backend routes libav's own output through these
-    // categories, and libav is chatty at info level: every clip opened prints
-    // av_dump_format's full stream banner, and its hardware-acceleration probe
-    // prints one error per device type it cannot load ("Cannot load
-    // libcuda.so.1" on a machine that has no CUDA at all). None of it is
-    // actionable and all of it drowns our own log. Skipped when the user is
-    // already filtering multimedia themselves, since setFilterRules is applied
-    // after QT_LOGGING_RULES and would otherwise silently override it.
-    if (!qEnvironmentVariable("QT_LOGGING_RULES").contains(QLatin1String("multimedia"))) {
-        loggingRules += QStringLiteral("qt.multimedia.ffmpeg*.info=false\n"
-                                       "qt.multimedia.ffmpeg*.debug=false\n");
-    }
-    QLoggingCategory::setFilterRules(loggingRules);
+    QLoggingCategory::setFilterRules(QStringLiteral("qt.gui.icc.warning=false\n"));
 
     QApplication app(argc, argv);
     // QApplication's constructor calls setlocale(LC_ALL, "") and libmpv refuses
@@ -166,9 +163,9 @@ int main(int argc, char *argv[])
                          }
                      });
 
-    // Voice notes (libmpv) and videos (Qt Multimedia) are separate engines
-    // with no idea of each other; without this a note and a video played
-    // sound at the same time. Muted GIFs never trip either direction.
+    // A voice note and a video are separate mpv instances with no idea of each
+    // other; without this both played sound at once. Muted GIFs never trip
+    // either direction.
     QObject::connect(AudioPlayer::instance(), &AudioPlayer::playingChanged, VideoPlaybackArbiter::instance(), []() {
         if (AudioPlayer::instance()->playing()) {
             VideoPlaybackArbiter::instance()->pauseAudibleSessions();

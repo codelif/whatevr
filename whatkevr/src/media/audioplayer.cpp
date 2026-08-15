@@ -31,7 +31,7 @@ AudioPlayer *AudioPlayer::create(QQmlEngine *, QJSEngine *)
 
 AudioPlayer::AudioPlayer(QObject *parent)
     : QObject(parent)
-    , m_core(new MpvCore(this))
+    , m_core(new MpvCore(MpvCore::Mode::Audio, this))
 {
     connect(m_core, &MpvCore::playingChanged, this, [this] {
         if (m_core->playing() && !m_startedReported && !m_messageId.isEmpty()) {

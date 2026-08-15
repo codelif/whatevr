@@ -21,6 +21,8 @@ set(WHATKEVR_SOURCES
     media/audioplayer.h
     media/mpvcore.cpp
     media/mpvcore.h
+    media/mpvvideoitem.cpp
+    media/mpvvideoitem.h
     media/playbacksession.cpp
     media/playbacksession.h
     media/videoarbiter.cpp
@@ -50,8 +52,8 @@ set(WHATKEVR_SOURCES
 set(WHATKEVR_LINK_LIBRARIES
     Qt6::Core
     Qt6::Gui
-    Qt6::Multimedia
     Qt6::Network
+    Qt6::OpenGL
     Qt6::Qml
     Qt6::Quick
     Qt6::QuickControls2
@@ -121,7 +123,7 @@ set(WHATKEVR_QML_FILES
     qml/components/DocumentBubble.qml
     qml/components/MediaViewer.qml
     qml/components/VideoBubble.qml
-    qml/components/QtVideoSurface.qml
+    qml/components/MpvVideoSurface.qml
     qml/components/VideoSurface.qml
     qml/components/VideoSurfaceBackend.qml
     qml/components/MediaFormat.js

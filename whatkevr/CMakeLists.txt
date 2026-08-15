@@ -38,7 +38,7 @@ find_package(Qt6 ${QT_MIN_VERSION} REQUIRED COMPONENTS
     Core
     Gui
     Network
-    Multimedia
+    OpenGL
     Qml
     Quick
     QuickControls2
@@ -59,11 +59,14 @@ find_package(KF6 ${KF_MIN_VERSION} REQUIRED COMPONENTS
 find_package(KF6KirigamiAddons ${KIRIGAMI_ADDONS_MIN_VERSION} REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(RLottie REQUIRED IMPORTED_TARGET rlottie)
-# libmpv remains the audio engine because it changes voice-note speed without
-# changing pitch. Video playback uses Qt Multimedia.
+# libmpv plays everything: pitch-corrected voice-note speed, and video that
+# actually reaches the screen. Qt Multimedia's FFmpeg backend holds the first
+# frame of a low-frame-rate clip (a photo with music, which most status videos
+# are) for as long as it takes its demuxer to read ahead far enough to fill a
+# frame-threaded decoder, which on this machine was eleven seconds of audio over
+# a blank rectangle.
 pkg_check_modules(Mpv REQUIRED IMPORTED_TARGET mpv)
 
-ecm_find_qmlmodule(QtMultimedia REQUIRED)
 ecm_find_qmlmodule(org.kde.ki18n REQUIRED)
 ecm_find_qmlmodule(org.kde.desktop REQUIRED)
 ecm_find_qmlmodule(org.kde.kirigami REQUIRED)

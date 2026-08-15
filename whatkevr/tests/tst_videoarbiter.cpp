@@ -3,7 +3,6 @@
 #include <QImage>
 #include <QSignalSpy>
 #include <QTest>
-#include <QVideoFrame>
 
 #include "videoarbiter.h"
 
@@ -250,7 +249,7 @@ private Q_SLOTS:
         QCOMPARE(pool->frameRevision(QStringLiteral("clip")), 0);
         QVERIFY(pool->frameImage(QStringLiteral("clip")).isNull());
 
-        pool->captureFrame(QStringLiteral("clip"), frameOfColour(Qt::red));
+        pool->captureImage(QStringLiteral("clip"), frameOfColour(Qt::red));
         QVERIFY(pool->hasFrame(QStringLiteral("clip")));
         QCOMPARE(pool->frameRevision(QStringLiteral("clip")), 1);
         QCOMPARE(pool->frameImage(QStringLiteral("clip")).pixelColor(0, 0), QColor(Qt::red));
@@ -260,20 +259,20 @@ private Q_SLOTS:
         // The revision is what makes a url reload: without it a second capture
         // of the same message would be answered from the image cache and the
         // viewer would keep showing the first one forever.
-        pool->captureFrame(QStringLiteral("clip"), frameOfColour(Qt::green));
+        pool->captureImage(QStringLiteral("clip"), frameOfColour(Qt::green));
         QCOMPARE(pool->frameRevision(QStringLiteral("clip")), 2);
         QCOMPARE(pool->frameImage(QStringLiteral("clip")).pixelColor(0, 0), QColor(Qt::green));
 
         // An invalid frame is what a decoder that has opened a file but drawn
         // nothing hands out; storing it would replace a good still with black.
-        pool->captureFrame(QStringLiteral("clip"), QVideoFrame());
+        pool->captureImage(QStringLiteral("clip"), QImage());
         QCOMPARE(pool->frameRevision(QStringLiteral("clip")), 2);
         QCOMPARE(pool->frameImage(QStringLiteral("clip")).pixelColor(0, 0), QColor(Qt::green));
         QCOMPARE(captured.count(), 2);
 
         // Images, not doubles: far fewer are worth keeping than positions.
         for (int i = 0; i < 12; ++i) {
-            pool->captureFrame(QStringLiteral("other-%1").arg(i), frameOfColour(Qt::blue));
+            pool->captureImage(QStringLiteral("other-%1").arg(i), frameOfColour(Qt::blue));
         }
         QVERIFY(!pool->hasFrame(QStringLiteral("clip")));
         QVERIFY(!pool->hasFrame(QStringLiteral("other-0")));
@@ -388,12 +387,12 @@ private Q_SLOTS:
     }
 
 private:
-    /// A one-colour frame, the smallest thing captureFrame() will accept.
-    static QVideoFrame frameOfColour(const QColor &colour)
+    /// A one-colour frame, the smallest thing captureImage() will accept.
+    static QImage frameOfColour(const QColor &colour)
     {
         QImage image(4, 4, QImage::Format_RGBA8888);
         image.fill(colour);
-        return QVideoFrame(image);
+        return image;
     }
 };
 

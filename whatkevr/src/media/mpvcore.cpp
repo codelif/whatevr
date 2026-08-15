@@ -20,6 +20,16 @@ void wakeup(void *ctx)
     QMetaObject::invokeMethod(core, &MpvCore::handleEventsFromMpv, Qt::QueuedConnection);
 }
 
+/// Frees an mpv_node's contents however the reader below leaves the function.
+struct node_cleanup {
+    mpv_node *node;
+
+    ~node_cleanup()
+    {
+        mpv_free_node_contents(node);
+    }
+};
+
 void setOption(mpv_handle *mpv, const char *name, const char *value)
 {
     if (const int status = mpv_set_option_string(mpv, name, value); status < 0) {
@@ -27,6 +37,22 @@ void setOption(mpv_handle *mpv, const char *name, const char *value)
     }
 }
 
+}
+
+MpvHandleOwner::MpvHandleOwner(mpv_handle *handle)
+    : handle(handle)
+{
+}
+
+MpvHandleOwner::~MpvHandleOwner()
+{
+    if (handle) {
+        // terminate_destroy rather than destroy: it blocks until the core has
+        // actually shut down, which is what makes the teardown order between
+        // this and the render context observable rather than hopeful.
+        mpv_terminate_destroy(handle);
+        handle = nullptr;
+    }
 }
 
 void MpvCore::ensureNumericLocale()
@@ -38,11 +64,15 @@ void MpvCore::ensureNumericLocale()
     std::setlocale(LC_NUMERIC, "C");
 }
 
-MpvCore::MpvCore(QObject *parent)
+MpvCore::MpvCore(Mode mode, QObject *parent)
     : QObject(parent)
+    , m_mode(mode)
 {
     ensureNumericLocale();
-    m_mpv = mpv_create();
+    if (mpv_handle *created = mpv_create()) {
+        m_handle = std::make_shared<MpvHandleOwner>(created);
+        m_mpv = created;
+    }
     if (!m_mpv) {
         // The usual cause is a non-C LC_NUMERIC, which main.cpp resets right
         // after the QApplication constructor puts the user's locale back.
@@ -84,8 +114,19 @@ MpvCore::MpvCore(QObject *parent)
     // open, and it is already authenticated by its token.
     setOption(m_mpv, "network-timeout", "30");
 
-    setOption(m_mpv, "vid", "no");
-    setOption(m_mpv, "audio-display", "no");
+    if (m_mode == Mode::Audio) {
+        setOption(m_mpv, "vid", "no");
+        setOption(m_mpv, "audio-display", "no");
+    } else {
+        // The scene graph owns the window; mpv draws into a framebuffer we hand
+        // it, so it must not go looking for output of its own.
+        setOption(m_mpv, "vo", "libmpv");
+        setOption(m_mpv, "hwdec", "auto-safe");
+        // Land scrubs where the user let go rather than on the nearest
+        // keyframe, which on a WhatsApp video can be several seconds away.
+        setOption(m_mpv, "hr-seek", "yes");
+        setOption(m_mpv, "hr-seek-framedrop", "yes");
+    }
 
     // Tests run without an audio device; everything else takes mpv's own pick.
     if (const QByteArray ao = qgetenv("WHATKEVR_MPV_AO"); !ao.isEmpty()) {
@@ -94,7 +135,7 @@ MpvCore::MpvCore(QObject *parent)
 
     if (const int status = mpv_initialize(m_mpv); status < 0) {
         qWarning("whatkevr: could not initialize mpv: %s", mpv_error_string(status));
-        mpv_terminate_destroy(m_mpv);
+        m_handle.reset();
         m_mpv = nullptr;
         return;
     }
@@ -107,9 +148,12 @@ MpvCore::~MpvCore()
 {
     if (m_mpv) {
         mpv_set_wakeup_callback(m_mpv, nullptr, nullptr);
-        mpv_terminate_destroy(m_mpv);
         m_mpv = nullptr;
     }
+    // Dropping the reference is all this does. If a render context on the
+    // render thread still holds one, the handle stays alive until that context
+    // has been freed there, which is the only order libmpv accepts.
+    m_handle.reset();
 }
 
 void MpvCore::observeProperties()
@@ -123,6 +167,27 @@ void MpvCore::observeProperties()
     // MPV_EVENT_END_FILE never arrives for a clean finish. This property is how
     // the end is actually observable.
     mpv_observe_property(m_mpv, 0, "eof-reached", MPV_FORMAT_FLAG);
+    // What the spinner is allowed to be about. Reading these rather than
+    // guessing from position updates is the difference between "this engine is
+    // working" and "this clip is broken".
+    mpv_observe_property(m_mpv, 0, "seeking", MPV_FORMAT_FLAG);
+    mpv_observe_property(m_mpv, 0, "paused-for-cache", MPV_FORMAT_FLAG);
+    mpv_observe_property(m_mpv, 0, "core-idle", MPV_FORMAT_FLAG);
+    if (m_mode == Mode::Video) {
+        // dwidth/dheight are the displayed size, and they only exist once a
+        // frame has been decoded: the first honest "there is a picture".
+        mpv_observe_property(m_mpv, 0, "dwidth", MPV_FORMAT_INT64);
+        mpv_observe_property(m_mpv, 0, "dheight", MPV_FORMAT_INT64);
+    }
+}
+
+bool MpvCore::updateFlag(bool &target, bool value)
+{
+    if (target == value) {
+        return false;
+    }
+    target = value;
+    return true;
 }
 
 void MpvCore::command(const QStringList &args)
@@ -180,8 +245,13 @@ void MpvCore::load(const QUrl &source, bool autoplay, double startSeconds)
     m_source = source;
     m_position = startSeconds > 0.0 ? startSeconds : 0.0;
     m_duration = 0.0;
+    m_videoSize = QSize();
+    m_endReached = false;
+    m_errorText.clear();
     Q_EMIT positionChanged();
     Q_EMIT durationChanged();
+    Q_EMIT videoSizeChanged();
+    Q_EMIT progressStateChanged();
 
     if (source.isEmpty()) {
         command({QStringLiteral("stop")});
@@ -227,7 +297,9 @@ void MpvCore::seek(double seconds)
     if (seconds < 0.0) {
         seconds = 0.0;
     }
-    command({QStringLiteral("seek"), QString::number(seconds), QStringLiteral("absolute")});
+    // exact, not the default keyframe snap: a scrub that lands two seconds from
+    // where the thumb was left reads as a broken seekbar.
+    command({QStringLiteral("seek"), QString::number(seconds), QStringLiteral("absolute+exact")});
 }
 
 void MpvCore::setSpeed(double speed)
@@ -252,6 +324,78 @@ void MpvCore::setLooping(bool looping)
 void MpvCore::setVolume(double volume)
 {
     setProperty(QStringLiteral("volume"), qBound(0.0, volume, 100.0));
+}
+
+void MpvCore::reopenVideoTrack()
+{
+    if (!m_mpv || m_mode != Mode::Video || m_source.isEmpty()) {
+        return;
+    }
+    setProperty(QStringLiteral("vid"), QStringLiteral("no"));
+    setProperty(QStringLiteral("vid"), QStringLiteral("auto"));
+}
+
+QImage MpvCore::grabStill() const
+{
+    if (!m_mpv || m_mode != Mode::Video || !m_videoSize.isValid() || m_videoSize.isEmpty()) {
+        return {};
+    }
+
+    // "video" rather than "subtitles" or "window": the decoded frame with
+    // nothing painted over it and no scaling to the item's size.
+    mpv_node result;
+    const char *args[] = {"screenshot-raw", "video", nullptr};
+    if (mpv_command_ret(m_mpv, args, &result) < 0) {
+        return {};
+    }
+    node_cleanup cleanup{&result};
+    if (result.format != MPV_FORMAT_NODE_MAP) {
+        return {};
+    }
+
+    qint64 width = 0;
+    qint64 height = 0;
+    qint64 stride = 0;
+    QByteArray format;
+    const mpv_byte_array *data = nullptr;
+    const mpv_node_list *map = result.u.list;
+    for (int i = 0; i < map->num; ++i) {
+        const QLatin1StringView key(map->keys[i]);
+        const mpv_node &value = map->values[i];
+        if (key == QLatin1StringView("w") && value.format == MPV_FORMAT_INT64) {
+            width = value.u.int64;
+        } else if (key == QLatin1StringView("h") && value.format == MPV_FORMAT_INT64) {
+            height = value.u.int64;
+        } else if (key == QLatin1StringView("stride") && value.format == MPV_FORMAT_INT64) {
+            stride = value.u.int64;
+        } else if (key == QLatin1StringView("format") && value.format == MPV_FORMAT_STRING) {
+            format = QByteArray(value.u.string);
+        } else if (key == QLatin1StringView("data") && value.format == MPV_FORMAT_BYTE_ARRAY) {
+            data = value.u.ba;
+        }
+    }
+
+    if (width <= 0 || height <= 0 || stride <= 0 || !data || !data->data) {
+        return {};
+    }
+    // mpv documents bgr0 as the only format screenshot-raw currently produces,
+    // and refusing anything else is better than reading a buffer as something
+    // it is not.
+    if (format != QByteArrayLiteral("bgr0")) {
+        qWarning() << "whatkevr: unexpected screenshot format" << format;
+        return {};
+    }
+    if (qint64(data->size) < stride * height) {
+        return {};
+    }
+
+    const QImage view(static_cast<const uchar *>(data->data),
+                      int(width),
+                      int(height),
+                      int(stride),
+                      QImage::Format_RGB32);
+    // copy(): the node, and the buffer behind it, is freed on the way out.
+    return view.copy();
 }
 
 void MpvCore::handleEventsFromMpv()
@@ -288,9 +432,37 @@ void MpvCore::handleEventsFromMpv()
                 Q_EMIT mutedChanged();
             } else if (name == QLatin1StringView("eof-reached") && property->format == MPV_FORMAT_FLAG) {
                 const bool reached = *static_cast<int *>(property->data) != 0;
+                if (updateFlag(m_endReached, reached)) {
+                    Q_EMIT progressStateChanged();
+                }
                 if (reached && !m_looping) {
                     Q_EMIT endOfFile();
                 }
+            } else if (name == QLatin1StringView("seeking") && property->format == MPV_FORMAT_FLAG) {
+                if (updateFlag(m_seeking, *static_cast<int *>(property->data) != 0)) {
+                    Q_EMIT progressStateChanged();
+                }
+            } else if (name == QLatin1StringView("paused-for-cache") && property->format == MPV_FORMAT_FLAG) {
+                if (updateFlag(m_waitingForCache, *static_cast<int *>(property->data) != 0)) {
+                    Q_EMIT progressStateChanged();
+                }
+            } else if (name == QLatin1StringView("core-idle") && property->format == MPV_FORMAT_FLAG) {
+                if (updateFlag(m_coreIdle, *static_cast<int *>(property->data) != 0)) {
+                    Q_EMIT progressStateChanged();
+                }
+            } else if (name == QLatin1StringView("dwidth") || name == QLatin1StringView("dheight")) {
+                // A track that goes away reports the property as unavailable
+                // rather than as zero, and a size left standing from the last
+                // file would claim there is a picture when there is none.
+                const int value = property->format == MPV_FORMAT_INT64
+                    ? int(*static_cast<int64_t *>(property->data))
+                    : 0;
+                if (name == QLatin1StringView("dwidth")) {
+                    m_videoSize.setWidth(value);
+                } else {
+                    m_videoSize.setHeight(value);
+                }
+                Q_EMIT videoSizeChanged();
             }
             break;
         }
@@ -302,7 +474,8 @@ void MpvCore::handleEventsFromMpv()
             if (end->reason == MPV_END_FILE_REASON_EOF && !m_looping) {
                 Q_EMIT endOfFile();
             } else if (end->reason == MPV_END_FILE_REASON_ERROR) {
-                Q_EMIT errorOccurred(QString::fromUtf8(mpv_error_string(end->error)));
+                m_errorText = QString::fromUtf8(mpv_error_string(end->error));
+                Q_EMIT errorOccurred(m_errorText);
             }
             break;
         }

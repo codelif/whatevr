@@ -6,8 +6,7 @@ import QtQuick
 import Whatevr as Whatevr
 
 /**
- * The lazy Qt Multimedia video surface and the only place that asks
- * permission to play.
+ * The lazy video surface and the only place that asks permission to play.
  *
  * Everything above this file (VideoBubble, MediaViewer) treats video as one
  * thing: a source, a playing flag, a position. The decoder is instantiated
@@ -242,7 +241,7 @@ Item {
         // PlaybackSession::replayFromStart, which keeps the old guarantee that
         // an exhausted engine is never resumed into.
         active: root.grantHeld
-        sourceComponent: qtComponent
+        sourceComponent: mpvComponent
 
         // Both the connect and the disconnect live here: a Loader can replace
         // or drop its item at any time, and a stale relay would deliver
@@ -263,9 +262,9 @@ Item {
     property VideoSurfaceBackend relayedBackend: null
 
     Component {
-        id: qtComponent
+        id: mpvComponent
 
-        QtVideoSurface {
+        MpvVideoSurface {
             messageId: root.messageId
             session: root.session
             playing: root.playing && root.grantHeld

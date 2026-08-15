@@ -118,13 +118,16 @@ target_link_libraries(tst_mediaplayback PRIVATE
 
 add_test(NAME tst_mediaplayback COMMAND tst_mediaplayback)
 
-# Who is allowed to be playing, and the frame each claimant left behind. Pure
-# bookkeeping over plain QObjects: no window, no decoder and no libmpv, which is
-# the point of the arbiter living above the engine seam rather than inside the
-# mpv pool. Multimedia is here only for QVideoFrame, the type a still arrives
-# as; nothing in this target opens a player.
+# Who is allowed to be playing, and the frame each claimant left behind. The
+# arbiter itself is bookkeeping over plain QObjects; the sessions it hands out
+# each own an mpv instance, which without a render context stays an idle engine
+# with no window and no output.
 qt_add_executable(tst_videoarbiter
     tst_videoarbiter.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/media/mpvcore.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/media/mpvcore.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/media/mpvvideoitem.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/media/mpvvideoitem.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/media/playbacksession.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/media/playbacksession.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/media/videoarbiter.cpp
@@ -142,14 +145,46 @@ target_include_directories(tst_videoarbiter PRIVATE
 target_link_libraries(tst_videoarbiter PRIVATE
     Qt6::Core
     Qt6::Gui
-    Qt6::Multimedia
+    Qt6::OpenGL
     Qt6::Qml
+    Qt6::Quick
     Qt6::Test
     KF6::ColorScheme
     KF6::I18n
+    PkgConfig::Mpv
 )
 
 add_test(NAME tst_videoarbiter COMMAND tst_videoarbiter)
+
+# Video reaching the screen: a real mpv instance, a real scene graph and a
+# readback of the pixels. Needs a working GL stack, and skips rather than fails
+# where there is none.
+qt_add_executable(tst_mpvrender
+    tst_mpvrender.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/media/mpvcore.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/media/mpvcore.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/media/mpvvideoitem.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/media/mpvvideoitem.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/media/playbacksession.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/media/playbacksession.h
+)
+
+target_include_directories(tst_mpvrender PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/media
+)
+
+target_link_libraries(tst_mpvrender PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::OpenGL
+    Qt6::Qml
+    Qt6::Quick
+    Qt6::Test
+    PkgConfig::Mpv
+)
+
+add_test(NAME tst_mpvrender COMMAND tst_mpvrender)
 
 # Waveform geometry. Pure scene-graph item, so it needs only Gui and Qml.
 qt_add_executable(tst_waveformitem

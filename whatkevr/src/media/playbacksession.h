@@ -1,29 +1,30 @@
 // SPDX-License-Identifier: BSD-3-Clause
 #pragma once
 
-#include <QAudioOutput>
-#include <QMediaPlayer>
+#include <QImage>
 #include <QObject>
 #include <QPointer>
 #include <QQmlEngine>
+#include <QQuickItem>
 #include <QString>
 #include <QTimer>
 #include <QUrl>
-#include <QVideoSink>
+
+class MpvCore;
+class MpvVideoItem;
 
 /**
- * One live playback: a decoder, its audio, and the seek machine, with no view
- * attached.
+ * One live playback: a libmpv core, its audio, and the item that draws it.
  *
  * A session outlives any single view of it. The inline bubble and the
- * full-screen viewer each bring their own VideoOutput and attach its sink;
- * moving a clip between them reassigns the sink on a player that never stops,
- * which is what makes the handoff gapless. The previous design gave each view
- * its own MediaPlayer, so every handoff was a teardown, a fresh open, and a
- * seek, with the audio silent for all of it.
+ * full-screen viewer each offer a container item, and the session moves its
+ * one video item between them; nothing is reopened, reseeked or restarted, so
+ * the handoff costs a reparent. The previous design gave each view its own
+ * player, and every handoff was a teardown, a fresh open and a seek, with the
+ * audio silent for all of it.
  *
- * Sessions are owned and pooled by VideoPlaybackArbiter; views receive one
- * from acquire() and must never destroy or reconfigure it themselves.
+ * Sessions are owned and pooled by VideoPlaybackArbiter; views receive one from
+ * acquire() and must never destroy or reconfigure it themselves.
  */
 class PlaybackSession : public QObject
 {
@@ -52,24 +53,60 @@ class PlaybackSession : public QObject
 public:
     explicit PlaybackSession(QObject *parent = nullptr);
 
-    [[nodiscard]] QString messageId() const { return m_messageId; }
-    [[nodiscard]] QUrl source() const { return m_player.source(); }
-    [[nodiscard]] bool playing() const { return m_playing; }
-    [[nodiscard]] bool muted() const { return m_audio.isMuted(); }
-    [[nodiscard]] double volume() const { return m_volume; }
-    [[nodiscard]] double rate() const { return m_player.playbackRate(); }
-    [[nodiscard]] bool loop() const { return m_loop; }
-    [[nodiscard]] double position() const { return m_player.position() / 1000.0; }
-    [[nodiscard]] double duration() const { return m_player.duration() / 1000.0; }
-    [[nodiscard]] bool seeking() const { return m_seekTarget >= 0.0; }
-    [[nodiscard]] double seekTarget() const { return m_seekTarget; }
+    [[nodiscard]] QString messageId() const
+    {
+        return m_messageId;
+    }
+    [[nodiscard]] QUrl source() const;
+    [[nodiscard]] bool playing() const
+    {
+        return m_playing;
+    }
+    [[nodiscard]] bool muted() const
+    {
+        return m_muted;
+    }
+    [[nodiscard]] double volume() const
+    {
+        return m_volume;
+    }
+    [[nodiscard]] double rate() const
+    {
+        return m_rate;
+    }
+    [[nodiscard]] bool loop() const
+    {
+        return m_loop;
+    }
+    [[nodiscard]] double position() const;
+    [[nodiscard]] double duration() const;
+    [[nodiscard]] bool seeking() const
+    {
+        return m_seekTarget >= 0.0;
+    }
+    [[nodiscard]] double seekTarget() const
+    {
+        return m_seekTarget;
+    }
     [[nodiscard]] bool busy() const;
-    [[nodiscard]] bool failed() const { return m_failed; }
-    [[nodiscard]] QString errorText() const { return m_errorText; }
-    [[nodiscard]] bool hasVideo() const { return m_player.hasVideo(); }
-    [[nodiscard]] bool active() const { return m_player.playbackState() != QMediaPlayer::StoppedState; }
-    [[nodiscard]] bool atEnd() const { return m_player.mediaStatus() == QMediaPlayer::EndOfMedia; }
-    [[nodiscard]] bool audible() const { return m_playing && !muted() && m_volume > 0.0; }
+    [[nodiscard]] bool failed() const
+    {
+        return m_failed;
+    }
+    [[nodiscard]] QString errorText() const
+    {
+        return m_errorText;
+    }
+    [[nodiscard]] bool hasVideo() const;
+    [[nodiscard]] bool active() const
+    {
+        return !m_source.isEmpty();
+    }
+    [[nodiscard]] bool atEnd() const;
+    [[nodiscard]] bool audible() const
+    {
+        return m_playing && !m_muted && m_volume > 0.0;
+    }
 
     void setPlaying(bool playing);
     void setMuted(bool muted);
@@ -86,25 +123,30 @@ public:
     void promoteSource(const QUrl &source);
 
     /// Stops and forgets everything so the session can be handed to another
-    /// message. The player object itself is reused; opening a decoder is the
-    /// expensive part, a resting QMediaPlayer is not.
+    /// message. The core and its video item are kept: creating them is the part
+    /// worth pooling, a resting mpv instance is not.
     void park();
 
-    /// The view showing this session hands its sink in; the previous sink, if
-    /// any, simply stops receiving frames. Audio is untouched, which is the
-    /// whole trick of the bubble to full screen handoff.
-    Q_INVOKABLE void attachSink(QVideoSink *sink);
-    /// Detaches only if this sink is still the attached one, so a view being
-    /// torn down cannot yank the sink a newer view just attached.
-    Q_INVOKABLE void detachSink(QVideoSink *sink);
+    /**
+     * The view showing this session offers a container to draw in.
+     *
+     * The item moves; it is never rebuilt. Freeing mpv's render context
+     * switches the video track of the playing file off, and a fresh context
+     * does not turn it back on, so a handoff that rebuilt the item would hand
+     * over sound and a black rectangle.
+     */
+    Q_INVOKABLE void attachView(QQuickItem *container);
+    /// Detaches only if this container is still the one showing the session, so
+    /// a view being torn down cannot yank the item a newer view just took.
+    Q_INVOKABLE void detachView(QQuickItem *container);
 
     Q_INVOKABLE void seek(double seconds);
 
-    /// A finished clip playing again from the top. play() on a player parked
-    /// at EndOfMedia restarts from zero; if the engine refuses to leave
-    /// StoppedState the watchdog re-opens the source, preserving the old
-    /// guarantee that replay never resumes an exhausted engine.
+    /// A finished clip playing again from the top.
     Q_INVOKABLE void replayFromStart();
+
+    /// Hands the frame on screen to whoever is keeping stills.
+    Q_INVOKABLE void captureStill();
 
 Q_SIGNALS:
     void messageIdChanged();
@@ -126,34 +168,47 @@ Q_SIGNALS:
     /// This session started producing sound, or stopped being silent (unmuted
     /// mid-play). What the audio player pauses voice notes on.
     void audiblePlaybackStarted();
+    /// A still was grabbed for this message. The arbiter stores it; the session
+    /// deliberately knows nothing about that store.
+    void stillGrabbed(const QString &messageId, const QImage &image);
 
 private:
-    void flushSeek();
-    void handleMediaStatus(QMediaPlayer::MediaStatus status);
-    void handlePosition(qint64 positionMs);
+    void applyStateToCore();
+    void loadIfReady();
+    void handlePosition();
+    void handleProgressState();
     void resetSeekState();
     void maybeAnnounceAudible();
+    void syncItemGeometry();
 
-    /// FFmpeg lands seeks on a keyframe, so "arrived" is a wide net.
-    static constexpr double seekSettleEpsilon = 1.5;
+    /// mpv seeks exactly, so a landing is a landing; the slack is for the frame
+    /// or two of playback that can pass before the position is reported.
+    static constexpr double seekSettleEpsilon = 0.75;
 
-    QMediaPlayer m_player;
-    QAudioOutput m_audio;
-    /// The attached sink, guarded: a view (and its sink) can be destroyed at
-    /// any moment while the session lives on, and the player must never be
-    /// left holding a dangling sink pointer.
-    QPointer<QVideoSink> m_sink;
+    MpvCore *m_core = nullptr;
+    /// Created with the first view that asks for one, then kept for the life of
+    /// the session and moved between views.
+    MpvVideoItem *m_item = nullptr;
+    QPointer<QQuickItem> m_container;
+
     QString m_messageId;
+    QUrl m_source;
+    double m_startAt = 0.0;
+    /// Whether the current source has been handed to mpv. False while waiting
+    /// for a render context, which must exist before a file is opened.
+    bool m_loaded = false;
+
     QTimer m_seekSettleTimer;
-    QTimer m_replayWatchdog;
 
     bool m_playing = false;
+    bool m_muted = false;
     bool m_loop = false;
     double m_volume = 100.0;
+    double m_rate = 1.0;
     double m_seekTarget = -1.0;
-    bool m_seekIssued = false;
     bool m_failed = false;
     QString m_errorText;
     bool m_wasAtEnd = false;
     bool m_wasAudible = false;
+    bool m_wasBusy = false;
 };

@@ -9,15 +9,14 @@
 #include <QPointer>
 #include <QQmlEngine>
 #include <QString>
-#include <QVideoFrame>
 
 #include "playbacksession.h"
 
 /**
  * VideoPlaybackArbiter decides what is allowed to be playing, app-wide.
  *
- * This sits above QtVideoSurface so decoder limits and exclusive playback are
- * decided before a MediaPlayer is instantiated.
+ * This sits above the video surfaces so decoder limits and exclusive playback
+ * are decided before an engine is handed out.
  *
  * Two lanes, because two kinds of clip want opposite things:
  *
@@ -128,11 +127,10 @@ public:
      * at all. The still is what the poster should have been for the length of
      * that gap, in both directions.
      *
-     * Cheap to take (the sink already holds the frame; nothing is rendered or
-     * grabbed) but expensive to keep, so far fewer are remembered than
-     * positions.
+     * Taken from mpv on request rather than kept per frame, and expensive to
+     * hold, so far fewer are remembered than positions.
      */
-    Q_INVOKABLE void captureFrame(const QString &messageId, const QVideoFrame &frame);
+    void captureImage(const QString &messageId, const QImage &image);
     Q_INVOKABLE bool hasFrame(const QString &messageId) const;
     /// Bumped on every capture. QML puts it in the image url's query string,
     /// which is the only thing that makes a cached provider url reload.
