@@ -612,12 +612,30 @@ Item {
         if (messageId.length === 0) {
             return
         }
+        // Keep the expanding row where the reader is looking: the row grows
+        // downward, and without re-anchoring, everything below the tap
+        // scrolled away under the cursor.
+        let anchorOffset = -1
+        const index = list.model && typeof list.model.indexOf === "function"
+            ? list.model.indexOf(messageId) : -1
+        const item = index >= 0 ? list.itemAtIndex(index) : null
+        if (item !== null) {
+            anchorOffset = item.y - list.contentY
+        }
         if (list.model && typeof list.model.expandMessageText === "function") {
             list.model.expandMessageText(messageId)
         }
         const next = Object.assign({}, expandedMessageTextIds)
         next[messageId] = true
         expandedMessageTextIds = next
+        if (item !== null && anchorOffset >= 0 && !followNewest) {
+            Qt.callLater(function() {
+                const again = list.itemAtIndex(index)
+                if (again !== null) {
+                    list.contentY = again.y - anchorOffset
+                }
+            })
+        }
         Qt.callLater(updateScrollState)
     }
 
@@ -1901,8 +1919,14 @@ Item {
             }
         }
         onJumpToNewestRequested: {
+            // The same path as the go-to-bottom button: dragging the thumb to
+            // the very bottom must also re-enter follow mode, or the view sat
+            // at the newest row without following new arrivals.
+            root.pendingNewestMessageCount = 0
+            kineticWheelScroller.stopKinetic()
+            if (list.flicking) list.cancelFlick()
             Whatevr.ProtocolController.jumpToBottom()
-            list.positionViewAtEnd()
+            root.scrollToNewest()
         }
     }
 

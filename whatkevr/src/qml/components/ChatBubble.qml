@@ -796,6 +796,16 @@ Item {
                     return Qt.PointingHandCursor
                 }
             }
+            // The frameless kinds live outside mediaSlot; a tappable video
+            // note under an arrow cursor read as inert.
+            if (root.framelessBubble && root.isVideoNote) {
+                const f = mapToItem(root.framelessBubble, mouseX, mouseY)
+                if (f.x >= root.framelessBubble.slotX && f.y >= root.framelessBubble.slotY
+                        && f.x <= root.framelessBubble.slotX + root.framelessBubble.slotWidth
+                        && f.y <= root.framelessBubble.slotY + root.framelessBubble.slotHeight) {
+                    return Qt.PointingHandCursor
+                }
+            }
             return Qt.ArrowCursor
         }
         z: 9
@@ -1031,7 +1041,13 @@ Item {
                     // shortDuration, so cutting on Ready left the bubble showing
                     // its empty plate for the whole of that fade. That is the
                     // blink a completed download used to end with.
-                    visible: root.hasThumbnailImage && (!root.hasLocalImage || roundedImg.opacity < 1)
+                    //
+                    // Latched from the fade's end rather than bound to the
+                    // opacity, which re-evaluated this per animation frame and
+                    // dropped the thumbnail for good; reset on delegate reuse so
+                    // the next decode has its blur-up again.
+                    property bool fullImageShown: false
+                    visible: root.hasThumbnailImage && (!root.hasLocalImage || !fullImageShown)
                     opacity: thumb.status === Image.Ready ? 0.78 : 0
                     source: thumb
                     topLeftRadius: root.mediaTopLeftRadius
@@ -1044,7 +1060,8 @@ Item {
 
                         anchors.fill: parent
                         visible: false
-                        source: root.mediaSourceActive && mediaSlot.visible && roundedThumb.visible ? Whatevr.ProtocolController.localFileUrl(root.mediaThumbnailLocalPath) : ""
+                        source: root.mediaSourceActive && mediaSlot.visible && root.hasThumbnailImage && !roundedThumb.fullImageShown
+                                ? Whatevr.ProtocolController.localFileUrl(root.mediaThumbnailLocalPath) : ""
                         asynchronous: true
                         cache: true
                         sourceSize.width: root.thumbnailDecodeWidth
@@ -1068,6 +1085,11 @@ Item {
                     anchors.fill: parent
                     visible: root.hasLocalImage
                     opacity: img.status === Image.Ready ? 1 : 0
+                    onOpacityChanged: {
+                        if (opacity >= 1 && img.status === Image.Ready) {
+                            roundedThumb.fullImageShown = true
+                        }
+                    }
                     source: img
                     topLeftRadius: root.mediaTopLeftRadius
                     topRightRadius: root.mediaTopRightRadius
@@ -1083,7 +1105,10 @@ Item {
                         // when the underlying file changes on delegate reuse.
                         property bool everDecoded: false
                         readonly property string targetPath: root.mediaLocalPath
-                        onTargetPathChanged: everDecoded = false
+                        onTargetPathChanged: {
+                            everDecoded = false
+                            roundedThumb.fullImageShown = false
+                        }
                         onStatusChanged: if (status === Image.Ready) everDecoded = true
 
                         anchors.fill: parent
@@ -1761,9 +1786,14 @@ Item {
 
         active: root.hasReactions
         z: 10
+        // The 8gu floor gives chips room under a narrow bubble, but never
+        // more room than the row itself has: an uncapped floor pushed chips
+        // past the bubble edge in a narrow window.
         width: Math.max(root.replyGlowRight - root.replyGlowLeft,
-                        Kirigami.Units.gridUnit * 8)
-        x: Math.round(root.isOutgoing ? root.replyGlowRight - width : root.replyGlowLeft)
+                        Math.min(Kirigami.Units.gridUnit * 8,
+                                 Math.max(0, root.width - root.outerMargin * 2)))
+        x: Math.round(Math.max(root.outerMargin,
+                               root.isOutgoing ? root.replyGlowRight - width : root.replyGlowLeft))
         y: Math.round(root.replyGlowBottom + Kirigami.Units.smallSpacing / 2)
 
         sourceComponent: ReactionRow {

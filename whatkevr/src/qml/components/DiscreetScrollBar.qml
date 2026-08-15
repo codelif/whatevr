@@ -23,13 +23,14 @@ ScrollBar {
         }
     }
 
-    // The attached-ScrollBar helper pins this bar to the flickable's right edge,
-    // but only re-runs that layout on the bar's own implicit-width change (e.g.
-    // hover) — not when the flickable is resized. Re-assert geometry on parent
-    // resize so the bar tracks window resizes instead of floating off its edge.
+    // The attached-ScrollBar helper positions the bar imperatively and only
+    // re-runs that layout on the bar's own implicit-width change, not when
+    // the flickable resizes or the width animates on hover: the bar drifted
+    // off its edge in both cases. An anchor tracks every geometry change.
+    anchors.right: parent ? parent.right : undefined
+
     Connections {
         target: root.parent
-        function onWidthChanged() { root.x = root.parent.width - root.width }
         function onHeightChanged() { root.height = root.parent.height }
     }
 
