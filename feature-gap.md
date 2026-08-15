@@ -108,9 +108,9 @@ chat-list preview string:
   `duration_secs`, `size_bytes`, `filename`, `page_count`, `waveform` and
   `played` on the wire, and render as their own bubbles (`VideoBubble`,
   `VoiceBubble`, `DocumentBubble`) plus a full-screen `MediaViewer` and a
-  per-chat gallery over the new `chat_media` view. Playback is libmpv, with Qt
-  Multimedia as the video fallback when the scene graph is not on OpenGL
-  (Settings → Advanced). Voice notes send a played receipt on first listen
+  per-chat gallery over the new `chat_media` view. Playback is libmpv, for
+  audio and video alike, drawn into the scene graph through mpv's render API.
+  Voice notes send a played receipt on first listen
   (`message.mark_played`), auto-advance to the next note, remember where you
   stopped, and get a daemon-derived waveform via ffmpeg when the sender omitted
   one. Media no longer waits for a whole-file download: `media.stream` serves

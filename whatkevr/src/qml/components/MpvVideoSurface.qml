@@ -69,17 +69,25 @@ VideoSurfaceBackend {
         if (!session) {
             return
         }
-        session.attachView(videoArea)
+        // Wishes first, container second: attaching is what lets the session
+        // open its file, and a GIF that was opened before its mute arrived got
+        // to be audible for those few milliseconds.
         session.playing = playing
         session.muted = muted
         session.loop = loop
         session.rate = speed
         session.volume = volume
+        session.attachView(videoArea)
     }
 
     Component.onCompleted: {
         if (session) {
             attachedSession = session
+            session.playing = playing
+            session.muted = muted
+            session.loop = loop
+            session.rate = speed
+            session.volume = volume
             session.attachView(videoArea)
         }
     }

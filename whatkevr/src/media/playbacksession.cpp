@@ -122,8 +122,10 @@ void PlaybackSession::setPlaying(bool playing)
         } else {
             m_core->pause();
         }
-    } else {
+    } else if (playing) {
         // Nothing is open yet, so this only decides how the file will start.
+        // Stopping is deliberately not a reason to open one: a surface letting
+        // go pauses the session it never got to use.
         loadIfReady();
     }
     Q_EMIT playingChanged();
