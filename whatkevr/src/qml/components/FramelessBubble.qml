@@ -258,7 +258,7 @@ Item {
                 width: stickerOverlayColumn.width + Kirigami.Units.largeSpacing
                 height: stickerOverlayColumn.height + Kirigami.Units.smallSpacing * 2
                 radius: Kirigami.Units.cornerRadius
-                visible: false
+                visible: stickerOverlayColumn.visibleChildren.length > 0
                 color: Qt.alpha(Kirigami.Theme.backgroundColor, 0.72)
                 border.color: Qt.alpha(Kirigami.Theme.textColor, 0.10)
             }

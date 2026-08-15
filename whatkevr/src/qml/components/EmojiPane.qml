@@ -580,6 +580,9 @@ Item {
 
         parent: pane
         padding: Kirigami.Units.smallSpacing
+        // Without focus the popup never receives the Escape it declares in
+        // closePolicy, so the key falls through and closes the whole picker.
+        focus: true
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
         background: Rectangle {

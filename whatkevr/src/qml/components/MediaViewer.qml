@@ -118,7 +118,11 @@ QQC2.Popup {
     }
 
     function skip(seconds) {
-        surface.seek(Math.max(0, surface.position + seconds))
+        let target = Math.max(0, surface.position + seconds)
+        if (surface.duration > 0) {
+            target = Math.min(target, Math.max(0, surface.duration - 0.5))
+        }
+        surface.seek(target)
     }
 
     function cycleSpeed() {
@@ -316,7 +320,7 @@ QQC2.Popup {
                 engaged: root.visible && root.isVideo
                 playing: root.isVideo && playbackWanted
                 muted: false
-                loop: root.isGif
+                loop: root.isGif && Whatevr.Settings.loopGifs
 
                 property bool playbackWanted: true
 
@@ -452,6 +456,7 @@ QQC2.Popup {
             Behavior on opacity {
                 NumberAnimation { duration: Kirigami.Units.longDuration }
             }
+            focusPolicy: Qt.NoFocus
             icon.name: "window-close-symbolic"
             text: Whatevr.I18n.i18nc("@action:button", "Close")
             display: QQC2.AbstractButton.IconOnly
@@ -491,6 +496,7 @@ QQC2.Popup {
                 spacing: 0
 
                 QQC2.ToolButton {
+                    focusPolicy: Qt.NoFocus
                     icon.name: "document-save-symbolic"
                     text: Whatevr.I18n.i18nc("@action:button", "Save As…")
                     display: QQC2.AbstractButton.IconOnly
@@ -503,6 +509,7 @@ QQC2.Popup {
 
                 QQC2.ToolButton {
                     visible: !root.isVideo
+                    focusPolicy: Qt.NoFocus
                     icon.name: "edit-copy-symbolic"
                     text: Whatevr.I18n.i18nc("@action:button", "Copy Image")
                     display: QQC2.AbstractButton.IconOnly
@@ -514,6 +521,7 @@ QQC2.Popup {
                 }
 
                 QQC2.ToolButton {
+                    focusPolicy: Qt.NoFocus
                     icon.name: "document-open-symbolic"
                     text: Whatevr.I18n.i18nc("@action:button", "Open Externally")
                     display: QQC2.AbstractButton.IconOnly
@@ -526,6 +534,7 @@ QQC2.Popup {
 
                 QQC2.ToolButton {
                     visible: root.messageId.length > 0
+                    focusPolicy: Qt.NoFocus
                     icon.name: "mail-forward-symbolic"
                     text: Whatevr.I18n.i18nc("@action:button", "Forward…")
                     display: QQC2.AbstractButton.IconOnly
@@ -572,6 +581,7 @@ QQC2.Popup {
 
                 QQC2.ToolButton {
                     visible: root.hasTimeline
+                    focusPolicy: Qt.NoFocus
                     icon.name: "media-seek-backward-symbolic"
                     text: Whatevr.I18n.i18nc("@action:button", "Back 10 seconds")
                     display: QQC2.AbstractButton.IconOnly
@@ -583,6 +593,7 @@ QQC2.Popup {
                 }
 
                 QQC2.ToolButton {
+                    focusPolicy: Qt.NoFocus
                     icon.name: surface.playbackWanted ? "media-playback-pause-symbolic" : "media-playback-start-symbolic"
                     text: surface.playbackWanted
                         ? Whatevr.I18n.i18nc("@action:button", "Pause")
@@ -597,6 +608,7 @@ QQC2.Popup {
 
                 QQC2.ToolButton {
                     visible: root.hasTimeline
+                    focusPolicy: Qt.NoFocus
                     icon.name: "media-seek-forward-symbolic"
                     text: Whatevr.I18n.i18nc("@action:button", "Forward 10 seconds")
                     display: QQC2.AbstractButton.IconOnly
@@ -619,6 +631,7 @@ QQC2.Popup {
 
                     visible: root.hasTimeline
                     Layout.fillWidth: true
+                    focusPolicy: Qt.NoFocus
                     from: 0
                     to: Math.max(surface.duration, root.durationSecs, 1)
                     // Seek on release rather than on every pixel of the drag:
@@ -659,6 +672,7 @@ QQC2.Popup {
 
                 QQC2.AbstractButton {
                     visible: root.hasTimeline
+                    focusPolicy: Qt.NoFocus
                     implicitWidth: speedLabel.implicitWidth + Kirigami.Units.smallSpacing * 2
                     implicitHeight: speedLabel.implicitHeight + Kirigami.Units.smallSpacing
                     text: Whatevr.I18n.i18nc("@action:button", "Playback speed")
@@ -686,6 +700,7 @@ QQC2.Popup {
                 }
 
                 QQC2.ToolButton {
+                    focusPolicy: Qt.NoFocus
                     icon.name: surface.muted || surface.volume <= 0
                         ? "audio-volume-muted-symbolic"
                         : "audio-volume-high-symbolic"
@@ -704,12 +719,23 @@ QQC2.Popup {
                     id: volumeBar
 
                     Layout.preferredWidth: Kirigami.Units.gridUnit * 4
+                    focusPolicy: Qt.NoFocus
                     from: 0
                     to: 100
-                    value: surface.volume
                     onMoved: {
                         surface.volume = value
                         surface.muted = value <= 0
+                    }
+
+                    // Same shape as the seek bar: a drag writes `value`
+                    // directly and would destroy a plain binding, after which
+                    // the keyboard volume keys stop moving the handle.
+                    Binding {
+                        target: volumeBar
+                        property: "value"
+                        value: surface.volume
+                        when: !volumeBar.pressed
+                        restoreMode: Binding.RestoreNone
                     }
                 }
             }

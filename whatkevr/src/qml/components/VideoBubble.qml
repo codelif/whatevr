@@ -235,9 +235,9 @@ Item {
             intent = "playing"
             return
         case "buffering":
-            // Acts as a stop: the spinner is the only thing on screen, so the
-            // only useful thing a tap can mean is "never mind".
-            intent = "stopped"
+            // A tap on the spinner used to cancel the session the user just
+            // asked for; a slow load is not a reason to throw the request
+            // away. Cancelling stays available through the context menu.
             return
         default:
             beginPlayback()

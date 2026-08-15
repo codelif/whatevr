@@ -1138,6 +1138,7 @@ Item {
 
                 Item {
                     id: imageOverlay
+                    anchors.fill: parent
 
                     // A decode in progress is not, by itself, a reason to cover
                     // the bubble: the thumbnail below is already showing the

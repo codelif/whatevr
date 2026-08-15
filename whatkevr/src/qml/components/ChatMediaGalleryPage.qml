@@ -75,10 +75,10 @@ Kirigami.ScrollablePage {
             height: grid.cellHeight
 
             // A GridView hands focus to whichever delegate declares it, which
-            // is what puts the key handlers below on the current tile. Doing it
-            // here rather than reaching back through itemAtIndex also keeps the
-            // call typed: the view only knows its delegates as QQuickItem.
-            focus: true
+            // is what puts the key handlers below on the current tile. Gated
+            // on being the current item; an unconditional `true` handed focus
+            // to whichever tile was instantiated last during a scroll.
+            focus: GridView.isCurrentItem
             Keys.onReturnPressed: cell.activate()
             Keys.onEnterPressed: cell.activate()
             Keys.onSpacePressed: cell.activate()
