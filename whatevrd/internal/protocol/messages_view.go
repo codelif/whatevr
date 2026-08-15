@@ -79,11 +79,13 @@ func (v messagesView) Open(params json.RawMessage, invalidate func()) (ViewSessi
 	newFeed := func() messagesChatFeed {
 		return messagesChatFeed{
 			lister:       v.lister,
+			daemon:       v.daemon,
 			chatID:       p.ChatID,
 			eventsCancel: cancel,
 			ctx:          ctx,
 			cancelCtx:    cancelCtx,
 			done:         make(chan struct{}),
+			downloading:  activeDownloadsFor(v.daemon, p.ChatID),
 		}
 	}
 	if anchorID == "" {
@@ -170,12 +172,22 @@ func (v messagesView) resolveAnchor(ctx context.Context, p messagesParams) (stri
 // recomputes to no diff.
 type messagesChatFeed struct {
 	lister       MessageLister
+	daemon       *app.Daemon
 	chatID       string
 	eventsCancel func()
 	ctx          context.Context
 	cancelCtx    context.CancelFunc
 	done         chan struct{}
 	closeOnce    sync.Once
+
+	// downloadMu guards downloading: the ids in this chat with a media fetch in
+	// flight right now. It lives on the message row rather than being joined
+	// from `transfers` because the two are separate subscriptions recomputed on
+	// separate goroutines: a frontend joining them saw the transfer disappear
+	// before the path arrived and flashed its download button back. One row,
+	// one update, no ordering to get wrong.
+	downloadMu  sync.Mutex
+	downloading map[string]bool
 
 	// subjectsMu guards avatarSubjects: the ids whose avatar actually appears
 	// in the window right now (every sender in it, plus the chat itself).
@@ -200,6 +212,59 @@ func (f *messagesChatFeed) noteAvatarSubjects(msgs []store.Message) {
 	f.subjectsMu.Unlock()
 }
 
+// activeDownloadsFor snapshots this chat's in-flight fetches from the daemon,
+// the same source `transfers` seeds itself from.
+func activeDownloadsFor(daemon *app.Daemon, chatID string) map[string]bool {
+	fresh := make(map[string]bool)
+	if daemon == nil {
+		return fresh
+	}
+	for _, download := range daemon.ActiveMediaDownloads() {
+		if download.MessageID != "" && download.ChatID == chatID && download.Downloading {
+			fresh[download.MessageID] = true
+		}
+	}
+	return fresh
+}
+
+// reloadDownloading rebuilds the in-flight set from the daemon snapshot after a
+// dropped-event gap: it is daemon memory rather than store state, so a resync
+// has no other way to recover it.
+func (f *messagesChatFeed) reloadDownloading() {
+	fresh := activeDownloadsFor(f.daemon, f.chatID)
+	f.downloadMu.Lock()
+	f.downloading = fresh
+	f.downloadMu.Unlock()
+}
+
+// noteDownloadChanged folds one transfer event in and reports whether the
+// window has to be recomputed. Progress ticks arrive several times a second per
+// transfer and do not move this bool, so only the two edges cost a re-read of
+// the window.
+func (f *messagesChatFeed) noteDownloadChanged(evt app.MediaDownloadEvent) bool {
+	f.downloadMu.Lock()
+	defer f.downloadMu.Unlock()
+	if f.downloading == nil {
+		f.downloading = make(map[string]bool)
+	}
+	was := f.downloading[evt.MessageID]
+	if was == evt.Downloading {
+		return false
+	}
+	if evt.Downloading {
+		f.downloading[evt.MessageID] = true
+	} else {
+		delete(f.downloading, evt.MessageID)
+	}
+	return true
+}
+
+func (f *messagesChatFeed) isDownloading(id string) bool {
+	f.downloadMu.Lock()
+	defer f.downloadMu.Unlock()
+	return f.downloading[id]
+}
+
 func (f *messagesChatFeed) avatarInWindow(id string) bool {
 	f.subjectsMu.Lock()
 	defer f.subjectsMu.Unlock()
@@ -222,8 +287,16 @@ func (f *messagesChatFeed) run(events <-chan app.DaemonEvent, invalidate func())
 func (f *messagesChatFeed) eventAffectsChat(evt app.DaemonEvent) bool {
 	switch evt.Kind {
 	case app.DaemonEventResync:
-		// Dropped-event gap: re-read the store (Items is authoritative).
+		// Dropped-event gap: re-read the store (Items is authoritative) and the
+		// transfer set, which is daemon memory rather than store state and so
+		// has no other way back.
+		f.reloadDownloading()
 		return true
+	case app.DaemonEventMediaDownloadChanged:
+		if evt.MediaDownload.ChatID != f.chatID || evt.MediaDownload.MessageID == "" {
+			return false
+		}
+		return f.noteDownloadChanged(evt.MediaDownload)
 	case app.DaemonEventNewMessage, app.DaemonEventMessageUpdated:
 		return evt.Message.ChatID == f.chatID
 	case app.DaemonEventMessageDeleted, app.DaemonEventChatDeleted:
@@ -275,7 +348,7 @@ func (s *latestMessagesSession) Items(max int) []Item {
 	s.noteAvatarSubjects(msgs)
 	items := make([]Item, 0, len(msgs))
 	for _, m := range msgs {
-		items = append(items, messageWireItem(m))
+		items = append(items, messageWireItem(m, s.isDownloading(m.ID)))
 	}
 	return items
 }
@@ -403,15 +476,21 @@ func (s *anchoredMessagesSession) Items(int) []Item {
 
 	items := make([]Item, 0, len(window))
 	for _, m := range window {
-		items = append(items, messageWireItem(m))
+		items = append(items, messageWireItem(m, s.isDownloading(m.ID)))
 	}
 	return items
 }
 
 // messageWireItem projects a stored message into a view Item: stable id, the
-// ascending timestamp sort key (render order), and the wire shape.
-func messageWireItem(m store.Message) Item {
-	return Item{ID: m.ID, Sort: messageSort(m), Data: messageItemFromStore(m)}
+// ascending timestamp sort key (render order), and the wire shape. `downloading`
+// is the one field that is not store state: it is live daemon memory, folded in
+// here so a row's fetch state and its path can never disagree.
+func messageWireItem(m store.Message, downloading bool) Item {
+	item := messageItemFromStore(m)
+	if downloading && item.Media != nil {
+		item.Media.Downloading = true
+	}
+	return Item{ID: m.ID, Sort: messageSort(m), Data: item}
 }
 
 // reverseMessages flips a slice in place; the store returns ascending pages
@@ -497,6 +576,9 @@ type messageMedia struct {
 	ThumbnailPath string `json:"thumbnail_path,omitempty"`
 	Path          string `json:"path,omitempty"`
 	DownloadError string `json:"download_error,omitempty"`
+	// Downloading is true while a fetch for this message is in flight. Only the
+	// `messages` view sets it; `transfers` still carries the byte counters.
+	Downloading bool `json:"downloading,omitempty"`
 	SizeBytes     int64  `json:"size_bytes,omitempty"`
 	DurationSecs  int32  `json:"duration_secs,omitempty"`
 	Filename      string `json:"filename,omitempty"`

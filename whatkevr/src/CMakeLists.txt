@@ -23,6 +23,8 @@ set(WHATKEVR_SOURCES
     media/mpvcore.h
     media/videoarbiter.cpp
     media/videoarbiter.h
+    media/videoframeprovider.cpp
+    media/videoframeprovider.h
     protocol/protocolclient.cpp
     protocol/protocolclient.h
     protocol/collectionviewmodel.cpp

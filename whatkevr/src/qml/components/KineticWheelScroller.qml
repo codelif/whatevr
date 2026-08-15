@@ -27,6 +27,13 @@ Item {
     // hard-stopping at a stale edge that is about to move.
     property bool clampAtOrigin: true
     property real pendingDelta: 0
+    // When the accumulator last took a notch, so an undeliverable one is given
+    // a short grace before being abandoned rather than dropped on the spot.
+    property double pendingDeltaSince: 0
+    // How long a notch may wait for the view's geometry to catch up. Long
+    // enough to cover a layout pass, short enough that a genuinely unscrollable
+    // view does not hold a stale scroll and apply it much later.
+    property int pendingDeltaGrace: 150
     property real velocity: 0
     property bool kineticActive: false
     // contentY as we last set it; used to detect the ListView repositioning the
@@ -259,6 +266,7 @@ Item {
         kineticActive = false
         velocity = 0
         pendingDelta = 0
+        pendingDeltaSince = 0
         hasAppliedContentY = false
         lastWheelTimestamp = 0
         lastImpulseTimestamp = 0
@@ -291,6 +299,7 @@ Item {
         kineticActive = false
         velocity = 0
         pendingDelta = 0
+        pendingDeltaSince = 0
         lastWheelTimestamp = 0
         lastImpulseTimestamp = 0
         lastInputTimestamp = 0
@@ -304,177 +313,206 @@ Item {
         }
     }
 
+    // The two devices are routed by what they *are*, not by what their deltas
+    // happen to look like. A high-resolution mouse wheel emits pixel deltas on
+    // Wayland, so the delta-shape test alone put a mouse on the touchpad path:
+    // its phantom-end detection launched an inertia fling 65 ms after every
+    // notch, which the next notch then had to fight. That is the "resists once
+    // or twice" the user sees. The shape test survives as the tie-breaker
+    // within the non-touchpad path, for devices that report as a mouse but
+    // stream like a trackpad.
     WheelHandler {
         target: null
-        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+        acceptedDevices: PointerDevice.Mouse
 
-        onWheel: event => {
-            if (event.modifiers & Qt.ControlModifier) {
-                return
-            }
+        onWheel: event => root.handleWheel(event, true)
+    }
 
-            const pixelY = event.pixelDelta.y
-            const angleY = event.angleDelta.y
-            const phase = event.phase
-            const delta = root.wheelDelta(pixelY, angleY)
-            const now = Date.now()
-            if (phase !== 0) {
-                root.sawPhaseEvents = true
-            }
-            const hasPixelDelta = Math.abs(pixelY) > 0
-            // Discrete wheel notches: angle-only, phase-less, whole multiples
-            // of 120. Everything else (pixel deltas, phased streams, fractional
-            // angle deltas from X11 touchpads) is a smooth gesture and keeps
-            // exact 1:1 tracking plus flick inertia. A smooth gesture stays
-            // smooth even if one of its deltas happens to land on a multiple
-            // of 120.
-            const discreteWheel = !hasPixelDelta && phase === 0 && Math.abs(angleY) % 120 === 0
-                    && !(root.gestureActive && root.gestureHasSmoothDeltas)
-            if (Math.abs(delta) < 0.01) {
-                if (phase === root.scrollBeginPhase || phase === root.scrollEndPhase) {
-                    event.accepted = true
-                    if (phase === root.scrollBeginPhase) {
-                        root.velocity = 0
-                        root.lastWheelTimestamp = 0
-                        root.lastImpulseTimestamp = 0
-                        root.lastInputTimestamp = now
-                        root.lastRealDeltaTimestamp = 0
-                        root.gestureTotalDistance = 0
-                        root.gestureActive = true
-                        root.gestureHeld = false
-                        root.gestureHasSmoothDeltas = false
-                        root.kineticActive = false
-                        root.activeTimeConstant = root.timeConstant
-                        root.pendingDelta = 0
-                        root.clearFlickSamples()
-                        if (frameDriver.running) {
-                            frameDriver.stop()
-                        }
-                    }
-                    if (phase === root.scrollEndPhase && !root.launchInertia(now)) {
-                        root.gestureActive = false
-                        root.finishInteraction()
-                    }
-                }
-                return
-            }
+    WheelHandler {
+        target: null
+        acceptedDevices: PointerDevice.TouchPad
 
-            if (discreteWheel) {
-                // Wheel notches are large discrete jumps; instead of applying
-                // them instantly (or feeding them through the touchpad EMA),
-                // accumulate and let the frame driver ease the remainder out
-                // exponentially — Firefox-style smooth wheel scrolling. Rapid
-                // notches stack into one continuous glide.
-                if (root.blocksAtBound(delta)) {
-                    event.accepted = true
-                    root.pendingDelta = 0
-                    return
-                }
-                if (!root.canMove(delta) && Math.abs(root.pendingDelta) < 0.01) {
-                    return
-                }
+        onWheel: event => root.handleWheel(event, false)
+    }
+
+    function handleWheel(event, fromMouse) {
+        if (event.modifiers & Qt.ControlModifier) {
+            return
+        }
+
+        const pixelY = event.pixelDelta.y
+        const angleY = event.angleDelta.y
+        const phase = event.phase
+        const delta = root.wheelDelta(pixelY, angleY)
+        const now = Date.now()
+        if (phase !== 0) {
+            root.sawPhaseEvents = true
+        }
+        const hasPixelDelta = Math.abs(pixelY) > 0
+        // Discrete wheel notches: angle-only, phase-less, whole multiples
+        // of 120. Everything else (pixel deltas, phased streams, fractional
+        // angle deltas from X11 touchpads) is a smooth gesture and keeps
+        // exact 1:1 tracking plus flick inertia. A smooth gesture stays
+        // smooth even if one of its deltas happens to land on a multiple
+        // of 120. A wheel that arrives with a phase is a genuine gesture
+        // stream whatever the device claims to be, so it keeps the smooth
+        // path even on a mouse.
+        const discreteWheel = (fromMouse
+                               ? phase === 0
+                               : (!hasPixelDelta && phase === 0 && Math.abs(angleY) % 120 === 0))
+                && !(root.gestureActive && root.gestureHasSmoothDeltas)
+        if (Math.abs(delta) < 0.01) {
+            if (phase === root.scrollBeginPhase || phase === root.scrollEndPhase) {
                 event.accepted = true
-                root.beginInteraction()
-                // A notch against an active fling's direction stops the fling;
-                // same-direction notches add on top of it.
-                if (root.kineticActive && !root.sameDirection(root.velocity, delta)) {
-                    root.kineticActive = false
+                if (phase === root.scrollBeginPhase) {
                     root.velocity = 0
-                }
-                if (!root.sameDirection(root.pendingDelta, delta)) {
-                    root.pendingDelta = 0
-                }
-                root.pendingDelta = root.clamp(root.pendingDelta + delta,
-                                               -root.target.height, root.target.height)
-                if (!frameDriver.running) {
-                    frameDriver.restart()
-                }
-                return
-            }
-
-            if (!root.canMove(delta)) {
-                if (root.blocksAtBound(delta)) {
-                    event.accepted = true
-                    root.velocity = 0
+                    root.lastWheelTimestamp = 0
+                    root.lastImpulseTimestamp = 0
+                    root.lastInputTimestamp = now
                     root.lastRealDeltaTimestamp = 0
                     root.gestureTotalDistance = 0
-                    root.gestureHeld = true
+                    root.gestureActive = true
+                    root.gestureHeld = false
+                    root.gestureHasSmoothDeltas = false
+                    root.kineticActive = false
+                    root.activeTimeConstant = root.timeConstant
+                    root.pendingDelta = 0
+                    root.clearFlickSamples()
+                    if (frameDriver.running) {
+                        frameDriver.stop()
+                    }
                 }
-                root.stopKinetic()
+                if (phase === root.scrollEndPhase && !root.launchInertia(now)) {
+                    root.gestureActive = false
+                    root.finishInteraction()
+                }
+            }
+            return
+        }
+
+        if (discreteWheel) {
+            // Wheel notches are large discrete jumps; instead of applying
+            // them instantly (or feeding them through the touchpad EMA),
+            // accumulate and let the frame driver ease the remainder out
+            // exponentially — Firefox-style smooth wheel scrolling. Rapid
+            // notches stack into one continuous glide.
+            //
+            // Deliberately *not* gated on canMove(): the geometry it asks
+            // about is an estimate that trails reality by an event-loop turn
+            // (the list's height is a delayed Binding, and a variable-height
+            // ListView revises contentHeight as delegates materialise).
+            // Discarding a notch on a stale answer is how the wheel came to
+            // swallow one every so often. The accumulator is re-checked against
+            // live geometry every frame instead, so a notch that cannot move
+            // yet arrives a frame late rather than never; frameDriver drops it
+            // if the view really is stuck.
+            if (root.blocksAtBound(delta)) {
+                event.accepted = true
+                root.pendingDelta = 0
                 return
             }
-
             event.accepted = true
+            root.pendingDeltaSince = now
             root.beginInteraction()
-
-            if (!root.gestureActive) {
-                root.gestureActive = true
-                root.gestureHeld = false
-                root.gestureHasSmoothDeltas = false
-                root.gestureTotalDistance = 0
-                root.lastRealDeltaTimestamp = 0
-                root.lastWheelTimestamp = 0
+            // A notch against an active fling's direction stops the fling;
+            // same-direction notches add on top of it.
+            if (root.kineticActive && !root.sameDirection(root.velocity, delta)) {
+                root.kineticActive = false
                 root.velocity = 0
-            } else if (root.lastRealDeltaTimestamp > 0 && now - root.lastRealDeltaTimestamp > root.holdCancelTimeout) {
-                root.cancelHeldGesture()
             }
-
-            if (root.gestureHeld && Math.abs(delta) >= root.minimumFlickDistance) {
-                root.gestureHeld = false
-                root.gestureTotalDistance = 0
-                root.velocity = 0
-                root.lastWheelTimestamp = 0
-                root.clearFlickSamples()
+            if (!root.sameDirection(root.pendingDelta, delta)) {
+                root.pendingDelta = 0
             }
-
-            root.gestureHasSmoothDeltas = true
-            // Smooth streams (pixel deltas, or fractional angle deltas on X11)
-            // arrive at device/frame rate; a tight dt floor keeps the velocity
-            // estimate honest. Discrete notches never reach this path.
-            let dt = root.lastWheelTimestamp > 0
-                    ? (now - root.lastWheelTimestamp) / 1000
-                    : 1 / 60
-            dt = root.clamp(dt, hasPixelDelta ? 0.004 : 0.008, 0.12)
-            root.lastWheelTimestamp = now
-
-            const instantVelocity = delta / dt
-            root.gestureTotalDistance += Math.abs(delta)
-            if (!root.gestureHeld && Math.abs(delta) >= root.velocitySampleThreshold) {
-                // High weight so the EMA tracks the gesture's peak speed
-                // closely; a flick then launches at roughly its true velocity.
-                const inputWeight = hasPixelDelta ? 0.7 : 0.5
-                const reversesHard = !root.sameDirection(root.velocity, instantVelocity)
-                        && Math.abs(instantVelocity) > Math.max(180, Math.abs(root.velocity) * 0.45)
-                if (reversesHard) {
-                    // A hard direction reversal invalidates the window too.
-                    root.clearFlickSamples()
-                }
-                const baseVelocity = root.sameDirection(root.velocity, instantVelocity) || !reversesHard
-                        ? root.velocity
-                        : 0
-                root.velocity = root.clamp(baseVelocity * (1 - inputWeight) + instantVelocity * inputWeight,
-                                           -root.maximumVelocity, root.maximumVelocity)
-            }
-            if (!root.gestureHeld) {
-                // No magnitude gate: trailing micro-deltas must be in the
-                // window so the measured span stays honest — they cannot
-                // dominate a 120 ms displacement sum.
-                root.pushFlickSample(now, delta)
-            }
-
-            const actual = root.applyDelta(delta)
-            if (Math.abs(actual) < Math.abs(delta) * 0.5) {
-                root.velocity *= 0.35
-                root.clearFlickSamples()
-            }
-            root.kineticActive = true
-            root.lastInputTimestamp = now
-            root.lastRealDeltaTimestamp = now
-            root.lastImpulseTimestamp = now
-
+            root.pendingDelta = root.clamp(root.pendingDelta + delta,
+                                           -root.target.height, root.target.height)
             if (!frameDriver.running) {
                 frameDriver.restart()
             }
+            return
+        }
+
+        if (!root.canMove(delta)) {
+            if (root.blocksAtBound(delta)) {
+                event.accepted = true
+                root.velocity = 0
+                root.lastRealDeltaTimestamp = 0
+                root.gestureTotalDistance = 0
+                root.gestureHeld = true
+            }
+            root.stopKinetic()
+            return
+        }
+
+        event.accepted = true
+        root.beginInteraction()
+
+        if (!root.gestureActive) {
+            root.gestureActive = true
+            root.gestureHeld = false
+            root.gestureHasSmoothDeltas = false
+            root.gestureTotalDistance = 0
+            root.lastRealDeltaTimestamp = 0
+            root.lastWheelTimestamp = 0
+            root.velocity = 0
+        } else if (root.lastRealDeltaTimestamp > 0 && now - root.lastRealDeltaTimestamp > root.holdCancelTimeout) {
+            root.cancelHeldGesture()
+        }
+
+        if (root.gestureHeld && Math.abs(delta) >= root.minimumFlickDistance) {
+            root.gestureHeld = false
+            root.gestureTotalDistance = 0
+            root.velocity = 0
+            root.lastWheelTimestamp = 0
+            root.clearFlickSamples()
+        }
+
+        root.gestureHasSmoothDeltas = true
+        // Smooth streams (pixel deltas, or fractional angle deltas on X11)
+        // arrive at device/frame rate; a tight dt floor keeps the velocity
+        // estimate honest. Discrete notches never reach this path.
+        let dt = root.lastWheelTimestamp > 0
+                ? (now - root.lastWheelTimestamp) / 1000
+                : 1 / 60
+        dt = root.clamp(dt, hasPixelDelta ? 0.004 : 0.008, 0.12)
+        root.lastWheelTimestamp = now
+
+        const instantVelocity = delta / dt
+        root.gestureTotalDistance += Math.abs(delta)
+        if (!root.gestureHeld && Math.abs(delta) >= root.velocitySampleThreshold) {
+            // High weight so the EMA tracks the gesture's peak speed
+            // closely; a flick then launches at roughly its true velocity.
+            const inputWeight = hasPixelDelta ? 0.7 : 0.5
+            const reversesHard = !root.sameDirection(root.velocity, instantVelocity)
+                    && Math.abs(instantVelocity) > Math.max(180, Math.abs(root.velocity) * 0.45)
+            if (reversesHard) {
+                // A hard direction reversal invalidates the window too.
+                root.clearFlickSamples()
+            }
+            const baseVelocity = root.sameDirection(root.velocity, instantVelocity) || !reversesHard
+                    ? root.velocity
+                    : 0
+            root.velocity = root.clamp(baseVelocity * (1 - inputWeight) + instantVelocity * inputWeight,
+                                       -root.maximumVelocity, root.maximumVelocity)
+        }
+        if (!root.gestureHeld) {
+            // No magnitude gate: trailing micro-deltas must be in the
+            // window so the measured span stays honest — they cannot
+            // dominate a 120 ms displacement sum.
+            root.pushFlickSample(now, delta)
+        }
+
+        const actual = root.applyDelta(delta)
+        if (Math.abs(actual) < Math.abs(delta) * 0.5) {
+            root.velocity *= 0.35
+            root.clearFlickSamples()
+        }
+        root.kineticActive = true
+        root.lastInputTimestamp = now
+        root.lastRealDeltaTimestamp = now
+        root.lastImpulseTimestamp = now
+
+        if (!frameDriver.running) {
+            frameDriver.restart()
         }
     }
 
@@ -482,12 +520,22 @@ Item {
         id: frameDriver
 
         onTriggered: {
+            const now = Date.now()
             if (!root.scrollable()) {
+                // Not necessarily true: the list's height is a delayed Binding
+                // and its contentHeight an estimate delegates keep revising, so
+                // "not scrollable" is regularly a stale answer that a layout
+                // pass is about to correct. Hold an accumulated notch across
+                // that rather than throwing it away, and give up only once the
+                // view has stayed unscrollable for the whole grace.
+                if (Math.abs(root.pendingDelta) >= 0.01
+                        && now - root.pendingDeltaSince <= root.pendingDeltaGrace) {
+                    return
+                }
                 root.stopKinetic()
                 return
             }
 
-            const now = Date.now()
             const inputQuiet = now - root.lastInputTimestamp > 42
 
             // Ease out the wheel-notch accumulator: a fixed fraction of the
@@ -500,8 +548,15 @@ Item {
                 const applied = root.applyDelta(step)
                 root.pendingDelta -= step
                 if (Math.abs(step) >= 0.01 && Math.abs(applied) < 0.01) {
-                    // Hit a bound; drop the rest instead of grinding at it.
-                    root.pendingDelta = 0
+                    // Nothing moved. At a bound that is real, drop the rest
+                    // instead of grinding at it. At one that is only an
+                    // estimate (the top of a list still loading older history,
+                    // where originY is revised as rows materialise), hold it
+                    // for the grace and try again as the geometry settles.
+                    if (root.blocksAtBound(step)
+                            || now - root.pendingDeltaSince > root.pendingDeltaGrace) {
+                        root.pendingDelta = 0
+                    }
                 }
             } else if (root.pendingDelta !== 0) {
                 root.applyDelta(root.pendingDelta)

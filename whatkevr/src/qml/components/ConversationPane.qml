@@ -38,8 +38,14 @@ Kirigami.Page {
     property string editingMessageId: ""
     property string editingOriginalText: ""
 
+    // Whether the rows on screen belong to the chat on screen. A same-chat
+    // re-subscribe (a jump, go-to-bottom from mid-history, a daemon-side reset)
+    // empties the model for one round trip; that is a reload of this
+    // conversation, not the absence of one, so the pane keeps its chrome
+    // instead of collapsing to the placeholder and rebuilding itself.
     readonly property bool messagesCurrent: Whatevr.ProtocolController.hasSelectedChat
-                                             && Whatevr.ProtocolController.displayedMessagesChatId === Whatevr.ProtocolController.selectedChatId
+                                             && (Whatevr.ProtocolController.displayedMessagesChatId === Whatevr.ProtocolController.selectedChatId
+                                                 || Whatevr.ProtocolController.messagesReloading)
     readonly property bool waitingForMessages: Whatevr.ProtocolController.hasSelectedChat
                                                && (Whatevr.ProtocolController.messagesLoading
                                                    || Whatevr.ProtocolController.unreadAnchorResolving
@@ -718,12 +724,16 @@ Kirigami.Page {
 
                 anchors.fill: parent
                 anchors.margins: Kirigami.Units.smallSpacing
+                // Hiding this destroys every delegate and rebuilds them on the
+                // way back, so "empty for a moment" must not read as "gone":
+                // a reload of the same chat keeps the view mounted.
                 visible: Whatevr.ProtocolController.hasSelectedChat
                           && root.pinnedLayoutReady
                           && root.messagesCurrent
                           && !Whatevr.ProtocolController.unreadAnchorResolving
                           && Whatevr.ProtocolController.messageErrorText.length === 0
-                          && !Whatevr.ProtocolController.messagesEmpty
+                          && (!Whatevr.ProtocolController.messagesEmpty
+                              || Whatevr.ProtocolController.messagesReloading)
                 chatId: Whatevr.ProtocolController.selectedChatId
                 model: Whatevr.ProtocolController.messageListModel
                 loadingMessages: Whatevr.ProtocolController.messagesLoading

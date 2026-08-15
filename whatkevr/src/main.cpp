@@ -14,6 +14,7 @@
 #include "app/protocolcontroller.h"
 #include "app/settings.h"
 #include "media/mpvcore.h"
+#include "media/videoframeprovider.h"
 #include "version.h"
 
 namespace
@@ -134,6 +135,11 @@ int main(int argc, char *argv[])
 
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextObject(new KLocalizedContext(&engine));
+    // The last frame a video decoder was showing when it let go, so a clip
+    // moving between an inline bubble and the full-screen viewer keeps its
+    // picture instead of falling back to the poster (see VideoPlaybackArbiter).
+    // The engine takes ownership.
+    engine.addImageProvider(QStringLiteral("videoframe"), new VideoFrameImageProvider);
 
     // Constructed before the controller so the models it creates can read the
     // shared Settings instance (default skin tone, draft persistence).

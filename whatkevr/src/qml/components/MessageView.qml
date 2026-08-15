@@ -656,6 +656,14 @@ Item {
                 || list.count === 0) {
             return
         }
+        // positionViewAtEnd() forces a synchronous layout of the whole
+        // materialised band, and the settle window fires on every content-height
+        // revision, several per send while the new row settles. Skip it when
+        // the viewport did not actually drift, which is the ordinary case for a
+        // list that was already parked at the bottom.
+        if (Math.abs(distanceFromBottom()) < 1) {
+            return
+        }
         traceViewport("applyBottomRepin")
         programmaticScroll = true
         list.positionViewAtEnd()
@@ -1129,6 +1137,25 @@ Item {
 
     // Recompute followNewest and fire predictive history prefetch. Cheap: two
     // indexAt probes, no allocations, safe to call on every contentY change.
+    // updateScrollState() costs two indexAt() probes plus an itemAtIndex(), each
+    // forcing a layout pass, and its callers are contentY and contentHeight,
+    // which change several times per frame while scrolling. Coalesce to one run
+    // per event-loop turn: nothing reads the result in between, and the probes
+    // are cheaper *and* more accurate once the frame's geometry has settled.
+    property bool scrollStateQueued: false
+    function queueScrollStateUpdate() {
+        if (scrollStateQueued) {
+            return
+        }
+        scrollStateQueued = true
+        Qt.callLater(applyScrollStateUpdate)
+    }
+
+    function applyScrollStateUpdate() {
+        scrollStateQueued = false
+        updateScrollState()
+    }
+
     function updateScrollState() {
         if (list.count === 0) {
             atNewest = true
@@ -1644,7 +1671,7 @@ Item {
             // costs two indexAt() probes plus an itemAtIndex(), each forcing a
             // layout pass. Nothing reads the result until the open finishes.
             if (!root.openingChat) {
-                root.updateScrollState()
+                root.queueScrollStateUpdate()
             }
             root.noteScroll()
         }
@@ -1669,7 +1696,7 @@ Item {
                 root.queueBottomRepin()
             }
             if (!root.openingChat) {
-                root.updateScrollState()
+                root.queueScrollStateUpdate()
             }
         }
         onMovementEnded: root.updateScrollState()

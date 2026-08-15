@@ -4,6 +4,8 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtMultimedia
 
+import Whatevr as Whatevr
+
 // Qt Multimedia video playback, exposed through the small interface shared by
 // the inline bubble and full-screen viewer.
 VideoSurfaceBackend {
@@ -29,8 +31,41 @@ VideoSurfaceBackend {
                          || player.mediaStatus === MediaPlayer.BufferingMedia
                          || player.mediaStatus === MediaPlayer.EndOfMedia)
 
+    // Everything the engine does before it can draw. A `media.stream` source
+    // reads through the daemon's range server, where a seek into bytes that
+    // have not arrived blocks until they do; on a large clip that is routinely
+    // several seconds of entirely healthy waiting.
+    surfaceStalled: player.mediaStatus === MediaPlayer.LoadingMedia
+                    || player.mediaStatus === MediaPlayer.StalledMedia
+                    || player.mediaStatus === MediaPlayer.BufferingMedia
+                    || root.pendingSeek >= 0
+
     function surfaceSeek(seconds) {
-        player.position = Math.round(seconds * 1000)
+        const target = Math.max(0, seconds)
+        if (!player.seekable) {
+            // Seeking an unseekable player is silently dropped, which is how a
+            // scrub issued the moment a clip opened did nothing at all. Hold it
+            // until the engine says it can.
+            root.pendingSeek = target
+            return
+        }
+        root.pendingSeek = -1
+        player.position = Math.round(target * 1000)
+    }
+
+    function captureStill() {
+        const sink = output.videoSink
+        if (!sink) {
+            return
+        }
+        // A sink that has never been handed a frame reports undefined rather
+        // than an invalid QVideoFrame, which is not a value the C++ signature
+        // can take at all.
+        const frame = sink.videoFrame
+        if (frame === undefined || frame === null) {
+            return
+        }
+        Whatevr.VideoPlayback.captureFrame(root.messageId, frame)
     }
 
     onPlayingChanged: {
@@ -52,8 +87,15 @@ VideoSurfaceBackend {
     /// exactly once per load: repeating it on every status change would drag
     /// playback back to the start position for as long as the clip ran.
     property bool startApplied: false
+    /// A seek asked for while the player could not take one, in seconds, or -1.
+    property real pendingSeek: -1
 
-    onSourceChanged: root.startApplied = false
+    onSourceChanged: {
+        root.startApplied = false
+        root.pendingSeek = -1
+        root.surfaceFailed = false
+        root.surfaceErrorText = ""
+    }
 
     VideoOutput {
         id: output
@@ -79,6 +121,23 @@ VideoSurfaceBackend {
         audioOutput: AudioOutput {
             muted: root.muted
             volume: root.volume / 100
+        }
+        // The only authority on whether playback failed. Everything above used
+        // to infer it from a stopwatch, which said "could not be played" about
+        // clips that were merely slow.
+        onErrorOccurred: (error, errorString) => {
+            if (error === MediaPlayer.NoError) {
+                return
+            }
+            root.surfaceFailed = true
+            root.surfaceErrorText = errorString
+        }
+        onSeekableChanged: {
+            if (player.seekable && root.pendingSeek >= 0) {
+                const target = root.pendingSeek
+                root.pendingSeek = -1
+                player.position = Math.round(target * 1000)
+            }
         }
         onMediaStatusChanged: {
             // Seekable only once the media is loaded; asking earlier is

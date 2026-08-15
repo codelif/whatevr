@@ -118,9 +118,11 @@ target_link_libraries(tst_mediaplayback PRIVATE
 
 add_test(NAME tst_mediaplayback COMMAND tst_mediaplayback)
 
-# Who is allowed to be playing. Pure bookkeeping over plain QObjects: no
-# window, no decoder and no libmpv, which is the point of the arbiter living
-# above the engine seam rather than inside the mpv pool.
+# Who is allowed to be playing, and the frame each claimant left behind. Pure
+# bookkeeping over plain QObjects: no window, no decoder and no libmpv, which is
+# the point of the arbiter living above the engine seam rather than inside the
+# mpv pool. Multimedia is here only for QVideoFrame, the type a still arrives
+# as; nothing in this target opens a player.
 qt_add_executable(tst_videoarbiter
     tst_videoarbiter.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/media/videoarbiter.cpp
@@ -138,6 +140,7 @@ target_include_directories(tst_videoarbiter PRIVATE
 target_link_libraries(tst_videoarbiter PRIVATE
     Qt6::Core
     Qt6::Gui
+    Qt6::Multimedia
     Qt6::Qml
     Qt6::Test
     KF6::ColorScheme

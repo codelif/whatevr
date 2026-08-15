@@ -2,11 +2,14 @@
 #pragma once
 
 #include <QHash>
+#include <QImage>
 #include <QList>
+#include <QMutex>
 #include <QObject>
 #include <QPointer>
 #include <QQmlEngine>
 #include <QString>
+#include <QVideoFrame>
 
 /**
  * VideoPlaybackArbiter decides what is allowed to be playing, app-wide.
@@ -73,6 +76,29 @@ public:
     /// Delivers a completed full-screen handoff to the matching inline bubble.
     Q_INVOKABLE void handoffToInline(const QString &messageId, double seconds, bool resumePlayback);
 
+    /**
+     * Keeps the frame a decoder was showing when it let go.
+     *
+     * A position alone does not hand a clip over: the receiving side has to
+     * open a file and seek before it can draw anything, and until then it fell
+     * back to the daemon's poster: the *first* frame of the video, which is
+     * neither where the user was nor, on a clip that opens on black, a picture
+     * at all. The still is what the poster should have been for the length of
+     * that gap, in both directions.
+     *
+     * Cheap to take (the sink already holds the frame; nothing is rendered or
+     * grabbed) but expensive to keep, so far fewer are remembered than
+     * positions.
+     */
+    Q_INVOKABLE void captureFrame(const QString &messageId, const QVideoFrame &frame);
+    Q_INVOKABLE bool hasFrame(const QString &messageId) const;
+    /// Bumped on every capture. QML puts it in the image url's query string,
+    /// which is the only thing that makes a cached provider url reload.
+    Q_INVOKABLE int frameRevision(const QString &messageId) const;
+    /// Reads a still back. Called from the image provider, which Qt may run on
+    /// its own thread, so the store is mutex-guarded rather than thread-affine.
+    [[nodiscard]] QImage frameImage(const QString &messageId) const;
+
     /// Testing hooks. The live limit is the user's setting; the tests set it
     /// directly so they do not depend on a QSettings store.
     void setAnimatedLimit(int limit);
@@ -93,14 +119,25 @@ Q_SIGNALS:
     /// read the value from before the save.
     void resumePositionChanged(const QString &messageId);
     void inlineHandoff(const QString &messageId, double seconds, bool resumePlayback);
+    /// A new still is available for this message. Whoever is showing it re-reads
+    /// frameRevision() and reloads.
+    void frameCaptured(const QString &messageId);
 
 private:
     void offerAnimatedSlot();
     void rememberOrder(const QString &messageId);
+    void rememberFrameOrder(const QString &messageId);
 
     /// The most recent positions, so scrolling a long way back does not resume
     /// a clip from where it was hours ago and the hash cannot grow without end.
     static constexpr int resumeHistoryLimit = 32;
+    /// Stills are images, not doubles. Only the handful in play matter: the
+    /// bubble handed to full screen and back, and whatever the user last
+    /// scrolled away from.
+    static constexpr int frameHistoryLimit = 6;
+    /// Cap on a stored still's long edge. Everything showing one is at most a
+    /// bubble or a screen wide, and a 4K frame per entry is not worth holding.
+    static constexpr int frameMaxEdge = 1280;
 
     QPointer<QObject> m_exclusive;
     /// QPointer throughout: a bubble is destroyed by the list recycling it at
@@ -110,6 +147,13 @@ private:
 
     QHash<QString, double> m_positions;
     QList<QString> m_positionOrder;
+
+    /// Guards the still store alone: the image provider reads it from Qt's
+    /// image-loading thread while QML writes it from the GUI thread.
+    mutable QMutex m_frameMutex;
+    QHash<QString, QImage> m_frames;
+    QHash<QString, int> m_frameRevisions;
+    QList<QString> m_frameOrder;
 
     /// -1 means "read the user's setting". Tests override it.
     int m_animatedLimitOverride = -1;

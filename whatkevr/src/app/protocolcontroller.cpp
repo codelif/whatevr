@@ -938,6 +938,7 @@ void ProtocolController::setSelectedChat(const QString &chatId, const QString &a
         m_effectiveAnchor.clear();
         m_pendingJumpMessageId.clear();
         m_displayedMessagesChatId.clear();
+        m_messagesReloading = false;
         m_waitingInitialMessages = false;
         m_unreadAnchorMessageId.clear();
         m_unreadAnchorCount = 0;
@@ -960,6 +961,7 @@ void ProtocolController::setSelectedChat(const QString &chatId, const QString &a
         m_effectiveAnchor.clear();
         m_pendingJumpMessageId.clear();
         m_displayedMessagesChatId.clear();
+        m_messagesReloading = false;
         m_waitingInitialMessages = true;
         m_messagesModel->onReset();
         Q_EMIT messagesChanged();
@@ -973,6 +975,7 @@ void ProtocolController::setSelectedChat(const QString &chatId, const QString &a
         m_effectiveAnchor = effectiveAnchor;
         m_pendingJumpMessageId = jumpMessageId;
         m_displayedMessagesChatId.clear();
+        m_messagesReloading = false;
         m_waitingInitialMessages = false;
         m_messagesModel->onReset();
         Q_EMIT messagesChanged();
@@ -1008,6 +1011,10 @@ void ProtocolController::subscribeMessages(const QString &anchor, const QString 
     m_effectiveAnchor = anchor;
     m_pendingJumpMessageId = jumpMessageId;
     m_pendingExtendDirection.clear();
+    // A re-subscribe within the chat already on screen is a reload, not an open.
+    // The rows go away for a round trip, but the conversation does not, and the
+    // pane must not collapse to its empty state and back in between.
+    m_messagesReloading = m_displayedMessagesChatId == m_selectedChatId && !m_selectedChatId.isEmpty();
     m_displayedMessagesChatId.clear();
     m_messageErrorText.clear();
     m_waitingInitialMessages = true;
@@ -1059,9 +1066,8 @@ void ProtocolController::onMessagesSubscribed(const QVariantMap &meta)
         if (m_unreadAnchorMessageId.isEmpty()) {
             // No unread anchor means the daemon deliberately degraded to the
             // live edge; there is no divider to render.
-            m_effectiveAnchor = QStringLiteral("latest");
             m_unreadAnchorCount = 0;
-            m_messagesAtLiveEdge = true;
+            noteReachedLiveEdge();
         }
         Q_EMIT unreadAnchorChanged();
     }
@@ -1081,13 +1087,14 @@ void ProtocolController::onMessagesReady(bool exhausted)
             m_newerMessagesFailed = false;
             m_canLoadNewerMessages = !exhausted;
             if (exhausted) {
-                m_messagesAtLiveEdge = true;
+                noteReachedLiveEdge();
             }
         }
         if (m_refillingAfterReset) {
             m_refillingAfterReset = false;
             m_waitingInitialMessages = false;
             m_displayedMessagesChatId = m_selectedChatId;
+            m_messagesReloading = false;
         }
         Q_EMIT messagesChanged();
         return;
@@ -1098,6 +1105,7 @@ void ProtocolController::onMessagesReady(bool exhausted)
     }
     m_waitingInitialMessages = false;
     m_displayedMessagesChatId = m_selectedChatId;
+    m_messagesReloading = false;
     if (m_refillingAfterReset) {
         m_refillingAfterReset = false;
         m_olderMessagesFailed = false;
@@ -1106,15 +1114,18 @@ void ProtocolController::onMessagesReady(bool exhausted)
         return;
     }
     if (m_effectiveAnchor == QLatin1String("latest")) {
-        m_messagesAtLiveEdge = true;
         m_canLoadOlderMessages = !exhausted;
         m_canLoadNewerMessages = false;
+        noteReachedLiveEdge();
     } else {
         // Initial anchored exhaustion describes both frontiers together. When
         // false, probe each independently as the viewport approaches it.
         m_messagesAtLiveEdge = exhausted;
         m_canLoadOlderMessages = !exhausted;
         m_canLoadNewerMessages = !exhausted;
+        if (exhausted) {
+            noteReachedLiveEdge();
+        }
     }
 
     Q_EMIT messagesChanged();
@@ -1161,6 +1172,7 @@ void ProtocolController::onMessagesFailed(const QString &code, const QString &me
         });
     } else {
         m_messageErrorText = message;
+        m_messagesReloading = false;
     }
     Q_EMIT unreadAnchorChanged();
     Q_EMIT messagesChanged();
@@ -1171,8 +1183,14 @@ void ProtocolController::onMessagesReset()
     if (m_selectedChatId.isEmpty()) {
         return;
     }
+    // Reached both from a daemon-side `reset` (queue overflow) and from
+    // subscribeMessages() resetting the model itself. Either way the chat on
+    // screen is not going anywhere, so the rows come back rather than the pane
+    // falling through to its empty state.
+    m_messagesReloading = m_messagesReloading || m_displayedMessagesChatId == m_selectedChatId;
     m_displayedMessagesChatId.clear();
     if (!m_conversationVisible) {
+        m_messagesReloading = false;
         m_waitingInitialMessages = false;
         Q_EMIT messagesChanged();
         return;
@@ -1283,9 +1301,28 @@ void ProtocolController::jumpToMessage(const QString &messageId)
     subscribeMessages(messageId, messageId);
 }
 
+// noteReachedLiveEdge records that the window now contains the newest message.
+//
+// The anchor is where the window was *opened*, which is not where it is: a chat
+// opened on its unread divider keeps `m_effectiveAnchor == "unread"` for the
+// rest of the session even after extending forward to the newest message. Every
+// caller that treats the anchor as "where we are" was therefore wrong about a
+// chat with unread messages, and jumpToBottom() below re-subscribed on every
+// single send because of it.
+void ProtocolController::noteReachedLiveEdge()
+{
+    m_messagesAtLiveEdge = true;
+    m_effectiveAnchor = QStringLiteral("latest");
+}
+
 void ProtocolController::jumpToBottom()
 {
-    if (m_selectedChatId.isEmpty() || m_effectiveAnchor == QLatin1String("latest")) {
+    // Re-subscribing resets the model, which tears down and rebuilds every
+    // delegate and blanks the conversation column for a socket round trip. Only
+    // worth it when the window genuinely does not reach the newest message:
+    // while it does, the caller's own scroll is the whole job.
+    if (m_selectedChatId.isEmpty() || m_effectiveAnchor == QLatin1String("latest")
+        || (m_messagesAtLiveEdge && !m_canLoadNewerMessages)) {
         return;
     }
     subscribeMessages(QStringLiteral("latest"));
@@ -1349,6 +1386,7 @@ void ProtocolController::setConversationVisible(bool visible)
         delete m_messagesSub;
         m_messagesSub = nullptr;
         m_displayedMessagesChatId.clear();
+        m_messagesReloading = false;
         m_waitingInitialMessages = false;
         m_messagesModel->onReset();
         sendSessionUpdate();

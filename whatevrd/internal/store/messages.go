@@ -1782,9 +1782,17 @@ func (db *DB) UpdateMessageMediaLocalPathWithDimensions(ctx context.Context, id,
 	defer tx.Rollback()
 
 	if mediaWidth > 0 && mediaHeight > 0 {
+		// Only fill dimensions in, never correct them. A renderer has already
+		// reserved a slot from the sender-declared size, and rewriting it when
+		// the bytes land makes every completed download reflow the timeline
+		// under the reader. A sender that lies about its dimensions keeps its
+		// wrong slot; a stable layout is worth more than a late correction.
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE messages
-			SET media_local_path = ?, media_width = ?, media_height = ?, media_download_error = ''
+			SET media_local_path = ?,
+			    media_width = CASE WHEN media_width > 0 THEN media_width ELSE ? END,
+			    media_height = CASE WHEN media_height > 0 THEN media_height ELSE ? END,
+			    media_download_error = ''
 			WHERE id = ?
 		`, localPath, mediaWidth, mediaHeight, id); err != nil {
 			return Message{}, err

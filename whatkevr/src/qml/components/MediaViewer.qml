@@ -48,13 +48,27 @@ QQC2.Popup {
         : streamUrl
     readonly property bool hasFile: localPath.length > 0
 
+    /// The still the bubble left behind for this clip, revision-keyed so a
+    /// fresh capture is not answered from the image cache. Empty when this
+    /// message has never been decoded anywhere.
+    property int stillRevision: 0
+    readonly property url handoffStill: isVideo && messageId.length > 0 && stillRevision > 0
+        ? "image://videoframe/" + encodeURIComponent(messageId) + "?rev=" + stillRevision
+        : ""
+
     /// Playback was asked for and there is still nothing on screen. Split from
     /// the failure below because the first second of it is entirely normal.
     readonly property bool buffering: isVideo && surface.playbackWanted && !surface.hasFrame
-    /// Long enough with no frame that something is wrong rather than slow. The
-    /// viewer used to show a black rectangle here and say nothing at all, which
-    /// is indistinguishable from a video that is simply very dark.
-    property bool playbackFailed: false
+    /// Playback genuinely failed: either the decoder said so, or the stream did.
+    /// Not a stopwatch. A `media.stream` source reads through the daemon's range
+    /// server, where a scrub into bytes that have not arrived blocks until they
+    /// do, so "no picture yet" was routinely several seconds of a perfectly
+    /// healthy video that this dialog then declared unplayable.
+    property bool streamFailed: false
+    readonly property bool playbackFailed: streamFailed || surface.failed || stalledOut
+    /// The backstop for a decoder that neither errors nor ever draws: generous,
+    /// and held off entirely while the engine reports it is working on something.
+    property bool stalledOut: false
 
     /// Whether the chrome is on screen. A full-screen player that permanently
     /// covers a strip of the video with its own transport bar is not
@@ -75,6 +89,7 @@ QQC2.Popup {
         messageId = ""
         fileName = ""
         startAt = 0
+        stillRevision = 0
         open()
     }
 
@@ -87,8 +102,11 @@ QQC2.Popup {
         durationSecs = duration
         fileName = ""
         // Before open(), so the surface engages with it already set: the start
-        // position is read once, when the file is loaded.
+        // position is read once, when the file is loaded. Same for the still
+        // the bubble just captured, which stands in until the decoder catches
+        // up to that position.
         startAt = at ?? 0
+        stillRevision = Whatevr.VideoPlayback.frameRevision(id)
         surface.muted = false
         surface.volume = 100
         surface.playbackWanted = true
@@ -131,6 +149,10 @@ QQC2.Popup {
 
     onAboutToHide: {
         if (isVideo && messageId.length > 0) {
+            // While the decoder is still attached: the frame goes back to the
+            // bubble with the position, so it comes back showing where the user
+            // was rather than the clip's first frame.
+            surface.rememberStill()
             returnMessageId = messageId
             returnPosition = surface.handoffPosition()
             returnPlaying = surface.playbackWanted
@@ -147,11 +169,13 @@ QQC2.Popup {
         messageId = ""
         kind = "image"
         startAt = 0
+        stillRevision = 0
         surface.speed = 1.0
         surface.volume = 100
         surface.muted = false
         surface.playbackWanted = true
-        playbackFailed = false
+        streamFailed = false
+        stalledOut = false
         const id = returnMessageId
         const at = returnPosition
         const resume = returnPlaying
@@ -166,21 +190,25 @@ QQC2.Popup {
     }
 
     onOpened: {
-        playbackFailed = false
+        streamFailed = false
+        stalledOut = false
         wakeChrome()
     }
 
     // Restarted from scratch whenever what we are waiting on changes, so a
-    // seek or a second file never inherits an older verdict.
+    // seek or a second file never inherits an older verdict. Only runs while
+    // the engine is *not* telling us it is busy, so a slow open, a scrub into
+    // unfetched bytes and a stalled buffer all sit under the spinner for as
+    // long as they need instead of being called a failure.
     Timer {
         id: failureTimer
 
-        interval: 2500
-        running: root.visible && root.buffering
-        onTriggered: root.playbackFailed = true
+        interval: 20000
+        running: root.visible && root.buffering && !surface.stalled && !root.playbackFailed
+        onTriggered: root.stalledOut = true
     }
 
-    onBufferingChanged: if (!buffering) playbackFailed = false
+    onBufferingChanged: if (!buffering) stalledOut = false
 
     Connections {
         target: Whatevr.ProtocolController
@@ -193,10 +221,11 @@ QQC2.Popup {
                 const at = surface.handoffPosition()
                 root.startAt = at
                 root.localPath = path
-                root.playbackFailed = false
+                root.streamFailed = false
+                root.stalledOut = false
             } else if (state === "failed") {
                 surface.playbackWanted = false
-                root.playbackFailed = true
+                root.streamFailed = true
             }
         }
     }
@@ -256,6 +285,19 @@ QQC2.Popup {
             height: root.isVideoNote
                 ? width
                 : parent.height - Kirigami.Units.gridUnit * 6
+
+            // The frame the bubble was showing when it handed over, held until
+            // this viewer's own decoder has one. Opening a file and seeking to
+            // the handoff position takes long enough to see, and what used to
+            // fill it was a black rectangle.
+            Image {
+                anchors.fill: parent
+                visible: root.isVideo && !surface.hasFrame && status === Image.Ready
+                source: root.handoffStill
+                fillMode: Image.PreserveAspectFit
+                asynchronous: true
+                cache: false
+            }
 
             VideoSurface {
                 id: surface
@@ -342,6 +384,21 @@ QQC2.Popup {
                     color: "white"
                     horizontalAlignment: Text.AlignHCenter
                     wrapMode: Text.Wrap
+                }
+
+                // What the decoder actually said, when it said anything. This
+                // dialog used to be reached by a timer and so had nothing to
+                // report; now it usually does, and "could not be played" alone
+                // is not much help in deciding what to try next.
+                QQC2.Label {
+                    Layout.fillWidth: true
+                    visible: text.length > 0
+                    text: surface.errorText
+                    color: "white"
+                    opacity: 0.7
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.Wrap
+                    font.pointSize: Kirigami.Theme.smallFont.pointSize
                 }
 
                 QQC2.Button {

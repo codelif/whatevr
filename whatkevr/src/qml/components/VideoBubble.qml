@@ -40,7 +40,34 @@ Item {
     readonly property bool isGif: row.isGif
     readonly property bool isVideoNote: row.isVideoNote
     readonly property bool hasFile: row.mediaLocalPath.length > 0
-    readonly property bool hasThumbnail: row.mediaThumbnailLocalPath.length > 0
+
+    // ---- Artwork ----
+
+    /**
+     * The still a decoder left behind for this message, if there is one.
+     *
+     * It takes precedence over the daemon's poster, which is the *first* frame
+     * of the clip: after a trip through the full-screen viewer the poster shows
+     * neither where the user was nor, on a clip that opens on black, anything at
+     * all. Revision-keyed because the pipeline would otherwise answer from cache
+     * and never show a newer capture.
+     *
+     * Assigned rather than bound: frameRevision() is a plain call with nothing
+     * to notify on. refreshStill() runs at every moment it can change: this
+     * row being built, being reused for another message, and the arbiter
+     * capturing a still for it.
+     */
+    property int stillRevision: 0
+    readonly property bool hasStill: stillRevision > 0
+    readonly property url stillSource: hasStill
+        ? "image://videoframe/" + encodeURIComponent(row.messageId) + "?rev=" + stillRevision
+        : ""
+
+    function refreshStill() {
+        stillRevision = Whatevr.VideoPlayback.frameRevision(row.messageId)
+    }
+
+    readonly property bool hasPosterFile: row.mediaThumbnailLocalPath.length > 0
 
     // A video note is a circle, so its four radii are half its size and the
     // bubble's grouped-corner radii do not apply. The picture is inset by the
@@ -110,10 +137,16 @@ Item {
     property bool retryDownloadOnly: false
     signal playbackRequestDispatched(string method)
 
-    /// Long enough with a decoder and no picture that something is wrong rather
-    /// than slow. Before this existed a bubble that never got a frame span its
-    /// spinner for the rest of the session.
-    property bool playbackFailed: false
+    /// The stream said it could not be fetched. Distinct from the decoder's own
+    /// verdict below, which the surface reports.
+    property bool streamFailed: false
+    /// A decoder that neither errored nor ever drew anything. The backstop, not
+    /// the mechanism: a bubble that never got a frame used to spin forever, and
+    /// the timer that replaced that then went off on clips that were merely
+    /// slow. Now it only runs while the engine is not reporting work in
+    /// progress, and playback failure proper comes from the decoder.
+    property bool stalledOut: false
+    readonly property bool playbackFailed: streamFailed || surface.failed || stalledOut
 
     // ---- Phase ----
 
@@ -147,14 +180,20 @@ Item {
     Timer {
         id: failureTimer
 
-        interval: 6000
-        running: root.phase === "buffering"
-        onTriggered: root.playbackFailed = true
+        // Only while the engine is not reporting work in progress. A clip
+        // opening off a `media.stream` source waits on bytes the daemon is
+        // still fetching, which is normal and can take a while; a stopwatch
+        // running through that called healthy videos unplayable.
+        interval: 20000
+        running: root.phase === "buffering" && !surface.stalled && !root.playbackFailed
+        onTriggered: root.stalledOut = true
     }
 
     onPhaseChanged: {
-        if (phase === "playing" || phase === "paused")
-            playbackFailed = false
+        if (phase === "playing" || phase === "paused") {
+            streamFailed = false
+            stalledOut = false
+        }
     }
 
     // ---- Actions ----
@@ -178,7 +217,8 @@ Item {
             intent = "playing"
             return
         case "failed":
-            playbackFailed = false
+            streamFailed = false
+            stalledOut = false
             if (hasSource) {
                 beginPlayback()
             } else {
@@ -231,6 +271,9 @@ Item {
      * clip at once, which is what the second tap used to do.
      */
     function openFullScreen() {
+        // Before handing over: the viewer opens on this frame while its own
+        // decoder is still opening the file and seeking to the position below.
+        surface.rememberStill()
         row.videoActivated(row.messageId,
                            root.recoveredLocalPath.length > 0 ? root.recoveredLocalPath : row.mediaLocalPath,
                            root.streamUrl.toString(),
@@ -272,9 +315,11 @@ Item {
         requestPending = false
         playAfterDownload = false
         retryDownloadOnly = false
-        playbackFailed = false
+        streamFailed = false
+        stalledOut = false
         userMuted = !isVideoNote
         resumeAt = Whatevr.VideoPlayback.resumePosition(row.messageId)
+        refreshStill()
 
         // Model role notifications do not have a useful ordering guarantee.
         // Wait until this event turn has applied the new kind and media paths
@@ -310,6 +355,7 @@ Item {
     // is waiting for something that may never come.
     Component.onCompleted: {
         resumeAt = Whatevr.VideoPlayback.resumePosition(row.messageId)
+        refreshStill()
         requestAutoplaySource()
     }
 
@@ -348,9 +394,10 @@ Item {
                 }
                 root.sessionSource = Qt.resolvedUrl("file://" + path)
                 root.recoveredLocalPath = path
-                root.playbackFailed = false
+                root.streamFailed = false
+                root.stalledOut = false
             } else if (state === "failed") {
-                root.playbackFailed = true
+                root.streamFailed = true
                 root.intent = "stopped"
             }
         }
@@ -380,6 +427,11 @@ Item {
         function onResumePositionChanged(messageId) {
             if (messageId === root.row.messageId)
                 root.resumeAt = Whatevr.VideoPlayback.resumePosition(messageId)
+        }
+
+        function onFrameCaptured(messageId) {
+            if (messageId === root.row.messageId)
+                root.refreshStill()
         }
 
         function onInlineHandoff(messageId, seconds, resumePlayback) {
@@ -413,8 +465,12 @@ Item {
 
             objectName: "videoBubble.poster"
             property bool everDecoded: false
-            readonly property string targetPath: root.row.mediaThumbnailLocalPath
-            onTargetPathChanged: everDecoded = false
+            readonly property url targetSource: root.hasStill
+                ? root.stillSource
+                : (root.hasPosterFile
+                   ? Qt.resolvedUrl("file://" + root.row.mediaThumbnailLocalPath)
+                   : "")
+            onTargetSourceChanged: everDecoded = false
             onStatusChanged: if (status === Image.Ready) everDecoded = true
 
             anchors.fill: parent
@@ -422,13 +478,15 @@ Item {
             // Do not begin a texture upload in the middle of a fast fling. An
             // already-decoded poster remains available, while a new one waits
             // for the list to settle. This is the same policy as photo rows.
-            source: root.hasThumbnail && !root.row.pooled
-                    && (!root.row.fastFlicking || everDecoded)
-                ? Qt.resolvedUrl("file://" + root.row.mediaThumbnailLocalPath)
+            source: !root.row.pooled && (!root.row.fastFlicking || everDecoded)
+                ? targetSource
                 : ""
             fillMode: Image.PreserveAspectCrop
             asynchronous: true
-            cache: true
+            // A provider url is answered from a store that changes underneath
+            // it; the revision in the url is what makes a new capture reload,
+            // and caching the old one by url would defeat that.
+            cache: !root.hasStill
             // The generic thumbnail cap is deliberately tiny and exists to
             // make a blurred photo placeholder. A video poster is the final
             // idle artwork, so decode it at the stable media display size.
@@ -438,7 +496,12 @@ Item {
 
         RoundedImage {
             anchors.fill: parent
-            visible: root.hasThumbnail && !root.showsVideo && poster.status === Image.Ready
+            // Deliberately not gated on `!showsVideo`. The video layer below is
+            // built only once playback is running and needs a frame or two to
+            // render its first texture; taking the poster away the instant the
+            // decoder reported a frame left a hole for exactly that long, which
+            // is the blank a clip used to flash on starting.
+            visible: poster.status === Image.Ready
             source: poster
             topLeftRadius: root.cornerTopLeft
             topRightRadius: root.cornerTopRight
@@ -446,12 +509,12 @@ Item {
             bottomRightRadius: root.cornerBottomRight
         }
 
-        // Placeholder for a clip that arrived without a thumbnail, so the slot is
-        // never a hole in the wallpaper.
+        // Placeholder for a clip that arrived without artwork, so the slot is
+        // never a hole in the wallpaper. Same reasoning as above: it stays under
+        // the video rather than being switched off as playback starts.
         Kirigami.ShadowedRectangle {
             anchors.fill: parent
-            visible: !root.showsVideo
-                     && !(root.hasThumbnail && poster.status === Image.Ready)
+            visible: poster.status !== Image.Ready
             color: Qt.alpha(Kirigami.Theme.textColor, 0.08)
             corners.topLeftRadius: root.cornerTopLeft
             corners.topRightRadius: root.cornerTopRight
@@ -672,6 +735,9 @@ Item {
 
                 Controls.Label {
                     anchors.verticalCenter: parent.verticalCenter
+                    // There is no room in a bubble for the decoder's own
+                    // message; the full-screen viewer shows that. This says
+                    // only that it was tried and did not work.
                     text: Whatevr.I18n.i18nc("@info", "Could not play")
                     color: "white"
                     font.pointSize: Kirigami.Theme.smallFont.pointSize

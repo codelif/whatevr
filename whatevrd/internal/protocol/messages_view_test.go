@@ -235,6 +235,96 @@ func TestMessagesViewImageItemShape(t *testing.T) {
 	c.expectReady(sub, true)
 }
 
+// Whether a fetch is in flight rides the message row, so a renderer never has
+// to join it against `transfers` and never sees the two disagree: the terminal
+// update both clears `downloading` and delivers the path.
+func TestMessagesViewCarriesDownloadingOnTheRow(t *testing.T) {
+	socketPath, daemon, db := startChatsTestServer(t)
+	base := time.Unix(1_700_000_000, 0)
+	chat := "c@s.whatsapp.net"
+	id := "img-dl"
+	if _, err := db.SaveMediaMessage(context.Background(), store.MediaMessageInput{
+		TextMessageInput: store.TextMessageInput{
+			ID:        id,
+			ChatID:    chat,
+			Timestamp: base,
+			Direction: store.DirectionIncoming,
+		},
+		MediaKind:     store.MediaKindImage,
+		MediaMimeType: "image/jpeg",
+	}); err != nil {
+		t.Fatalf("seed image: %v", err)
+	}
+
+	c := dialTest(t, socketPath)
+	c.hello()
+	sub := c.subscribe(2, fmt.Sprintf(`{"view":"messages","chat_id":%q}`, chat))
+	mediaOf := func(msg map[string]any) map[string]any {
+		item := msg["item"].(map[string]any)
+		media, ok := item["media"].(map[string]any)
+		if !ok {
+			t.Fatalf("item carries no media: %v", item)
+		}
+		return media
+	}
+	if media := mediaOf(c.expectUpsert(sub, id)); media["downloading"] != nil {
+		t.Fatalf("idle row reports downloading: %v", media)
+	}
+	c.expectReady(sub, true)
+
+	daemon.PublishMediaDownloadChanged(id, chat, true, "", 0, 1024)
+	if media := mediaOf(c.expectUpsert(sub, id)); media["downloading"] != true {
+		t.Fatalf("started download not on the row: %v", media)
+	}
+
+	// Progress does not move the bool, so it must not re-emit the row: the byte
+	// counters are `transfers`' job. If it did, the next frame read below would
+	// be a duplicate rather than the terminal update.
+	daemon.PublishMediaDownloadChanged(id, chat, true, "", 256, 1024)
+	daemon.PublishMediaDownloadChanged(id, chat, true, "", 512, 1024)
+
+	if _, err := db.UpdateMessageMediaLocalPathWithDimensions(context.Background(), id, "/cache/full.jpg", 0, 0); err != nil {
+		t.Fatalf("store downloaded path: %v", err)
+	}
+	daemon.PublishMediaDownloadChanged(id, chat, false, "", 1024, 1024)
+
+	media := mediaOf(c.expectUpsert(sub, id))
+	if media["downloading"] != nil {
+		t.Fatalf("finished download still reports downloading: %v", media)
+	}
+	if media["path"] != "/cache/full.jpg" {
+		t.Fatalf("finished download did not deliver the path: %v", media)
+	}
+}
+
+// noteDownloadChanged is the filter that keeps progress ticks from re-reading
+// the whole window: only the two edges of a transfer count as a change.
+func TestMessagesFeedInvalidatesOnlyOnDownloadEdges(t *testing.T) {
+	f := &messagesChatFeed{chatID: "c@s.whatsapp.net"}
+	start := app.MediaDownloadEvent{MessageID: "m1", ChatID: f.chatID, Downloading: true}
+	if !f.noteDownloadChanged(start) {
+		t.Fatal("first downloading event did not count as a change")
+	}
+	if !f.isDownloading("m1") {
+		t.Fatal("feed did not record the transfer")
+	}
+	progress := start
+	progress.ReceivedBytes = 512
+	if f.noteDownloadChanged(progress) {
+		t.Fatal("a progress tick invalidated the window")
+	}
+	done := app.MediaDownloadEvent{MessageID: "m1", ChatID: f.chatID}
+	if !f.noteDownloadChanged(done) {
+		t.Fatal("terminal event did not count as a change")
+	}
+	if f.isDownloading("m1") {
+		t.Fatal("feed still reports a finished transfer")
+	}
+	if f.noteDownloadChanged(done) {
+		t.Fatal("a repeated terminal event invalidated the window")
+	}
+}
+
 func TestMessagesViewParamErrors(t *testing.T) {
 	socketPath, _, db := startChatsTestServer(t)
 	chat := "c@s.whatsapp.net"

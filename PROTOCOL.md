@@ -232,7 +232,7 @@ noted; this inventory fixes the shape of the protocol, not every field name.
 | `stickers` | `source` (`recent`\|`favorite`\|`all`), `limit` | stickers | |
 | `sticker_packs` | none | packs | |
 | `sticker_pack` | `pack_id` | stickers | contents fetch is async; items land as they resolve |
-| `transfers` | none | active media transfers | `message_id`, `direction`, `received_bytes`, `total_bytes`, optional active `error`; `remove` on terminal success or failure: success itself is visible as the message row upserting with its new `media.path`, failure as the message row upserting with `media.download_error`. `direction` is `"download"` today; outbound uploads are not yet modelled here (a known gap). A `media.stream` fetch reports through this view too, where `received_bytes` counts the chunks present rather than a sequential write head, so it can climb out of order as the viewer seeks |
+| `transfers` | none | active media transfers | `message_id`, `direction`, `received_bytes`, `total_bytes`, optional active `error`; `remove` on terminal success or failure. This view carries the byte counters only: whether a fetch is in flight at all is `media.downloading` on the message row, so a renderer never has to join two independently recomputed views and never sees the two disagree. `direction` is `"download"` today; outbound uploads are not yet modelled here (a known gap). A `media.stream` fetch reports through this view too, where `received_bytes` counts the chunks present rather than a sequential write head, so it can climb out of order as the viewer seeks |
 | `notifications` | none | notification records | **Reserved, not served in protocol 1**: subscribing errors `not_found`. What the daemon would notify about, for applets, relays, and headless setups; the daemon's own D-Bus notifier is unaffected. Its shape waits on a real consumer (see *Open questions*) |
 
 Avatar paths are embedded in chat/message/contact/member rows and refresh via
@@ -332,15 +332,25 @@ A message item has a `kind` (`text`, `image`, `sticker`, `video`, `gif`,
   quote, `reactions`, `mentions`, `edited`, `revoked`, `starred`, `pinned_until`.
 
 Media-bearing kinds carry `media` (`mime`, dimensions, `thumbnail_path`,
-`path` which is empty until downloaded, optional `download_error`) plus the
-optional per-kind facts: `size_bytes`, `duration_secs`, `filename`,
-`page_count`, `waveform` (voice notes: 64 amplitude buckets of 0-100, the one
-piece of media data that rides the socket rather than a file, because the
-bubble needs it before any download), and `played`. Captions ride the
-item-level `text`, for every kind. The download lifecycle is: `media.download` → active progress in `transfers` →
-`transfers` remove when the attempt ends → message upsert with `path` set on
-success or `download_error` set on failure. A retry clears `download_error` via
-another message upsert.
+`path` which is empty until downloaded, `downloading`, optional
+`download_error`) plus the optional per-kind facts: `size_bytes`,
+`duration_secs`, `filename`, `page_count`, `waveform` (voice notes: 64
+amplitude buckets of 0-100, the one piece of media data that rides the socket
+rather than a file, because the bubble needs it before any download), and
+`played`. Captions ride the item-level `text`, for every kind.
+
+The download lifecycle is: `media.download` → message upsert with
+`downloading` true → byte progress in `transfers` → message upsert with
+`downloading` cleared and `path` set on success or `download_error` set on
+failure. A retry clears `download_error` via another message upsert.
+`downloading` is on the row rather than joined from `transfers` deliberately:
+the two views are recomputed independently, so a renderer that inferred "not
+downloading" from the transfer row's disappearance would see it before the path
+arrived and briefly render the message as never having been fetched. One row
+changing once has no such window. `transfers` remains the place to find every
+in-flight fetch at once and the only place the byte counts live, and it is not
+invalidated by progress, so a running download costs one message-row upsert at
+each end and nothing in between.
 
 ## Connection-directed events
 

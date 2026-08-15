@@ -149,24 +149,45 @@ private Q_SLOTS:
         QCOMPARE(model.rowCount(), 0);
     }
 
-    // D4c: the download roles are read through to the global `transfers` view by
-    // message id. Nothing is copied into the row, so a transfer appearing,
-    // progressing and ending is visible as an ordinary dataChanged.
+    // D4c: whether a fetch is in flight is the message row's own
+    // `media.downloading`; the `transfers` view supplies only the byte counters.
+    // The split is what stops the two views, which are recomputed independently
+    // daemon-side, from disagreeing (PROTOCOL.md, "Messages").
     void composesTheTransfersView()
     {
         CollectionViewModel source;
         CollectionViewModel transfers;
         ProtocolMessageModel model(&source);
         model.setTransfersSource(&transfers);
+        const auto mediaRow = [](bool downloading, const QString &path, const QString &error) {
+            QJsonObject media{
+                {QStringLiteral("mime"), QStringLiteral("image/jpeg")},
+                {QStringLiteral("thumbnail_path"), QStringLiteral("/cache/thumb.jpg")},
+            };
+            if (downloading) {
+                media.insert(QStringLiteral("downloading"), true);
+            }
+            if (!path.isEmpty()) {
+                media.insert(QStringLiteral("path"), path);
+            }
+            if (!error.isEmpty()) {
+                media.insert(QStringLiteral("download_error"), error);
+            }
+            return media;
+        };
         QJsonObject item = message(QStringLiteral("m1"), 1'700'000'000);
         item.insert(QStringLiteral("kind"), QStringLiteral("image"));
-        item.insert(QStringLiteral("media"), QJsonObject{
-            {QStringLiteral("mime"), QStringLiteral("image/jpeg")},
-            {QStringLiteral("thumbnail_path"), QStringLiteral("/cache/thumb.jpg")},
-        });
+        item.insert(QStringLiteral("media"), mediaRow(false, {}, {}));
         source.onUpsert(QStringLiteral("0001"), item);
 
         QVERIFY(!role(model, 0, ProtocolMessageModel::MediaDownloadingRole).toBool());
+        QCOMPARE(role(model, 0, ProtocolMessageModel::MediaDownloadProgressRole).toDouble(), -1.0);
+
+        QJsonObject downloading = item;
+        downloading.insert(QStringLiteral("media"), mediaRow(true, {}, {}));
+        source.onUpsert(QStringLiteral("0001"), downloading);
+        QVERIFY(role(model, 0, ProtocolMessageModel::MediaDownloadingRole).toBool());
+        // Downloading with no known size stays indeterminate (-1), not 0%.
         QCOMPARE(role(model, 0, ProtocolMessageModel::MediaDownloadProgressRole).toDouble(), -1.0);
 
         QSignalSpy changed(&model, &QAbstractItemModel::dataChanged);
@@ -174,28 +195,28 @@ private Q_SLOTS:
             {QStringLiteral("id"), QStringLiteral("m1")},
             {QStringLiteral("message_id"), QStringLiteral("m1")},
             {QStringLiteral("direction"), QStringLiteral("download")},
-            {QStringLiteral("received_bytes"), 0},
-            {QStringLiteral("total_bytes"), 0},
-        });
-        QCOMPARE(changed.count(), 1);
-        QVERIFY(role(model, 0, ProtocolMessageModel::MediaDownloadingRole).toBool());
-        // Downloading with no known size stays indeterminate (-1), not 0%.
-        QCOMPARE(role(model, 0, ProtocolMessageModel::MediaDownloadProgressRole).toDouble(), -1.0);
-
-        transfers.onUpsert(QStringLiteral("m1"), QJsonObject{
-            {QStringLiteral("id"), QStringLiteral("m1")},
-            {QStringLiteral("message_id"), QStringLiteral("m1")},
-            {QStringLiteral("direction"), QStringLiteral("download")},
             {QStringLiteral("received_bytes"), 512},
             {QStringLiteral("total_bytes"), 2048},
         });
+        QCOMPARE(changed.count(), 1);
+        QCOMPARE(changed.constFirst().at(2).value<QList<int>>(),
+                 QList<int>{ProtocolMessageModel::MediaDownloadProgressRole});
         QCOMPARE(role(model, 0, ProtocolMessageModel::MediaDownloadProgressRole).toDouble(), 0.25);
 
-        // A terminal transfer is removed; the durable outcome is the message
-        // row's own media state (path or download_error), not a transfer field.
+        // The transfer row going away on its own does not end the download: the
+        // bubble must not fall back to "never fetched" before the path lands.
         transfers.onRemove(QStringLiteral("m1"));
-        QVERIFY(!role(model, 0, ProtocolMessageModel::MediaDownloadingRole).toBool());
+        QVERIFY(role(model, 0, ProtocolMessageModel::MediaDownloadingRole).toBool());
         QCOMPARE(role(model, 0, ProtocolMessageModel::MediaDownloadProgressRole).toDouble(), -1.0);
+
+        // The message row is what ends it, carrying the outcome in the same
+        // update.
+        QJsonObject done = item;
+        done.insert(QStringLiteral("media"), mediaRow(false, QStringLiteral("/cache/m1.jpg"), {}));
+        source.onUpsert(QStringLiteral("0001"), done);
+        QVERIFY(!role(model, 0, ProtocolMessageModel::MediaDownloadingRole).toBool());
+        QCOMPARE(role(model, 0, ProtocolMessageModel::MediaLocalPathRole).toString(),
+                 QStringLiteral("/cache/m1.jpg"));
 
         QJsonObject failed = item;
         failed.insert(QStringLiteral("media"), QJsonObject{
@@ -203,6 +224,7 @@ private Q_SLOTS:
             {QStringLiteral("download_error"), QStringLiteral("network unreachable")},
         });
         source.onUpsert(QStringLiteral("0001"), failed);
+        QVERIFY(!role(model, 0, ProtocolMessageModel::MediaDownloadingRole).toBool());
         QCOMPARE(role(model, 0, ProtocolMessageModel::MediaDownloadErrorRole).toString(),
                  QStringLiteral("network unreachable"));
     }

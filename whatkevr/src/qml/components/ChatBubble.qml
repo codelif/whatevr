@@ -1021,7 +1021,13 @@ Item {
                     // Stay up as the blur-up placeholder until the full image has
                     // decoded, so a fast fling (which holds off the full-res
                     // decode) always has the cheap thumbnail to show.
-                    visible: root.hasThumbnailImage && (!root.hasLocalImage || img.status !== Image.Ready)
+                    //
+                    // Held until the full image is *fully* opaque, not until it
+                    // reports Ready: the image below fades in over
+                    // shortDuration, so cutting on Ready left the bubble showing
+                    // its empty plate for the whole of that fade. That is the
+                    // blink a completed download used to end with.
+                    visible: root.hasThumbnailImage && (!root.hasLocalImage || roundedImg.opacity < 1)
                     opacity: thumb.status === Image.Ready ? 0.78 : 0
                     source: thumb
                     topLeftRadius: root.mediaTopLeftRadius
@@ -1133,11 +1139,17 @@ Item {
                 Item {
                     id: imageOverlay
 
-                    anchors.fill: parent
+                    // A decode in progress is not, by itself, a reason to cover
+                    // the bubble: the thumbnail below is already showing the
+                    // picture. Only a row with nothing to look at, an active
+                    // download, or a failure gets chrome, so an ordinary decode
+                    // (including a re-decode after a fling settles) no longer
+                    // darkens and un-darkens the image.
+                    readonly property bool hasPicture: root.hasThumbnailImage && thumb.status === Image.Ready
                     visible: !root.hasLocalImage
                              || root.mediaDownloading
                              || thumb.status === Image.Loading
-                             || img.status === Image.Loading
+                             || (img.status === Image.Loading && !hasPicture)
                              || img.status === Image.Error
                              || root.mediaDownloadError.length > 0
 
@@ -1366,6 +1378,12 @@ Item {
             Loader {
                 id: selectionEditLoader
 
+                // Asynchronous: this instantiates a TextEdit, and so a
+                // QTextDocument, the first time the pointer touches the row.
+                // Doing that inline meant rows sliding under a stationary
+                // cursor each stalled a frame the first time they passed it,
+                // which is exactly the wheel "resisting once or twice".
+                asynchronous: true
                 active: root.selectionLatched
                         && root.hasBody
                         && !root.displayHasRichText
@@ -1658,9 +1676,12 @@ Item {
     }
 
     // Built lazily on first hover of the row (hoverLatched): scrolling never
-    // pays for the button, only the rows the pointer actually visits do.
+    // pays for the button, only the rows the pointer actually visits do. Off
+    // the frame's critical path too, for the same reason as the selection
+    // surface above: rows crossing an idle cursor must not each cost a stall.
     Loader {
         anchors.fill: parent
+        asynchronous: true
         active: root.hoverLatched && root.canReply && !root.pooled
         z: 8
 

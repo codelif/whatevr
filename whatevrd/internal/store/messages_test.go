@@ -217,6 +217,10 @@ func TestRecordUndecryptableMessageTimestampKeepsEarliest(t *testing.T) {
 	}
 }
 
+// Decoded dimensions fill a gap; they never correct a sender's. A renderer has
+// already reserved a slot from what the message declared, so rewriting it when
+// the bytes land would reflow the timeline under the reader on every completed
+// download.
 func TestUpdateMessageMediaLocalPathWithDimensionsPersistsDimensions(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
@@ -225,35 +229,51 @@ func TestUpdateMessageMediaLocalPathWithDimensionsPersistsDimensions(t *testing.
 	}
 	defer db.Close()
 
-	if _, err := db.SaveMediaMessage(ctx, MediaMessageInput{
-		TextMessageInput: TextMessageInput{
-			ID:        "chat-1:image-1",
-			ChatID:    "chat-1",
-			ChatName:  "Test Chat",
-			SenderID:  "sender-1",
-			Timestamp: time.Unix(100, 0),
-		},
-		MediaKind:     MediaKindImage,
-		MediaMimeType: "image/jpeg",
-		MediaWidth:    4,
-		MediaHeight:   3,
-	}); err != nil {
-		t.Fatalf("save image message: %v", err)
+	seed := func(id string, width, height int32) {
+		t.Helper()
+		if _, err := db.SaveMediaMessage(ctx, MediaMessageInput{
+			TextMessageInput: TextMessageInput{
+				ID:        id,
+				ChatID:    "chat-1",
+				ChatName:  "Test Chat",
+				SenderID:  "sender-1",
+				Timestamp: time.Unix(100, 0),
+			},
+			MediaKind:     MediaKindImage,
+			MediaMimeType: "image/jpeg",
+			MediaWidth:    width,
+			MediaHeight:   height,
+		}); err != nil {
+			t.Fatalf("save image message %q: %v", id, err)
+		}
 	}
 
-	updated, err := db.UpdateMessageMediaLocalPathWithDimensions(ctx, "chat-1:image-1", "/tmp/image.jpg", 1200, 240)
+	seed("chat-1:declared", 4, 3)
+	seed("chat-1:undeclared", 0, 0)
+
+	declared, err := db.UpdateMessageMediaLocalPathWithDimensions(ctx, "chat-1:declared", "/tmp/declared.jpg", 1200, 240)
 	if err != nil {
 		t.Fatalf("UpdateMessageMediaLocalPathWithDimensions() error = %v", err)
 	}
-	if updated.MediaLocalPath != "/tmp/image.jpg" || updated.MediaWidth != 1200 || updated.MediaHeight != 240 {
-		t.Fatalf("updated media = path %q dimensions %dx%d, want path and 1200x240", updated.MediaLocalPath, updated.MediaWidth, updated.MediaHeight)
+	if declared.MediaLocalPath != "/tmp/declared.jpg" || declared.MediaWidth != 4 || declared.MediaHeight != 3 {
+		t.Fatalf("declared media = path %q dimensions %dx%d, want path and the original 4x3",
+			declared.MediaLocalPath, declared.MediaWidth, declared.MediaHeight)
 	}
 
-	loaded, err := db.GetMessage(ctx, "chat-1:image-1")
+	filled, err := db.UpdateMessageMediaLocalPathWithDimensions(ctx, "chat-1:undeclared", "/tmp/undeclared.jpg", 1200, 240)
+	if err != nil {
+		t.Fatalf("UpdateMessageMediaLocalPathWithDimensions() error = %v", err)
+	}
+	if filled.MediaLocalPath != "/tmp/undeclared.jpg" || filled.MediaWidth != 1200 || filled.MediaHeight != 240 {
+		t.Fatalf("undeclared media = path %q dimensions %dx%d, want path and 1200x240",
+			filled.MediaLocalPath, filled.MediaWidth, filled.MediaHeight)
+	}
+
+	loaded, err := db.GetMessage(ctx, "chat-1:undeclared")
 	if err != nil {
 		t.Fatalf("GetMessage() error = %v", err)
 	}
-	if loaded.MediaLocalPath != "/tmp/image.jpg" || loaded.MediaWidth != 1200 || loaded.MediaHeight != 240 {
+	if loaded.MediaLocalPath != "/tmp/undeclared.jpg" || loaded.MediaWidth != 1200 || loaded.MediaHeight != 240 {
 		t.Fatalf("stored media = path %q dimensions %dx%d, want path and 1200x240", loaded.MediaLocalPath, loaded.MediaWidth, loaded.MediaHeight)
 	}
 }

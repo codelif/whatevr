@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: BSD-3-Clause
+#include <QColor>
+#include <QImage>
 #include <QSignalSpy>
 #include <QTest>
+#include <QVideoFrame>
 
 #include "videoarbiter.h"
 
@@ -232,6 +235,58 @@ private Q_SLOTS:
         pool->handoffToInline(QStringLiteral("video"), 22.0, false);
         QCOMPARE(handoff.count(), 2);
         QCOMPARE(handoff.last().at(2).toBool(), false);
+    }
+
+    // A position alone does not hand a clip over: the receiving surface has to
+    // open a file and seek before it can draw, and until then it showed the
+    // daemon's poster, which is the clip's *first* frame. The still is what
+    // fills that gap in both directions.
+    void stillsAreKeptRevisionedAndEvicted()
+    {
+        VideoPlaybackArbiter *pool = arbiter();
+        QSignalSpy captured(pool, &VideoPlaybackArbiter::frameCaptured);
+
+        QVERIFY(!pool->hasFrame(QStringLiteral("clip")));
+        QCOMPARE(pool->frameRevision(QStringLiteral("clip")), 0);
+        QVERIFY(pool->frameImage(QStringLiteral("clip")).isNull());
+
+        pool->captureFrame(QStringLiteral("clip"), frameOfColour(Qt::red));
+        QVERIFY(pool->hasFrame(QStringLiteral("clip")));
+        QCOMPARE(pool->frameRevision(QStringLiteral("clip")), 1);
+        QCOMPARE(pool->frameImage(QStringLiteral("clip")).pixelColor(0, 0), QColor(Qt::red));
+        QCOMPARE(captured.count(), 1);
+        QCOMPARE(captured.first().first().toString(), QStringLiteral("clip"));
+
+        // The revision is what makes a url reload: without it a second capture
+        // of the same message would be answered from the image cache and the
+        // viewer would keep showing the first one forever.
+        pool->captureFrame(QStringLiteral("clip"), frameOfColour(Qt::green));
+        QCOMPARE(pool->frameRevision(QStringLiteral("clip")), 2);
+        QCOMPARE(pool->frameImage(QStringLiteral("clip")).pixelColor(0, 0), QColor(Qt::green));
+
+        // An invalid frame is what a decoder that has opened a file but drawn
+        // nothing hands out; storing it would replace a good still with black.
+        pool->captureFrame(QStringLiteral("clip"), QVideoFrame());
+        QCOMPARE(pool->frameRevision(QStringLiteral("clip")), 2);
+        QCOMPARE(pool->frameImage(QStringLiteral("clip")).pixelColor(0, 0), QColor(Qt::green));
+        QCOMPARE(captured.count(), 2);
+
+        // Images, not doubles: far fewer are worth keeping than positions.
+        for (int i = 0; i < 12; ++i) {
+            pool->captureFrame(QStringLiteral("other-%1").arg(i), frameOfColour(Qt::blue));
+        }
+        QVERIFY(!pool->hasFrame(QStringLiteral("clip")));
+        QVERIFY(!pool->hasFrame(QStringLiteral("other-0")));
+        QVERIFY(pool->hasFrame(QStringLiteral("other-11")));
+    }
+
+private:
+    /// A one-colour frame, the smallest thing captureFrame() will accept.
+    static QVideoFrame frameOfColour(const QColor &colour)
+    {
+        QImage image(4, 4, QImage::Format_RGBA8888);
+        image.fill(colour);
+        return QVideoFrame(image);
     }
 };
 

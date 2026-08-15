@@ -560,7 +560,8 @@ void ChatBubblePerf::videoDelegateReuseClearsPlaybackState()
     QVERIFY(videoBubble->setProperty("requestPending", true));
     QVERIFY(videoBubble->setProperty("playAfterDownload", true));
     QVERIFY(videoBubble->setProperty("retryDownloadOnly", true));
-    QVERIFY(videoBubble->setProperty("playbackFailed", true));
+    QVERIFY(videoBubble->setProperty("streamFailed", true));
+    QVERIFY(videoBubble->setProperty("stalledOut", true));
     QVERIFY(videoBubble->setProperty("userMuted", true));
 
     QVERIFY(bubble->setProperty("messageId", QStringLiteral("video-new")));
@@ -572,6 +573,8 @@ void ChatBubblePerf::videoDelegateReuseClearsPlaybackState()
     QCOMPARE(videoBubble->property("requestPending").toBool(), false);
     QCOMPARE(videoBubble->property("playAfterDownload").toBool(), false);
     QCOMPARE(videoBubble->property("retryDownloadOnly").toBool(), false);
+    QCOMPARE(videoBubble->property("streamFailed").toBool(), false);
+    QCOMPARE(videoBubble->property("stalledOut").toBool(), false);
     QCOMPARE(videoBubble->property("playbackFailed").toBool(), false);
     QCOMPARE(videoBubble->property("userMuted").toBool(), true);
 }

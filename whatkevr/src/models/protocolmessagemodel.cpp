@@ -219,8 +219,9 @@ void ProtocolMessageModel::invalidateTransferRoles()
     for (const QString &id : std::as_const(affected)) {
         const int row = indexOf(id);
         if (row >= 0) {
-            Q_EMIT dataChanged(index(row, 0), index(row, 0),
-                               {MediaDownloadingRole, MediaDownloadProgressRole});
+            // Progress only. Whether a fetch is in flight comes from the message
+            // row itself and arrives with its own dataChanged.
+            Q_EMIT dataChanged(index(row, 0), index(row, 0), {MediaDownloadProgressRole});
         }
     }
 }
@@ -403,7 +404,12 @@ QVariant ProtocolMessageModel::data(const QModelIndex &index, int role) const
     case GroupEndRole:
         return endsSenderGroup(index.row());
     case MediaDownloadingRole:
-        return !transfer(item).isEmpty();
+        // Off the message row, not the `transfers` join: the two views are
+        // recomputed independently, and reading this from the transfer row's
+        // disappearance meant the bubble learned the download had ended before
+        // it learned where the file was, and flashed its download button back
+        // (PROTOCOL.md, "Messages").
+        return mediaData().value(QStringLiteral("downloading")).toBool();
     case MediaDownloadErrorRole:
         return mediaData().value(QStringLiteral("download_error")).toString();
     case ReplyToMessageIdRole:

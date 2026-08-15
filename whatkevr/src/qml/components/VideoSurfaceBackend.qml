@@ -39,8 +39,24 @@ Item {
     /// surfaceActive leaves a blank rectangle on screen for the whole of it.
     property bool surfaceHasFrame: false
 
+    /// Whether the decoder reported a real error, and what it said. Distinct
+    /// from "no frame yet": a clip can be slow for a long time without having
+    /// failed, and treating the two the same is what made a seek into a
+    /// still-downloading stream claim the video could not be played.
+    property bool surfaceFailed: false
+    property string surfaceErrorText: ""
+    /// Whether the engine is working on something (opening, seeking, refilling
+    /// its buffer). While this is true an absent picture is progress, not
+    /// absence, and nothing above may escalate it to a failure.
+    property bool surfaceStalled: false
+
     signal endOfFile
 
     function surfaceSeek(seconds) {
+    }
+
+    /// Hands the frame on screen to the arbiter, so whatever draws this clip
+    /// next has a picture before its own decoder produces one.
+    function captureStill() {
     }
 }

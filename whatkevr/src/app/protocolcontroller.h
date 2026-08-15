@@ -124,6 +124,11 @@ class ProtocolController final : public QObject
     Q_PROPERTY(bool messagesAtLiveEdge READ messagesAtLiveEdge NOTIFY messagesChanged FINAL)
     Q_PROPERTY(bool phoneHistoryRequesting READ phoneHistoryRequesting NOTIFY messagesChanged FINAL)
     Q_PROPERTY(bool messagesEmpty READ messagesEmpty NOTIFY messagesChanged FINAL)
+    // True while the *same* chat's message window is being re-subscribed (a
+    // jump, or go-to-bottom from mid-history). The model is empty for the round
+    // trip, but the conversation is not gone: the pane keeps its chrome rather
+    // than collapsing to the "Select a chat" placeholder and back.
+    Q_PROPERTY(bool messagesReloading READ messagesReloading NOTIFY messagesChanged FINAL)
     Q_PROPERTY(QString displayedMessagesChatId READ displayedMessagesChatId NOTIFY messagesChanged FINAL)
     Q_PROPERTY(QString messageErrorText READ messageErrorText NOTIFY messagesChanged FINAL)
     Q_PROPERTY(QString unreadAnchorMessageId READ unreadAnchorMessageId NOTIFY unreadAnchorChanged FINAL)
@@ -321,6 +326,7 @@ public:
     [[nodiscard]] bool messagesAtLiveEdge() const { return m_messagesAtLiveEdge; }
     [[nodiscard]] bool phoneHistoryRequesting() const { return m_phoneHistoryRequesting; }
     [[nodiscard]] bool messagesEmpty() const;
+    [[nodiscard]] bool messagesReloading() const { return m_messagesReloading; }
     [[nodiscard]] QString displayedMessagesChatId() const { return m_displayedMessagesChatId; }
     [[nodiscard]] QString messageErrorText() const { return m_messageErrorText; }
     [[nodiscard]] QString unreadAnchorMessageId() const { return m_unreadAnchorMessageId; }
@@ -688,6 +694,9 @@ private:
     void selectedChatLookupFailed(const QString &chatId, const QString &code, const QString &message);
     void setSelectedChat(const QString &chatId, const QString &anchor, const QString &jumpMessageId);
     void subscribeMessages(const QString &anchor, const QString &jumpMessageId = {});
+    // Records that the window now reaches the newest message, which is not the
+    // same thing as the anchor it was opened on.
+    void noteReachedLiveEdge();
     void onMessagesSubscribed(const QVariantMap &meta);
     void onMessagesReady(bool exhausted);
     void onMessagesFailed(const QString &code, const QString &message);
@@ -811,6 +820,7 @@ private:
     int m_unreadAnchorCount = 0;
     bool m_unreadAnchorResolving = false;
     bool m_waitingInitialMessages = false;
+    bool m_messagesReloading = false;
     bool m_refillingAfterReset = false;
     bool m_waitingForSelectedChatItem = false;
     // One chat-list `extend` in flight at a time; cleared by the view's `ready`

@@ -49,6 +49,14 @@ Item {
     /// True once there is a decoded frame to show. This, not `active`, is what
     /// callers should swap their thumbnail out on.
     readonly property bool hasFrame: backend ? backend.surfaceHasFrame : false
+    /// The decoder said this cannot be played, and what it said. A caller should
+    /// report failure on this and nothing else; an absent picture on its own
+    /// only ever means "not yet".
+    readonly property bool failed: backend ? backend.surfaceFailed : false
+    readonly property string errorText: backend ? backend.surfaceErrorText : ""
+    /// The engine is opening, seeking or refilling. Show a spinner, never a
+    /// failure.
+    readonly property bool stalled: backend ? backend.surfaceStalled : false
     // Decoder errors and source teardown can reset position to zero before the
     // owner gets a chance to hand off. Keep the last meaningful value here.
     property real lastUsablePosition: 0
@@ -75,6 +83,24 @@ Item {
         }
     }
 
+    /// Writes down the picture this clip is showing, from the one place that
+    /// has it. Paired with rememberPosition(): between them they are everything
+    /// the next surface to open this message needs to carry on without a visible
+    /// break.
+    function rememberStill() {
+        if (messageId.length === 0 || !backend || !hasFrame) {
+            return
+        }
+        backend.captureStill()
+    }
+
+    /// Both halves of letting go, in the order that works: the caller may be
+    /// about to drop the grant, and neither can be read afterwards.
+    function rememberPlaybackState() {
+        rememberStill()
+        rememberPosition()
+    }
+
     // ---- Arbitration ----
 
     /// Whether the arbiter has allowed this surface to play. False either
@@ -90,7 +116,7 @@ Item {
             }
             return
         }
-        rememberPosition()
+        rememberPlaybackState()
         // Unconditional, even when nothing is held: it is also how a surface
         // gives up its place in the animated queue, which a bubble scrolled out
         // of view has to do or it is handed a slot it no longer wants.
@@ -119,7 +145,7 @@ Item {
     // from the first frame) never sees that change signal.
     Component.onCompleted: syncGrant()
     Component.onDestruction: {
-        rememberPosition()
+        rememberPlaybackState()
         Whatevr.VideoPlayback.release(root)
     }
 
@@ -129,6 +155,12 @@ Item {
         function onRevoked(claimant) {
             if (claimant !== root)
                 return
+            // Before grantHeld drops, not after. The owner reacts to revoked()
+            // by stopping, which runs syncGrant(), whose rememberPlaybackState()
+            // declines to record anything once the grant is gone: a clip
+            // revoked by another one silently lost both its position and its
+            // picture.
+            root.rememberPlaybackState()
             root.grantHeld = false
             root.revoked()
         }

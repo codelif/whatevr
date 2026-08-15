@@ -190,3 +190,67 @@ void VideoPlaybackArbiter::rememberOrder(const QString &messageId)
         m_positions.remove(m_positionOrder.takeFirst());
     }
 }
+
+void VideoPlaybackArbiter::captureFrame(const QString &messageId, const QVideoFrame &frame)
+{
+    if (messageId.isEmpty() || !frame.isValid()) {
+        return;
+    }
+    QImage image = frame.toImage();
+    if (image.isNull()) {
+        return;
+    }
+    // A decoder that has opened a file but not produced a picture yet hands out
+    // a frame of the right size filled with nothing. Storing that would replace
+    // a good still with a black rectangle, which is the failure this whole
+    // mechanism exists to avoid.
+    if (image.width() <= 0 || image.height() <= 0) {
+        return;
+    }
+    if (image.width() > frameMaxEdge || image.height() > frameMaxEdge) {
+        image = image.scaled(frameMaxEdge, frameMaxEdge, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    }
+    // detach(): toImage() may hand back a view onto the frame's own buffer,
+    // which the decoder reuses for the next frame.
+    image.detach();
+
+    {
+        QMutexLocker locker(&m_frameMutex);
+        m_frames.insert(messageId, image);
+        m_frameRevisions[messageId] = m_frameRevisions.value(messageId, 0) + 1;
+        rememberFrameOrder(messageId);
+    }
+    Q_EMIT frameCaptured(messageId);
+}
+
+bool VideoPlaybackArbiter::hasFrame(const QString &messageId) const
+{
+    QMutexLocker locker(&m_frameMutex);
+    return m_frames.contains(messageId);
+}
+
+int VideoPlaybackArbiter::frameRevision(const QString &messageId) const
+{
+    QMutexLocker locker(&m_frameMutex);
+    return m_frameRevisions.value(messageId, 0);
+}
+
+QImage VideoPlaybackArbiter::frameImage(const QString &messageId) const
+{
+    QMutexLocker locker(&m_frameMutex);
+    return m_frames.value(messageId);
+}
+
+// Called with m_frameMutex held.
+void VideoPlaybackArbiter::rememberFrameOrder(const QString &messageId)
+{
+    m_frameOrder.removeAll(messageId);
+    m_frameOrder.append(messageId);
+    while (m_frameOrder.size() > frameHistoryLimit) {
+        const QString evicted = m_frameOrder.takeFirst();
+        m_frames.remove(evicted);
+        // The revision is kept: an evicted still may be captured again, and a
+        // url that went back to a revision it has already shown would come out
+        // of the pipeline's cache rather than being re-read.
+    }
+}
