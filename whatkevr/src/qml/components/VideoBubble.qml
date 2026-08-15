@@ -324,11 +324,25 @@ Item {
         // Model role notifications do not have a useful ordering guarantee.
         // Wait until this event turn has applied the new kind and media paths
         // before deciding whether the replacement row is an autoplaying GIF.
-        const replacementId = row.messageId
-        Qt.callLater(function() {
-            if (root.row.messageId === replacementId)
+        // A child Timer, not Qt.callLater: the deferred closure outlived
+        // delegates the list destroyed in the same turn and then ran in their
+        // dead context, throwing on every reuse wave.
+        pendingAutoplayId = row.messageId
+        autoplaySettleTimer.restart()
+    }
+
+    /// The message resetForMessage() deferred an autoplay check for; the check
+    /// only fires if the row still shows that message when the turn settles.
+    property string pendingAutoplayId: ""
+
+    Timer {
+        id: autoplaySettleTimer
+
+        interval: 0
+        onTriggered: {
+            if (root.row.messageId === root.pendingAutoplayId)
                 root.requestAutoplaySource()
-        })
+        }
     }
 
     onAutoWantsChanged: requestAutoplaySource()
