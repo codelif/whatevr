@@ -210,6 +210,16 @@ void VideoPlaybackArbiter::scheduleParking(PlaybackSession *session)
     if (!session) {
         return;
     }
+    // The last moment this clip has a picture: keep it, so whatever draws this
+    // message next opens on the frame the user was looking at instead of the
+    // sender's first frame. Views ask for this too, on the paths where they
+    // know it matters, but a view can be recycled or closed without getting
+    // the chance and the still is not worth losing to timing. A looping GIF is
+    // skipped: it has no meaningful "where I was", and the whole point of
+    // doing this here is that it also runs while a list is being scrolled.
+    if (session->hasVideo() && !session->loop()) {
+        session->captureStill();
+    }
     session->setPlaying(false);
     QPointer<PlaybackSession> guarded(session);
     QTimer::singleShot(parkGraceMs, this, [this, guarded]() {

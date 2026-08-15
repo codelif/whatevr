@@ -457,6 +457,11 @@ Item {
                 ? seconds
                 : Whatevr.VideoPlayback.resumePosition(messageId)
             root.sessionSource = ""
+            // Back to how this kind sounds inline, whatever the viewer was
+            // doing: rectangular video is silent in a conversation, and a clip
+            // that carried on out loud under the chat after the viewer closed
+            // is the one thing worse than it stopping.
+            root.userMuted = !root.isVideoNote
             if (resumePlayback) {
                 root.latchAvailableSource()
                 root.intent = "playing"

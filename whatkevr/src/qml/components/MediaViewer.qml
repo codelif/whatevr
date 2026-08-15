@@ -269,12 +269,21 @@ QQC2.Popup {
     contentItem: Item {
         id: viewerContent
 
-        // Tapping the backdrop closes; tapping the media itself toggles play,
-        // which is what every video player does. The chrome bars carry their
-        // own handlers so that a tap on the bar's background (as opposed to one
-        // of its buttons) does not fall through to here and shut the viewer.
+        // On a video, a tap anywhere that is not a control plays or pauses:
+        // the clip is what the screen is for, and a full-screen player that
+        // exits when the pointer misses the picture by ten pixels is a trap.
+        // A photo has nothing to toggle, so there the backdrop still closes.
+        // The chrome bars carry their own handlers so a tap on a bar's
+        // background does not fall through to here.
         TapHandler {
-            onTapped: root.close()
+            onTapped: {
+                if (root.isVideo) {
+                    root.togglePlayback()
+                    root.wakeChrome()
+                    return
+                }
+                root.close()
+            }
         }
 
         // Any pointer movement anywhere brings the controls back.
@@ -414,12 +423,9 @@ QQC2.Popup {
                 // loops.
                 onEndOfFile: surface.playbackWanted = false
 
-                TapHandler {
-                    onTapped: {
-                        root.togglePlayback()
-                        root.wakeChrome()
-                    }
-                }
+                // No tap handler of its own: the whole viewer toggles playback
+                // now, and two handlers over the same pixels both fired on one
+                // tap, which is a toggle that toggles back.
             }
 
             // A paused full-screen video used to show a still frame and nothing
