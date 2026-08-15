@@ -382,17 +382,17 @@ Item {
         }
 
         function onMediaStreamUpdated(streamId, messageId, state, path, error) {
-            if (messageId !== root.row.messageId || streamId !== root.activeStreamId)
+            // By message id, not stream id: a one-shot stream id consumed by
+            // another view (or wiped by a delegate reset) left this one
+            // reading a URL the daemon had already torn down.
+            if (messageId !== root.row.messageId)
                 return
             root.activeStreamId = ""
             root.requestPending = false
             if (state === "local" && path.length > 0) {
-                const at = surface.handoffPosition()
-                if (at > 0) {
-                    root.resumeAt = at
-                    Whatevr.VideoPlayback.setResumePosition(messageId, at)
-                }
-                root.sessionSource = Qt.resolvedUrl("file://" + path)
+                // The running decoder is switched to the file by the arbiter,
+                // in one place; the bubble only records the path for its next
+                // playback session.
                 root.recoveredLocalPath = path
                 root.streamFailed = false
                 root.stalledOut = false

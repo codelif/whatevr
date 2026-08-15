@@ -102,6 +102,13 @@ public:
     /// voice note does to videos.
     Q_INVOKABLE void pauseAudibleSessions();
 
+    /// A stream this message was playing from finished downloading: swap the
+    /// live session onto the completed file, keeping position and play state.
+    /// Matched by message id, not stream id: a one-shot stream id could be
+    /// consumed by one view while another kept reading a URL the daemon had
+    /// already torn down, which played on as an indefinite "loading".
+    void promoteStreamedSource(const QString &messageId, const QString &localPath);
+
     /// Where this message was left, in seconds, or 0 if it has not been played.
     Q_INVOKABLE double resumePosition(const QString &messageId) const;
     Q_INVOKABLE void setResumePosition(const QString &messageId, double seconds);

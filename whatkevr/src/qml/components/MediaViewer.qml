@@ -225,12 +225,15 @@ QQC2.Popup {
         target: Whatevr.ProtocolController
 
         function onMediaStreamUpdated(streamId, messageId, state, path, error) {
-            if (streamId !== root.activeStreamId || messageId !== root.messageId)
+            // By message id, not stream id: the bubble could consume the
+            // one-shot stream id before this viewer opened, stranding it on a
+            // URL the daemon had already torn down. The running decoder is
+            // switched to the file by the arbiter; this only updates what
+            // Save and Open Externally point at.
+            if (messageId !== root.messageId)
                 return
             root.activeStreamId = ""
             if (state === "local" && path.length > 0) {
-                const at = surface.handoffPosition()
-                root.startAt = at
                 root.localPath = path
                 root.streamFailed = false
                 root.stalledOut = false

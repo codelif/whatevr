@@ -14,6 +14,7 @@
 #include "app/protocolcontroller.h"
 #include "app/settings.h"
 #include "media/mpvcore.h"
+#include "media/videoarbiter.h"
 #include "media/videoframeprovider.h"
 #include "version.h"
 
@@ -150,6 +151,19 @@ int main(int argc, char *argv[])
     // renders (PROTOCOL.md).
     ProtocolController protocolController(nullptr);
     ProtocolController::setInstance(&protocolController);
+
+    // A stream that finishes downloading mid-playback is swapped onto its
+    // completed file here, once, in the session that is actually decoding it.
+    // The views only record the new path; two QML handlers used to race each
+    // other for this and could leave the viewer reading a torn-down URL.
+    QObject::connect(&protocolController,
+                     &ProtocolController::mediaStreamUpdated,
+                     VideoPlaybackArbiter::instance(),
+                     [](const QString &, const QString &messageId, const QString &state, const QString &path, const QString &) {
+                         if (state == QLatin1String("local")) {
+                             VideoPlaybackArbiter::instance()->promoteStreamedSource(messageId, path);
+                         }
+                     });
 
     // Single-instance: a second launch (e.g. clicking a notification, which runs
     // `whatkevr whatevr://chat/<id>` via the desktop scheme handler) forwards its

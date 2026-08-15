@@ -160,6 +160,16 @@ void VideoPlaybackArbiter::pauseAudibleSessions()
     }
 }
 
+void VideoPlaybackArbiter::promoteStreamedSource(const QString &messageId, const QString &localPath)
+{
+    if (localPath.isEmpty()) {
+        return;
+    }
+    if (PlaybackSession *session = liveSessionFor(messageId)) {
+        session->promoteSource(QUrl::fromLocalFile(localPath));
+    }
+}
+
 void VideoPlaybackArbiter::bindSession(QObject *claimant, PlaybackSession *session)
 {
     m_bound.insert(claimant, session);
