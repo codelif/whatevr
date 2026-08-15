@@ -233,6 +233,39 @@ private Q_SLOTS:
         QTRY_VERIFY_WITH_TIMEOUT(hasBrightPixels(window.grabWindow()), 15000);
     }
 
+    void playbackKeepsRunningWhenNobodyIsRendering()
+    {
+        QQuickWindow window;
+        window.resize(frameWidth, frameHeight);
+        auto *container = new QQuickItem(window.contentItem());
+        container->setSize(QSizeF(frameWidth, frameHeight));
+        window.show();
+        if (!QTest::qWaitForWindowExposed(&window)) {
+            QSKIP("no exposed window on this platform");
+        }
+        if (window.rendererInterface()->graphicsApi() != QSGRendererInterface::OpenGL) {
+            QSKIP("scene graph is not on OpenGL here");
+        }
+
+        PlaybackSession session;
+        session.attachView(container);
+        session.setMuted(true);
+        session.configure(QStringLiteral("clip"), QUrl::fromLocalFile(m_fixture), 0.0);
+        session.setPlaying(true);
+        QTRY_VERIFY_WITH_TIMEOUT(session.hasVideo(), 15000);
+
+        // Rendering under advanced control is a conversation: mpv asks for a
+        // frame to be drawn and waits to be asked what to draw. A window that
+        // stops rendering (hidden, occluded, another workspace) stops
+        // answering, and if that could stall the engine, a minimised window
+        // would take the sound with it.
+        window.hide();
+        const double before = session.position();
+        QTest::qWait(1500);
+        QVERIFY2(session.position() > before + 0.5,
+                 qPrintable(QStringLiteral("position stopped at %1 with the window hidden").arg(session.position())));
+    }
+
 private:
     QTemporaryDir m_dir;
     QString m_fixture;
