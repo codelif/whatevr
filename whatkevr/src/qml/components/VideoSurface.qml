@@ -114,10 +114,17 @@ Item {
     property bool grantHeld: false
     readonly property bool wantsGrant: engaged && source.toString().length > 0
 
+    /// The engine the arbiter handed this surface. If a session for this
+    /// message was already live somewhere (the same clip inline while the
+    /// viewer opens), acquire() transfers it running rather than building a
+    /// second decoder, which is what makes the handoff gapless.
+    property Whatevr.PlaybackSession session: null
+
     function syncGrant() {
         if (wantsGrant) {
             if (!grantHeld) {
-                grantHeld = Whatevr.VideoPlayback.request(root, lane)
+                session = Whatevr.VideoPlayback.acquire(root, messageId, source, startPosition, lane)
+                grantHeld = session !== null
             }
             return
         }
@@ -126,7 +133,17 @@ Item {
         // gives up its place in the animated queue, which a bubble scrolled out
         // of view has to do or it is handed a slot it no longer wants.
         Whatevr.VideoPlayback.release(root)
+        session = null
         grantHeld = false
+    }
+
+    // The source changing underneath a held grant is a promotion: the stream
+    // this session opened on finished downloading and the caller switched to
+    // the file. One seamless swap inside the session, not a rebuild.
+    onSourceChanged: {
+        if (grantHeld && wantsGrant && session) {
+            Whatevr.VideoPlayback.updateSource(root, source)
+        }
     }
 
     /// Writes down where this clip got to, from the one place that knows: this
@@ -166,6 +183,10 @@ Item {
             // revoked by another one silently lost both its position and its
             // picture.
             root.rememberPlaybackState()
+            // The session may already belong to whoever revoked this surface.
+            // Let go of the reference before the owner's stop cascade runs, so
+            // this view's teardown cannot pause a clip mid-handoff.
+            root.session = null
             root.grantHeld = false
             root.revoked()
         }
@@ -173,8 +194,10 @@ Item {
         function onGrantOffered(claimant) {
             if (claimant !== root)
                 return
-            if (root.wantsGrant && !root.grantHeld)
-                root.grantHeld = Whatevr.VideoPlayback.request(root, root.lane)
+            if (root.wantsGrant && !root.grantHeld) {
+                root.session = Whatevr.VideoPlayback.acquire(root, root.messageId, root.source, root.startPosition, root.lane)
+                root.grantHeld = root.session !== null
+            }
         }
     }
 
@@ -183,10 +206,11 @@ Item {
 
         objectName: "videoSurface.backendLoader"
         anchors.fill: parent
-        // An idle bubble is only a poster. Do not create a MediaPlayer merely
-        // because the row entered ListView's cache band. The backend is rebuilt
-        // for each real playback session, which also guarantees that replay
-        // after EOF starts with a fresh engine rather than an exhausted one.
+        // An idle bubble is only a poster. Do not build the view layer merely
+        // because the row entered ListView's cache band. The decoder itself
+        // lives in the arbiter's session; replay after EOF goes through
+        // PlaybackSession::replayFromStart, which keeps the old guarantee that
+        // an exhausted engine is never resumed into.
         active: root.grantHeld
         sourceComponent: qtComponent
 
@@ -213,8 +237,7 @@ Item {
 
         QtVideoSurface {
             messageId: root.messageId
-            source: root.grantHeld ? root.source : ""
-            startPosition: root.startPosition
+            session: root.session
             playing: root.playing && root.grantHeld
             muted: root.muted
             loop: root.loop

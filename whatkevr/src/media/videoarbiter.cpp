@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: BSD-3-Clause
 #include "videoarbiter.h"
 
+#include <algorithm>
+
 #include <QQmlEngine>
+#include <QTimer>
 
 #include "app/settings.h"
 
@@ -42,7 +45,175 @@ bool VideoPlaybackArbiter::request(QObject *claimant, Lane lane)
     if (!claimant) {
         return false;
     }
+    return admit(claimant, lane);
+}
 
+PlaybackSession *VideoPlaybackArbiter::acquire(QObject *claimant,
+                                               const QString &messageId,
+                                               const QUrl &source,
+                                               double startAt,
+                                               Lane lane)
+{
+    if (!claimant) {
+        return nullptr;
+    }
+
+    // A claimant switching messages first lets go of the session it held;
+    // pausing into the grace period rather than parking outright, in case the
+    // old message is re-acquired right away by someone else.
+    if (PlaybackSession *held = m_bound.value(claimant)) {
+        if (held->messageId() == messageId && !messageId.isEmpty()) {
+            if (!admit(claimant, lane)) {
+                return nullptr;
+            }
+            return held;
+        }
+        m_bound.remove(claimant);
+        scheduleParking(held);
+    }
+
+    PlaybackSession *live = messageId.isEmpty() ? nullptr : liveSessionFor(messageId);
+    QObject *previousHolder = nullptr;
+    if (live) {
+        for (auto it = m_bound.constBegin(); it != m_bound.constEnd(); ++it) {
+            if (it.value() == live) {
+                previousHolder = const_cast<QObject *>(it.key());
+                break;
+            }
+        }
+    }
+
+    // Rebind before any revocation lands: the previous holder reacts to
+    // revoked() by releasing, and a release that still found it bound would
+    // pause the session mid-handoff. This ordering is the gapless part.
+    QObject *const preAdmitExclusive = m_exclusive.data();
+    if (live && previousHolder && previousHolder != claimant) {
+        m_bound.remove(previousHolder);
+    }
+    if (live) {
+        bindSession(claimant, live);
+    }
+
+    if (!admit(claimant, lane)) {
+        // Animated lane full; the claimant is queued. Hand the session back
+        // to whoever had it rather than leaving it bound to a claimant that
+        // was refused.
+        if (live) {
+            m_bound.remove(claimant);
+            if (previousHolder && previousHolder != claimant) {
+                m_bound.insert(previousHolder, live);
+            }
+        }
+        return nullptr;
+    }
+
+    if (live) {
+        // admit() already revoked the previous exclusive holder; only a
+        // holder it did not know about (the same clip running in the other
+        // lane) still needs to be told to let go of its view.
+        if (previousHolder && previousHolder != claimant && previousHolder != preAdmitExclusive) {
+            Q_EMIT revoked(previousHolder);
+        }
+        return live;
+    }
+
+    PlaybackSession *session = obtainParkedSession();
+    const double at = startAt > 0.0 ? startAt : resumePosition(messageId);
+    session->configure(messageId, source, at);
+    bindSession(claimant, session);
+    return session;
+}
+
+void VideoPlaybackArbiter::updateSource(QObject *claimant, const QUrl &source)
+{
+    if (PlaybackSession *held = m_bound.value(claimant)) {
+        held->promoteSource(source);
+    }
+}
+
+PlaybackSession *VideoPlaybackArbiter::sessionFor(const QObject *claimant) const
+{
+    return m_bound.value(claimant);
+}
+
+PlaybackSession *VideoPlaybackArbiter::liveSessionFor(const QString &messageId) const
+{
+    if (messageId.isEmpty()) {
+        return nullptr;
+    }
+    for (PlaybackSession *session : m_sessions) {
+        // park() clears the message id, so a non-empty match is live: either
+        // bound to a view or paused in its post-release grace.
+        if (session->messageId() == messageId) {
+            return session;
+        }
+    }
+    return nullptr;
+}
+
+void VideoPlaybackArbiter::pauseAudibleSessions()
+{
+    for (PlaybackSession *session : m_sessions) {
+        if (session->audible()) {
+            session->setPlaying(false);
+        }
+    }
+}
+
+void VideoPlaybackArbiter::bindSession(QObject *claimant, PlaybackSession *session)
+{
+    m_bound.insert(claimant, session);
+    // A claimant destroyed without releasing (a delegate the list recycled
+    // mid-teardown) must not leave its session bound forever.
+    connect(claimant, &QObject::destroyed, this, &VideoPlaybackArbiter::release, Qt::UniqueConnection);
+}
+
+PlaybackSession *VideoPlaybackArbiter::obtainParkedSession()
+{
+    const auto isBound = [this](PlaybackSession *session) {
+        return std::find(m_bound.constBegin(), m_bound.constEnd(), session) != m_bound.constEnd();
+    };
+    // A parked session first; failing that, one resting in its grace period,
+    // which loses its chance of a seamless resume to a clip that actually
+    // wants to play right now.
+    for (PlaybackSession *session : m_sessions) {
+        if (!isBound(session) && session->messageId().isEmpty()) {
+            return session;
+        }
+    }
+    for (PlaybackSession *session : m_sessions) {
+        if (!isBound(session)) {
+            session->park();
+            return session;
+        }
+    }
+    auto *session = new PlaybackSession(this);
+    QQmlEngine::setObjectOwnership(session, QQmlEngine::CppOwnership);
+    connect(session, &PlaybackSession::audiblePlaybackStarted, this, &VideoPlaybackArbiter::audiblePlaybackStarted);
+    m_sessions.append(session);
+    return session;
+}
+
+void VideoPlaybackArbiter::scheduleParking(PlaybackSession *session)
+{
+    if (!session) {
+        return;
+    }
+    session->setPlaying(false);
+    QPointer<PlaybackSession> guarded(session);
+    QTimer::singleShot(parkGraceMs, this, [this, guarded]() {
+        if (!guarded) {
+            return;
+        }
+        const bool bound = std::find(m_bound.constBegin(), m_bound.constEnd(), guarded.data()) != m_bound.constEnd();
+        if (!bound) {
+            guarded->park();
+        }
+    });
+}
+
+bool VideoPlaybackArbiter::admit(QObject *claimant, Lane lane)
+{
     if (lane == Exclusive) {
         // A claimant already in the animated lane is changing its mind about
         // what it is, which happens when a bubble is reused for another
@@ -99,6 +270,11 @@ void VideoPlaybackArbiter::release(QObject *claimant)
     // wanting to play, and leaving it queued would hand a slot to something
     // that is not on screen any more.
     m_animatedWaiting.removeAll(QPointer<QObject>(claimant));
+    // A session transferred to another claimant is no longer in m_bound under
+    // this key, so a revoked holder releasing cannot pause the handoff.
+    if (PlaybackSession *held = m_bound.take(claimant)) {
+        scheduleParking(held);
+    }
     if (heldAnimated) {
         offerAnimatedSlot();
     }

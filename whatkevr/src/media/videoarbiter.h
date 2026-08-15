@@ -11,6 +11,8 @@
 #include <QString>
 #include <QVideoFrame>
 
+#include "playbacksession.h"
+
 /**
  * VideoPlaybackArbiter decides what is allowed to be playing, app-wide.
  *
@@ -62,10 +64,43 @@ public:
      */
     Q_INVOKABLE bool request(QObject *claimant, VideoPlaybackArbiter::Lane lane);
 
+    /**
+     * Asks to play and hands back the session to play with, or nullptr when
+     * the animated lane is full (the claimant is queued and offered a slot
+     * later, exactly as request()).
+     *
+     * If a live session already exists for this message it is transferred:
+     * the previous claimant is revoked and only lets go of its view, while
+     * the session itself keeps running untouched. That transfer is the
+     * bubble to full-screen handoff, and it is also what stops a clip from
+     * ever decoding twice.
+     */
+    Q_INVOKABLE PlaybackSession *acquire(QObject *claimant,
+                                         const QString &messageId,
+                                         const QUrl &source,
+                                         double startAt,
+                                         VideoPlaybackArbiter::Lane lane);
+
+    /// Points a held session at a different source (a stream promoted to its
+    /// completed file), keeping position and play state.
+    Q_INVOKABLE void updateSource(QObject *claimant, const QUrl &source);
+
     /// Gives up a grant, and gives up a place in the animated queue. Safe to
     /// call for a claimant that holds nothing, which is what a surface does
-    /// every time playback stops.
+    /// every time playback stops. A session it held is paused and, after a
+    /// short grace for an immediate re-acquire (the viewer closing back into
+    /// the bubble), parked for reuse.
     Q_INVOKABLE void release(QObject *claimant);
+
+    /// The session a claimant currently holds, or nullptr.
+    [[nodiscard]] PlaybackSession *sessionFor(const QObject *claimant) const;
+    /// The live session for a message, held or in its post-release grace, or
+    /// nullptr.
+    [[nodiscard]] PlaybackSession *liveSessionFor(const QString &messageId) const;
+
+    /// Pauses every session that is currently making sound. What starting a
+    /// voice note does to videos.
+    Q_INVOKABLE void pauseAudibleSessions();
 
     /// Where this message was left, in seconds, or 0 if it has not been played.
     Q_INVOKABLE double resumePosition(const QString &messageId) const;
@@ -122,11 +157,18 @@ Q_SIGNALS:
     /// A new still is available for this message. Whoever is showing it re-reads
     /// frameRevision() and reloads.
     void frameCaptured(const QString &messageId);
+    /// Some session began producing sound. What pauses the voice-note player.
+    void audiblePlaybackStarted();
 
 private:
     void offerAnimatedSlot();
     void rememberOrder(const QString &messageId);
     void rememberFrameOrder(const QString &messageId);
+    /// Lane admission alone, shared by request() and acquire().
+    bool admit(QObject *claimant, Lane lane);
+    void bindSession(QObject *claimant, PlaybackSession *session);
+    PlaybackSession *obtainParkedSession();
+    void scheduleParking(PlaybackSession *session);
 
     /// The most recent positions, so scrolling a long way back does not resume
     /// a clip from where it was hours ago and the hash cannot grow without end.
@@ -139,11 +181,21 @@ private:
     /// bubble or a screen wide, and a 4K frame per entry is not worth holding.
     static constexpr int frameMaxEdge = 1280;
 
+    /// How long a released session keeps its decoder before parking, so the
+    /// viewer closing back into a bubble (a release and a re-acquire one tick
+    /// apart) resumes the same engine instead of opening the file again.
+    static constexpr int parkGraceMs = 2000;
+
     QPointer<QObject> m_exclusive;
     /// QPointer throughout: a bubble is destroyed by the list recycling it at
     /// any moment, holding a grant or waiting for one.
     QList<QPointer<QObject>> m_animated;
     QList<QPointer<QObject>> m_animatedWaiting;
+
+    /// Every session ever created, all owned by this object. Bound ones are
+    /// values of m_bound; the rest are parked or in their post-release grace.
+    QList<PlaybackSession *> m_sessions;
+    QHash<const QObject *, PlaybackSession *> m_bound;
 
     QHash<QString, double> m_positions;
     QList<QString> m_positionOrder;

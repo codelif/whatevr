@@ -280,6 +280,113 @@ private Q_SLOTS:
         QVERIFY(pool->hasFrame(QStringLiteral("other-11")));
     }
 
+    void acquireHandsOutOneSessionPerMessage()
+    {
+        VideoPlaybackArbiter *pool = arbiter();
+        QObject bubble;
+
+        PlaybackSession *session = pool->acquire(&bubble, QStringLiteral("clip"),
+                                                 QUrl(QStringLiteral("file:///tmp/a.mp4")), 0,
+                                                 VideoPlaybackArbiter::Exclusive);
+        QVERIFY(session);
+        QCOMPARE(session->messageId(), QStringLiteral("clip"));
+        QVERIFY(pool->holds(&bubble));
+        QCOMPARE(pool->sessionFor(&bubble), session);
+
+        // Asking again for the same message is idempotent, not a rebuild.
+        QCOMPARE(pool->acquire(&bubble, QStringLiteral("clip"), QUrl(), 0,
+                               VideoPlaybackArbiter::Exclusive),
+                 session);
+    }
+
+    void aHandoffTransfersTheSessionWithoutStoppingIt()
+    {
+        VideoPlaybackArbiter *pool = arbiter();
+        QObject bubble;
+        QObject viewer;
+
+        PlaybackSession *session = pool->acquire(&bubble, QStringLiteral("clip"),
+                                                 QUrl(QStringLiteral("file:///tmp/a.mp4")), 0,
+                                                 VideoPlaybackArbiter::Exclusive);
+        QVERIFY(session);
+        session->setPlaying(true);
+
+        QSignalSpy revoked(pool, &VideoPlaybackArbiter::revoked);
+        QSignalSpy sourceChanged(session, &PlaybackSession::sourceChanged);
+        QSignalSpy playingChanged(session, &PlaybackSession::playingChanged);
+
+        // The viewer opening on the same clip gets the same engine, running.
+        PlaybackSession *transferred = pool->acquire(&viewer, QStringLiteral("clip"), QUrl(), 0,
+                                                     VideoPlaybackArbiter::Exclusive);
+        QCOMPARE(transferred, session);
+        QCOMPARE(revoked.count(), 1);
+        QCOMPARE(revoked.first().first().value<QObject *>(), &bubble);
+        QVERIFY(session->playing());
+        QCOMPARE(sourceChanged.count(), 0);
+        QCOMPARE(playingChanged.count(), 0);
+
+        // The revoked holder letting go afterwards must not pause the clip it
+        // no longer owns: this exact release used to be the audio gap.
+        pool->release(&bubble);
+        QVERIFY(session->playing());
+        QCOMPARE(pool->sessionFor(&viewer), session);
+    }
+
+    void theLastReleaseParksAfterAGraceForAnImmediateReacquire()
+    {
+        VideoPlaybackArbiter *pool = arbiter();
+        QObject viewer;
+
+        PlaybackSession *session = pool->acquire(&viewer, QStringLiteral("clip"),
+                                                 QUrl(QStringLiteral("file:///tmp/a.mp4")), 0,
+                                                 VideoPlaybackArbiter::Exclusive);
+        QVERIFY(session);
+        session->setPlaying(true);
+        pool->release(&viewer);
+
+        // Paused, not parked: the viewer closing back into the bubble is a
+        // release and a re-acquire one tick apart, and re-opening the file
+        // for that would put the audio gap back.
+        QVERIFY(!session->playing());
+        QCOMPARE(pool->liveSessionFor(QStringLiteral("clip")), session);
+
+        QObject bubble;
+        QCOMPARE(pool->acquire(&bubble, QStringLiteral("clip"), QUrl(), 0,
+                               VideoPlaybackArbiter::Exclusive),
+                 session);
+
+        // Once nobody comes back for it, the grace runs out and the session
+        // is parked for reuse under another message.
+        pool->release(&bubble);
+        QTest::qWait(2600);
+        QCOMPARE(pool->liveSessionFor(QStringLiteral("clip")), nullptr);
+        QVERIFY(session->messageId().isEmpty());
+    }
+
+    void anAnimatedSessionIsTransferredToAnExclusiveClaimant()
+    {
+        VideoPlaybackArbiter *pool = arbiter();
+        pool->setAnimatedLimit(2);
+        QObject gifBubble;
+        QObject viewer;
+
+        PlaybackSession *session = pool->acquire(&gifBubble, QStringLiteral("gif"),
+                                                 QUrl(QStringLiteral("file:///tmp/a.gif")), 0,
+                                                 VideoPlaybackArbiter::Animated);
+        QVERIFY(session);
+
+        QSignalSpy revoked(pool, &VideoPlaybackArbiter::revoked);
+        // Full screen for a GIF is the exclusive lane, but it must not leave
+        // the inline copy decoding the same clip behind the modal.
+        PlaybackSession *transferred = pool->acquire(&viewer, QStringLiteral("gif"), QUrl(), 0,
+                                                     VideoPlaybackArbiter::Exclusive);
+        QCOMPARE(transferred, session);
+        QCOMPARE(revoked.count(), 1);
+        QCOMPARE(revoked.first().first().value<QObject *>(), &gifBubble);
+        QVERIFY(pool->holds(&viewer));
+        QCOMPARE(pool->sessionFor(&viewer), session);
+    }
+
 private:
     /// A one-colour frame, the smallest thing captureFrame() will accept.
     static QVideoFrame frameOfColour(const QColor &colour)

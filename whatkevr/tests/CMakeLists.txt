@@ -125,6 +125,8 @@ add_test(NAME tst_mediaplayback COMMAND tst_mediaplayback)
 # as; nothing in this target opens a player.
 qt_add_executable(tst_videoarbiter
     tst_videoarbiter.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/media/playbacksession.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/media/playbacksession.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/media/videoarbiter.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/media/videoarbiter.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/app/settings.cpp

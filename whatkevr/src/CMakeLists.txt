@@ -21,6 +21,8 @@ set(WHATKEVR_SOURCES
     media/audioplayer.h
     media/mpvcore.cpp
     media/mpvcore.h
+    media/playbacksession.cpp
+    media/playbacksession.h
     media/videoarbiter.cpp
     media/videoarbiter.h
     media/videoframeprovider.cpp
