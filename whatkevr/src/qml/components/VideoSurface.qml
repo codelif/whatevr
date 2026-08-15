@@ -57,6 +57,11 @@ Item {
     /// The engine is opening, seeking or refilling. Show a spinner, never a
     /// failure.
     readonly property bool stalled: backend ? backend.surfaceStalled : false
+    /// The seek in flight and where it is headed. The transport displays the
+    /// target while one is pending so the clock does not keep running from
+    /// the pre-seek point.
+    readonly property bool seeking: backend ? backend.surfaceSeeking : false
+    readonly property real seekTarget: backend ? backend.surfaceSeekTarget : -1
     // Decoder errors and source teardown can reset position to zero before the
     // owner gets a chance to hand off. Keep the last meaningful value here.
     property real lastUsablePosition: 0

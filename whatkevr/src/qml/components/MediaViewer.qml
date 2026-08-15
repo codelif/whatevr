@@ -359,10 +359,12 @@ QQC2.Popup {
                 }
             }
 
-            // Opening a file, claiming a decoder, or waiting behind one.
+            // Opening a file, claiming a decoder, waiting behind one, or
+            // landing a seek. The last frame stays on screen during a seek,
+            // so without the indicator a slow one would look ignored.
             QQC2.BusyIndicator {
                 anchors.centerIn: parent
-                visible: root.buffering && !root.playbackFailed
+                visible: (root.buffering || surface.seeking) && !root.playbackFailed
                 running: visible
             }
 
@@ -621,7 +623,9 @@ QQC2.Popup {
 
                 QQC2.Label {
                     visible: root.hasTimeline
-                    text: root.formatTime(surface.position)
+                    // While a seek settles the clock shows where it is headed,
+                    // not the pre-seek point the engine still reports.
+                    text: root.formatTime(surface.seeking ? surface.seekTarget : surface.position)
                     color: "white"
                     font.pointSize: Kirigami.Theme.smallFont.pointSize
                 }
@@ -629,24 +633,50 @@ QQC2.Popup {
                 QQC2.Slider {
                     id: seekBar
 
+                    // The drag's destination, captured from onMoved, which
+                    // only user interaction fires. The release handler must
+                    // not read `value`: the Binding below shares the
+                    // pressedChanged notifier and can restore the stale
+                    // playback position into `value` before the handler runs,
+                    // which turned every scrub into a seek to where the clip
+                    // already was.
+                    property real dragTarget: -1
+
                     visible: root.hasTimeline
                     Layout.fillWidth: true
                     focusPolicy: Qt.NoFocus
                     from: 0
-                    to: Math.max(surface.duration, root.durationSecs, 1)
+                    // The decoder's duration once it has one; the sender's
+                    // declared duration is frequently wrong, and a bar scaled
+                    // past the real end turns "drag to the right edge" into a
+                    // seek beyond EOF.
+                    to: surface.duration > 0 ? surface.duration : Math.max(root.durationSecs, 1)
                     // Seek on release rather than on every pixel of the drag:
                     // an absolute seek per mouse move makes the decoder thrash
                     // and the picture stutter while scrubbing.
-                    onPressedChanged: if (!pressed) surface.seek(value)
+                    onMoved: dragTarget = value
+                    onPressedChanged: {
+                        if (pressed) {
+                            dragTarget = value
+                            return
+                        }
+                        if (dragTarget >= 0) {
+                            surface.seek(dragTarget)
+                        }
+                        dragTarget = -1
+                    }
 
                     // The bar follows playback except while it is being
-                    // dragged, when it follows the finger. Written as a Binding
-                    // rather than `value: pressed ? value : surface.position`,
-                    // which reads its own value and is a binding loop.
+                    // dragged, when it follows the finger, and while a seek is
+                    // settling, when it holds the destination instead of
+                    // snapping back to wherever the audio clock still is.
+                    // Written as a Binding rather than
+                    // `value: pressed ? value : surface.position`, which reads
+                    // its own value and is a binding loop.
                     Binding {
                         target: seekBar
                         property: "value"
-                        value: surface.position
+                        value: surface.seeking ? surface.seekTarget : surface.position
                         when: !seekBar.pressed
                         restoreMode: Binding.RestoreNone
                     }
@@ -665,7 +695,7 @@ QQC2.Popup {
 
                 QQC2.Label {
                     visible: root.hasTimeline
-                    text: root.formatTime(Math.max(surface.duration, root.durationSecs))
+                    text: root.formatTime(surface.duration > 0 ? surface.duration : root.durationSecs)
                     color: "white"
                     font.pointSize: Kirigami.Theme.smallFont.pointSize
                 }

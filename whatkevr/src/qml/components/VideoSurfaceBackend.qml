@@ -49,6 +49,12 @@ Item {
     /// its buffer). While this is true an absent picture is progress, not
     /// absence, and nothing above may escalate it to a failure.
     property bool surfaceStalled: false
+    /// The seek the engine is trying to land, in seconds, or -1 when none is
+    /// in flight. While one is, callers display the target rather than the
+    /// live clock: the engine's position keeps reporting the pre-seek point
+    /// for as long as the pipeline takes to catch up.
+    property real surfaceSeekTarget: -1
+    readonly property bool surfaceSeeking: surfaceSeekTarget >= 0
 
     signal endOfFile
 
