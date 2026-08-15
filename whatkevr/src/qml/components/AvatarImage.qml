@@ -15,7 +15,18 @@ Item {
     readonly property url avatarSource: Whatevr.ProtocolController.localFileUrl(avatarLocalPath)
     readonly property bool avatarBroken: statusProbe.status === Image.Error
     readonly property bool hasUsableAvatar: avatarLocalPath.length > 0 && !avatarBroken
-    readonly property bool initialsAreAlphabetic: /^[A-Za-z]+$/.test(initials)
+    // Letters in any script, not just ASCII: Cyrillic, Devanagari, CJK and
+    // accented names all deserve their initials rather than the anonymous
+    // icon. Built at runtime with a fallback so an engine without unicode
+    // property escapes degrades to the old ASCII test instead of failing to
+    // load the component.
+    readonly property bool initialsAreAlphabetic: {
+        try {
+            return new RegExp("^\\p{L}+$", "u").test(initials)
+        } catch (e) {
+            return /^[A-Za-z]+$/.test(initials)
+        }
+    }
     readonly property bool showInitials: !hasUsableAvatar && initialsAreAlphabetic
 
     // Emitted when the avatar file could not be loaded (e.g. a stale path

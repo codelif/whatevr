@@ -755,9 +755,21 @@ Kirigami.Page {
                 onEditMessageRequested: (messageId, text) => root.setEditTarget(messageId, text)
                 onMentionClicked: jid => contactInfoDialog.openFor({ isGroup: false, targetJid: jid })
                 onMentionAllClicked: root.openChatInfo()
-                onImageViewRequested: localPath => messageImageViewer.showImage(localPath)
-                onVideoViewRequested: (messageId, localPath, streamUrl, streamId, kind, durationSecs, startAt) =>
-                    messageImageViewer.showVideo(messageId, localPath, streamUrl, streamId, kind, durationSecs, startAt)
+                onImageViewRequested: (messageId, localPath) => {
+                    // The delegate only carries what it renders; the file name
+                    // and send time come from the row snapshot so Save As can
+                    // name and date the file after the message.
+                    const snapshot = messageView.messageSnapshot(messageId)
+                    messageImageViewer.showImage(localPath, messageId,
+                                                 snapshot ? String(snapshot.mediaFileName || "") : "",
+                                                 snapshot ? Number(snapshot.timestampUnix || 0) : 0)
+                }
+                onVideoViewRequested: (messageId, localPath, streamUrl, streamId, kind, durationSecs, startAt) => {
+                    const snapshot = messageView.messageSnapshot(messageId)
+                    messageImageViewer.showVideo(messageId, localPath, streamUrl, streamId, kind, durationSecs, startAt,
+                                                 snapshot ? String(snapshot.mediaFileName || "") : "",
+                                                 snapshot ? Number(snapshot.timestampUnix || 0) : 0)
+                }
             }
 
             // Full-screen viewer for message photos and video. Saving and
@@ -766,7 +778,7 @@ Kirigami.Page {
             MediaViewer {
                 id: messageImageViewer
 
-                onSaveRequested: (localPath, kind, fileName) => messageView.saveMedia(localPath, kind, fileName)
+                onSaveRequested: (localPath, kind, fileName, timestampUnix) => messageView.saveMedia(localPath, kind, fileName, timestampUnix)
                 onForwardRequested: messageId => messageView.openForwardPicker([messageId])
             }
 

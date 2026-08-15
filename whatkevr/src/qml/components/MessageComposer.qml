@@ -70,15 +70,22 @@ Frame {
     signal clearEditRequested()
     signal editConsumed()
 
-    // Prefill with the message body on entering edit mode, clear on leaving.
-    // editingOriginalText is set before editingMessageId at the call site, so it
-    // is already current when this fires.
+    /// Whatever was typed when edit mode took the input over, put back when it
+    /// ends. Entering and leaving edit used to silently destroy a half-typed
+    /// draft with no undo.
+    property string stashedDraft: ""
+
+    // Prefill with the message body on entering edit mode, restore the draft
+    // on leaving. editingOriginalText is set before editingMessageId at the
+    // call site, so it is already current when this fires.
     onEditingChanged: {
         if (root.editing) {
+            root.stashedDraft = input.getText(0, input.length)
             root.setText(root.editingOriginalText)
             root.forceInputFocus()
         } else {
-            root.setText("")
+            root.setText(root.stashedDraft)
+            root.stashedDraft = ""
         }
     }
 

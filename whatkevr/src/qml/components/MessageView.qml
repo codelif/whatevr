@@ -129,7 +129,7 @@ Item {
     // matching contact/group info dialog.
     signal mentionClicked(string jid)
     signal mentionAllClicked()
-    signal imageViewRequested(string localPath)
+    signal imageViewRequested(string messageId, string localPath)
     /// A video, GIF or video note asked to open full screen.
     signal videoViewRequested(string messageId, string localPath, string streamUrl, string streamId, string kind, int durationSecs, real startAt)
 
@@ -1642,7 +1642,7 @@ Item {
             onReplyRequested: (messageId, senderName, text, mediaKind, mediaMimeType, outgoing) => root.replyToMessageRequested(messageId, senderName, text, mediaKind, mediaMimeType, outgoing)
             onReplyPreviewActivated: messageId => root.jumpToReplyTarget(messageId)
             onReadMoreRequested: messageId => root.openMessageContent(messageId)
-            onImageActivated: localPath => root.imageViewRequested(localPath)
+            onImageActivated: (messageId, localPath) => root.imageViewRequested(messageId, localPath)
             onVideoActivated: (messageId, localPath, streamUrl, streamId, kind, durationSecs, startAt) => root.videoViewRequested(messageId, localPath, streamUrl, streamId, kind, durationSecs, startAt)
             onMentionClicked: jid => root.mentionClicked(jid)
             onMentionAllClicked: root.mentionAllClicked()

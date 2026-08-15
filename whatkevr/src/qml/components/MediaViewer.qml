@@ -32,8 +32,11 @@ QQC2.Popup {
     /// reached when it handed over. Read at load, so it is set before the
     /// surface engages.
     property real startAt: 0
-    /// Suggested name when saving, for kinds that carry one.
+    /// Suggested name when saving, for kinds that carry one, and the
+    /// message's own timestamp so a save is dated when it was sent rather
+    /// than when the dialog opened.
     property string fileName: ""
+    property real timestampUnix: 0
     property string returnMessageId: ""
     property real returnPosition: 0
     property bool returnPlaying: false
@@ -82,25 +85,27 @@ QQC2.Popup {
 
     signal forwardRequested(string messageId)
 
-    function showImage(path) {
+    function showImage(path, id, name, sentAtUnix) {
         kind = "image"
         localPath = path
         streamUrl = ""
-        messageId = ""
-        fileName = ""
+        messageId = id ?? ""
+        fileName = name ?? ""
+        timestampUnix = sentAtUnix ?? 0
         startAt = 0
         stillRevision = 0
         open()
     }
 
-    function showVideo(id, path, url, streamId, mediaKind, duration, at) {
+    function showVideo(id, path, url, streamId, mediaKind, duration, at, name, sentAtUnix) {
         kind = mediaKind && mediaKind.length > 0 ? mediaKind : "video"
         messageId = id
         localPath = path
         streamUrl = url
         activeStreamId = streamId ?? ""
         durationSecs = duration
-        fileName = ""
+        fileName = name ?? ""
+        timestampUnix = sentAtUnix ?? 0
         // Before open(), so the surface engages with it already set: the start
         // position is read once, when the file is loaded. Same for the still
         // the bubble just captured, which stands in until the decoder catches
@@ -137,11 +142,11 @@ QQC2.Popup {
 
     function saveMedia() {
         if (hasFile) {
-            saveRequested(localPath, kind, fileName)
+            saveRequested(localPath, kind, fileName, timestampUnix)
         }
     }
 
-    signal saveRequested(string localPath, string kind, string fileName)
+    signal saveRequested(string localPath, string kind, string fileName, real timestampUnix)
 
     parent: QQC2.Overlay.overlay
     modal: true
@@ -179,6 +184,8 @@ QQC2.Popup {
         localPath = ""
         messageId = ""
         kind = "image"
+        fileName = ""
+        timestampUnix = 0
         startAt = 0
         stillRevision = 0
         surface.speed = 1.0

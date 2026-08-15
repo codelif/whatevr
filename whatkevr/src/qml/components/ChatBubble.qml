@@ -149,7 +149,7 @@ Item {
     signal replyPreviewActivated(string messageId)
     signal readMoreRequested(string messageId)
     // A downloaded message photo was clicked: open it full screen.
-    signal imageActivated(string localPath)
+    signal imageActivated(string messageId, string localPath)
     // A video, GIF or video note asked to open full screen. The path and
     // duration ride along so the viewer needs no lookup, and startAt carries
     // the second the inline copy had reached, so opening full screen continues
@@ -1112,7 +1112,7 @@ Item {
                         acceptedButtons: Qt.LeftButton
                         enabled: root.hasLocalImage && !root.isSticker && !root.selectionModeActive
                         exclusiveSignals: TapHandler.SingleTap | TapHandler.DoubleTap
-                        onSingleTapped: root.imageActivated(root.mediaLocalPath)
+                        onSingleTapped: root.imageActivated(root.messageId, root.mediaLocalPath)
                     }
 
                     HoverHandler {
