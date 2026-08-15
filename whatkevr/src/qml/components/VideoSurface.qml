@@ -194,9 +194,16 @@ Item {
         target: root.session
 
         function onPlayingChanged() {
-            if (root.session && !root.session.playing && root.playing && root.grantHeld) {
-                root.externallyPaused()
+            if (!root.session || root.session.playing || !root.playing || !root.grantHeld) {
+                return
             }
+            // Except at the end of the clip: the engine holds the last frame by
+            // pausing itself, and calling that an external pause left a
+            // finished bubble claiming it was paused partway through.
+            if (root.session.atEnd) {
+                return
+            }
+            root.externallyPaused()
         }
     }
 
