@@ -62,6 +62,9 @@ Item {
     /// the pre-seek point.
     readonly property bool seeking: backend ? backend.surfaceSeeking : false
     readonly property real seekTarget: backend ? backend.surfaceSeekTarget : -1
+    /// The clip ran to its end and is parked on its last frame. Playing again
+    /// starts over, and the transport should offer that as a replay.
+    readonly property bool atEnd: backend ? backend.surfaceAtEnd : false
     // Decoder errors and source teardown can reset position to zero before the
     // owner gets a chance to hand off. Keep the last meaningful value here.
     property real lastUsablePosition: 0

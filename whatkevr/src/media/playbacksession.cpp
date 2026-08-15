@@ -79,7 +79,15 @@ void PlaybackSession::setPlaying(bool playing)
     }
     m_playing = playing;
     if (playing) {
+        // play() on an EndOfMedia player restarts from zero; the watchdog
+        // covers the engines that refuse and need a re-open instead, which
+        // preserves the guarantee that replay never resumes an exhausted
+        // engine.
+        const bool restartingFromEnd = atEnd();
         m_player.play();
+        if (restartingFromEnd) {
+            m_replayWatchdog.start();
+        }
     } else {
         m_player.pause();
     }

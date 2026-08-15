@@ -55,6 +55,9 @@ Item {
     /// for as long as the pipeline takes to catch up.
     property real surfaceSeekTarget: -1
     readonly property bool surfaceSeeking: surfaceSeekTarget >= 0
+    /// The clip ran to its end and is parked there. Play from here restarts
+    /// from the top, and the transport should say so.
+    property bool surfaceAtEnd: false
 
     signal endOfFile
 

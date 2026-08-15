@@ -125,6 +125,10 @@ QQC2.Popup {
         surface.seek(target)
     }
 
+    function togglePlayback() {
+        surface.playbackWanted = !surface.playbackWanted
+    }
+
     function cycleSpeed() {
         const speeds = [1.0, 1.5, 2.0]
         const index = speeds.indexOf(surface.speed)
@@ -159,7 +163,10 @@ QQC2.Popup {
             surface.rememberStill()
             returnMessageId = messageId
             returnPosition = surface.handoffPosition()
-            returnPlaying = surface.playbackWanted
+            // Escaping a video that never started must not make the bubble
+            // start it: wanting playback only counts once there was playback,
+            // a frame on screen or a position reached.
+            returnPlaying = surface.playbackWanted && (surface.hasFrame || surface.position > 0)
         }
     }
 
@@ -328,17 +335,17 @@ QQC2.Popup {
                 // up, since it is modal, but if it ever did the viewer must not
                 // sit there claiming to play.
                 onRevoked: surface.playbackWanted = false
-                // A clip that ran out is finished. Rewind rather than sit on
-                // the last frame with the transport still saying "pause". A GIF
-                // never gets here: it loops.
-                onEndOfFile: {
-                    surface.playbackWanted = false
-                    surface.seek(0)
-                }
+                // A clip that ran out is finished: stop wanting playback and
+                // leave the last frame on screen. The old seek(0) here ran
+                // against a player Qt had already stopped, which parked a
+                // pending seek nothing could flush; play on an ended clip
+                // restarts from zero on its own. A GIF never gets here when it
+                // loops.
+                onEndOfFile: surface.playbackWanted = false
 
                 TapHandler {
                     onTapped: {
-                        surface.playbackWanted = !surface.playbackWanted
+                        root.togglePlayback()
                         root.wakeChrome()
                     }
                 }
@@ -346,13 +353,16 @@ QQC2.Popup {
 
             // A paused full-screen video used to show a still frame and nothing
             // else, which is indistinguishable from a video that has stopped
-            // working. One obvious way back in.
+            // working. One obvious way back in; on a finished clip it says so
+            // and starts over.
             MediaOverlayButton {
                 anchors.centerIn: parent
                 visible: root.isVideo && !surface.playbackWanted && !root.playbackFailed
                 diameter: Kirigami.Units.gridUnit * 4
-                iconName: "media-playback-start-symbolic"
-                text: Whatevr.I18n.i18nc("@action:button", "Play")
+                iconName: surface.atEnd ? "media-playlist-repeat-symbolic" : "media-playback-start-symbolic"
+                text: surface.atEnd
+                    ? Whatevr.I18n.i18nc("@action:button", "Replay")
+                    : Whatevr.I18n.i18nc("@action:button", "Play")
                 onClicked: {
                     surface.playbackWanted = true
                     root.wakeChrome()
@@ -605,7 +615,7 @@ QQC2.Popup {
                     QQC2.ToolTip.visible: hovered
                     QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
                     Accessible.name: text
-                    onClicked: surface.playbackWanted = !surface.playbackWanted
+                    onClicked: root.togglePlayback()
                 }
 
                 QQC2.ToolButton {
@@ -779,7 +789,7 @@ QQC2.Popup {
             root.wakeChrome()
             switch (event.key) {
             case Qt.Key_Space:
-                surface.playbackWanted = !surface.playbackWanted
+                root.togglePlayback()
                 event.accepted = true
                 break
             case Qt.Key_Left:

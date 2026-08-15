@@ -34,6 +34,7 @@ VideoSurfaceBackend {
     surfaceHasFrame: root.sinkFrameSeen && (session ? session.hasVideo : false)
     surfaceStalled: session ? session.busy : false
     surfaceSeekTarget: session ? session.seekTarget : -1
+    surfaceAtEnd: session ? session.atEnd : false
     surfaceFailed: session ? session.failed : false
     surfaceErrorText: session ? session.errorText : ""
 

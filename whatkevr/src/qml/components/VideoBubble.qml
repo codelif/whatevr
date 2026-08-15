@@ -437,7 +437,11 @@ Item {
         function onInlineHandoff(messageId, seconds, resumePlayback) {
             if (messageId !== root.row.messageId)
                 return
-            root.resumeAt = Math.max(0, seconds)
+            // A viewer escaped before its first frame hands back zero; that
+            // must not overwrite a position this clip already had stored.
+            root.resumeAt = seconds > 0
+                ? seconds
+                : Whatevr.VideoPlayback.resumePosition(messageId)
             root.sessionSource = ""
             if (resumePlayback) {
                 root.latchAvailableSource()
