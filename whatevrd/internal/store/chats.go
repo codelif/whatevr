@@ -23,6 +23,7 @@ type Chat struct {
 	IsGroup              bool
 	IsPinned             bool
 	PinnedOrder          uint32
+	IsFavorite           bool
 	IsArchived           bool
 	IsMuted              bool
 	MuteEndTimestamp     int64
@@ -32,6 +33,60 @@ type Chat struct {
 	AvatarPictureID      string
 	AvatarStatus         string
 	AvatarCheckedAt      int64
+}
+
+type ChatFolder struct {
+	ID   int64
+	Name string
+}
+
+func (db *DB) ListChatFolders(ctx context.Context) ([]ChatFolder, error) {
+	rows, err := db.reader().QueryContext(ctx, `SELECT id, name FROM chat_folders ORDER BY name COLLATE NOCASE, id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var folders []ChatFolder
+	for rows.Next() {
+		var f ChatFolder
+		if err := rows.Scan(&f.ID, &f.Name); err != nil {
+			return nil, err
+		}
+		folders = append(folders, f)
+	}
+	return folders, rows.Err()
+}
+
+func (db *DB) CreateChatFolder(ctx context.Context, name string) (ChatFolder, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ChatFolder{}, errors.New("folder name is required")
+	}
+	res, err := db.conn.ExecContext(ctx, `INSERT INTO chat_folders(name) VALUES (?)`, name)
+	if err != nil {
+		return ChatFolder{}, err
+	}
+	id, err := res.LastInsertId()
+	return ChatFolder{ID: id, Name: name}, err
+}
+
+func (db *DB) RenameChatFolder(ctx context.Context, id int64, name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return errors.New("folder name is required")
+	}
+	_, err := db.conn.ExecContext(ctx, `UPDATE chat_folders SET name = ? WHERE id = ?`, name, id)
+	return err
+}
+
+func (db *DB) DeleteChatFolder(ctx context.Context, id int64) error {
+	_, err := db.conn.ExecContext(ctx, `DELETE FROM chat_folders WHERE id = ?`, id)
+	return err
+}
+
+func (db *DB) SetChatFolder(ctx context.Context, chatID string, folderID *int64) error {
+	_, err := db.conn.ExecContext(ctx, `UPDATE chats SET folder_id = ? WHERE id = ?`, folderID, chatID)
+	return err
 }
 
 const (
@@ -82,7 +137,7 @@ func (db *DB) ListChats(ctx context.Context, limit, offset int, afterChatID stri
 	}
 
 	const selectColumns = `
-		SELECT c.id, c.name, c.name_source, c.last_message, c.last_message_time, c.last_message_direction, c.last_message_status, c.unread_count, c.is_group, c.is_pinned, c.pinned_order, c.updated_at, c.is_archived, c.is_muted, c.mute_end_timestamp, c.history_exhausted,
+		SELECT c.id, c.name, c.name_source, c.last_message, c.last_message_time, c.last_message_direction, c.last_message_status, c.unread_count, c.is_group, c.is_pinned, c.pinned_order, c.is_favorite, c.updated_at, c.is_archived, c.is_muted, c.mute_end_timestamp, c.history_exhausted,
 		       COALESCE(NULLIF(a.local_path, ''), c.avatar_local_path), COALESCE(NULLIF(a.picture_id, ''), c.avatar_picture_id), COALESCE(NULLIF(a.status, ''), c.avatar_status), COALESCE(NULLIF(a.checked_at, 0), c.avatar_checked_at)
 		FROM chats c
 		LEFT JOIN avatars a ON a.subject_kind = 'chat' AND a.subject_id = c.id
@@ -158,16 +213,20 @@ func (db *DB) ListChats(ctx context.Context, limit, offset int, afterChatID stri
 // Chat list filters for ListChatsForView. The empty string means both direct
 // and group chats.
 const (
-	ChatFilterAll    = ""
-	ChatFilterDirect = "direct"
-	ChatFilterGroups = "groups"
+	ChatFilterAll      = ""
+	ChatFilterDirect   = "direct"
+	ChatFilterGroups   = "groups"
+	ChatFilterUnread   = "unread"
+	ChatFilterFavorite = "favorite"
 )
 
 // ChatListFilter selects which chats ListChatsForView returns.
 type ChatListFilter struct {
-	Kind     string // ChatFilterAll | ChatFilterDirect | ChatFilterGroups
-	Archived bool   // archived tab (true) vs the main list (false)
-	Limit    int    // <= 0 means no limit (whole filtered list)
+	Kind       string // ChatFilterAll | ChatFilterDirect | ChatFilterGroups | ChatFilterUnread | ChatFilterFavorite
+	Archived   bool   // archived tab (true) vs the main list (false)
+	UnreadOnly bool   // only chats with a non-zero unread badge
+	Limit      int    // <= 0 means no limit (whole filtered list)
+	FolderID   *int64
 }
 
 // ListChatsForView returns chats matching filter in list order (pinned first,
@@ -179,7 +238,7 @@ func (db *DB) ListChatsForView(ctx context.Context, filter ChatListFilter) ([]Ch
 	defer db.timeOp("ListChatsForView", time.Now())
 
 	query := `
-		SELECT c.id, c.name, c.name_source, c.last_message, c.last_message_time, c.last_message_direction, c.last_message_status, c.unread_count, c.is_group, c.is_pinned, c.pinned_order, c.updated_at, c.is_archived, c.is_muted, c.mute_end_timestamp, c.history_exhausted,
+		SELECT c.id, c.name, c.name_source, c.last_message, c.last_message_time, c.last_message_direction, c.last_message_status, c.unread_count, c.is_group, c.is_pinned, c.pinned_order, c.is_favorite, c.updated_at, c.is_archived, c.is_muted, c.mute_end_timestamp, c.history_exhausted,
 		       COALESCE(NULLIF(a.local_path, ''), c.avatar_local_path), COALESCE(NULLIF(a.picture_id, ''), c.avatar_picture_id), COALESCE(NULLIF(a.status, ''), c.avatar_status), COALESCE(NULLIF(a.checked_at, 0), c.avatar_checked_at)
 		FROM chats c
 		LEFT JOIN avatars a ON a.subject_kind = 'chat' AND a.subject_id = c.id
@@ -192,6 +251,16 @@ func (db *DB) ListChatsForView(ctx context.Context, filter ChatListFilter) ([]Ch
 		query += ` AND c.is_group = 0`
 	case ChatFilterGroups:
 		query += ` AND c.is_group = 1`
+	}
+	if filter.UnreadOnly || filter.Kind == ChatFilterUnread {
+		query += ` AND c.unread_count > 0`
+	}
+	if filter.Kind == ChatFilterFavorite {
+		query += ` AND c.is_favorite != 0`
+	}
+	if filter.FolderID != nil {
+		query += ` AND c.folder_id = ?`
+		args = append(args, *filter.FolderID)
 	}
 
 	query += `
@@ -234,7 +303,7 @@ func (db *DB) SearchChats(ctx context.Context, query string, limit int) ([]Chat,
 	}
 
 	rows, err := db.reader().QueryContext(ctx, `
-		SELECT c.id, c.name, c.name_source, c.last_message, c.last_message_time, c.last_message_direction, c.last_message_status, c.unread_count, c.is_group, c.is_pinned, c.pinned_order, c.updated_at, c.is_archived, c.is_muted, c.mute_end_timestamp, c.history_exhausted,
+		SELECT c.id, c.name, c.name_source, c.last_message, c.last_message_time, c.last_message_direction, c.last_message_status, c.unread_count, c.is_group, c.is_pinned, c.pinned_order, c.is_favorite, c.updated_at, c.is_archived, c.is_muted, c.mute_end_timestamp, c.history_exhausted,
 		       COALESCE(NULLIF(a.local_path, ''), c.avatar_local_path), COALESCE(NULLIF(a.picture_id, ''), c.avatar_picture_id), COALESCE(NULLIF(a.status, ''), c.avatar_status), COALESCE(NULLIF(a.checked_at, 0), c.avatar_checked_at)
 		FROM chats c
 		LEFT JOIN avatars a ON a.subject_kind = 'chat' AND a.subject_id = c.id
@@ -299,6 +368,14 @@ func (db *DB) GetChat(ctx context.Context, chatID string) (Chat, error) {
 	return getChatRow(ctx, db.reader(), chatID)
 }
 
+// TotalUnreadCount sums unread badges across chats, for the tray tooltip.
+func (db *DB) TotalUnreadCount(ctx context.Context) (int, error) {
+	defer db.timeOp("TotalUnreadCount", time.Now())
+	var total int
+	err := db.reader().QueryRowContext(ctx, `SELECT COALESCE(SUM(unread_count), 0) FROM chats`).Scan(&total)
+	return total, err
+}
+
 // GetChatForView returns one chat with the same display-name normalization as
 // ListChatsForView and SearchChats. GetChat intentionally preserves the stored
 // WhatsApp push-name fallback for daemon-internal callers.
@@ -316,6 +393,12 @@ func (db *DB) EnsureChat(ctx context.Context, chatID, name string, isGroup bool)
 
 func (db *DB) EnsureChatWithNameSource(ctx context.Context, chatID, name, nameSource string, isGroup bool) (Chat, error) {
 	if chatID == "" {
+		return Chat{}, nil
+	}
+	// Newsletters live in the channels directory and statuses in the status
+	// store; neither may materialize as chat rows (app-state sync at connect
+	// would otherwise resurrect purged rows).
+	if strings.HasSuffix(chatID, "@newsletter") || chatID == "status@broadcast" {
 		return Chat{}, nil
 	}
 	name = strings.TrimSpace(name)
@@ -377,6 +460,29 @@ func (db *DB) DeleteChat(ctx context.Context, chatID string) (bool, error) {
 		return false, err
 	}
 	return affected > 0, nil
+}
+
+// ChatIDsWithServer lists the chat ids living on one server suffix (e.g. all
+// newsletter rows). Used once to retire chats the old ingest misfiled.
+func (db *DB) ChatIDsWithServer(ctx context.Context, server string) ([]string, error) {
+	defer db.timeOp("ChatIDsWithServer", time.Now())
+	rows, err := db.reader().QueryContext(ctx, `SELECT id FROM chats WHERE id LIKE '%@' || ?`, server)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
 }
 
 // ClearChatMessages wipes a chat's transcript but keeps the chat row.
@@ -446,6 +552,25 @@ func (db *DB) UpdateChatPinState(ctx context.Context, chatID string, pinned bool
 		return Chat{}, false, err
 	}
 	return chat, true, nil
+}
+
+func (db *DB) UpdateChatFavoriteState(ctx context.Context, chatID string, favorite bool) (Chat, bool, error) {
+	if chatID == "" {
+		return Chat{}, false, nil
+	}
+	result, err := db.conn.ExecContext(ctx, `UPDATE chats SET is_favorite = ? WHERE id = ? AND is_favorite != ?`, boolToInt(favorite), chatID, boolToInt(favorite))
+	if err != nil {
+		return Chat{}, false, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return Chat{}, false, err
+	}
+	if affected == 0 {
+		return Chat{}, false, nil
+	}
+	chat, err := db.GetChat(ctx, chatID)
+	return chat, true, err
 }
 
 func (db *DB) UpdateChatArchiveState(ctx context.Context, chatID string, archived bool) (Chat, bool, error) {
@@ -1239,8 +1364,8 @@ func (db *DB) MigrateChatID(ctx context.Context, fromChatID, toChatID string) (C
 	}
 
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO chats (id, name, name_source, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group, is_pinned, pinned_order, is_archived, is_muted, mute_end_timestamp, history_exhausted, avatar_local_path, avatar_picture_id)
-		SELECT ?, name, name_source, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group, is_pinned, pinned_order, is_archived, is_muted, mute_end_timestamp, history_exhausted, avatar_local_path, avatar_picture_id
+		INSERT INTO chats (id, name, name_source, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group, is_pinned, pinned_order, is_favorite, is_archived, is_muted, mute_end_timestamp, history_exhausted, avatar_local_path, avatar_picture_id)
+		SELECT ?, name, name_source, last_message, last_message_time, last_message_direction, last_message_status, unread_count, is_group, is_pinned, pinned_order, is_favorite, is_archived, is_muted, mute_end_timestamp, history_exhausted, avatar_local_path, avatar_picture_id
 		FROM chats
 		WHERE id = ?
 		ON CONFLICT(id) DO UPDATE SET

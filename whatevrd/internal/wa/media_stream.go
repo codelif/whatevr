@@ -210,7 +210,8 @@ func (c *Client) ensureMediaStream(message appstore.Message, url, streamID strin
 	}
 
 	messageID, chatID := message.ID, message.ChatID
-	stream, err := mediastream.New(
+	stream, err := mediastream.NewWithContext(
+		c.backgroundContext(),
 		source,
 		finalPath+".part",
 		httpClient,

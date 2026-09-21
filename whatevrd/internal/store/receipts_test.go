@@ -99,7 +99,7 @@ func TestMarkMessageRevokedClearsContentAndUpdatesSummary(t *testing.T) {
 	saveOutgoingGroupMessage(t, db, ctx, "msg-1")
 	const messageID = "group@g.us:msg-1"
 
-	message, chat, changed, err := db.MarkMessageRevoked(ctx, messageID)
+	message, chat, changed, err := db.MarkMessageRevoked(ctx, messageID, false)
 	if err != nil {
 		t.Fatalf("mark revoked: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestMarkMessageRevokedClearsContentAndUpdatesSummary(t *testing.T) {
 	}
 
 	// Idempotent on repeat.
-	_, _, changedAgain, err := db.MarkMessageRevoked(ctx, messageID)
+	_, _, changedAgain, err := db.MarkMessageRevoked(ctx, messageID, false)
 	if err != nil {
 		t.Fatalf("repeat revoke: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestUpdateMessageTextRefusesRevokedMessage(t *testing.T) {
 	saveOutgoingGroupMessage(t, db, ctx, "msg-1")
 	const messageID = "group@g.us:msg-1"
 
-	if _, _, _, err := db.MarkMessageRevoked(ctx, messageID); err != nil {
+	if _, _, _, err := db.MarkMessageRevoked(ctx, messageID, false); err != nil {
 		t.Fatalf("mark revoked: %v", err)
 	}
 

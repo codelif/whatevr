@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -133,6 +134,9 @@ func (c *conn) reportReadError(err error) {
 		} else {
 			log.Printf("protocol: connection read timed out: %v", err)
 		}
+	case errors.Is(err, syscall.ECONNRESET):
+		// The peer quit without closing cleanly (a crashed or killed
+		// frontend). Routine desktop churn, not a framing failure.
 	default:
 		log.Printf("protocol: connection read error: %v", err)
 	}

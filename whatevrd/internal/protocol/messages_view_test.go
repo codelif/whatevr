@@ -114,7 +114,7 @@ func TestMessagesViewRevokeAsUpsert(t *testing.T) {
 	c.expectUpsert(sub, id)
 	c.expectReady(sub, true)
 
-	if _, _, _, err := db.MarkMessageRevoked(ctx, id); err != nil {
+	if _, _, _, err := db.MarkMessageRevoked(ctx, id, false); err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
 	daemon.PublishMessageUpdated(app.Message{ID: id, ChatID: chat, IsRevoked: true})
@@ -791,6 +791,199 @@ func appChatFor(t *testing.T, db *store.DB, chatID string) app.Chat {
 		t.Fatalf("get chat %q: %v", chatID, err)
 	}
 	return toTestAppChat(chat)
+}
+
+// An inbound view-once row keeps its real kind and keys in the store but must
+// render as the unsupported tombstone on the wire, with the view_once flag
+// set so the frontend can offer an explicit save.
+func TestMessagesViewInboundViewOnceRendersTombstone(t *testing.T) {
+	socketPath, _, db := startChatsTestServer(t)
+	chat := "c@s.whatsapp.net"
+	id := "vo-1"
+	if _, err := db.SaveMediaMessage(context.Background(), store.MediaMessageInput{
+		TextMessageInput: store.TextMessageInput{
+			ID:        id,
+			ChatID:    chat,
+			Text:      "View once photo",
+			Timestamp: time.Unix(1_700_000_000, 0),
+			Direction: store.DirectionIncoming,
+		},
+		MediaKind:     store.MediaKindImage,
+		MediaMimeType: "image/jpeg",
+		MediaPayload:  []byte{0x0a, 0x01, 0x61},
+		IsViewOnce:    true,
+	}); err != nil {
+		t.Fatalf("seed view-once: %v", err)
+	}
+
+	c := dialTest(t, socketPath)
+	c.hello()
+	sub := c.subscribe(2, fmt.Sprintf(`{"view":"messages","chat_id":%q}`, chat))
+	item := c.expectUpsert(sub, id)["item"].(map[string]any)
+	if item["kind"] != "unsupported" {
+		t.Fatalf("kind = %v, want unsupported", item["kind"])
+	}
+	if item["fallback"] != "View once photo" {
+		t.Fatalf("fallback = %v, want the tombstone label", item["fallback"])
+	}
+	if item["view_once"] != true {
+		t.Fatalf("view_once = %v, want true", item["view_once"])
+	}
+	c.expectReady(sub, true)
+}
+
+func TestMessagesViewLinkPreviewItemShape(t *testing.T) {
+	socketPath, _, db := startChatsTestServer(t)
+	chat := "c@s.whatsapp.net"
+	payload, err := store.EncodePayload(store.MessagePayload{LinkPreview: &store.LinkPreviewPayload{
+		URL: "https://example.com/a", Title: "Example", Description: "An example page", ThumbnailPath: "/cache/linkpreview.jpg",
+	}})
+	if err != nil {
+		t.Fatalf("encode preview: %v", err)
+	}
+	if _, err := db.SaveTextMessage(context.Background(), store.TextMessageInput{
+		ID:          "link-1",
+		ChatID:      chat,
+		Text:        "check https://example.com/a",
+		Timestamp:   time.Unix(1_700_000_000, 0),
+		Direction:   store.DirectionIncoming,
+		PayloadJSON: payload,
+	}); err != nil {
+		t.Fatalf("seed link message: %v", err)
+	}
+
+	c := dialTest(t, socketPath)
+	c.hello()
+	sub := c.subscribe(2, fmt.Sprintf(`{"view":"messages","chat_id":%q}`, chat))
+	item := c.expectUpsert(sub, "link-1")["item"].(map[string]any)
+	preview, ok := item["link_preview"].(map[string]any)
+	if !ok {
+		t.Fatalf("link item missing link_preview: %v", item)
+	}
+	if preview["url"] != "https://example.com/a" || preview["title"] != "Example" || preview["description"] != "An example page" || preview["thumbnail_path"] != "/cache/linkpreview.jpg" {
+		t.Fatalf("link preview fields wrong: %v", preview)
+	}
+	c.expectReady(sub, true)
+}
+
+func TestMessagesViewPollContactLocationShapes(t *testing.T) {
+	socketPath, _, db := startChatsTestServer(t)
+	chat := "c@s.whatsapp.net"
+	base := time.Unix(1_700_000_000, 0)
+	pollPayload, err := store.EncodePayload(store.MessagePayload{Poll: &store.PollPayload{
+		Question: "dinner?", SelectableCount: 1,
+	}})
+	if err != nil {
+		t.Fatalf("encode poll: %v", err)
+	}
+	if _, err := db.SaveMediaMessage(context.Background(), store.MediaMessageInput{
+		TextMessageInput: store.TextMessageInput{
+			ID:          "poll-1",
+			ChatID:      chat,
+			Timestamp:   base,
+			Direction:   store.DirectionIncoming,
+			PayloadJSON: pollPayload,
+		},
+		MediaKind:      store.MediaKindPoll,
+		PayloadSummary: "dinner?",
+	}); err != nil {
+		t.Fatalf("seed poll: %v", err)
+	}
+	if err := db.SavePollOptions(context.Background(), "poll-1", []store.PollOption{
+		{Index: 0, Name: "yes", SHA256: []byte("hash-yes")},
+		{Index: 1, Name: "no", SHA256: []byte("hash-no")},
+	}); err != nil {
+		t.Fatalf("seed poll options: %v", err)
+	}
+	contactPayload, err := store.EncodePayload(store.MessagePayload{Contacts: &store.ContactsPayload{
+		Cards: []store.ContactCard{{
+			DisplayName: "Bob",
+			Phones:      []store.ContactField{{Label: "CELL", Value: "+1234"}},
+		}},
+	}})
+	if err != nil {
+		t.Fatalf("encode contact: %v", err)
+	}
+	if _, err := db.SaveMediaMessage(context.Background(), store.MediaMessageInput{
+		TextMessageInput: store.TextMessageInput{
+			ID:          "contact-1",
+			ChatID:      chat,
+			Text:        "Bob",
+			Timestamp:   base.Add(time.Second),
+			Direction:   store.DirectionIncoming,
+			PayloadJSON: contactPayload,
+		},
+		MediaKind:      store.MediaKindContact,
+		PayloadSummary: "Bob",
+	}); err != nil {
+		t.Fatalf("seed contact: %v", err)
+	}
+	locationPayload, err := store.EncodePayload(store.MessagePayload{Location: &store.LocationPayload{
+		Latitude: 1.5, Longitude: 2.5, Name: "Here",
+	}})
+	if err != nil {
+		t.Fatalf("encode location: %v", err)
+	}
+	if _, err := db.SaveMediaMessage(context.Background(), store.MediaMessageInput{
+		TextMessageInput: store.TextMessageInput{
+			ID:          "loc-1",
+			ChatID:      chat,
+			Text:        "Here",
+			Timestamp:   base.Add(2 * time.Second),
+			Direction:   store.DirectionIncoming,
+			PayloadJSON: locationPayload,
+		},
+		MediaKind:      store.MediaKindLocation,
+		PayloadSummary: "Here",
+	}); err != nil {
+		t.Fatalf("seed location: %v", err)
+	}
+
+	c := dialTest(t, socketPath)
+	c.hello()
+	sub := c.subscribe(2, fmt.Sprintf(`{"view":"messages","chat_id":%q}`, chat))
+	items := map[string]map[string]any{}
+	for _, id := range []string{"poll-1", "contact-1", "loc-1"} {
+		msg := c.recvEvent()
+		item, ok := msg["item"].(map[string]any)
+		if !ok {
+			t.Fatalf("upsert without an item: %v", msg)
+		}
+		items[item["id"].(string)] = item
+		_ = id
+	}
+	pollItem := items["poll-1"]
+	poll, ok := pollItem["poll"].(map[string]any)
+	if !ok || poll["question"] != "dinner?" {
+		t.Fatalf("poll item wrong: %v", pollItem)
+	}
+	options, ok := poll["options"].([]any)
+	if !ok || len(options) != 2 || options[0].(map[string]any)["name"] != "yes" {
+		t.Fatalf("poll options wrong: %v", poll)
+	}
+	contactItem := items["contact-1"]
+	contacts, ok := contactItem["contacts"].(map[string]any)
+	if !ok {
+		t.Fatalf("contact item wrong: %v", contactItem)
+	}
+	cards, ok := contacts["cards"].([]any)
+	if !ok || len(cards) != 1 {
+		t.Fatalf("contact cards wrong: %v", contacts)
+	}
+	card := cards[0].(map[string]any)
+	if card["display_name"] != "Bob" {
+		t.Fatalf("contact card wrong: %v", card)
+	}
+	phones, ok := card["phones"].([]any)
+	if !ok || len(phones) != 1 || phones[0].(map[string]any)["value"] != "+1234" {
+		t.Fatalf("contact phones wrong: %v", card)
+	}
+	locItem := items["loc-1"]
+	loc, ok := locItem["location"].(map[string]any)
+	if !ok || loc["lat"] != float64(1.5) || loc["lng"] != float64(2.5) || loc["name"] != "Here" {
+		t.Fatalf("location item wrong: %v", locItem)
+	}
+	c.expectReady(sub, true)
 }
 
 // A business message crosses as one card whatever wire shape it arrived in, and

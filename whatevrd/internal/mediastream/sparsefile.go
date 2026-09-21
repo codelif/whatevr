@@ -161,7 +161,14 @@ func (s *SparseFile) PresentBytes() int64 {
 	if s.presentCount == len(s.present) {
 		return s.plaintextLen
 	}
-	return int64(s.presentCount) * ChunkSize
+	return minInt64(s.plaintextLen, int64(s.presentCount)*ChunkSize)
+}
+
+func minInt64(a, b int64) int64 {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // Size is the full plaintext length.

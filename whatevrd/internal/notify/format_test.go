@@ -67,3 +67,13 @@ func TestFormatPreviewDisabledHidesText(t *testing.T) {
 		t.Fatalf("expected hidden preview, got %+v", content)
 	}
 }
+
+func TestFormatActionsIncludeReadAndReplyWhenSupported(t *testing.T) {
+	content := FormatMessage(Capabilities{Actions: true, InlineReply: true}, app.Message{Text: "hello"}, app.Chat{Name: "Alice"}, Options{Preview: true})
+	if len(content.Actions) != 6 || content.Actions[2] != "mark-read" || content.Actions[4] != "reply" {
+		t.Fatalf("unexpected notification actions: %#v", content.Actions)
+	}
+	if content.Hints["x-kde-reply"] != "reply" {
+		t.Fatalf("missing inline reply hint: %#v", content.Hints)
+	}
+}

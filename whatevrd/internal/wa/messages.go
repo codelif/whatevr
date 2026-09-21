@@ -236,6 +236,7 @@ func (c *Client) processHistorySyncData(ctx context.Context, data *waHistorySync
 			kept, keptKnown := historyKeepState(webMsg)
 			if textInput, ok := c.textMessageInput(ctx, parsedEvt, opts); ok {
 				input := textInput
+				input.SenderDevice = parsedEvt.Info.Sender.Device
 				pending = append(pending, historySaveItem{
 					item:          appstore.MessageSaveItem{Text: &input},
 					id:            input.ID,
@@ -246,6 +247,7 @@ func (c *Client) processHistorySyncData(ctx context.Context, data *waHistorySync
 				})
 			} else if mediaInput, ok := c.mediaMessageInput(ctx, parsedEvt, opts); ok {
 				input := mediaInput
+				input.SenderDevice = parsedEvt.Info.Sender.Device
 				pending = append(pending, historySaveItem{
 					item:          appstore.MessageSaveItem{Media: &input},
 					id:            input.ID,
@@ -439,13 +441,35 @@ func historySyncConversationPinState(conv *waHistorySync.Conversation) (present 
 	return true, order > 0, order
 }
 
-// handleMessage returns false only when the message could not be stored, which
-// leaves whatsmeow's ack unsent so the server delivers it again. Sub-handlers
-// mostly report success regardless; history sync is the exception, because a
-// dropped chunk notification costs a whole slice of history.
 func (c *Client) handleMessage(ctx context.Context, evt *events.Message, offlineSync bool) bool {
 	if evt != nil && evt.Message != nil {
 		evt.Message = unwrapNestedMessage(evt.Message)
+	}
+	// Contact statuses ride the same event as chat messages but live outside
+	// chats; route them before any handler that would file them as one.
+	if isStatusBroadcast(evt) {
+		if !offlineSync {
+			c.ingestStatusUpdate(ctx, evt)
+		}
+		return true
+	}
+	// Channel posts ride the same event too but belong to the Channels tab;
+	// filing them as chats would put every followed channel's feed in the
+	// chat list. The channel_messages view fetches live and never stores, so
+	// there is nothing to file — just nudge open channel views to refetch.
+	// Any chat row the old ingest filed (or a racing writer recreated) is
+	// retired on the spot.
+	if evt.Info.Chat.Server == types.NewsletterServer {
+		if !offlineSync {
+			c.daemon.PublishChannelsChanged()
+			c.notifyChannelPost(ctx, evt)
+			if existed, err := c.store.DeleteChat(ctx, evt.Info.Chat.String()); err != nil {
+				c.log.Warnf("Failed to retire newsletter chat %s: %v", evt.Info.Chat.String(), err)
+			} else if existed {
+				c.daemon.PublishChatDeleted(evt.Info.Chat.String())
+			}
+		}
+		return true
 	}
 	if handled, stored := c.handleManualHistorySyncNotification(ctx, evt); handled {
 		return stored
@@ -541,7 +565,7 @@ func (c *Client) handleRevokeMessage(ctx context.Context, evt *events.Message, o
 	}
 
 	internalID := internalMessageIDForChat(chatID, types.MessageID(targetID))
-	message, chat, changed, err := c.store.MarkMessageRevoked(ctx, internalID)
+	message, chat, changed, err := c.store.MarkMessageRevoked(ctx, internalID, c.appPreferences().AntiDelete)
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			c.log.Warnf("Failed to mark message %s revoked: %v", internalID, err)
@@ -751,6 +775,7 @@ func (c *Client) registerSavedMessage(ctx context.Context, message appstore.Mess
 // nothing handles, because neither of those gets better on redelivery.
 func (c *Client) ingestMessage(ctx context.Context, evt *events.Message, opts ingestOptions) (appstore.SavedTextMessage, bool, bool) {
 	if textInput, ok := c.textMessageInput(ctx, evt, opts); ok {
+		textInput.SenderDevice = evt.Info.Sender.Device
 		saved, err := c.store.SaveTextMessage(ctx, textInput)
 		if err != nil {
 			c.log.Errorf("Failed to store text message %s: %v", textInput.ID, err)
@@ -787,6 +812,7 @@ func (c *Client) ingestMessage(ctx context.Context, evt *events.Message, opts in
 	}
 
 	if mediaInput, ok := c.mediaMessageInput(ctx, evt, opts); ok {
+		mediaInput.SenderDevice = evt.Info.Sender.Device
 		saved, err := c.store.SaveMediaMessage(ctx, mediaInput)
 		if err != nil {
 			c.log.Errorf("Failed to store media message %s: %v", mediaInput.ID, err)
@@ -806,6 +832,7 @@ func (c *Client) ingestMessage(ctx context.Context, evt *events.Message, opts in
 		} else if ok {
 			saved.Message = updated
 		}
+		c.recordInboundStickerRecency(ctx, mediaInput)
 		c.registerSavedMessage(ctx, saved.Message, evt.Message, evt.Info.Timestamp, opts.source == sourceLive)
 		if opts.source == sourceLive {
 			c.log.Infof("Stored media message %s from %s", saved.Message.ID, saved.Message.SenderID)
@@ -839,6 +866,36 @@ func (c *Client) ingestMessage(ctx context.Context, evt *events.Message, opts in
 	}
 
 	return appstore.SavedTextMessage{}, false, true
+}
+
+// recordInboundStickerRecency files a received sticker in the local Recents
+// library, so stickers arriving from the phone (or any sender) show up in
+// the picker the way the phone's own recents do. Own sends are already
+// recorded by SendSticker, and history sync seeds recents with weights, so
+// only inbound live/offline rows land here. The row is created when needed
+// (files download lazily on first picker display); existing rows only move
+// up via last_used, and phone-initiated removals still win through
+// ClearStickerRecency.
+func (c *Client) recordInboundStickerRecency(ctx context.Context, input appstore.MediaMessageInput) {
+	if input.MediaKind != appstore.MediaKindSticker || input.MediaCacheKey == "" {
+		return
+	}
+	if input.Direction != appstore.DirectionIncoming {
+		return
+	}
+	if err := c.store.TouchRecentSticker(ctx, appstore.Sticker{
+		CacheKey:       input.MediaCacheKey,
+		MimeType:       input.MediaMimeType,
+		IsAnimated:     input.MediaAnimated,
+		Width:          input.MediaWidth,
+		Height:         input.MediaHeight,
+		StickerPayload: input.MediaPayload,
+		LastUsed:       time.Now().Unix(),
+	}); err != nil {
+		c.log.Debugf("Failed to record inbound sticker recency for %s: %v", input.ID, err)
+		return
+	}
+	c.publishStickerLibraryChangedDebounced(app.StickerSourceRecent)
 }
 
 func (c *Client) clearComposingAfterLiveIncomingMessage(message app.Message) {
@@ -961,8 +1018,8 @@ func (c *Client) mediaInputBase(ctx context.Context, evt *events.Message, opts i
 		Mentions: c.resolveMentions(ctx, mentionedJIDsFromContextInfo(contextInfo)),
 		// The sender's client marks forwarded copies in the same context
 		// info; without this only our own forwards (flagged at send time)
-		// ever rendered a forwarded header, so forwarded-to-us rows showed
-		// it on the phone but never on the desktop.
+		// ever rendered the header, so forwarded-to-us rows showed it on
+		// the phone but never on the desktop.
 		IsForwarded: contextInfo.GetIsForwarded(),
 	}, chatID, true
 }
@@ -1090,7 +1147,7 @@ func (c *Client) documentMessageInput(ctx context.Context, evt *events.Message, 
 		return appstore.MediaMessageInput{}, false
 	}
 
-	base, chatID, ok := c.mediaInputBase(ctx, evt, opts, docMsg.GetCaption(), docMsg.GetContextInfo())
+	base, _, ok := c.mediaInputBase(ctx, evt, opts, docMsg.GetCaption(), docMsg.GetContextInfo())
 	if !ok {
 		return appstore.MediaMessageInput{}, false
 	}
@@ -1110,16 +1167,13 @@ func (c *Client) documentMessageInput(ctx context.Context, evt *events.Message, 
 	}
 
 	return appstore.MediaMessageInput{
-		TextMessageInput:        base,
-		MediaKind:               appstore.MediaKindDocument,
-		MediaMimeType:           mimeType,
-		MediaThumbnailLocalPath: c.saveMessageThumbnail(chatID, base.ID, docMsg.GetJPEGThumbnail()),
-		MediaWidth:              int32(docMsg.GetThumbnailWidth()),
-		MediaHeight:             int32(docMsg.GetThumbnailHeight()),
-		MediaPayload:            payload,
-		MediaSizeBytes:          int64(docMsg.GetFileLength()),
-		MediaFileName:           fileName,
-		MediaPageCount:          int32(docMsg.GetPageCount()),
+		TextMessageInput: base,
+		MediaKind:        appstore.MediaKindDocument,
+		MediaMimeType:    mimeType,
+		MediaPayload:     payload,
+		MediaSizeBytes:   int64(docMsg.GetFileLength()),
+		MediaFileName:    fileName,
+		MediaPageCount:   int32(docMsg.GetPageCount()),
 	}, true
 }
 
@@ -1292,7 +1346,7 @@ func (c *Client) unsupportedMessageInput(ctx context.Context, evt *events.Messag
 		return appstore.MediaMessageInput{}, false
 	}
 
-	return appstore.MediaMessageInput{
+	input := appstore.MediaMessageInput{
 		TextMessageInput: base,
 		MediaKind:        appstore.MediaKindUnsupported,
 		// Keep the marshalled payload even though nothing reads it today. A
@@ -1300,7 +1354,57 @@ func (c *Client) unsupportedMessageInput(ctx context.Context, evt *events.Messag
 		// build learned its kind, which is why every location and poll ingested
 		// before this change stays grey forever. This one will not.
 		MediaPayload: marshalMessagePayload(evt.Message),
-	}, true
+	}
+	// Inbound view-once media keeps its keys on the row (real kind + payload)
+	// so an explicit `media.save` can fetch it later. It still renders as a
+	// tombstone: messageKind() forces inbound view-once rows to the
+	// `unsupported` wire kind, so no auto-download policy ever picks them up.
+	if kind, mime, payload, ok := viewOnceTombstoneAttrs(evt); ok {
+		input.MediaKind = kind
+		input.MediaMimeType = mime
+		input.MediaPayload = payload
+		input.IsViewOnce = true
+	}
+	return input, true
+}
+
+// viewOnceTombstoneAttrs extracts the savable facts of an inbound view-once
+// photo/video/voice note: the real media kind plus the wire payload (media
+// keys) that a later explicit `media.save` can download with. The row still
+// renders as a tombstone — nothing here fetches bytes on its own — so the
+// sender's "view on your phone" intent survives until the user deliberately
+// overrides it per message.
+func viewOnceTombstoneAttrs(evt *events.Message) (kind string, mime string, payload []byte, ok bool) {
+	if evt == nil || evt.Message == nil || !evt.IsViewOnce {
+		return "", "", nil, false
+	}
+	msg := evt.Message
+	if img := msg.GetImageMessage(); img != nil {
+		payload, err := proto.Marshal(img)
+		if err != nil {
+			return "", "", nil, false
+		}
+		return appstore.MediaKindImage, defaultMime(img.GetMimetype(), "image/jpeg"), payload, true
+	}
+	if video := msg.GetVideoMessage(); video != nil {
+		payload, err := proto.Marshal(video)
+		if err != nil {
+			return "", "", nil, false
+		}
+		return appstore.MediaKindVideo, defaultMime(video.GetMimetype(), "video/mp4"), payload, true
+	}
+	if audio := msg.GetAudioMessage(); audio != nil {
+		payload, err := proto.Marshal(audio)
+		if err != nil {
+			return "", "", nil, false
+		}
+		kind := appstore.MediaKindAudio
+		if audio.GetPTT() {
+			kind = appstore.MediaKindVoice
+		}
+		return kind, defaultMime(audio.GetMimetype(), "audio/ogg; codecs=opus"), payload, true
+	}
+	return "", "", nil, false
 }
 
 // storeBackfilledMessageSecret persists the message secret of a history-synced
@@ -2391,6 +2495,7 @@ func toDaemonChat(chat appstore.Chat) app.Chat {
 		IsGroup:              chat.IsGroup,
 		IsPinned:             chat.IsPinned,
 		PinnedOrder:          chat.PinnedOrder,
+		IsFavorite:           chat.IsFavorite,
 		IsArchived:           chat.IsArchived,
 		IsMuted:              chat.IsMuted,
 		MuteEndTimestamp:     chat.MuteEndTimestamp,

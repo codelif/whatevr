@@ -19,6 +19,7 @@ type Capabilities struct {
 	ImagePath   bool
 	Persistence bool
 	Sound       bool
+	InlineReply bool
 }
 
 type Content struct {
@@ -55,6 +56,8 @@ func ParseCapabilities(values []string) Capabilities {
 			caps.Persistence = true
 		case "sound":
 			caps.Sound = true
+		case "inline-reply", "x-kde-reply":
+			caps.InlineReply = true
 		}
 	}
 	return caps
@@ -91,7 +94,11 @@ func FormatMessage(caps Capabilities, message app.Message, chat app.Chat, opts O
 	// with our own playback. caps.Sound is still parsed for capability probing.
 
 	if caps.Actions {
-		content.Actions = []string{"default", "Open Chat"}
+		content.Actions = []string{"default", "Open Chat", "mark-read", "Mark as read"}
+		if caps.InlineReply {
+			content.Actions = append(content.Actions, "reply", "Reply")
+			content.Hints["x-kde-reply"] = "reply"
+		}
 	}
 
 	if (caps.ImagePath || caps.IconStatic) && strings.TrimSpace(chat.AvatarLocalPath) != "" {

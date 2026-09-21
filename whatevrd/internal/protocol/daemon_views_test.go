@@ -67,7 +67,27 @@ func (f *fakePendingCounter) ListPinnedMessages(context.Context, string) ([]stor
 	return nil, nil
 }
 
-func (f *fakePendingCounter) ListChatMediaMessages(context.Context, string, int, string) ([]store.Message, error) {
+func (f *fakePendingCounter) ListChatMediaMessages(context.Context, string, int, string, []string) ([]store.Message, error) {
+	return nil, nil
+}
+
+func (f *fakePendingCounter) ListChatLinkMessages(context.Context, string, int, string) ([]store.Message, error) {
+	return nil, nil
+}
+
+func (f *fakePendingCounter) ListChannels(context.Context) ([]store.Channel, error) {
+	return nil, nil
+}
+
+func (f *fakePendingCounter) ListStatusUpdates(context.Context, int) ([]store.StatusUpdate, error) {
+	return nil, nil
+}
+
+func (f *fakePendingCounter) ListKeptStatusSenders(context.Context) ([]string, error) {
+	return nil, nil
+}
+
+func (f *fakePendingCounter) ListMutedStatusSenders(context.Context) ([]string, error) {
 	return nil, nil
 }
 

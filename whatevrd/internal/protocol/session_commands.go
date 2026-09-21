@@ -44,6 +44,25 @@ func (h commandHandlers) daemonReconnect(_ *conn, req request) (any, *Error) {
 	return nil, mapCommandError(h.actions.Reconnect(context.Background()))
 }
 
+// daemon.shutdown stops the daemon after the ack flushes, so Quit removes
+// the daemon-owned tray icon too instead of leaving it running headless.
+// main's defers (WA close, DB close, lock release) still run on the way out,
+// and Restart=on-failure does not restart a clean exit.
+func (h commandHandlers) daemonShutdown(_ *conn, req request) (any, *Error) {
+	if err := rejectNonEmptyParams(req.Params); err != nil {
+		return nil, err
+	}
+	if h.server == nil {
+		return nil, errorf(CodeInternal, "shutdown unavailable")
+	}
+	server := h.server
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		server.Shutdown()
+	}()
+	return map[string]any{}, nil
+}
+
 func (h commandHandlers) accountLogout(ctx context.Context, _ *conn, req request) (any, *Error) {
 	if err := h.requireActions(); err != nil {
 		return nil, err

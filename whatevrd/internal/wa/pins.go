@@ -233,6 +233,10 @@ func (c *Client) reconcileRegularAppState(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to fetch regular_high app state: %w", err)
 	}
+	// Status mutes ride the same regular_high snapshot (IndexUserStatusMute);
+	// the regular_low snapshot above never carries them, so reconciling from
+	// it would wipe every mute on connect.
+	c.reconcileMutedStatusesFromEvents(ctx, highEvents)
 	return c.reconcileMutedChatsFromEvents(ctx, highEvents)
 }
 
@@ -252,6 +256,9 @@ func (c *Client) recoverPinnedChatsFromAppState(ctx context.Context) error {
 	if err := c.reconcileArchivedChatsFromEvents(ctx, eventsToDispatch); err != nil {
 		c.log.Warnf("Failed to reconcile archived chats from app state: %v", err)
 	}
+	// No muted-status reconcile here: status mutes live in regular_high and
+	// this recovery only replays regular_low — reconciling from it would wipe
+	// every mute. The next full sync (and live UserStatusMute events) cover it.
 	c.reconcileMarkReadFromEvents(ctx, eventsToDispatch)
 	return c.reconcilePinnedChatsFromEvents(ctx, eventsToDispatch)
 }

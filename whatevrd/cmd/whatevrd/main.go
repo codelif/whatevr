@@ -2,18 +2,27 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log"
+	"os"
 	"os/signal"
 	"syscall"
 
 	"whatevrd/internal/app"
+	"whatevrd/internal/backup"
+	"whatevrd/internal/logfile"
 	"whatevrd/internal/notify"
 	"whatevrd/internal/protocol"
 	"whatevrd/internal/store"
+	"whatevrd/internal/tray"
 	"whatevrd/internal/wa"
 )
 
 func main() {
+	restoreBundle := flag.String("restore", "", "restore a backup bundle created by daemon.backup_export and exit (the daemon must be stopped)")
+	restorePassphrase := flag.String("restore-passphrase", "", "passphrase for an encrypted backup bundle (prefer WHATEVR_BACKUP_PASSPHRASE)")
+	flag.Parse()
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -25,6 +34,12 @@ func main() {
 	if err := paths.Ensure(); err != nil {
 		log.Fatalf("create runtime/data directories: %v", err)
 	}
+
+	// Debug log: stderr plus a size-rotated file in the cache dir. First
+	// thing after the dirs exist, so every later log line is captured.
+	logHandle := logfile.Init(paths.CacheDir)
+	defer logHandle.Close()
+	log.Printf("debug log: %s", logHandle.Path())
 
 	// Adopt a systemd-activated socket if present (and clear LISTEN_* so it is
 	// never inherited by child processes). nil means run standalone.
@@ -38,6 +53,21 @@ func main() {
 		log.Fatalf("acquire process lock: %v", err)
 	}
 	defer processLock.Close()
+
+	// Offline restore runs before anything opens the databases; holding the
+	// process lock above is what guarantees no live daemon is writing while
+	// the bundle lands. The lock refuses when one is running.
+	if *restoreBundle != "" {
+		passphrase := []byte(*restorePassphrase)
+		if len(passphrase) == 0 {
+			passphrase = []byte(os.Getenv("WHATEVR_BACKUP_PASSPHRASE"))
+		}
+		if err := backup.Restore(paths, *restoreBundle, passphrase); err != nil {
+			log.Fatalf("restore: %v", err)
+		}
+		log.Printf("restored backup %s", *restoreBundle)
+		return
+	}
 
 	db, err := store.Open(ctx, paths.DatabasePath)
 	if err != nil {
@@ -62,6 +92,10 @@ func main() {
 	if notificationWorker != nil {
 		notificationWorker.Start(ctx)
 	}
+
+	// Daemon tray icon (StatusNotifierItem): connection state + unread count.
+	// Best-effort — a missing session bus or watcher only logs.
+	go tray.Start(ctx, daemon, db, protocolServer)
 
 	waClient, err := wa.New(ctx, paths, daemon, db, notificationWorker)
 	if err != nil {

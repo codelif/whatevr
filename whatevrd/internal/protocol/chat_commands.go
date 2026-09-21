@@ -40,6 +40,23 @@ func (h commandHandlers) chatMarkRead(ctx context.Context, _ *conn, req request)
 	return nil, mapCommandError(err)
 }
 
+// chat.mark_all_read marks every unread message read in every chat (local
+// rows, badges, and upstream read receipts), returning how many chats had
+// unread.
+func (h commandHandlers) chatMarkAllRead(ctx context.Context, _ *conn, req request) (any, *Error) {
+	if err := h.requireActions(); err != nil {
+		return nil, err
+	}
+	if err := rejectNonEmptyParams(req.Params); err != nil {
+		return nil, err
+	}
+	marked, err := h.actions.MarkAllChatsRead(ctx)
+	if perr := mapCommandError(err); perr != nil {
+		return nil, perr
+	}
+	return map[string]any{"marked_chats": marked}, nil
+}
+
 type chatPinParams struct {
 	ChatID string `json:"chat_id"`
 	Pinned *bool  `json:"pinned"`
@@ -60,6 +77,29 @@ func (h commandHandlers) chatPin(ctx context.Context, _ *conn, req request) (any
 		return nil, errorf(CodeInvalidParams, "pinned is required")
 	}
 	_, err := h.actions.SetChatPinned(ctx, strings.TrimSpace(p.ChatID), *p.Pinned)
+	return nil, mapCommandError(err)
+}
+
+type chatFavoriteParams struct {
+	ChatID   string `json:"chat_id"`
+	Favorite *bool  `json:"favorite"`
+}
+
+func (h commandHandlers) chatFavorite(ctx context.Context, _ *conn, req request) (any, *Error) {
+	if err := h.requireActions(); err != nil {
+		return nil, err
+	}
+	var p chatFavoriteParams
+	if err := decodeParams(req.Params, &p); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(p.ChatID) == "" {
+		return nil, errorf(CodeInvalidParams, "chat_id is required")
+	}
+	if p.Favorite == nil {
+		return nil, errorf(CodeInvalidParams, "favorite is required")
+	}
+	_, err := h.actions.SetChatFavorite(ctx, strings.TrimSpace(p.ChatID), *p.Favorite)
 	return nil, mapCommandError(err)
 }
 
@@ -114,6 +154,34 @@ func (h commandHandlers) chatMute(ctx context.Context, _ *conn, req request) (an
 	}
 	_, err := h.actions.SetChatMuted(ctx, strings.TrimSpace(p.ChatID), *p.Muted, time.Duration(p.DurationSecs)*time.Second)
 	return nil, mapCommandError(err)
+}
+
+type chatExportParams struct {
+	ChatID string `json:"chat_id"`
+	Path   string `json:"path"`
+}
+
+// chatExport writes the chat transcript to path in the official WhatsApp
+// .txt export format. The frontend picks the destination with a save dialog.
+func (h commandHandlers) chatExport(ctx context.Context, _ *conn, req request) (any, *Error) {
+	if err := h.requireActions(); err != nil {
+		return nil, err
+	}
+	var p chatExportParams
+	if err := decodeParams(req.Params, &p); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(p.ChatID) == "" {
+		return nil, errorf(CodeInvalidParams, "chat_id is required")
+	}
+	if strings.TrimSpace(p.Path) == "" {
+		return nil, errorf(CodeInvalidParams, "path is required")
+	}
+	path, err := h.actions.ExportChat(ctx, strings.TrimSpace(p.ChatID), strings.TrimSpace(p.Path))
+	if perr := mapCommandError(err); perr != nil {
+		return nil, perr
+	}
+	return map[string]any{"path": path}, nil
 }
 
 type chatTypingParams struct {

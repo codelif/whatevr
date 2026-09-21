@@ -62,6 +62,9 @@ func (c *Client) handleEvent(sess *accountSession, raw any) bool {
 		c.recordSelfJID(ctx)
 		sess.spawn(c.migrateLIDChats)
 		sess.spawn(c.backfillAnimatedWebPFlags)
+		sess.spawn(c.backfillStatusThumbs)
+		sess.spawn(c.pruneStatusBroadcastMirror)
+		sess.spawn(c.pruneMisfiledNewsletterChats)
 	case *events.AppStateSyncComplete:
 		c.syncPresence(sess.detached(), true)
 		// A fresh login reconciles app state on Connected, which is before the
@@ -122,6 +125,14 @@ func (c *Client) handleEvent(sess *accountSession, raw any) bool {
 		c.daemon.SetConnection(app.StateOffline, evt.String(), 0, 0, false)
 	case *events.Message:
 		return c.handleMessage(sess.detached(), evt, offlineSync)
+	case *events.CallOffer:
+		c.handleCallOffer(sess.detached(), evt)
+	case *events.CallOfferNotice:
+		c.handleCallOfferNotice(sess.detached(), evt)
+	case *events.CallTerminate:
+		c.handleCallTerminate(sess.detached(), evt)
+	case *events.CallReject:
+		c.handleCallReject(sess.detached(), evt)
 	case *events.UndecryptableMessage:
 		c.handleUndecryptableMessage(sess.detached(), evt)
 	case *events.Receipt:
@@ -136,6 +147,8 @@ func (c *Client) handleEvent(sess *accountSession, raw any) bool {
 		c.handleArchiveEvent(sess.detached(), evt)
 	case *events.Mute:
 		c.handleMuteEvent(sess.detached(), evt)
+	case *events.UserStatusMute:
+		c.handleUserStatusMuteEvent(sess.detached(), evt)
 	case *events.Star:
 		c.handleStarEvent(sess.detached(), evt)
 	case *events.MarkChatAsRead:

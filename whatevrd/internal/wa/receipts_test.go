@@ -241,8 +241,30 @@ func TestHandleRevokeMessageTombstonesTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get message: %v", err)
 	}
-	if !message.IsRevoked || message.Text != "" {
-		t.Fatalf("expected tombstone, got %+v", message)
+	// Anti-delete is on by default: the revoke flags the row but the content
+	// stays readable.
+	if !message.IsRevoked || message.Text == "" {
+		t.Fatalf("expected kept content, got %+v", message)
+	}
+
+	// With anti-delete off the same revoke tombstones instead (fresh client so
+	// the row starts unrevoked).
+	c2, db2 := newReceiptTestClient(t)
+	if _, err := c2.UpdateAppPreferences(ctx, func(prefs *app.AppPreferences) {
+		prefs.AntiDelete = false
+	}); err != nil {
+		t.Fatalf("disable anti-delete: %v", err)
+	}
+	messageID2 := seedGroupMessage(t, db2, appstore.StatusSent)
+	if !c2.handleRevokeMessage(ctx, evt, false) {
+		t.Fatal("expected the revoke protocol message to be intercepted")
+	}
+	tombstoned, err := db2.GetMessage(ctx, messageID2)
+	if err != nil {
+		t.Fatalf("get message: %v", err)
+	}
+	if !tombstoned.IsRevoked || tombstoned.Text != "" {
+		t.Fatalf("expected tombstone, got %+v", tombstoned)
 	}
 
 	// A regular text message is not intercepted.
@@ -393,7 +415,7 @@ func TestEditMessageRejectsIneligibleMessages(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("save outgoing: %v", err)
 		}
-		if _, _, _, err := db.MarkMessageRevoked(ctx, messageID); err != nil {
+		if _, _, _, err := db.MarkMessageRevoked(ctx, messageID, false); err != nil {
 			t.Fatalf("revoke: %v", err)
 		}
 		_, err := c.EditMessage(ctx, messageID, "nope")

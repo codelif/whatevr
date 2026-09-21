@@ -572,6 +572,10 @@ type messageItem struct {
 	Starred     bool              `json:"starred,omitempty"`
 	Forwarded   bool              `json:"forwarded,omitempty"`
 	PinnedUntil int64             `json:"pinned_until,omitempty"`
+	// ViewOnce marks our own view-once sends. Inbound view-once media is
+	// never stored as media (phone-only tombstone), so this only appears on
+	// outgoing rows.
+	ViewOnce bool `json:"view_once,omitempty"`
 	// Kept marks a disappearing message somebody asked to keep in the chat.
 	Kept  bool          `json:"kept,omitempty"`
 	Media *messageMedia `json:"media,omitempty"`
@@ -778,6 +782,9 @@ type messageSender struct {
 	ID         string `json:"id"`
 	Name       string `json:"name,omitempty"`
 	AvatarPath string `json:"avatar_path,omitempty"`
+	// Device is the sender's device id: 0 is the primary phone app,
+	// anything else a linked device.
+	Device uint16 `json:"device,omitempty"`
 }
 
 type messageReply struct {
@@ -834,7 +841,7 @@ func messageItemFromStore(m store.Message) messageItem {
 		Fallback:    messageFallback(m),
 		Kept:        m.IsKept,
 		Text:        m.Text,
-		Sender:      messageSender{ID: m.SenderID, Name: m.SenderName, AvatarPath: m.SenderAvatarLocalPath},
+		Sender:      messageSender{ID: m.SenderID, Name: m.SenderName, AvatarPath: m.SenderAvatarLocalPath, Device: m.SenderDevice},
 		Timestamp:   m.TimestampUnix,
 		Direction:   m.Direction,
 		Status:      m.Status,
@@ -843,6 +850,7 @@ func messageItemFromStore(m store.Message) messageItem {
 		Starred:     m.IsStarred,
 		Forwarded:   m.IsForwarded,
 		PinnedUntil: m.PinnedUntil,
+		ViewOnce:    m.IsViewOnce,
 		Reactions:   messageReactions(m.Reactions),
 		Mentions:    messageMentions(m.Mentions),
 		Media:       messageMediaFromStore(m),
@@ -866,6 +874,13 @@ func messageItemFromStore(m store.Message) messageItem {
 func messageKind(m store.Message) string {
 	if m.IsRevoked {
 		return "text"
+	}
+	// Inbound view-once rows keep their real kind and keys in the store (so
+	// an explicit `media.save` can fetch them), but they always render as the
+	// `unsupported` tombstone: no bubble and no auto-download policy may
+	// silently defeat the sender's view-once intent.
+	if m.IsViewOnce && m.Direction == store.DirectionIncoming {
+		return store.MediaKindUnsupported
 	}
 	return mediaKindToWire(m.MediaKind)
 }

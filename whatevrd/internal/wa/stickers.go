@@ -909,8 +909,8 @@ func favoriteStickerFromAction(action *waSyncAction.StickerAction, encKey string
 		FileEncSHA256: action.GetFileEncSHA256(),
 		FileLength:    proto.Uint64(action.GetFileLength()),
 		Mimetype:      proto.String(mimeType),
-		Width:         proto.Uint32(action.GetHeight()),
-		Height:        proto.Uint32(action.GetWidth()),
+		Width:         proto.Uint32(action.GetWidth()),
+		Height:        proto.Uint32(action.GetHeight()),
 		IsAnimated:    proto.Bool(action.GetIsLottie()),
 	}
 	payload, _ := proto.Marshal(stickerMsg)

@@ -34,7 +34,17 @@ func (fixtureCommands) Logout(context.Context) error                     { retur
 func (fixtureCommands) MarkChatReadUpTo(context.Context, string, string) (appstore.Chat, error) {
 	return appstore.Chat{}, nil
 }
+func (fixtureCommands) MarkChatRead(context.Context, string) (appstore.Chat, error) {
+	return appstore.Chat{}, nil
+}
+func (fixtureCommands) MarkAllChatsRead(context.Context) (int, error) { return 0, nil }
+func (fixtureCommands) ExportChat(_ context.Context, chatID, path string) (string, error) {
+	return path, nil
+}
 func (fixtureCommands) SetChatPinned(context.Context, string, bool) (appstore.Chat, error) {
+	return appstore.Chat{}, nil
+}
+func (fixtureCommands) SetChatFavorite(context.Context, string, bool) (appstore.Chat, error) {
 	return appstore.Chat{}, nil
 }
 func (fixtureCommands) SetChatArchived(context.Context, string, bool) (appstore.Chat, error) {
@@ -53,8 +63,25 @@ func (fixtureCommands) EnsureDirectChat(_ context.Context, jid string) (appstore
 func (fixtureCommands) SendText(_ context.Context, chatID, text, _ string, _ []string) (appstore.SavedTextMessage, error) {
 	return appstore.SavedTextMessage{Message: appstore.Message{ID: chatID + ":fixture-text", ChatID: chatID, Text: text}}, nil
 }
+func (fixtureCommands) ScheduleText(context.Context, string, string, time.Time) (int64, error) {
+	return 1, nil
+}
+func (fixtureCommands) ListScheduledMessages(context.Context, string) ([]appstore.ScheduledMessage, error) {
+	return nil, nil
+}
+func (fixtureCommands) CancelScheduledMessage(context.Context, int64) error { return nil }
 func (fixtureCommands) SendMediaWithMentions(_ context.Context, chatID, path, caption, _ string, _ []string) (appstore.SavedTextMessage, error) {
 	return appstore.SavedTextMessage{Message: appstore.Message{ID: chatID + ":fixture-media", ChatID: chatID, Text: caption, MediaLocalPath: path}}, nil
+}
+func (fixtureCommands) SendMediaWithOptions(_ context.Context, chatID, path, caption, _ string, _ []string, _ app.MediaSendOptions) (appstore.SavedTextMessage, error) {
+	return appstore.SavedTextMessage{Message: appstore.Message{ID: chatID + ":fixture-media", ChatID: chatID, Text: caption, MediaLocalPath: path}}, nil
+}
+func (fixtureCommands) SendMediaBatch(_ context.Context, chatID string, files []app.MediaBatchFile, _ string, _ app.MediaSendOptions) ([]appstore.SavedTextMessage, []app.MediaBatchError) {
+	out := make([]appstore.SavedTextMessage, 0, len(files))
+	for _, file := range files {
+		out = append(out, appstore.SavedTextMessage{Message: appstore.Message{ID: chatID + ":fixture-batch", ChatID: chatID, Text: file.Caption}})
+	}
+	return out, nil
 }
 func (fixtureCommands) SendSticker(_ context.Context, chatID, cacheKey, _ string) (appstore.SavedTextMessage, error) {
 	return appstore.SavedTextMessage{Message: appstore.Message{ID: chatID + ":fixture-sticker", ChatID: chatID, MediaCacheKey: cacheKey}}, nil
@@ -105,6 +132,91 @@ func (fixtureCommands) JoinGroupInvite(context.Context, string) (string, error) 
 func (fixtureCommands) RespondToEvent(context.Context, string, string, int) error { return nil }
 func (fixtureCommands) FetchProfilePicture(_ context.Context, jid string) (string, error) {
 	return "/cache/avatars/" + jid + ".jpg", nil
+}
+func (fixtureCommands) SaveMediaToPath(_ context.Context, messageID, statusID, jid, dest string) (string, error) {
+	if dest == "" {
+		return "", nil
+	}
+	return dest, nil
+}
+func (fixtureCommands) MarkStatusViewed(_ context.Context, statusID string) (appstore.StatusUpdate, error) {
+	return appstore.StatusUpdate{ID: statusID}, nil
+}
+func (fixtureCommands) PostStatus(_ context.Context, text, path, caption string, background uint32, font int32) (appstore.StatusUpdate, error) {
+	return appstore.StatusUpdate{ID: "status:fixture", Text: text}, nil
+}
+func (fixtureCommands) DownloadStatusMedia(_ context.Context, statusID string) (appstore.StatusUpdate, error) {
+	return appstore.StatusUpdate{ID: statusID}, nil
+}
+func (fixtureCommands) ReplyToStatus(_ context.Context, statusID, text string) (appstore.SavedTextMessage, error) {
+	return appstore.SavedTextMessage{Message: appstore.Message{ID: "reply:fixture", Text: text}}, nil
+}
+func (fixtureCommands) DeleteStatus(context.Context, string) error { return nil }
+func (fixtureCommands) ListStatusViewers(context.Context, string) ([]appstore.StatusViewer, error) {
+	return nil, nil
+}
+func (fixtureCommands) ListMessageEdits(_ context.Context, messageID string) ([]appstore.MessageEdit, error) {
+	return []appstore.MessageEdit{{MessageID: messageID}}, nil
+}
+func (fixtureCommands) SetStatusKeepSender(context.Context, string, bool) error  { return nil }
+func (fixtureCommands) ListKeptStatusSenders(context.Context) ([]string, error)  { return nil, nil }
+func (fixtureCommands) SetStatusMutedSender(context.Context, string, bool) error { return nil }
+func (fixtureCommands) ListMutedStatusSenders(context.Context) ([]string, error) { return nil, nil }
+func (fixtureCommands) SendPoll(_ context.Context, chatID, question string, options []string, multi bool) (appstore.SavedTextMessage, error) {
+	return appstore.SavedTextMessage{Message: appstore.Message{ID: chatID + ":poll", ChatID: chatID, Text: question}}, nil
+}
+func (fixtureCommands) SendContact(_ context.Context, chatID, name, phone string) (appstore.SavedTextMessage, error) {
+	return appstore.SavedTextMessage{Message: appstore.Message{ID: chatID + ":contact", ChatID: chatID, Text: name}}, nil
+}
+func (fixtureCommands) SendLocation(_ context.Context, chatID string, lat, long float64, name, address string) (appstore.SavedTextMessage, error) {
+	return appstore.SavedTextMessage{Message: appstore.Message{ID: chatID + ":location", ChatID: chatID, Text: name}}, nil
+}
+func (fixtureCommands) CreateGroup(_ context.Context, name string, members []string, photo string) (appstore.Chat, error) {
+	return appstore.Chat{ID: "group-fixture@g.us", Name: name}, nil
+}
+func (fixtureCommands) LeaveGroup(context.Context, string) error                  { return nil }
+func (fixtureCommands) SetGroupName(context.Context, string, string) error        { return nil }
+func (fixtureCommands) SetGroupDescription(context.Context, string, string) error { return nil }
+func (fixtureCommands) SetGroupPhoto(context.Context, string, string) error       { return nil }
+func (fixtureCommands) GetGroupInviteLink(_ context.Context, chatID string, reset bool) (string, error) {
+	return "https://chat.whatsapp.com/fixture", nil
+}
+func (fixtureCommands) JoinGroupWithLink(_ context.Context, link string) (appstore.Chat, error) {
+	return appstore.Chat{ID: "joined@g.us"}, nil
+}
+func (fixtureCommands) UpdateGroupMembers(context.Context, string, string, []string) error {
+	return nil
+}
+func (fixtureCommands) SetGroupAnnounce(context.Context, string, bool) error { return nil }
+func (fixtureCommands) SetGroupLocked(context.Context, string, bool) error   { return nil }
+func (fixtureCommands) RejectCall(context.Context, string) error             { return nil }
+func (fixtureCommands) ExportBackup(_ context.Context, dest, passphrase string, useKeyring bool) (string, int64, error) {
+	if dest == "" {
+		dest = "/tmp/whatevr-backup.tar.gz"
+	}
+	return dest, 42, nil
+}
+func (fixtureCommands) SetBackupPassphrase(context.Context, string) error { return nil }
+func (fixtureCommands) RecentLogs(_ context.Context, limit int) ([]string, error) {
+	return []string{"log line 1", "log line 2"}, nil
+}
+func (fixtureCommands) ListCommunitySubgroups(_ context.Context, chatID string) ([]app.CommunityGroup, error) {
+	return []app.CommunityGroup{{ID: "sub@g.us", Name: "Sub"}}, nil
+}
+func (fixtureCommands) LinkCommunityGroup(context.Context, string, string) error   { return nil }
+func (fixtureCommands) UnlinkCommunityGroup(context.Context, string, string) error { return nil }
+func (fixtureCommands) RefreshChannels(context.Context) ([]appstore.Channel, error) {
+	return []appstore.Channel{{ID: "chan@newsletter", Name: "Chan"}}, nil
+}
+func (fixtureCommands) FollowChannel(context.Context, string) error { return nil }
+func (fixtureCommands) FollowChannelByInvite(_ context.Context, invite string) (appstore.Channel, error) {
+	return appstore.Channel{ID: "chan@newsletter", Name: "Chan"}, nil
+}
+func (fixtureCommands) UnfollowChannel(context.Context, string) error            { return nil }
+func (fixtureCommands) SetChannelMuted(context.Context, string, bool) error      { return nil }
+func (fixtureCommands) MarkChannelViewed(context.Context, string, []int64) error { return nil }
+func (fixtureCommands) ReactToChannelMessage(context.Context, string, int64, string) error {
+	return nil
 }
 func (fixtureCommands) SetPrivacySetting(context.Context, string, string, bool) (app.PrivacySettings, error) {
 	return app.PrivacySettings{}, nil

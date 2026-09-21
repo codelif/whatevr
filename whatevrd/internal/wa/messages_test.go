@@ -899,20 +899,32 @@ func TestMediaMessageInputCoversPlayableKinds(t *testing.T) {
 	}
 }
 
-// TestViewOnceMediaStaysTombstoned guards the one case that must keep falling
-// through to the unsupported path now that video and audio have builders.
+// TestViewOnceMediaStaysTombstoned guards the view-once ingest contract: the
+// row keeps its real kind and keys (so an explicit `media.save` can fetch it)
+// plus IsViewOnce, while the label stays the tombstone text. Rendering stays
+// tombstoned because messageKind() forces inbound view-once rows to the
+// `unsupported` wire kind.
 func TestViewOnceMediaStaysTombstoned(t *testing.T) {
 	client := newMediaIngestClient(t)
 
-	evt := mediaIngestEvent("VO1", &waE2E.Message{VideoMessage: &waE2E.VideoMessage{}})
+	evt := mediaIngestEvent("VO1", &waE2E.Message{VideoMessage: &waE2E.VideoMessage{
+		DirectPath: proto.String("/enc/video.enc"),
+		FileLength: proto.Uint64(1234),
+	}})
 	evt.IsViewOnce = true
 
 	input, ok := client.mediaMessageInput(context.Background(), evt, ingestOptions{})
 	if !ok {
 		t.Fatal("mediaMessageInput() returned ok=false for view-once video")
 	}
-	if input.MediaKind != appstore.MediaKindUnsupported {
-		t.Fatalf("kind = %q, want %q", input.MediaKind, appstore.MediaKindUnsupported)
+	if input.MediaKind != appstore.MediaKindVideo {
+		t.Fatalf("kind = %q, want %q", input.MediaKind, appstore.MediaKindVideo)
+	}
+	if !input.IsViewOnce {
+		t.Fatal("IsViewOnce = false, want true")
+	}
+	if len(input.MediaPayload) == 0 {
+		t.Fatal("MediaPayload is empty, want the stored video keys")
 	}
 	if input.Text != "View once video" {
 		t.Fatalf("label = %q, want %q", input.Text, "View once video")
@@ -936,5 +948,45 @@ func TestNormalizedWaveformRejectsWrongShapes(t *testing.T) {
 	}
 	if got[0] != 100 {
 		t.Errorf("clamped value = %d, want 100", got[0])
+	}
+}
+
+func TestLinkPreviewFromMessageExtractsSenderPreview(t *testing.T) {
+	c := &Client{}
+	chatID := "chat@s.whatsapp.net"
+	msg := &waE2E.Message{
+		ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+			Text:          proto.String("check https://example.com/a"),
+			MatchedText:   proto.String("https://example.com/a"),
+			Title:         proto.String("Example"),
+			Description:   proto.String("An example page"),
+			JPEGThumbnail: []byte{0xff, 0xd8, 0xff},
+		},
+	}
+	preview := c.linkPreviewFromMessage(chatID, "ext-1", msg)
+	if preview == nil {
+		t.Fatal("expected link preview, got nil")
+	}
+	if preview.URL != "https://example.com/a" || preview.Title != "Example" || preview.Description != "An example page" {
+		t.Fatalf("preview facts wrong: %+v", preview)
+	}
+	if preview.ThumbnailPath == "" {
+		t.Fatal("expected preview thumbnail to be cached to a file")
+	}
+}
+
+func TestLinkPreviewFromMessageNilWithoutMatchedText(t *testing.T) {
+	c := &Client{}
+	cases := map[string]*waE2E.Message{
+		"plain conversation": {Conversation: proto.String("hello https://example.com")},
+		"extended without match": {ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+			Text: proto.String("hello"),
+		}},
+		"nil": nil,
+	}
+	for name, msg := range cases {
+		if got := c.linkPreviewFromMessage("chat@s.whatsapp.net", "ext-1", msg); got != nil {
+			t.Fatalf("%s: expected nil preview, got %+v", name, got)
+		}
 	}
 }

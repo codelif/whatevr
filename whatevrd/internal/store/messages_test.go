@@ -493,7 +493,7 @@ func TestMarkMessageRevokedClearsReplyContext(t *testing.T) {
 		t.Fatalf("save reply message: %v", err)
 	}
 
-	if _, _, changed, err := db.MarkMessageRevoked(ctx, "chat-1:reply-1"); err != nil {
+	if _, _, changed, err := db.MarkMessageRevoked(ctx, "chat-1:reply-1", false); err != nil {
 		t.Fatalf("mark revoked: %v", err)
 	} else if !changed {
 		t.Fatal("expected revoke to change the message")
@@ -2205,6 +2205,69 @@ func TestSaveMessagesBatchMatchesSingleSaveSemantics(t *testing.T) {
 	}
 	if len(messages) != 2 {
 		t.Fatalf("expected 2 stored messages, got %d", len(messages))
+	}
+}
+
+func TestSaveTextMessagePersistsLinkPreview(t *testing.T) {
+	payload, err := EncodePayload(MessagePayload{LinkPreview: &LinkPreviewPayload{
+		URL:         "https://example.com/a",
+		Title:       "Example",
+		Description: "An example page",
+	}})
+	if err != nil {
+		t.Fatalf("encode payload: %v", err)
+	}
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "whatevrd.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	saved, err := db.SaveTextMessage(ctx, TextMessageInput{
+		ID:          "chat-1:msg-1",
+		ChatID:      "chat-1",
+		SenderID:    "sender-1",
+		Text:        "check https://example.com/a",
+		Timestamp:   time.Unix(100, 0),
+		Direction:   DirectionIncoming,
+		Status:      StatusDelivered,
+		PayloadJSON: payload,
+	})
+	if err != nil {
+		t.Fatalf("save message: %v", err)
+	}
+	decoded := DecodePayload(saved.Message.PayloadJSON)
+	if decoded.LinkPreview == nil || decoded.LinkPreview.URL != "https://example.com/a" || decoded.LinkPreview.Title != "Example" {
+		t.Fatalf("saved link preview = %+v", saved.Message)
+	}
+
+	messages, err := db.ListMessages(ctx, "chat-1", 10, "")
+	if err != nil {
+		t.Fatalf("list messages: %v", err)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(messages))
+	}
+	gotPreview := DecodePayload(messages[0].PayloadJSON)
+	if gotPreview.LinkPreview == nil || gotPreview.LinkPreview.Description != "An example page" {
+		t.Fatalf("listed link preview = %+v", messages[0])
+	}
+
+	plain, err := db.SaveTextMessage(ctx, TextMessageInput{
+		ID:        "chat-1:msg-2",
+		ChatID:    "chat-1",
+		SenderID:  "sender-1",
+		Text:      "no links here",
+		Timestamp: time.Unix(200, 0),
+		Direction: DirectionIncoming,
+		Status:    StatusDelivered,
+	})
+	if err != nil {
+		t.Fatalf("save plain message: %v", err)
+	}
+	if plain.Message.PayloadJSON != "" {
+		t.Fatalf("plain message has link preview: %+v", plain.Message)
 	}
 }
 

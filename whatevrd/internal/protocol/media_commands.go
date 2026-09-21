@@ -78,6 +78,49 @@ func (h commandHandlers) mediaFetchProfilePicture(ctx context.Context, _ *conn, 
 	return map[string]any{"path": path}, nil
 }
 
+type mediaSaveParams struct {
+	MessageID string `json:"message_id"`
+	StatusID  string `json:"status_id"`
+	JID       string `json:"jid"`
+	Path      string `json:"path"`
+}
+
+// mediaSave copies media out of the daemon cache to a caller-owned path.
+// Exactly one of message_id (downloaded chat media), status_id (a contact
+// status) or jid (full-resolution profile picture) selects the source, and
+// path is the absolute destination. Unlike media.download it is synchronous:
+// the response carries the final path once the bytes (fetched first when the
+// row carries keys but no file yet) are on disk. Saving an inbound view-once
+// row is the caller's deliberate per-item override of "view on your phone".
+func (h commandHandlers) mediaSave(ctx context.Context, _ *conn, req request) (any, *Error) {
+	if err := h.requireActions(); err != nil {
+		return nil, err
+	}
+	var p mediaSaveParams
+	if err := decodeParams(req.Params, &p); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(p.Path) == "" {
+		return nil, errorf(CodeInvalidParams, "path is required")
+	}
+	selectors := 0
+	for _, s := range []string{p.MessageID, p.StatusID, p.JID} {
+		if strings.TrimSpace(s) != "" {
+			selectors++
+		}
+	}
+	if selectors != 1 {
+		return nil, errorf(CodeInvalidParams, "exactly one of message_id, status_id or jid is required")
+	}
+	path, err := h.actions.SaveMediaToPath(ctx,
+		strings.TrimSpace(p.MessageID), strings.TrimSpace(p.StatusID),
+		strings.TrimSpace(p.JID), strings.TrimSpace(p.Path))
+	if perr := mapCommandError(err); perr != nil {
+		return nil, perr
+	}
+	return map[string]any{"path": path}, nil
+}
+
 // mediaStream hands back a loopback URL the frontend's player can open while
 // the bytes are still arriving. Unlike media.download it is a query, not a
 // lifecycle: the daemon fetches ranges on demand behind the URL, and the

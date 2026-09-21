@@ -53,6 +53,11 @@ type Server struct {
 	mu    sync.Mutex
 	conns map[*conn]struct{}
 	wg    sync.WaitGroup
+
+	// shutdownCh lets daemon.shutdown stop the server without a signal:
+	// closing it follows the same path as context cancellation.
+	shutdownCh   chan struct{}
+	shutdownOnce sync.Once
 }
 
 // New binds the whatevr protocol socket on socketPath but does not yet accept
@@ -104,6 +109,7 @@ func New(socketPath string, activated net.Listener, daemon *app.Daemon) (*Server
 		errCh:      make(chan error, 1),
 		views:      map[string]View{},
 		conns:      map[*conn]struct{}{},
+		shutdownCh: make(chan struct{}),
 	}
 	server.handlers = map[string]handlerFunc{
 		"subscribe":   server.handleSubscribe,
@@ -144,6 +150,15 @@ func (s *Server) Err() <-chan error {
 	return s.errCh
 }
 
+// Shutdown stops the server the same way context cancellation does: the
+// listener closes, connections drain, and Err's channel closes so main can
+// run its defers and exit. It is safe to call twice.
+func (s *Server) Shutdown() {
+	s.shutdownOnce.Do(func() {
+		close(s.shutdownCh)
+	})
+}
+
 func (s *Server) serve(ctx context.Context) {
 	defer close(s.errCh)
 
@@ -154,9 +169,16 @@ func (s *Server) serve(ctx context.Context) {
 	case err := <-acceptErr:
 		// Accept failed on its own before any shutdown was requested.
 		if err != nil && ctx.Err() == nil {
-			s.errCh <- err
+			select {
+			case <-s.shutdownCh:
+			default:
+				s.errCh <- err
+			}
 		}
 	case <-ctx.Done():
+		s.listener.Close()
+		<-acceptErr
+	case <-s.shutdownCh:
 		s.listener.Close()
 		<-acceptErr
 	}

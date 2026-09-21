@@ -84,6 +84,12 @@ type Client struct {
 	mediaRetryMu        sync.Mutex
 	mediaRetries        map[string]*mediaRetryState
 
+	// Locally-ringing calls keyed by call ID; see calls.go. WhatsApp has no
+	// desktop media stack, so these exist to render the `calls` view, reject,
+	// and tombstone missed calls — never to answer.
+	callsMu      sync.Mutex
+	pendingCalls map[string]*pendingCall
+
 	// In-progress ranged fetches, keyed by message ID, plus the loopback
 	// server that serves them to players while they fill; see media_stream.go.
 	mediaStreamMu    sync.Mutex
@@ -266,6 +272,7 @@ func (c *Client) startRunLoopsLocked(ctx context.Context) {
 	sess.spawn(c.runConnectionSupervisor)
 	sess.spawn(c.runConnectionReconciler)
 	sess.spawn(c.runSendQueue)
+	sess.spawn(c.runScheduledMessages)
 	sess.spawn(c.runVideoPosterWorker)
 	sess.spawn(c.repairCachedWebPAlphaFlags)
 	sess.spawn(c.runLiveLocationSweeper)

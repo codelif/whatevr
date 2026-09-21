@@ -4,30 +4,38 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"strings"
 	"sync"
 
 	"whatevrd/internal/app"
 	"whatevrd/internal/store"
 )
 
-// ChatMediaLister supplies the `chat_media` view its rows. *store.DB implements
-// it.
+// ChatMediaLister supplies the `chat_media` and `chat_links` views their
+// rows. *store.DB implements it.
 type ChatMediaLister interface {
-	ListChatMediaMessages(ctx context.Context, chatID string, limit int, beforeMessageID string) ([]store.Message, error)
+	ListChatMediaMessages(ctx context.Context, chatID string, limit int, beforeMessageID string, kinds []string) ([]store.Message, error)
+	ListChatLinkMessages(ctx context.Context, chatID string, limit int, beforeMessageID string) ([]store.Message, error)
 }
 
 // chatMediaView is a chat's media gallery: a live-edge prefix window over the
-// photos, videos, voice notes, audio files and documents in one chat, newest
-// first. It reuses the `messages` item shape verbatim, so the gallery renders
-// the same rows the conversation does, and a download landing shows up here as
-// an ordinary upsert with `media.path` set.
+// photos, videos, voice notes, audio files, documents, polls, contacts and
+// locations in one chat, newest first. `kinds` narrows to a subset (empty
+// means everything). It reuses the `messages` item shape verbatim, so the
+// gallery renders the same rows the conversation does, and a download landing
+// shows up here as an ordinary upsert with `media.path` set.
 type chatMediaView struct {
 	daemon *app.Daemon
 	lister ChatMediaLister
 }
 
 type chatMediaParams struct {
-	ChatID string `json:"chat_id"`
+	ChatID string   `json:"chat_id"`
+	Kinds  []string `json:"kinds"`
+	// Kind is the legacy singular filter; Kinds wins when both are set.
+	// Tolerated so a singular sender degrades to unfiltered rather than
+	// silently showing everything.
+	Kind string `json:"kind"`
 }
 
 func (v chatMediaView) Open(params json.RawMessage, invalidate func()) (ViewSession, map[string]any, *Error) {
@@ -40,11 +48,22 @@ func (v chatMediaView) Open(params json.RawMessage, invalidate func()) (ViewSess
 	if p.ChatID == "" {
 		return nil, nil, errorf(CodeInvalidParams, "chat_media params must carry a chat_id")
 	}
+	kinds, err := filterGalleryKinds(p.Kinds)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(kinds) == 0 && strings.TrimSpace(p.Kind) != "" {
+		kinds, err = filterGalleryKinds([]string{p.Kind})
+		if err != nil {
+			return nil, nil, err
+		}
+	}
 	events, cancel := v.daemon.SubscribeDaemonEvents()
 	ctx, cancelCtx := context.WithCancel(context.Background())
 	s := &chatMediaSession{
 		lister:       v.lister,
 		chatID:       p.ChatID,
+		kinds:        kinds,
 		eventsCancel: cancel,
 		ctx:          ctx,
 		cancelCtx:    cancelCtx,
@@ -54,9 +73,36 @@ func (v chatMediaView) Open(params json.RawMessage, invalidate func()) (ViewSess
 	return s, nil, nil
 }
 
+// filterGalleryKinds validates a kinds filter against the gallery set. Empty
+// means everything; anything else must name real gallery kinds.
+func filterGalleryKinds(kinds []string) ([]string, *Error) {
+	if len(kinds) == 0 {
+		return nil, nil
+	}
+	known := map[string]bool{}
+	for _, kind := range store.GalleryMediaKinds {
+		known[kind] = true
+	}
+	out := make([]string, 0, len(kinds))
+	seen := map[string]bool{}
+	for _, kind := range kinds {
+		kind = strings.TrimSpace(kind)
+		if kind == "" || seen[kind] {
+			continue
+		}
+		if !known[kind] {
+			return nil, errorf(CodeInvalidParams, "unknown gallery kind %q", kind)
+		}
+		seen[kind] = true
+		out = append(out, kind)
+	}
+	return out, nil
+}
+
 type chatMediaSession struct {
 	lister       ChatMediaLister
 	chatID       string
+	kinds        []string
 	eventsCancel func()
 	ctx          context.Context
 	cancelCtx    context.CancelFunc
@@ -112,7 +158,7 @@ func (s *chatMediaSession) ItemsErr(max int) ([]Item, error) {
 	if limit <= 0 {
 		limit = messagesUnboundedLimit
 	}
-	rows, err := s.lister.ListChatMediaMessages(s.ctx, s.chatID, limit, "")
+	rows, err := s.lister.ListChatMediaMessages(s.ctx, s.chatID, limit, "", s.kinds)
 	if err != nil {
 		log.Printf("protocol: list chat media for view: %v", err)
 		return nil, err

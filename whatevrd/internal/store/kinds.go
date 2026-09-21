@@ -139,6 +139,10 @@ type PreviewFacts struct {
 	MediaFileName  string
 	DurationSecs   int32
 	Revoked        bool
+	// ViewOnce marks our own view-once sends, rendered with a one-eye marker
+	// so they are distinguishable from ordinary media in every frontend,
+	// including ones that never heard of view-once.
+	ViewOnce bool
 }
 
 // PreviewLine renders a message as one human-readable line. It is the wire
@@ -150,6 +154,21 @@ func PreviewLine(f PreviewFacts) string {
 	}
 
 	caption := oneLine(f.Text)
+	if f.ViewOnce {
+		if caption != "" {
+			return caption
+		}
+		switch f.MediaKind {
+		case MediaKindImage:
+			return "👁 View-once photo"
+		case MediaKindVideo:
+			return "👁 View-once video" + durationSuffix(f.DurationSecs)
+		case MediaKindVoice:
+			return "👁 View-once voice message" + durationSuffix(f.DurationSecs)
+		case MediaKindAudio:
+			return "👁 View-once audio" + durationSuffix(f.DurationSecs)
+		}
+	}
 	descriptor, known := DescribeKind(f.MediaKind)
 	if !known {
 		if caption != "" {
@@ -202,6 +221,7 @@ func MessagePreviewLine(m Message) string {
 		MediaFileName:  m.MediaFileName,
 		DurationSecs:   m.MediaDurationSecs,
 		Revoked:        m.IsRevoked,
+		ViewOnce:       m.IsViewOnce,
 	})
 }
 

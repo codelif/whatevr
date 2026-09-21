@@ -89,6 +89,11 @@ type Stream struct {
 // New starts fetching source into the partial file at partPath. The returned
 // Stream is usable immediately; readers block on the chunks they need.
 func New(source Source, partPath string, client *http.Client, progress func(received, total int64), done func(error)) (*Stream, error) {
+	return NewWithContext(context.Background(), source, partPath, client, progress, done)
+}
+
+// NewWithContext starts a stream tied to the caller's lifecycle.
+func NewWithContext(parent context.Context, source Source, partPath string, client *http.Client, progress func(received, total int64), done func(error)) (*Stream, error) {
 	if err := source.Valid(); err != nil {
 		return nil, err
 	}
@@ -110,7 +115,10 @@ func New(source Source, partPath string, client *http.Client, progress func(rece
 		done = func(error) {}
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithCancel(parent)
 	s := &Stream{
 		source:    source,
 		file:      file,

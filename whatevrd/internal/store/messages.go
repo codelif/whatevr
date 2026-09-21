@@ -137,11 +137,14 @@ func MentionJIDs(mentions []MessageMention) []string {
 }
 
 type Message struct {
-	ID                      string
-	ChatID                  string
-	SenderID                string
-	SenderName              string
-	SenderAvatarLocalPath   string
+	ID                    string
+	ChatID                string
+	SenderID              string
+	SenderName            string
+	SenderAvatarLocalPath string
+	// SenderDevice is the sender's device id from the envelope: 0 is the
+	// primary phone app, anything else a linked device.
+	SenderDevice            uint16
 	Text                    string
 	TimestampUnix           int64
 	SortMS                  int64
@@ -186,7 +189,11 @@ type Message struct {
 	AlbumIndex    int32
 	// IsKept records a KeepInChatMessage naming this row: a disappearing
 	// message somebody asked to keep.
-	IsKept          bool
+	IsKept bool
+	// IsViewOnce marks our own view-once sends. Inbound view-once media is
+	// never stored as media (phone-only tombstone), so this only appears on
+	// outgoing rows.
+	IsViewOnce      bool
 	IsRevoked       bool
 	IsForwarded     bool
 	IsEdited        bool
@@ -257,6 +264,8 @@ type MediaMessageInput struct {
 	PayloadSummary          string
 	AlbumParentID           string
 	AlbumIndex              int32
+	// IsViewOnce marks an outbound media message sent as view-once.
+	IsViewOnce bool
 }
 
 type ReadCandidate struct {
@@ -275,15 +284,17 @@ type TextMessageInput struct {
 	ChatNameSource string
 	SenderID       string
 	SenderName     string
-	Text           string
-	Timestamp      time.Time
-	Direction      string
-	Status         string
-	IsGroup        bool
-	CountUnread    bool
-	IsForwarded    bool
-	ReplyTo        MessageReply
-	Mentions       []MessageMention
+	// SenderDevice is the sender's device id (see Message).
+	SenderDevice uint16
+	Text         string
+	Timestamp    time.Time
+	Direction    string
+	Status       string
+	IsGroup      bool
+	CountUnread  bool
+	IsForwarded  bool
+	ReplyTo      MessageReply
+	Mentions     []MessageMention
 	// PayloadJSON is the row's structured payload. It sits here rather than on
 	// MediaMessageInput because a payload belongs to the message, not to its
 	// media: a link preview rides an ordinary text row, whose kind stays
@@ -438,10 +449,11 @@ func saveTextMessageTx(ctx context.Context, tx *sql.Tx, input TextMessageInput) 
 	}
 
 	result, err := tx.ExecContext(ctx, `
-		INSERT INTO messages (id, chat_id, sender_id, text, timestamp, sort_ms, direction, is_read, status, is_forwarded, mentioned_jids, payload_json, reply_to_message_id, reply_to_sender_id, reply_to_sender_name, reply_to_text, reply_to_media_kind, reply_to_media_mime_type, reply_to_direction)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO messages (id, chat_id, sender_id, sender_device, text, timestamp, sort_ms, direction, is_read, status, is_forwarded, mentioned_jids, payload_json, reply_to_message_id, reply_to_sender_id, reply_to_sender_name, reply_to_text, reply_to_media_kind, reply_to_media_mime_type, reply_to_direction)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`+waitingPlaceholderUpgrade+`
 			text = excluded.text,
+			sender_device = excluded.sender_device,
 			is_forwarded = excluded.is_forwarded,
 			mentioned_jids = excluded.mentioned_jids,
 			payload_json = excluded.payload_json,
@@ -453,7 +465,7 @@ func saveTextMessageTx(ctx context.Context, tx *sql.Tx, input TextMessageInput) 
 			reply_to_media_mime_type = excluded.reply_to_media_mime_type,
 			reply_to_direction = excluded.reply_to_direction
 		WHERE messages.media_kind = '`+MediaKindWaiting+`'
-	`, input.ID, input.ChatID, input.SenderID, input.Text, input.Timestamp.Unix(), input.Timestamp.UnixMilli(), input.Direction, boolToInt(!input.CountUnread), input.Status, boolToInt(input.IsForwarded), encodeMentions(input.Mentions), input.PayloadJSON,
+	`, input.ID, input.ChatID, input.SenderID, input.SenderDevice, input.Text, input.Timestamp.Unix(), input.Timestamp.UnixMilli(), input.Direction, boolToInt(!input.CountUnread), input.Status, boolToInt(input.IsForwarded), encodeMentions(input.Mentions), input.PayloadJSON,
 		input.ReplyTo.MessageID, input.ReplyTo.SenderID, input.ReplyTo.SenderName, input.ReplyTo.Text, input.ReplyTo.MediaKind, input.ReplyTo.MediaMimeType, input.ReplyTo.Direction)
 	if err != nil {
 		return SavedTextMessage{}, err
@@ -640,11 +652,13 @@ func saveMediaMessageTx(ctx context.Context, tx *sql.Tx, input MediaMessageInput
 	}
 
 	result, err := tx.ExecContext(ctx, `
-		INSERT INTO messages (id, chat_id, sender_id, text, timestamp, sort_ms, direction, is_read, status, is_forwarded, mentioned_jids, media_kind, media_mime_type, media_local_path, media_thumbnail_local_path, media_width, media_height, media_animated, media_payload, media_cache_key, media_duration_secs, media_size_bytes, media_file_name, media_page_count, media_waveform, payload_json, payload_summary, album_parent_id, album_index, reply_to_message_id, reply_to_sender_id, reply_to_sender_name, reply_to_text, reply_to_media_kind, reply_to_media_mime_type, reply_to_direction)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO messages (id, chat_id, sender_id, sender_device, text, timestamp, sort_ms, direction, is_read, status, is_forwarded, mentioned_jids, media_kind, media_mime_type, media_local_path, media_thumbnail_local_path, media_width, media_height, media_animated, media_payload, media_cache_key, media_duration_secs, media_size_bytes, media_file_name, media_page_count, media_waveform, is_view_once, payload_json, payload_summary, album_parent_id, album_index, reply_to_message_id, reply_to_sender_id, reply_to_sender_name, reply_to_text, reply_to_media_kind, reply_to_media_mime_type, reply_to_direction)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`+waitingPlaceholderUpgrade+`
 			text = excluded.text,
+			sender_device = excluded.sender_device,
 			is_forwarded = excluded.is_forwarded,
+			is_view_once = excluded.is_view_once,
 			mentioned_jids = excluded.mentioned_jids,
 			media_mime_type = excluded.media_mime_type,
 			media_local_path = excluded.media_local_path,
@@ -670,9 +684,9 @@ func saveMediaMessageTx(ctx context.Context, tx *sql.Tx, input MediaMessageInput
 			reply_to_media_mime_type = excluded.reply_to_media_mime_type,
 			reply_to_direction = excluded.reply_to_direction
 		WHERE messages.media_kind = '`+MediaKindWaiting+`'
-	`, input.ID, input.ChatID, input.SenderID, input.Text, input.Timestamp.Unix(), input.Timestamp.UnixMilli(), input.Direction,
+	`, input.ID, input.ChatID, input.SenderID, input.SenderDevice, input.Text, input.Timestamp.Unix(), input.Timestamp.UnixMilli(), input.Direction,
 		boolToInt(!input.CountUnread), input.Status, boolToInt(input.IsForwarded), encodeMentions(input.Mentions), input.MediaKind, input.MediaMimeType, input.MediaLocalPath, input.MediaThumbnailLocalPath, input.MediaWidth, input.MediaHeight, boolToInt(input.MediaAnimated), input.MediaPayload, input.MediaCacheKey,
-		input.MediaDurationSecs, input.MediaSizeBytes, input.MediaFileName, input.MediaPageCount, input.MediaWaveform,
+		input.MediaDurationSecs, input.MediaSizeBytes, input.MediaFileName, input.MediaPageCount, input.MediaWaveform, boolToInt(input.IsViewOnce),
 		input.PayloadJSON, input.PayloadSummary, input.AlbumParentID, input.AlbumIndex,
 		input.ReplyTo.MessageID, input.ReplyTo.SenderID, input.ReplyTo.SenderName, input.ReplyTo.Text, input.ReplyTo.MediaKind, input.ReplyTo.MediaMimeType, input.ReplyTo.Direction)
 	if err != nil {
@@ -960,17 +974,21 @@ func recomputeChatSummaryTx(ctx context.Context, tx *sql.Tx, chatID string) erro
 	}
 
 	summary := RevokedPreview
-	if !latest.IsRevoked {
+	// A revoked row whose content was kept (anti-delete) previews like any
+	// other message; only a true tombstone shows the deleted line.
+	if !latest.IsRevoked || latest.Text != "" || latest.MediaKind != "" {
 		chat, err := getChatTx(ctx, tx, chatID)
 		if err != nil {
 			return err
 		}
+		preview := latest
+		preview.IsRevoked = false
 		summary = previewSummary(TextMessageInput{
 			IsGroup:    chat.IsGroup,
 			Direction:  latest.Direction,
 			SenderName: latest.SenderName,
 			Mentions:   latest.Mentions,
-		}, MessagePreviewLine(latest))
+		}, MessagePreviewLine(preview))
 	}
 
 	_, err = tx.ExecContext(ctx, `
@@ -985,12 +1003,12 @@ func recomputeChatSummaryTx(ctx context.Context, tx *sql.Tx, chatID string) erro
 // queries. Its column order matches scanMessageRows exactly; append a WHERE /
 // ORDER BY / LIMIT clause to use it.
 const messageSelectPrefix = `
-	SELECT m.id, m.chat_id, m.sender_id,
+	SELECT m.id, m.chat_id, m.sender_id, m.sender_device,
 	       COALESCE(NULLIF(s.name, ''), NULLIF(c.name, ''), ''),
 	       COALESCE(NULLIF(sa.local_path, ''), NULLIF(ca.local_path, ''), NULLIF(s.avatar_local_path, ''), NULLIF(c.avatar_local_path, ''), ''),
 	       m.text, m.timestamp, m.sort_ms, m.direction, m.is_read, m.status, m.media_kind, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_animated, m.media_download_error,
 	       m.media_duration_secs, m.media_size_bytes, m.media_file_name, m.media_page_count, m.media_waveform, m.media_played,
-	       m.payload_json, m.payload_summary, m.album_parent_id, m.album_index, m.is_kept,
+	       m.payload_json, m.payload_summary, m.album_parent_id, m.album_index, m.is_kept, m.is_view_once,
 	       m.reply_to_message_id, m.reply_to_sender_id, m.reply_to_sender_name, m.reply_to_text, m.reply_to_media_kind, m.reply_to_media_mime_type, m.reply_to_direction,
 	       m.send_attempts, m.last_send_error, m.next_send_attempt, m.is_revoked, m.is_edited, m.is_starred, m.pinned_at, m.pinned_until, m.mentioned_jids
 	FROM messages m
@@ -1044,6 +1062,26 @@ func (db *DB) ListMessages(ctx context.Context, chatID string, limit int, before
 	}
 
 	reverseMessages(messages)
+	return messages, nil
+}
+
+// ListMessagesForExport returns a chat's transcript oldest first for the
+// official .txt export shape.
+func (db *DB) ListMessagesForExport(ctx context.Context, chatID string) ([]Message, error) {
+	defer db.timeOp("ListMessagesForExport", time.Now())
+	rows, err := db.reader().QueryContext(ctx, messageSelectPrefix+`
+		WHERE m.chat_id = ?
+		ORDER BY m.timestamp ASC, m.rowid ASC
+	`, chatID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	messages, err := scanMessageRows(rows, 0)
+	if err != nil {
+		return nil, err
+	}
 	return messages, nil
 }
 
@@ -1463,7 +1501,7 @@ func (db *DB) updateMessageStatus(ctx context.Context, id, status string, nextSt
 // the row survives (so ordering and reply previews keep working) but its
 // content is cleared. Returns the refreshed message and chat, and whether
 // anything changed (false when the message was already revoked).
-func (db *DB) MarkMessageRevoked(ctx context.Context, id string) (Message, Chat, bool, error) {
+func (db *DB) MarkMessageRevoked(ctx context.Context, id string, keepContent bool) (Message, Chat, bool, error) {
 	tx, err := db.conn.BeginTx(ctx, nil)
 	if err != nil {
 		return Message{}, Chat{}, false, err
@@ -1482,7 +1520,14 @@ func (db *DB) MarkMessageRevoked(ctx context.Context, id string) (Message, Chat,
 		return message, chat, false, nil
 	}
 
-	if _, err := tx.ExecContext(ctx, `
+	if keepContent {
+		// Anti-delete: raise the flag but keep everything. The frontend
+		// renders the original content with a Deleted mark.
+		if _, err := tx.ExecContext(ctx, `UPDATE messages SET is_revoked = 1 WHERE id = ?`, id); err != nil {
+			return Message{}, Chat{}, false, err
+		}
+	} else {
+		if _, err := tx.ExecContext(ctx, `
 		UPDATE messages
 		SET is_revoked = 1,
 			text = '',
@@ -1512,13 +1557,14 @@ func (db *DB) MarkMessageRevoked(ctx context.Context, id string) (Message, Chat,
 			reply_to_media_mime_type = '',
 			reply_to_direction = ''
 		WHERE id = ?
-	`, id); err != nil {
-		return Message{}, Chat{}, false, err
-	}
+		`, id); err != nil {
+			return Message{}, Chat{}, false, err
+		}
 
-	// A deleted-for-everyone message drops its reactions along with its content.
-	if _, err := tx.ExecContext(ctx, `DELETE FROM message_reactions WHERE message_id = ?`, id); err != nil {
-		return Message{}, Chat{}, false, err
+		// A deleted-for-everyone message drops its reactions along with its content.
+		if _, err := tx.ExecContext(ctx, `DELETE FROM message_reactions WHERE message_id = ?`, id); err != nil {
+			return Message{}, Chat{}, false, err
+		}
 	}
 
 	// A revoked unread message no longer counts toward the badge.
@@ -1586,6 +1632,19 @@ func (db *DB) UpdateMessageText(ctx context.Context, id, newText string, mention
 		return message, chat, false, nil
 	}
 
+	// File the superseded body in the edit history before it is replaced.
+	// Empty originals (e.g. a caption added later) carry no information.
+	// The generated row id orders versions, so back-to-back edits in the
+	// same millisecond both survive.
+	if message.Text != "" && message.Text != newText {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO message_edits (message_id, edited_at_millis, text)
+			VALUES (?, ?, ?)
+		`, id, time.Now().UnixMilli(), message.Text); err != nil {
+			return Message{}, Chat{}, false, err
+		}
+	}
+
 	if mentions == nil {
 		_, err = tx.ExecContext(ctx, `
 			UPDATE messages
@@ -1626,6 +1685,43 @@ func (db *DB) UpdateMessageText(ctx context.Context, id, newText string, mention
 		return Message{}, Chat{}, false, err
 	}
 	return updated, chat, true, nil
+}
+
+// MessageEdit is one superseded body version of an edited message.
+// EditedAtMillis is a unix-millisecond timestamp (millis, not seconds, so
+// two quick successive edits keep distinct, ordered rows).
+type MessageEdit struct {
+	MessageID      string
+	EditedAtMillis int64
+	Text           string
+}
+
+// ListMessageEdits returns a message's superseded bodies, oldest first. The
+// live row itself holds the current version and is not included.
+func (db *DB) ListMessageEdits(ctx context.Context, messageID string) ([]MessageEdit, error) {
+	defer db.timeOp("ListMessageEdits", time.Now())
+	rows, err := db.reader().QueryContext(ctx, `
+		SELECT message_id, edited_at_millis, text
+		FROM message_edits
+		WHERE message_id = ?
+		ORDER BY id ASC
+	`, messageID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	edits := []MessageEdit{}
+	for rows.Next() {
+		var e MessageEdit
+		if err := rows.Scan(&e.MessageID, &e.EditedAtMillis, &e.Text); err != nil {
+			return nil, err
+		}
+		edits = append(edits, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return edits, nil
 }
 
 // StarredMessage pairs a starred message with its chat's display name, so the
@@ -1796,21 +1892,68 @@ var GalleryMediaKinds = []string{
 
 // ListChatMediaMessages returns a chat's media messages newest first, for the
 // media gallery. beforeMessageID is a keyset cursor for paging older results,
-// matching ListStarredMessages.
-func (db *DB) ListChatMediaMessages(ctx context.Context, chatID string, limit int, beforeMessageID string) ([]Message, error) {
+// matching ListStarredMessages. kinds narrows to a subset (empty means the
+// whole gallery set).
+func (db *DB) ListChatMediaMessages(ctx context.Context, chatID string, limit int, beforeMessageID string, kinds []string) ([]Message, error) {
 	defer db.timeOp("ListChatMediaMessages", time.Now())
 	if limit <= 0 {
 		limit = 50
 	}
+	if len(kinds) == 0 {
+		kinds = GalleryMediaKinds
+	}
 
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(GalleryMediaKinds)), ",")
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(kinds)), ",")
 	query := messageSelectPrefix + `
 		WHERE m.chat_id = ? AND m.is_revoked = 0 AND m.media_kind IN (` + placeholders + `)
 	`
 	args := []any{chatID}
-	for _, kind := range GalleryMediaKinds {
+	for _, kind := range kinds {
 		args = append(args, kind)
 	}
+	if beforeMessageID != "" {
+		beforeSortMS, beforeID, err := db.messageCursor(ctx, beforeMessageID)
+		if err != nil {
+			return nil, err
+		}
+		query += ` AND (m.sort_ms < ? OR (m.sort_ms = ? AND m.id < ?))`
+		args = append(args, beforeSortMS, beforeSortMS, beforeID)
+	}
+	query += `
+		ORDER BY m.sort_ms DESC, m.id DESC
+		LIMIT ?
+	`
+	args = append(args, limit)
+
+	rows, err := db.reader().QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	messages, err := scanMessageRows(rows, limit)
+	if err != nil {
+		return nil, err
+	}
+	if err := db.attachMessageExtras(ctx, db.reader(), messages); err != nil {
+		return nil, err
+	}
+	return messages, nil
+}
+
+// ListChatLinkMessages returns messages whose text contains a link, newest
+// first; beforeMessageID is a keyset cursor for paging older results.
+func (db *DB) ListChatLinkMessages(ctx context.Context, chatID string, limit int, beforeMessageID string) ([]Message, error) {
+	defer db.timeOp("ListChatLinkMessages", time.Now())
+	if limit <= 0 {
+		limit = 50
+	}
+
+	query := messageSelectPrefix + `
+		WHERE m.chat_id = ? AND m.is_revoked = 0
+		AND (m.text LIKE '%http://%' ESCAPE '\' OR m.text LIKE '%https://%' ESCAPE '\' OR m.text LIKE '%www.%' ESCAPE '\')
+	`
+	args := []any{chatID}
 	if beforeMessageID != "" {
 		beforeSortMS, beforeID, err := db.messageCursor(ctx, beforeMessageID)
 		if err != nil {
@@ -2461,6 +2604,51 @@ func (db *DB) MarkChatReadUpTo(ctx context.Context, chatID string, uptoUnix int6
 	return chat, changed || messagesChanged > 0, nil
 }
 
+func (db *DB) MarkAllChatsRead(ctx context.Context) ([]string, error) {
+	defer db.timeOp("MarkAllChatsRead", time.Now())
+	tx, err := db.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.QueryContext(ctx, `
+		SELECT DISTINCT chat_id FROM messages
+		WHERE direction = ? AND is_read = 0
+	`, DirectionIncoming)
+	if err != nil {
+		return nil, err
+	}
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE messages SET is_read = 1
+		WHERE direction = ? AND is_read = 0
+	`, DirectionIncoming); err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE chats SET unread_count = 0 WHERE unread_count > 0`); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
 // MarkMessagesReadByIDs marks the given incoming messages as read (self read
 // receipts name exact messages) and recomputes the chat badge. Returns
 // sql.ErrNoRows for unknown chats.
@@ -2538,11 +2726,12 @@ func getChatRow(ctx context.Context, queryer interface {
 	var chat Chat
 	var isGroup int
 	var isPinned int
+	var isFavorite int
 	var isArchived int
 	var isMuted int
 	var historyExhausted int
 	err := queryer.QueryRowContext(ctx, `
-		SELECT c.id, c.name, c.name_source, c.last_message, c.last_message_time, c.last_message_direction, c.last_message_status, c.unread_count, c.is_group, c.is_pinned, c.pinned_order, c.updated_at, c.is_archived, c.is_muted, c.mute_end_timestamp, c.history_exhausted,
+		SELECT c.id, c.name, c.name_source, c.last_message, c.last_message_time, c.last_message_direction, c.last_message_status, c.unread_count, c.is_group, c.is_pinned, c.pinned_order, c.is_favorite, c.updated_at, c.is_archived, c.is_muted, c.mute_end_timestamp, c.history_exhausted,
 		       COALESCE(NULLIF(a.local_path, ''), c.avatar_local_path), COALESCE(NULLIF(a.picture_id, ''), c.avatar_picture_id), COALESCE(NULLIF(a.status, ''), c.avatar_status), COALESCE(NULLIF(a.checked_at, 0), c.avatar_checked_at)
 		FROM chats c
 		LEFT JOIN avatars a ON a.subject_kind = 'chat' AND a.subject_id = c.id
@@ -2559,6 +2748,7 @@ func getChatRow(ctx context.Context, queryer interface {
 		&isGroup,
 		&isPinned,
 		&chat.PinnedOrder,
+		&isFavorite,
 		&chat.UpdatedAt,
 		&isArchived,
 		&isMuted,
@@ -2571,6 +2761,7 @@ func getChatRow(ctx context.Context, queryer interface {
 	)
 	chat.IsGroup = isGroup != 0
 	chat.IsPinned = isPinned != 0
+	chat.IsFavorite = isFavorite != 0
 	chat.IsArchived = isArchived != 0
 	chat.IsMuted = isMuted != 0
 	chat.HistoryExhausted = historyExhausted != 0
@@ -2582,12 +2773,12 @@ func getMessageRow(ctx context.Context, queryer interface {
 }, id string, message *Message) error {
 	var mentionedRaw string
 	err := queryer.QueryRowContext(ctx, `
-		SELECT m.id, m.chat_id, m.sender_id,
+		SELECT m.id, m.chat_id, m.sender_id, m.sender_device,
 		       COALESCE(NULLIF(s.name, ''), NULLIF(c.name, ''), ''),
 		       COALESCE(NULLIF(sa.local_path, ''), NULLIF(ca.local_path, ''), NULLIF(s.avatar_local_path, ''), NULLIF(c.avatar_local_path, ''), ''),
 		       m.text, m.timestamp, m.sort_ms, m.direction, m.is_read, m.status, m.media_kind, m.media_mime_type, m.media_local_path, m.media_thumbnail_local_path, m.media_width, m.media_height, m.media_animated, m.media_download_error, m.media_payload, m.media_cache_key,
 		       m.media_duration_secs, m.media_size_bytes, m.media_file_name, m.media_page_count, m.media_waveform, m.media_played,
-		       m.payload_json, m.payload_summary, m.album_parent_id, m.album_index, m.is_kept,
+		       m.payload_json, m.payload_summary, m.album_parent_id, m.album_index, m.is_kept, m.is_view_once,
 		       m.reply_to_message_id, m.reply_to_sender_id, m.reply_to_sender_name, m.reply_to_text, m.reply_to_media_kind, m.reply_to_media_mime_type, m.reply_to_direction,
 		       m.send_attempts, m.last_send_error, m.next_send_attempt, m.is_revoked, m.is_edited, m.is_starred, m.pinned_at, m.pinned_until, m.mentioned_jids
 		FROM messages m
@@ -2600,6 +2791,7 @@ func getMessageRow(ctx context.Context, queryer interface {
 		&message.ID,
 		&message.ChatID,
 		&message.SenderID,
+		&message.SenderDevice,
 		&message.SenderName,
 		&message.SenderAvatarLocalPath,
 		&message.Text,
@@ -2629,6 +2821,7 @@ func getMessageRow(ctx context.Context, queryer interface {
 		&message.AlbumParentID,
 		&message.AlbumIndex,
 		&message.IsKept,
+		&message.IsViewOnce,
 		&message.ReplyTo.MessageID,
 		&message.ReplyTo.SenderID,
 		&message.ReplyTo.SenderName,
@@ -2738,6 +2931,7 @@ func scanChat(scanner interface{ Scan(...any) error }) (Chat, error) {
 	var chat Chat
 	var isGroup int
 	var isPinned int
+	var isFavorite int
 	var isArchived int
 	var isMuted int
 	var historyExhausted int
@@ -2753,6 +2947,7 @@ func scanChat(scanner interface{ Scan(...any) error }) (Chat, error) {
 		&isGroup,
 		&isPinned,
 		&chat.PinnedOrder,
+		&isFavorite,
 		&chat.UpdatedAt,
 		&isArchived,
 		&isMuted,
@@ -2765,6 +2960,7 @@ func scanChat(scanner interface{ Scan(...any) error }) (Chat, error) {
 	)
 	chat.IsGroup = isGroup != 0
 	chat.IsPinned = isPinned != 0
+	chat.IsFavorite = isFavorite != 0
 	chat.IsArchived = isArchived != 0
 	chat.IsMuted = isMuted != 0
 	chat.HistoryExhausted = historyExhausted != 0
@@ -2786,6 +2982,7 @@ func scanMessageRows(rows *sql.Rows, capacity int) ([]Message, error) {
 			&message.ID,
 			&message.ChatID,
 			&message.SenderID,
+			&message.SenderDevice,
 			&message.SenderName,
 			&message.SenderAvatarLocalPath,
 			&message.Text,
@@ -2813,6 +3010,7 @@ func scanMessageRows(rows *sql.Rows, capacity int) ([]Message, error) {
 			&message.AlbumParentID,
 			&message.AlbumIndex,
 			&message.IsKept,
+			&message.IsViewOnce,
 			&message.ReplyTo.MessageID,
 			&message.ReplyTo.SenderID,
 			&message.ReplyTo.SenderName,

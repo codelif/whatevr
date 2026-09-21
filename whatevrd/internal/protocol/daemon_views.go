@@ -26,6 +26,9 @@ type DaemonStore interface {
 	MessageLister
 	StarredPinnedLister
 	ChatMediaLister
+	StatusLister
+	StatusSenderLister
+	ChannelLister
 	LiveLocationLister
 	SenderDisplayer
 }
@@ -42,6 +45,8 @@ type DaemonActions interface {
 	GroupActions
 	SettingsActions
 	StickerActions
+	// LogsTailer feeds the `daemon_logs` view from the process log ring.
+	LogsTailer
 }
 
 // RegisterDaemonViews registers the daemon-owned views from PROTOCOL.md.
@@ -55,7 +60,10 @@ func RegisterDaemonViews(s *Server, daemon *app.Daemon, store DaemonStore, actio
 	s.RegisterView("connection", connectionView{daemon: daemon, pending: store})
 	s.RegisterView("sync", syncView{daemon: daemon})
 	s.RegisterView("login", loginView{daemon: daemon})
-	s.RegisterView("chats", chatsView{daemon: daemon, lister: store})
+	s.RegisterView("chats", chatsView{daemon: daemon, lister: store, statuses: store})
+	if folders, ok := any(store).(FolderLister); ok {
+		s.RegisterView("chat_folders", foldersView{lister: folders})
+	}
 	s.RegisterView("chat", chatView{daemon: daemon, lister: store})
 	s.RegisterView("messages", messagesView{daemon: daemon, lister: store})
 	s.RegisterView("typing", typingView{daemon: daemon, resolver: store})
@@ -71,6 +79,14 @@ func RegisterDaemonViews(s *Server, daemon *app.Daemon, store DaemonStore, actio
 	s.RegisterView("starred", starredView{daemon: daemon, lister: store})
 	s.RegisterView("pinned", pinnedView{daemon: daemon, lister: store})
 	s.RegisterView("chat_media", chatMediaView{daemon: daemon, lister: store})
+	s.RegisterView("chat_links", chatLinksView{daemon: daemon, lister: store})
+	s.RegisterView("channels", channelsView{daemon: daemon, lister: store})
+	s.RegisterView("channel_messages", channelMessagesView{daemon: daemon, actions: channelActionsFrom(actions)})
+	s.RegisterView("status", statusView{daemon: daemon, lister: store, resolver: store})
+	s.RegisterView("status.kept", statusKeptView{daemon: daemon, lister: store})
+	s.RegisterView("status.muted", statusMutedView{daemon: daemon, lister: store})
+	s.RegisterView("calls", callsView{daemon: daemon, resolver: store})
+	s.RegisterView("daemon.logs", logsView{tailer: actions})
 	s.RegisterView("live_locations", liveLocationsView{daemon: daemon, lister: store})
 	s.RegisterView("stickers", stickersView{daemon: daemon, store: stickerStore})
 	s.RegisterView("sticker_packs", stickerPacksView{daemon: daemon, store: stickerStore, actions: actions})

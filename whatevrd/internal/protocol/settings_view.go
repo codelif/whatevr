@@ -185,6 +185,8 @@ type preferencesItem struct {
 	AutoDownloadDocuments bool   `json:"auto_download_documents"`
 	AutoDownloadStickers  bool   `json:"auto_download_stickers"`
 	AutoDownloadMaxBytes  int64  `json:"auto_download_max_bytes"`
+	AntiDelete            bool   `json:"anti_delete"`
+	SendTypingIndicators  bool   `json:"send_typing_indicators"`
 	AutoFetchMaps         bool   `json:"auto_fetch_maps"`
 }
 
@@ -303,6 +305,8 @@ func (s *preferencesSession) Items(max int) []Item {
 		AutoDownloadStickers:  p.AutoDownloadStickers,
 		AutoFetchMaps:         p.AutoFetchMaps,
 		AutoDownloadMaxBytes:  p.AutoDownloadMaxBytes,
+		AntiDelete:            p.AntiDelete,
+		SendTypingIndicators:  p.SendTypingIndicators,
 	}
 	return []Item{{ID: "self", Sort: objectViewSort, Data: item}}
 }

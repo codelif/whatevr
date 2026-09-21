@@ -4,8 +4,87 @@ import (
 	"context"
 	"math"
 	"strings"
+	"time"
 	"unicode/utf8"
+
+	"whatevrd/internal/app"
 )
+
+type scheduleTextParams struct {
+	ChatID string `json:"chat_id"`
+	Text   string `json:"text"`
+	SendAt int64  `json:"send_at"`
+}
+
+func (h commandHandlers) scheduleText(_ *conn, req request) (any, *Error) {
+	if err := h.requireActions(); err != nil {
+		return nil, err
+	}
+	var p scheduleTextParams
+	if err := decodeParams(req.Params, &p); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(p.ChatID) == "" || strings.TrimSpace(p.Text) == "" {
+		return nil, errorf(CodeInvalidParams, "chat_id and text are required")
+	}
+	if utf8.RuneCountInString(p.Text) > maxCommandTextRunes {
+		return nil, errorf(CodeInvalidParams, "text must be <= %d characters", maxCommandTextRunes)
+	}
+	if p.SendAt <= 0 {
+		return nil, errorf(CodeInvalidParams, "send_at must be a Unix timestamp")
+	}
+	id, err := h.actions.ScheduleText(context.Background(), strings.TrimSpace(p.ChatID), p.Text, time.Unix(p.SendAt, 0))
+	if perr := mapCommandError(err); perr != nil {
+		return nil, perr
+	}
+	return map[string]any{"scheduled_id": id}, nil
+}
+
+type scheduleListParams struct {
+	ChatID string `json:"chat_id"`
+}
+
+func (h commandHandlers) scheduleList(_ *conn, req request) (any, *Error) {
+	if err := h.requireActions(); err != nil {
+		return nil, err
+	}
+	var p scheduleListParams
+	if err := decodeParams(req.Params, &p); err != nil {
+		return nil, err
+	}
+	messages, err := h.actions.ListScheduledMessages(context.Background(), strings.TrimSpace(p.ChatID))
+	if perr := mapCommandError(err); perr != nil {
+		return nil, perr
+	}
+	items := make([]map[string]any, 0, len(messages))
+	for _, m := range messages {
+		items = append(items, map[string]any{
+			"id":      m.ID,
+			"chat_id": m.ChatID,
+			"text":    m.Text,
+			"send_at": m.SendAt,
+		})
+	}
+	return map[string]any{"messages": items}, nil
+}
+
+type scheduleCancelParams struct {
+	ID int64 `json:"id"`
+}
+
+func (h commandHandlers) scheduleCancel(_ *conn, req request) (any, *Error) {
+	if err := h.requireActions(); err != nil {
+		return nil, err
+	}
+	var p scheduleCancelParams
+	if err := decodeParams(req.Params, &p); err != nil {
+		return nil, err
+	}
+	if p.ID <= 0 {
+		return nil, errorf(CodeInvalidParams, "id is required")
+	}
+	return nil, mapCommandError(h.actions.CancelScheduledMessage(context.Background(), p.ID))
+}
 
 type sendTextParams struct {
 	ChatID   string   `json:"chat_id"`
@@ -47,6 +126,16 @@ type sendMediaParams struct {
 	Caption  string   `json:"caption"`
 	ReplyTo  string   `json:"reply_to"`
 	Mentions []string `json:"mentions"`
+	// Kind forces the media kind: "image", "video", "audio", "voice" or
+	// "document". Empty (or "auto") classifies from the file contents.
+	Kind string `json:"kind"`
+	// ViewOnce sends photo/video/audio media view-once.
+	ViewOnce bool `json:"view_once"`
+	// Filename overrides the document display name.
+	Filename string `json:"filename"`
+	// Quality is "standard" (photos downscaled to 1600px, like official
+	// clients) or "hd" (original bytes). Empty means standard.
+	Quality string `json:"quality"`
 }
 
 func (h commandHandlers) sendMedia(_ *conn, req request) (any, *Error) {
@@ -69,7 +158,175 @@ func (h commandHandlers) sendMedia(_ *conn, req request) (any, *Error) {
 	if utf8.RuneCountInString(p.Caption) > maxCommandCaptionRunes {
 		return nil, errorf(CodeInvalidParams, "caption must be <= %d characters", maxCommandCaptionRunes)
 	}
-	saved, err := h.actions.SendMediaWithMentions(context.Background(), strings.TrimSpace(p.ChatID), path, p.Caption, strings.TrimSpace(p.ReplyTo), trimStringSlice(p.Mentions))
+	saved, err := h.actions.SendMediaWithOptions(context.Background(), strings.TrimSpace(p.ChatID), path, p.Caption, strings.TrimSpace(p.ReplyTo), trimStringSlice(p.Mentions), mediaSendOptions(p))
+	if perr := mapCommandError(err); perr != nil {
+		return nil, perr
+	}
+	return map[string]any{"message_id": saved.Message.ID}, nil
+}
+
+type sendMediaBatchParams struct {
+	ChatID   string `json:"chat_id"`
+	ReplyTo  string `json:"reply_to"`
+	Kind     string `json:"kind"`
+	ViewOnce bool   `json:"view_once"`
+	Files    []struct {
+		Path    string `json:"path"`
+		Caption string `json:"caption"`
+	} `json:"files"`
+}
+
+// send.media_batch sends several files as individual messages through the
+// daemon's serialized send path. The frontend can only hold one in-flight
+// send, so looping send.media client-side drops every file after the first.
+// Per-file failures come back as {index, error} entries without stopping the
+// rest.
+func (h commandHandlers) sendMediaBatch(_ *conn, req request) (any, *Error) {
+	if err := h.requireActions(); err != nil {
+		return nil, err
+	}
+	var p sendMediaBatchParams
+	if err := decodeParams(req.Params, &p); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(p.ChatID) == "" {
+		return nil, errorf(CodeInvalidParams, "chat_id is required")
+	}
+	if len(p.Files) == 0 || len(p.Files) > 30 {
+		return nil, errorf(CodeInvalidParams, "files must hold 1-30 entries")
+	}
+	files := make([]app.MediaBatchFile, 0, len(p.Files))
+	for _, f := range p.Files {
+		path := strings.TrimSpace(f.Path)
+		if path == "" {
+			return nil, errorf(CodeInvalidParams, "every file needs a path")
+		}
+		if utf8.RuneCountInString(f.Caption) > maxCommandCaptionRunes {
+			return nil, errorf(CodeInvalidParams, "caption must be <= %d characters", maxCommandCaptionRunes)
+		}
+		files = append(files, app.MediaBatchFile{Path: path, Caption: f.Caption})
+	}
+	opts := app.MediaSendOptions{
+		Kind:     strings.TrimSpace(p.Kind),
+		ViewOnce: p.ViewOnce,
+	}
+	saved, failed := h.actions.SendMediaBatch(context.Background(), strings.TrimSpace(p.ChatID), files, strings.TrimSpace(p.ReplyTo), opts)
+	ids := make([]string, 0, len(saved))
+	for _, s := range saved {
+		ids = append(ids, s.Message.ID)
+	}
+	out := make([]map[string]any, 0, len(failed))
+	for _, f := range failed {
+		out = append(out, map[string]any{"index": f.Index, "error": f.Message})
+	}
+	return map[string]any{"message_ids": ids, "errors": out}, nil
+}
+
+// mediaSendOptions converts send.media params to the daemon's media options.
+// It lives in this file (rather than inline) so the mapping is unit-testable.
+func mediaSendOptions(p sendMediaParams) app.MediaSendOptions {
+	return app.MediaSendOptions{
+		Kind:     strings.TrimSpace(p.Kind),
+		ViewOnce: p.ViewOnce,
+		Filename: strings.TrimSpace(p.Filename),
+		Quality:  strings.TrimSpace(p.Quality),
+	}
+}
+
+type sendPollParams struct {
+	ChatID   string   `json:"chat_id"`
+	Question string   `json:"question"`
+	Options  []string `json:"options"`
+	Multi    bool     `json:"multi"`
+}
+
+// send.poll creates a single- or multi-select poll (2–12 options).
+func (h commandHandlers) sendPoll(ctx context.Context, _ *conn, req request) (any, *Error) {
+	if err := h.requireActions(); err != nil {
+		return nil, err
+	}
+	var p sendPollParams
+	if err := decodeParams(req.Params, &p); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(p.ChatID) == "" {
+		return nil, errorf(CodeInvalidParams, "chat_id is required")
+	}
+	if strings.TrimSpace(p.Question) == "" {
+		return nil, errorf(CodeInvalidParams, "question is required")
+	}
+	if utf8.RuneCountInString(p.Question) > maxCommandCaptionRunes {
+		return nil, errorf(CodeInvalidParams, "question must be <= %d characters", maxCommandCaptionRunes)
+	}
+	options := trimStringSlice(p.Options)
+	if len(options) < 2 {
+		return nil, errorf(CodeInvalidParams, "at least two options are required")
+	}
+	if len(options) > 12 {
+		return nil, errorf(CodeInvalidParams, "at most 12 options per poll")
+	}
+	saved, err := h.actions.SendPoll(ctx, strings.TrimSpace(p.ChatID), strings.TrimSpace(p.Question), options, p.Multi)
+	if perr := mapCommandError(err); perr != nil {
+		return nil, perr
+	}
+	return map[string]any{"message_id": saved.Message.ID}, nil
+}
+
+type sendContactParams struct {
+	ChatID string `json:"chat_id"`
+	Name   string `json:"name"`
+	Phone  string `json:"phone"`
+}
+
+// send.contact shares a contact card (name + phone) as a vCard message.
+func (h commandHandlers) sendContact(ctx context.Context, _ *conn, req request) (any, *Error) {
+	if err := h.requireActions(); err != nil {
+		return nil, err
+	}
+	var p sendContactParams
+	if err := decodeParams(req.Params, &p); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(p.ChatID) == "" {
+		return nil, errorf(CodeInvalidParams, "chat_id is required")
+	}
+	if strings.TrimSpace(p.Name) == "" {
+		return nil, errorf(CodeInvalidParams, "name is required")
+	}
+	if strings.TrimSpace(p.Phone) == "" {
+		return nil, errorf(CodeInvalidParams, "phone is required")
+	}
+	saved, err := h.actions.SendContact(ctx, strings.TrimSpace(p.ChatID), strings.TrimSpace(p.Name), strings.TrimSpace(p.Phone))
+	if perr := mapCommandError(err); perr != nil {
+		return nil, perr
+	}
+	return map[string]any{"message_id": saved.Message.ID}, nil
+}
+
+type sendLocationParams struct {
+	ChatID  string  `json:"chat_id"`
+	Lat     float64 `json:"lat"`
+	Long    float64 `json:"long"`
+	Name    string  `json:"name"`
+	Address string  `json:"address"`
+}
+
+// send.location shares a location pin.
+func (h commandHandlers) sendLocation(ctx context.Context, _ *conn, req request) (any, *Error) {
+	if err := h.requireActions(); err != nil {
+		return nil, err
+	}
+	var p sendLocationParams
+	if err := decodeParams(req.Params, &p); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(p.ChatID) == "" {
+		return nil, errorf(CodeInvalidParams, "chat_id is required")
+	}
+	if p.Lat < -90 || p.Lat > 90 || p.Long < -180 || p.Long > 180 {
+		return nil, errorf(CodeInvalidParams, "coordinates out of range")
+	}
+	saved, err := h.actions.SendLocation(ctx, strings.TrimSpace(p.ChatID), p.Lat, p.Long, strings.TrimSpace(p.Name), strings.TrimSpace(p.Address))
 	if perr := mapCommandError(err); perr != nil {
 		return nil, perr
 	}
@@ -137,6 +394,34 @@ func (h commandHandlers) messageReact(ctx context.Context, _ *conn, req request)
 type messageEditParams struct {
 	MessageID string `json:"message_id"`
 	Text      string `json:"text"`
+}
+
+// message.edit_history returns a message's superseded bodies, oldest first.
+// The live row holds the current version; the frontend appends it as such.
+// Synchronous: a local index read, no network.
+func (h commandHandlers) messageEditHistory(_ *conn, req request) (any, *Error) {
+	if err := h.requireActions(); err != nil {
+		return nil, err
+	}
+	var p messageIDParams
+	if err := decodeParams(req.Params, &p); err != nil {
+		return nil, err
+	}
+	if err := p.valid(); err != nil {
+		return nil, err
+	}
+	edits, err := h.actions.ListMessageEdits(context.Background(), strings.TrimSpace(p.MessageID))
+	if perr := mapCommandError(err); perr != nil {
+		return nil, perr
+	}
+	out := make([]map[string]any, 0, len(edits))
+	for _, e := range edits {
+		out = append(out, map[string]any{
+			"text":      e.Text,
+			"edited_at": e.EditedAtMillis,
+		})
+	}
+	return map[string]any{"edits": out}, nil
 }
 
 func (h commandHandlers) messageEdit(ctx context.Context, _ *conn, req request) (any, *Error) {

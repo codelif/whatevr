@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/url"
 	"os/exec"
+	"strings"
 	"sync"
 
 	"github.com/godbus/dbus/v5"
@@ -27,6 +28,11 @@ const (
 // by fanning out connection-directed open_chat events.
 type ChatOpener interface {
 	OpenChat(chatID string) bool
+}
+
+type NotificationActions interface {
+	MarkChatRead(chatID string) bool
+	ReplyToChat(chatID, text string) bool
 }
 
 type Worker struct {
@@ -65,14 +71,19 @@ func NewWorker(opener ChatOpener) (*Worker, error) {
 func (w *Worker) Start(ctx context.Context) {
 	signals := make(chan *dbus.Signal, 16)
 	w.conn.Signal(signals)
-	_ = w.conn.AddMatchSignal(dbus.WithMatchObjectPath(objectPath), dbus.WithMatchInterface(interfaceName))
-	_ = w.conn.AddMatchSignal(dbus.WithMatchObjectPath(dbusObjectPath), dbus.WithMatchInterface(dbusInterface), dbus.WithMatchMember("NameOwnerChanged"))
+	if err := w.conn.AddMatchSignal(dbus.WithMatchObjectPath(objectPath), dbus.WithMatchInterface(interfaceName)); err != nil {
+		log.Printf("notification signal registration failed: %v", err)
+	}
+	if err := w.conn.AddMatchSignal(dbus.WithMatchObjectPath(dbusObjectPath), dbus.WithMatchInterface(dbusInterface), dbus.WithMatchMember("NameOwnerChanged")); err != nil {
+		log.Printf("D-Bus owner signal registration failed: %v", err)
+	}
 
 	go func() {
 		defer w.conn.RemoveSignal(signals)
 		for {
 			select {
 			case <-ctx.Done():
+				_ = w.conn.Close()
 				return
 			case item := <-w.queue:
 				w.send(ctx, item.message, item.chat, item.opts)
@@ -152,6 +163,24 @@ func (w *Worker) handleSignal(ctx context.Context, signal *dbus.Signal) {
 		chatID, ok := w.activeChat(id)
 		if !ok {
 			return
+		}
+		action, _ := signal.Body[1].(string)
+		if action == "mark-read" {
+			if handler, ok := w.opener.(NotificationActions); ok && handler.MarkChatRead(chatID) {
+				return
+			}
+		}
+		if strings.HasPrefix(action, "reply:") {
+			if handler, ok := w.opener.(NotificationActions); ok && handler.ReplyToChat(chatID, strings.TrimPrefix(action, "reply:")) {
+				return
+			}
+		}
+		if action == "reply" && len(signal.Body) >= 3 {
+			if text, ok := signal.Body[2].(string); ok {
+				if handler, ok := w.opener.(NotificationActions); ok && handler.ReplyToChat(chatID, text) {
+					return
+				}
+			}
 		}
 		w.openChat(ctx, chatID)
 	case interfaceName + ".NotificationClosed":

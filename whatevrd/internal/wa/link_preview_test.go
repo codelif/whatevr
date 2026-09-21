@@ -179,7 +179,7 @@ func TestRevokeDropsTheCard(t *testing.T) {
 		t.Fatal("the preview was not stored in the first place")
 	}
 
-	revoked, _, _, err := client.store.MarkMessageRevoked(ctx, input.ID)
+	revoked, _, _, err := client.store.MarkMessageRevoked(ctx, input.ID, false)
 	if err != nil {
 		t.Fatalf("revoke: %v", err)
 	}

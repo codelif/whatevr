@@ -82,6 +82,8 @@ type preferencesSetParams struct {
 	AutoDownloadDocuments *bool  `json:"auto_download_documents"`
 	AutoDownloadStickers  *bool  `json:"auto_download_stickers"`
 	AutoDownloadMaxBytes  *int64 `json:"auto_download_max_bytes"`
+	AntiDelete            *bool  `json:"anti_delete"`
+	SendTypingIndicators  *bool  `json:"send_typing_indicators"`
 	AutoFetchMaps         *bool  `json:"auto_fetch_maps"`
 }
 
@@ -129,6 +131,12 @@ func applyPreferencesPatch(prefs *app.AppPreferences, p preferencesSetParams) {
 	}
 	if p.AutoDownloadMaxBytes != nil {
 		prefs.AutoDownloadMaxBytes = max(0, *p.AutoDownloadMaxBytes)
+	}
+	if p.AntiDelete != nil {
+		prefs.AntiDelete = *p.AntiDelete
+	}
+	if p.SendTypingIndicators != nil {
+		prefs.SendTypingIndicators = *p.SendTypingIndicators
 	}
 	if p.AutoFetchMaps != nil {
 		prefs.AutoFetchMaps = *p.AutoFetchMaps

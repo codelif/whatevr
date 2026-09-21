@@ -43,6 +43,7 @@ type Daemon struct {
 	presenceByChatID  map[string]presenceState
 	latestHistorySync *HistorySyncEvent
 	mediaDownloads    map[string]MediaDownloadEvent
+	ringingCalls      map[string]RingingCall
 
 	connMu sync.Mutex
 	conn   connState
@@ -163,9 +164,11 @@ type DaemonEvent struct {
 	// MessageDeleted payload (the row is gone, so only ids survive).
 	DeletedChatID    string
 	DeletedMessageID string
-	RetryAttempt     int32
-	NextRetryUnix    int64
-	CanReconnect     bool
+	// CallID identifies the call a DaemonEventCallChanged is about.
+	CallID        string
+	RetryAttempt  int32
+	NextRetryUnix int64
+	CanReconnect  bool
 
 	HistorySync     HistorySyncEvent
 	MediaDownload   MediaDownloadEvent
@@ -237,6 +240,17 @@ const (
 	// preferences change (via SetAppPreferences). It carries no payload; the
 	// `preferences` view re-reads GetAppPreferences off it.
 	DaemonEventPreferencesChanged
+	// DaemonEventStatusChanged fires when a contact status (story) arrives or
+	// updates. It carries no payload; the `status` view re-reads the store.
+	DaemonEventStatusChanged
+	// DaemonEventCallChanged fires when a call starts or stops ringing. CallID
+	// + Chat identify the call; the `calls` view re-reads the ringing set off
+	// it (the event itself carries only identity, like MessageReceipt).
+	DaemonEventCallChanged
+	// DaemonEventChannelsChanged fires when the followed-channel directory
+	// refreshes. It carries no payload; the `channels` view re-reads the
+	// store.
+	DaemonEventChannelsChanged
 	// DaemonEventLiveLocationsChanged fires when a live-location share in a
 	// chat opens, moves or ends. Its own view exists because a position that
 	// changes every few seconds has no business sharing an item with a message
@@ -387,6 +401,7 @@ type Chat struct {
 	IsGroup              bool
 	IsPinned             bool
 	PinnedOrder          uint32
+	IsFavorite           bool
 	IsArchived           bool
 	IsMuted              bool
 	MuteEndTimestamp     int64
@@ -571,6 +586,14 @@ type AppPreferences struct {
 	// means no limit. It exists so a 200 MB video is a decision rather than a
 	// side effect of scrolling past it.
 	AutoDownloadMaxBytes int64
+	// AntiDelete keeps the content of messages deleted for everyone and shows
+	// it with a Deleted mark instead of a tombstone. Local-only display: it
+	// changes nothing on the wire, so it cannot get the account flagged.
+	AntiDelete bool
+	// SendTypingIndicators announces composing presence while typing.
+	// Turning it off just omits the announcement (passive); it changes no
+	// message content or timing.
+	SendTypingIndicators bool
 	// AutoFetchMaps lets the daemon draw a real map for a shared location by
 	// fetching tiles. On by default, because a location bubble without a map is
 	// a pair of numbers. Turning it off means nothing tells a tile server you
@@ -588,6 +611,8 @@ func DefaultAppPreferences() AppPreferences {
 		NotificationSound:    false,
 		NotificationPreview:  true,
 		AutoDownloadMaxBytes: 16 * 1024 * 1024,
+		AntiDelete:           true,
+		SendTypingIndicators: true,
 		AutoFetchMaps:        true,
 	}
 }
@@ -622,7 +647,6 @@ func (d *Daemon) PublishQRCode(code string, expiresAt time.Time) {
 
 func (d *Daemon) SubscribeDaemonEvents() (<-chan DaemonEvent, func()) {
 	id := d.nextSubID.Add(1)
-	ch := make(chan DaemonEvent, daemonSubscriberBuffer)
 
 	// One snapshot, so the replayed event cannot mix a state from one moment
 	// with retry metadata from another.
@@ -631,14 +655,14 @@ func (d *Daemon) SubscribeDaemonEvents() (<-chan DaemonEvent, func()) {
 	d.connMu.Unlock()
 
 	d.subMu.Lock()
-	d.daemonSubs[id] = ch
 	latestHistorySync := d.latestHistorySync
 	mediaDownloads := make([]MediaDownloadEvent, 0, len(d.mediaDownloads))
 	for _, download := range d.mediaDownloads {
 		mediaDownloads = append(mediaDownloads, download)
 	}
-	d.subMu.Unlock()
-
+	ch := make(chan DaemonEvent, daemonSubscriberBuffer+1+len(mediaDownloads)+boolToInt(latestHistorySync != nil))
+	// Queue the replay before releasing the producer lock. Otherwise a live
+	// event can overtake this snapshot and regress the subscriber's state.
 	ch <- DaemonEvent{
 		Kind:          DaemonEventConnectionChanged,
 		State:         conn.state,
@@ -653,6 +677,8 @@ func (d *Daemon) SubscribeDaemonEvents() (<-chan DaemonEvent, func()) {
 	for _, download := range mediaDownloads {
 		ch <- DaemonEvent{Kind: DaemonEventMediaDownloadChanged, MediaDownload: download}
 	}
+	d.daemonSubs[id] = ch
+	d.subMu.Unlock()
 
 	return ch, func() {
 		d.subMu.Lock()
@@ -684,6 +710,13 @@ func (d *Daemon) SubscribeLoginEvents() (<-chan LoginEvent, func()) {
 		delete(d.loginSubs, id)
 		d.subMu.Unlock()
 	}
+}
+
+func boolToInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 func (d *Daemon) broadcastDaemonEvent(event DaemonEvent) {
@@ -973,6 +1006,47 @@ func (d *Daemon) ActiveMediaDownloads() []MediaDownloadEvent {
 	return out
 }
 
+// RingingCall is one locally-ringing call, for the `calls` view's initial
+// fill. The desktop cannot answer (no media stack upstream); these exist to
+// render, reject, and tombstone as missed.
+type RingingCall struct {
+	CallID      string
+	ChatID      string
+	CallerID    string
+	Video       bool
+	StartedUnix int64
+}
+
+// RingingCalls snapshots the currently ringing calls.
+func (d *Daemon) RingingCalls() []RingingCall {
+	d.subMu.Lock()
+	defer d.subMu.Unlock()
+	out := make([]RingingCall, 0, len(d.ringingCalls))
+	for _, call := range d.ringingCalls {
+		out = append(out, call)
+	}
+	return out
+}
+
+// SetRingingCall records a ringing call; ClearRingingCall forgets it.
+func (d *Daemon) SetRingingCall(call RingingCall) {
+	if call.CallID == "" {
+		return
+	}
+	d.subMu.Lock()
+	defer d.subMu.Unlock()
+	if d.ringingCalls == nil {
+		d.ringingCalls = make(map[string]RingingCall)
+	}
+	d.ringingCalls[call.CallID] = call
+}
+
+func (d *Daemon) ClearRingingCall(callID string) {
+	d.subMu.Lock()
+	defer d.subMu.Unlock()
+	delete(d.ringingCalls, callID)
+}
+
 // ConnectionSnapshot returns the current connection state the subscribe replay's
 // ConnectionChanged carries, for the `connection` view to reload on a resync.
 func (d *Daemon) ConnectionSnapshot() (state State, detail string, attempt int32, nextRetryUnix int64, canReconnect bool) {
@@ -1037,6 +1111,28 @@ func (d *Daemon) PublishBlocklistChanged() {
 // changed, so an open `preferences` view re-reads them.
 func (d *Daemon) PublishPreferencesChanged() {
 	d.broadcastDaemonEvent(DaemonEvent{Kind: DaemonEventPreferencesChanged})
+}
+
+// PublishStatusChanged signals a new or updated contact status; the `status`
+// view re-reads the store off it.
+func (d *Daemon) PublishStatusChanged() {
+	d.broadcastDaemonEvent(DaemonEvent{Kind: DaemonEventStatusChanged})
+}
+
+// PublishCallChanged signals a call starting or stopping ringing; the
+// `calls` view re-reads the ringing set off it.
+func (d *Daemon) PublishCallChanged(callID, chatID string) {
+	d.broadcastDaemonEvent(DaemonEvent{
+		Kind:   DaemonEventCallChanged,
+		CallID: callID,
+		Chat:   Chat{ID: chatID},
+	})
+}
+
+// PublishChannelsChanged signals a refreshed channel directory; the
+// `channels` view re-reads the store off it.
+func (d *Daemon) PublishChannelsChanged() {
+	d.broadcastDaemonEvent(DaemonEvent{Kind: DaemonEventChannelsChanged})
 }
 
 // PublishLiveLocationsChanged signals that a chat's set of running
