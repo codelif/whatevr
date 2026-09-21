@@ -11,7 +11,7 @@ import "SearchHighlight.js" as Highlight
 // One row of the unified search results list. Renders a chat-name match or a
 // message-text match depending on `kind`, highlighting the query inside the
 // name (chat rows) or a windowed snippet (message rows).
-ItemDelegate {
+QQC2.ItemDelegate {
     id: root
 
     required property string kind
@@ -82,7 +82,7 @@ ItemDelegate {
                 Layout.fillWidth: true
                 spacing: Kirigami.Units.smallSpacing
 
-                Label {
+                QQC2.Label {
                     Layout.fillWidth: true
                     // Number rows: "Message <name/number>". Chat rows highlight the
                     // matched name; message rows show the chat name plainly (the
@@ -103,7 +103,7 @@ ItemDelegate {
                     maximumLineCount: 1
                 }
 
-                Label {
+                QQC2.Label {
                     visible: root.isMessage && root.timeText.length > 0
                     text: root.timeText
                     color: Kirigami.Theme.disabledTextColor
@@ -111,7 +111,7 @@ ItemDelegate {
                 }
             }
 
-            Label {
+            QQC2.Label {
                 Layout.fillWidth: true
                 visible: text.length > 0
                 // Number rows: the phone number, or an "on WhatsApp" status.
