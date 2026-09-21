@@ -15,13 +15,11 @@
 #include <QPointer>
 #include <QProcess>
 #include <QQmlEngine>
-#include <QRegularExpression>
 #include <QSet>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QStringList>
 #include <QTextBoundaryFinder>
-#include <QTimeZone>
 #include <QTimer>
 #include <QUrl>
 #include <QUuid>
@@ -71,6 +69,9 @@ constexpr int kChatPageSize = 24;
 constexpr int kStarredPageSize = 50;
 // A gallery page is a grid, so it shows more per screen than the starred list.
 constexpr int kChatMediaPageSize = 60;
+// The status feed is windowed like any other collection; statuses expire after
+// 24h server-side, so one page already spans most of a day's stories.
+constexpr int kStatusPageSize = 100;
 // In-chat search asks for one generous page of matches: the match cursor walks
 // that list, it is not a scrollable surface.
 constexpr int kChatSearchLimit = 100;
@@ -214,6 +215,10 @@ ProtocolController::ProtocolController(QString socketPath, QObject *parent)
     connect(m_client, &ProtocolClient::ready, this, &ProtocolController::onClientReady);
     connect(m_client, &ProtocolClient::disconnected, this, &ProtocolController::onClientDisconnected);
     connect(m_client, &ProtocolClient::openChatRequested, this, &ProtocolController::openChatRequested);
+    connect(m_client, &ProtocolClient::activateWindowRequested, this,
+            &ProtocolController::activateWindowRequested);
+    connect(m_client, &ProtocolClient::showTrayMenuRequested, this,
+            &ProtocolController::showTrayMenuRequested);
     connect(m_client, &ProtocolClient::mediaStreamUpdated, this,
             [this](const QString &streamId,
                    const QString &messageId,
@@ -251,14 +256,17 @@ ProtocolController::ProtocolController(QString socketPath, QObject *parent)
     m_archivedModel = new CollectionViewModel(this);
     connect(m_archivedModel, &CollectionViewModel::countChanged, this, &ProtocolController::archivedChanged);
     connect(m_archivedModel, &CollectionViewModel::readyChanged, this, &ProtocolController::archivedChanged);
+    m_chatFoldersModel = new CollectionViewModel(this);
 
     // The selected conversation has its own `chat` object view, independent of
     // the sidebar's current filter and loaded window.
     m_selectedChatModel = new ObjectViewModel(this);
+    m_groupPolicyModel = new ObjectViewModel(this);
+    connect(m_groupPolicyModel, &ObjectViewModel::valueChanged, this, [this] { Q_EMIT composerChanged(); });
     connect(m_selectedChatModel, &ObjectViewModel::valueChanged, this, [this] {
         if (!m_selectedChatId.isEmpty()) {
-            if (m_session->phoneHistoryRequesting && selectedChatHistoryExhausted()) {
-                m_session->phoneHistoryRequesting = false;
+            if (m_phoneHistoryRequesting && selectedChatHistoryExhausted()) {
+                m_phoneHistoryRequesting = false;
                 m_phoneHistoryTimer->stop();
                 m_phoneHistorySettleTimer->stop();
                 Q_EMIT messagesChanged();
@@ -311,33 +319,28 @@ ProtocolController::ProtocolController(QString socketPath, QObject *parent)
     m_syncModel = new ObjectViewModel(this);
     connect(m_syncModel, &ObjectViewModel::valueChanged, this, &ProtocolController::recomputeHistorySync);
 
-    // The transcript models are per warm chat and built on demand; the pool
-    // starts empty with one slot per pane the conversation will park.
-    m_messageWindows.resize(kWarmChatWindows);
-
-    // An empty transcript that is never filled and never subscribed, so that
-    // "no chat is open" is a model saying it holds nothing rather than a null
-    // pointer. Around a dozen readers of the active transcript are property
-    // getters that QML evaluates before any chat has been chosen, and a
-    // placeholder answers all of them correctly (no rows, not ready, no such
-    // message) for the cost of one object.
-    m_idleMessagesModel = new CollectionViewModel(this);
-    m_idleMessagesModel->setReverseOrder(true);
-    m_idleMessagePresentation = new ProtocolMessageModel(m_idleMessagesModel, this);
-    // The stand-in with no chat in it. It is never in the pool and never
-    // subscribed; it exists so that nothing reading the active session has to
-    // check for null.
-    m_idleSession = new ConversationSession(this);
-    m_idleSession->source = m_idleMessagesModel;
-    m_idleSession->presentation = m_idleMessagePresentation;
-    m_session = m_idleSession;
-    m_messagesModel = m_idleMessagesModel;
-    m_messagePresentationModel = m_idleMessagePresentation;
-
+    m_messagesModel = new CollectionViewModel(this);
+    m_messagePresentationModel = new ProtocolMessageModel(m_messagesModel, this);
     // Media transfers (D4c): the global `transfers` view is what makes a
     // downloading bubble show progress. The timeline model reads it through by
     // message id at render time — the two views are never merged into one row.
     m_transfersModel = new CollectionViewModel(this);
+    m_messagePresentationModel->setTransfersSource(m_transfersModel);
+    connect(m_messagesModel, &CollectionViewModel::readyReceived, this, &ProtocolController::onMessagesReady);
+    connect(m_messagesModel, &QAbstractItemModel::modelReset, this, &ProtocolController::onMessagesReset);
+    connect(m_messagesModel, &CollectionViewModel::countChanged, this, [this] {
+        Q_EMIT messagesChanged();
+    });
+    connect(m_messagesModel, &QAbstractItemModel::rowsInserted, this,
+            [this](const QModelIndex &, int first, int) {
+        Q_UNUSED(first)
+        if (m_phoneHistoryRequesting && m_phoneHistoryGeneration == m_messagesGeneration
+            && m_messagePresentationModel->messageIdAt(0) != m_phoneHistoryOldestId) {
+            // Backfills arrive as a burst of individual upserts. Restore the
+            // viewport only after that burst settles, not after its first row.
+            m_phoneHistorySettleTimer->start();
+        }
+    });
 
     // Conversation-header presence (D3c): one item for the selected chat's
     // counterpart while a conversation is on screen.
@@ -360,11 +363,6 @@ ProtocolController::ProtocolController(QString socketPath, QObject *parent)
 
     // Pinned banner (D4b): the displayed chat's pins. The banner reads rows by
     // index, so every shape change (fill, pin, unpin, expiry) is one signal.
-    m_liveLocationsModel = new CollectionViewModel(this);
-    connect(m_liveLocationsModel, &CollectionViewModel::countChanged, this, &ProtocolController::liveLocationsChanged);
-    connect(m_liveLocationsModel, &CollectionViewModel::dataChanged, this, &ProtocolController::liveLocationsChanged);
-    connect(m_liveLocationsModel, &CollectionViewModel::modelReset, this, &ProtocolController::liveLocationsChanged);
-
     m_pinnedModel = new CollectionViewModel(this);
     connect(m_pinnedModel, &CollectionViewModel::countChanged, this, &ProtocolController::pinnedMessagesChanged);
     connect(m_pinnedModel, &CollectionViewModel::dataChanged, this, &ProtocolController::pinnedMessagesChanged);
@@ -392,6 +390,45 @@ ProtocolController::ProtocolController(QString socketPath, QObject *parent)
     connect(m_starredModel, &CollectionViewModel::countChanged, this, &ProtocolController::starredMessagesChanged);
     connect(m_starredModel, &CollectionViewModel::readyChanged, this, &ProtocolController::starredMessagesChanged);
     connect(m_starredModel, &CollectionViewModel::modelReset, this, &ProtocolController::starredMessagesChanged);
+
+    // Status and calls tabs: plain collection models over the `status` and
+    // `calls` views. The status page groups rows per contact itself; the calls
+    // count doubles as the rail badge.
+    m_statusModel = new CollectionViewModel(this);
+    connect(m_statusModel, &CollectionViewModel::countChanged, this, &ProtocolController::statusChanged);
+    connect(m_statusModel, &CollectionViewModel::readyChanged, this, &ProtocolController::statusChanged);
+    connect(m_statusModel, &CollectionViewModel::modelReset, this, &ProtocolController::statusChanged);
+    // Row content changes (viewed flags, downloaded paths) carry no count or
+    // ready edge but must still refresh pages holding snapshots — notably the
+    // status viewer, which otherwise keeps showing Load after the bytes land.
+    connect(m_statusModel, &CollectionViewModel::dataChanged, this, &ProtocolController::statusChanged);
+    // Kept senders ride the status tab's lifetime; any churn rebuilds groups.
+    m_keptStatusModel = new CollectionViewModel(this);
+    connect(m_keptStatusModel, &CollectionViewModel::countChanged, this, &ProtocolController::statusChanged);
+    connect(m_keptStatusModel, &CollectionViewModel::readyChanged, this, &ProtocolController::statusChanged);
+    connect(m_keptStatusModel, &CollectionViewModel::modelReset, this, &ProtocolController::statusChanged);
+    connect(m_keptStatusModel, &CollectionViewModel::dataChanged, this, &ProtocolController::statusChanged);
+    // Muted senders ride the same lifetime into the page's Muted section.
+    m_mutedStatusModel = new CollectionViewModel(this);
+    connect(m_mutedStatusModel, &CollectionViewModel::countChanged, this, &ProtocolController::statusChanged);
+    connect(m_mutedStatusModel, &CollectionViewModel::readyChanged, this, &ProtocolController::statusChanged);
+    connect(m_mutedStatusModel, &CollectionViewModel::modelReset, this, &ProtocolController::statusChanged);
+    connect(m_mutedStatusModel, &CollectionViewModel::dataChanged, this, &ProtocolController::statusChanged);
+    m_callsModel = new CollectionViewModel(this);
+    connect(m_callsModel, &CollectionViewModel::countChanged, this, &ProtocolController::callsChanged);
+    connect(m_callsModel, &CollectionViewModel::readyChanged, this, &ProtocolController::callsChanged);
+    connect(m_callsModel, &CollectionViewModel::modelReset, this, &ProtocolController::callsChanged);
+
+    m_channelsModel = new CollectionViewModel(this);
+    connect(m_channelsModel, &CollectionViewModel::countChanged, this, &ProtocolController::channelsChanged);
+    connect(m_channelsModel, &CollectionViewModel::readyChanged, this, &ProtocolController::channelsChanged);
+    connect(m_channelsModel, &CollectionViewModel::modelReset, this, &ProtocolController::channelsChanged);
+    m_channelMessagesModel = new CollectionViewModel(this);
+    connect(m_channelMessagesModel, &CollectionViewModel::countChanged, this, &ProtocolController::channelMessagesChanged);
+    connect(m_channelMessagesModel, &CollectionViewModel::readyChanged, this, &ProtocolController::channelMessagesChanged);
+    connect(m_channelMessagesModel, &CollectionViewModel::modelReset, this, &ProtocolController::channelMessagesChanged);
+
+    m_logsModel = new CollectionViewModel(this);
 
     // Info card (D5): one object view (either `contact` or `group`, whichever
     // the open dialog asked for) plus the group's member roster. Two-phase
@@ -467,12 +504,12 @@ ProtocolController::ProtocolController(QString socketPath, QObject *parent)
     m_readTimer->setSingleShot(true);
     m_readTimer->setInterval(kMarkReadDebounceMs);
     connect(m_readTimer, &QTimer::timeout, this, [this] {
-        if (m_selectedChatId.isEmpty() || m_session->pendingReadWatermark.isEmpty()) {
+        if (m_selectedChatId.isEmpty() || m_pendingReadWatermark.isEmpty()) {
             return;
         }
         const QString chatId = m_selectedChatId;
-        const QString watermark = std::exchange(m_session->pendingReadWatermark, {});
-        m_session->lastReadWatermark = watermark;
+        const QString watermark = std::exchange(m_pendingReadWatermark, {});
+        m_lastReadWatermark = watermark;
         m_client->request(QStringLiteral("chat.mark_read"),
                           {{QStringLiteral("chat_id"), chatId},
                            {QStringLiteral("up_to_message_id"), watermark}});
@@ -482,8 +519,8 @@ ProtocolController::ProtocolController(QString socketPath, QObject *parent)
     m_phoneHistoryTimer->setSingleShot(true);
     m_phoneHistoryTimer->setInterval(kPhoneHistoryTimeoutMs);
     connect(m_phoneHistoryTimer, &QTimer::timeout, this, [this] {
-        if (m_session->phoneHistoryRequesting) {
-            m_session->phoneHistoryRequesting = false;
+        if (m_phoneHistoryRequesting) {
+            m_phoneHistoryRequesting = false;
             Q_EMIT messagesChanged();
         }
     });
@@ -492,8 +529,8 @@ ProtocolController::ProtocolController(QString socketPath, QObject *parent)
     m_phoneHistorySettleTimer->setSingleShot(true);
     m_phoneHistorySettleTimer->setInterval(50);
     connect(m_phoneHistorySettleTimer, &QTimer::timeout, this, [this] {
-        if (m_session->phoneHistoryRequesting && m_session->phoneHistoryGeneration == m_session->generation) {
-            m_session->phoneHistoryRequesting = false;
+        if (m_phoneHistoryRequesting && m_phoneHistoryGeneration == m_messagesGeneration) {
+            m_phoneHistoryRequesting = false;
             m_phoneHistoryTimer->stop();
             Q_EMIT messagesChanged();
         }
@@ -527,14 +564,14 @@ ProtocolController::~ProtocolController()
     delete m_loginSub;
     delete m_chatsSub;
     delete m_archivedSub;
+    delete m_chatFoldersSub;
     delete m_typingSub;
     delete m_syncSub;
-    // The transcript subscriptions belong to the warm windows, one each.
-    closeAllMessageWindows();
+    delete m_messagesSub;
+    delete m_groupPolicySub;
     delete m_presenceSub;
     delete m_receiptsSub;
     delete m_pinnedSub;
-    delete m_liveLocationsSub;
     delete m_forwardTargetsSub;
     delete m_transfersSub;
     delete m_chatMediaSub;
@@ -546,6 +583,9 @@ ProtocolController::~ProtocolController()
     delete m_privacySub;
     delete m_preferencesSub;
     delete m_selfSub;
+    delete m_logsSub;
+    delete m_channelsSub;
+    delete m_channelMessagesSub;
     m_chatMembersSub = nullptr;
     m_starredSub = nullptr;
     m_chatMediaSub = nullptr;
@@ -555,25 +595,21 @@ ProtocolController::~ProtocolController()
     m_privacySub = nullptr;
     m_preferencesSub = nullptr;
     m_selfSub = nullptr;
+    m_logsSub = nullptr;
     m_connectionSub = nullptr;
     m_loginSub = nullptr;
     m_chatsSub = nullptr;
     m_archivedSub = nullptr;
+    m_chatFoldersSub = nullptr;
     m_chatsExtendPending = false;
     m_archivedExtendPending = false;
     m_typingSub = nullptr;
     m_syncSub = nullptr;
     m_messagesSub = nullptr;
+    m_groupPolicySub = nullptr;
     m_presenceSub = nullptr;
     m_receiptsSub = nullptr;
     m_pinnedSub = nullptr;
-    // Both banner subscriptions skip re-subscribing when the target chat has
-    // not changed, so the remembered target has to be cleared here too: after a
-    // teardown the subscription is gone but the chat is still selected, and
-    // without this the banner never comes back on reconnect.
-    m_pinnedChatId.clear();
-    m_liveLocationsSub = nullptr;
-    m_liveLocationsChatId.clear();
     m_forwardTargetsSub = nullptr;
     m_transfersSub = nullptr;
     if (m_client) {
@@ -612,6 +648,7 @@ void ProtocolController::start()
     // reports state otherwise).
     m_connectionSub = m_client->subscribe(QStringLiteral("connection"), {}, m_connectionModel);
     m_loginSub = m_client->subscribe(QStringLiteral("login"), {}, m_loginModel);
+    m_chatFoldersSub = m_client->subscribe(QStringLiteral("chat_folders"), {}, m_chatFoldersModel);
     subscribeChats();
     // The typing, sync and transfers views are global (unfiltered) and observed
     // for the whole session, like connection/login. `transfers` carries only
@@ -636,6 +673,10 @@ QString ProtocolController::chatFilterName() const
         return QStringLiteral("direct");
     case 2:
         return QStringLiteral("groups");
+    case 3:
+        return QStringLiteral("unread");
+    case 4:
+        return QStringLiteral("favorite");
     default:
         return QStringLiteral("all");
     }
@@ -660,14 +701,16 @@ void ProtocolController::subscribeChats()
     // way the active list does.
     m_chatsSub = m_client->subscribe(
         QStringLiteral("chats"),
-        {{QStringLiteral("filter"), chatFilterName()},
-         {QStringLiteral("archived"), false},
+         {{QStringLiteral("filter"), chatFilterName()},
+          {QStringLiteral("archived"), false},
+          {QStringLiteral("folder_id"), m_chatFolder > 0 ? QJsonValue(m_chatFolder) : QJsonValue()},
          {QStringLiteral("limit"), kChatPageSize}},
         m_chatsModel);
     m_archivedSub = m_client->subscribe(
         QStringLiteral("chats"),
-        {{QStringLiteral("filter"), chatFilterName()},
-         {QStringLiteral("archived"), true},
+         {{QStringLiteral("filter"), chatFilterName()},
+          {QStringLiteral("archived"), true},
+          {QStringLiteral("folder_id"), m_chatFolder > 0 ? QJsonValue(m_chatFolder) : QJsonValue()},
          {QStringLiteral("limit"), kChatPageSize}},
         m_archivedModel);
     // A rejected extend must not leave the list stuck refusing to ask again.
@@ -720,6 +763,19 @@ QAbstractItemModel *ProtocolController::chatsModel() const
     return m_chatsModel;
 }
 
+QAbstractItemModel *ProtocolController::chatFoldersModel() const
+{
+    return m_chatFoldersModel;
+}
+
+void ProtocolController::setChatFolder(int folder)
+{
+    if (folder < 0 || folder == m_chatFolder) return;
+    m_chatFolder = folder;
+    if (m_chatsSub) subscribeChats();
+    Q_EMIT chatFolderChanged();
+}
+
 QAbstractItemModel *ProtocolController::archivedChatsModel() const
 {
     return m_archivedModel;
@@ -735,6 +791,11 @@ bool ProtocolController::archivedExhausted() const
     return m_archivedSub == nullptr || m_archivedModel->isExhausted();
 }
 
+bool ProtocolController::archivedLoading() const
+{
+    return m_archivedSub != nullptr && !m_archivedModel->isReady();
+}
+
 bool ProtocolController::chatTyping(const QString &chatId) const
 {
     // The typing view is keyed by chat_id; a present row means someone is
@@ -744,7 +805,7 @@ bool ProtocolController::chatTyping(const QString &chatId) const
 
 void ProtocolController::setChatFilter(int filter)
 {
-    if (filter < 0 || filter > 2) {
+    if (filter < 0 || filter > 4) {
         filter = 0;
     }
     if (filter == m_chatFilter) {
@@ -785,6 +846,15 @@ void ProtocolController::setChatPinned(const QString &chatId, bool pinned)
                       {{QStringLiteral("chat_id"), chatId}, {QStringLiteral("pinned"), pinned}});
 }
 
+void ProtocolController::setChatFavorite(const QString &chatId, bool favorite)
+{
+    if (chatId.isEmpty()) {
+        return;
+    }
+    m_client->request(QStringLiteral("chat.favorite"),
+                      {{QStringLiteral("chat_id"), chatId}, {QStringLiteral("favorite"), favorite}});
+}
+
 void ProtocolController::setChatArchived(const QString &chatId, bool archived)
 {
     if (chatId.isEmpty()) {
@@ -803,6 +873,40 @@ void ProtocolController::setChatMuted(const QString &chatId, bool muted, int dur
                       {{QStringLiteral("chat_id"), chatId},
                        {QStringLiteral("muted"), muted},
                        {QStringLiteral("duration_secs"), durationSecs}});
+}
+
+void ProtocolController::createChatFolder(const QString &name)
+{
+    m_client->request(QStringLiteral("chat_folder.create"), {{QStringLiteral("name"), name}},
+                      [this](const QJsonObject &, const ProtocolError &) {
+                          delete m_chatFoldersSub;
+                          m_chatFoldersModel->onReset();
+                          m_chatFoldersSub = m_client->subscribe(QStringLiteral("chat_folders"), {}, m_chatFoldersModel);
+                      });
+}
+void ProtocolController::renameChatFolder(qint64 id, const QString &name)
+{
+    m_client->request(QStringLiteral("chat_folder.rename"), {{QStringLiteral("id"), id}, {QStringLiteral("name"), name}},
+                      [this](const QJsonObject &, const ProtocolError &) {
+                          delete m_chatFoldersSub;
+                          m_chatFoldersModel->onReset();
+                          m_chatFoldersSub = m_client->subscribe(QStringLiteral("chat_folders"), {}, m_chatFoldersModel);
+                      });
+}
+void ProtocolController::deleteChatFolder(qint64 id)
+{
+    m_client->request(QStringLiteral("chat_folder.delete"), {{QStringLiteral("id"), id}},
+                      [this](const QJsonObject &, const ProtocolError &) {
+                          delete m_chatFoldersSub;
+                          m_chatFoldersModel->onReset();
+                          m_chatFoldersSub = m_client->subscribe(QStringLiteral("chat_folders"), {}, m_chatFoldersModel);
+                      });
+}
+void ProtocolController::assignChatFolder(const QString &chatId, qint64 id)
+{
+    QJsonObject params{{QStringLiteral("chat_id"), chatId}};
+    if (id > 0) params.insert(QStringLiteral("folder_id"), id);
+    m_client->request(QStringLiteral("chat_folder.set_chat"), params);
 }
 
 // --- conversation + messages (D3b) ---------------------------------------
@@ -872,7 +976,7 @@ bool ProtocolController::selectedChatHistoryExhausted() const
 
 bool ProtocolController::messagesLoading() const
 {
-    return hasSelectedChat() && (m_session->waitingInitialMessages || !m_messagesModel->isReady());
+    return hasSelectedChat() && (m_waitingInitialMessages || !m_messagesModel->isReady());
 }
 
 bool ProtocolController::messagesEmpty() const
@@ -902,8 +1006,8 @@ void ProtocolController::setSelectedChat(const QString &chatId, const QString &a
     m_selectedChatId = chatId;
     m_stickerController->setChatId(chatId);
     if (selectionChanged) {
-        m_session->pendingReadWatermark.clear();
-        m_session->lastReadWatermark.clear();
+        m_pendingReadWatermark.clear();
+        m_lastReadWatermark.clear();
         m_readTimer->stop();
         // The in-chat search is scoped to one conversation; switching ends it.
         closeChatSearch();
@@ -911,6 +1015,9 @@ void ProtocolController::setSelectedChat(const QString &chatId, const QString &a
         m_waitingForSelectedChatItem = false;
         delete m_selectedChatSub;
         m_selectedChatSub = nullptr;
+        delete m_groupPolicySub;
+        m_groupPolicySub = nullptr;
+        m_groupPolicyModel->onReset();
         m_selectedChatModel->onReset();
         if (!chatId.isEmpty()) {
             // Waiting on the `chat` view before asking for messages made every
@@ -931,13 +1038,17 @@ void ProtocolController::setSelectedChat(const QString &chatId, const QString &a
             m_waitingForSelectedChatItem = anchor.isEmpty() && resolvedAnchor.isEmpty();
             m_selectedChatSub = m_client->subscribe(
                 QStringLiteral("chat"), {{QStringLiteral("chat_id"), chatId}}, m_selectedChatModel);
+            if (chatId.endsWith(QStringLiteral("@g.us"))) {
+                m_groupPolicySub = m_client->subscribe(
+                    QStringLiteral("group"), {{QStringLiteral("chat_id"), chatId}}, m_groupPolicyModel);
+            }
             connect(m_selectedChatSub, &Subscription::failed, this,
                     [this, chatId](const QString &code, const QString &message) {
                         selectedChatLookupFailed(chatId, code, message);
                     });
         }
     }
-    m_session->phoneHistoryRequesting = false;
+    m_phoneHistoryRequesting = false;
     m_phoneHistoryTimer->stop();
     m_phoneHistorySettleTimer->stop();
 
@@ -950,11 +1061,21 @@ void ProtocolController::setSelectedChat(const QString &chatId, const QString &a
     sendSessionUpdate();
     updatePresenceSubscription();
     updatePinnedSubscription();
-    updateLiveLocationsSubscription();
     updateChatMembersSubscription();
 
     if (chatId.isEmpty()) {
-        detachVisibleMessageWindow();
+        delete m_messagesSub;
+        m_messagesSub = nullptr;
+        m_requestedAnchor.clear();
+        m_effectiveAnchor.clear();
+        m_pendingJumpMessageId.clear();
+        m_displayedMessagesChatId.clear();
+        m_messagesReloading = false;
+        m_waitingInitialMessages = false;
+        m_unreadAnchorMessageId.clear();
+        m_unreadAnchorCount = 0;
+        m_unreadAnchorResolving = false;
+        m_messagesModel->onReset();
         Q_EMIT unreadAnchorChanged();
         Q_EMIT messagesChanged();
         return;
@@ -966,17 +1087,29 @@ void ProtocolController::setSelectedChat(const QString &chatId, const QString &a
     const QString effectiveAnchor = anchor.isEmpty() ? resolvedAnchor : anchor;
 
     if (effectiveAnchor.isEmpty()) {
-        detachVisibleMessageWindow();
-        m_session->waitingInitialMessages = true;
+        delete m_messagesSub;
+        m_messagesSub = nullptr;
+        m_requestedAnchor.clear();
+        m_effectiveAnchor.clear();
+        m_pendingJumpMessageId.clear();
+        m_displayedMessagesChatId.clear();
+        m_messagesReloading = false;
+        m_waitingInitialMessages = true;
+        m_messagesModel->onReset();
         Q_EMIT messagesChanged();
         return;
     }
 
     if (!m_conversationVisible) {
-        detachVisibleMessageWindow();
-        m_session->requestedAnchor = effectiveAnchor;
-        m_session->effectiveAnchor = effectiveAnchor;
-        m_session->pendingJumpMessageId = jumpMessageId;
+        delete m_messagesSub;
+        m_messagesSub = nullptr;
+        m_requestedAnchor = effectiveAnchor;
+        m_effectiveAnchor = effectiveAnchor;
+        m_pendingJumpMessageId = jumpMessageId;
+        m_displayedMessagesChatId.clear();
+        m_messagesReloading = false;
+        m_waitingInitialMessages = false;
+        m_messagesModel->onReset();
         Q_EMIT messagesChanged();
         return;
     }
@@ -984,302 +1117,53 @@ void ProtocolController::setSelectedChat(const QString &chatId, const QString &a
     subscribeMessages(effectiveAnchor, jumpMessageId);
 }
 
-// --- warm transcript pool ---------------------------------------------------
-
-QVariantList ProtocolController::warmWindows() const
-{
-    QVariantList out;
-    out.reserve(m_messageWindows.size());
-    for (int i = 0; i < m_messageWindows.size(); ++i) {
-        out.append(warmWindowAt(i));
-    }
-    return out;
-}
-
-QVariantMap ProtocolController::warmWindowAt(int index) const
-{
-    if (index < 0 || index >= m_messageWindows.size()) {
-        return {};
-    }
-    const ConversationSession *window = m_messageWindows.at(index);
-    if (!window) {
-        return {{QStringLiteral("chatId"), QString()},
-                {QStringLiteral("active"), false},
-                {QStringLiteral("session"), QVariant::fromValue<QObject *>(nullptr)},
-                {QStringLiteral("model"), QVariant::fromValue<QObject *>(nullptr)}};
-    }
-    // Which pane is the conversation, decided here rather than in QML.
-    //
-    // A window is keyed by chat *and* anchor, so a jump into a chat's history
-    // leaves that chat holding two of them: the live edge it was opened at and
-    // the anchored one it jumped to. Both are warm on purpose, which is what
-    // makes going back to the bottom free. But the panes used to work out which
-    // of them was on screen by comparing chat ids, and both matched: two panes
-    // drew at once, both claimed the conversation's message-view pointer, and
-    // both answered every jump result. The one that did not hold the target
-    // announced it missing and kept its highlight. Only the window the
-    // controller is actually driving is the current one.
-    return {{QStringLiteral("chatId"), window->chatId},
-            {QStringLiteral("active"), window == m_session},
-            {QStringLiteral("session"), QVariant::fromValue<QObject *>(const_cast<ConversationSession *>(window))},
-            {QStringLiteral("model"), QVariant::fromValue<QObject *>(window->presentation)}};
-}
-
-ConversationSession *ProtocolController::warmWindowFor(const QString &chatId,
-                                                                    const QString &anchor) const
-{
-    if (chatId.isEmpty()) {
-        return nullptr;
-    }
-    for (ConversationSession *window : m_messageWindows) {
-        // A window whose subscribe was rejected is not warm, whatever else it
-        // still holds: taking it back would hand the reader the same error
-        // again and never ask the daemon, which is what made Retry do nothing.
-        if (window && !window->failed && window->chatId == chatId && window->anchor == anchor) {
-            return window;
-        }
-    }
-    return nullptr;
-}
-
-
-// Reopening a chat that is still parked reopens it where it was parked.
-//
-// Without this, leaving a conversation and coming back recomputes the anchor
-// from the unread badge, so a chat parked at `latest` would be asked for at
-// `unread` and rebuilt from scratch, having been warm the whole time. Keeping
-// the reader's place is also the better answer on its own terms: they were just
-// here, and the divider is for a chat you are arriving at, not returning to.
-QString ProtocolController::anchorForOpening(const QString &chatId, const QString &requested) const
-{
-    for (ConversationSession *window : m_messageWindows) {
-        if (window && window->chatId == chatId) {
-            return window->anchor;
-        }
-    }
-    return requested;
-}
-
-void ProtocolController::connectMessageWindow(ConversationSession *window)
-{
-    // Every session stays connected while it is warm, so an off-screen chat
-    // keeps its transcript correct. Each handler writes only its own session,
-    // so nothing a background chat does can reach the one on screen.
-    CollectionViewModel *source = window->source;
-    connect(source, &CollectionViewModel::readyReceived, this, [this, window](bool exhausted) {
-        onMessagesReady(window, exhausted);
-    });
-    connect(source, &QAbstractItemModel::modelReset, this, [this, window] {
-        onMessagesReset(window);
-    });
-    connect(source, &CollectionViewModel::countChanged, this, [this, window] {
-        publishSession(window);
-    });
-    connect(source, &QAbstractItemModel::rowsInserted, this,
-            [this, window](const QModelIndex &, int, int) {
-        if (window != m_session) {
-            return;
-        }
-        // The first row of an open is the moment the window stops being a round
-        // trip and starts being a rendering problem, so it is the phase that
-        // splits the open budget in two.
-        if (m_openClock.isValid() && m_openPhaseRows == 0) {
-            markChatOpenPhase(QStringLiteral("first-row"));
-        }
-        if (window->phoneHistoryRequesting && window->phoneHistoryGeneration == window->generation
-            && window->presentation->oldestMessageId() != window->phoneHistoryOldestId) {
-            // Backfills arrive as a burst of individual upserts. Restore the
-            // viewport only after that burst settles, not after its first row.
-            m_phoneHistorySettleTimer->start();
-        }
-    });
-}
-
-ConversationSession *ProtocolController::openMessageWindow(const QString &chatId,
-                                                                        const QString &anchor)
-{
-    // A free slot first; failing that, the one used longest ago.
-    int slot = m_messageWindows.indexOf(nullptr);
-    if (slot < 0) {
-        slot = m_messageWindowUse.isEmpty() ? 0 : m_messageWindowUse.last();
-        closeMessageWindow(m_messageWindows.at(slot));
-    }
-
-    auto *window = new ConversationSession(this);
-    window->chatId = chatId;
-    window->anchor = anchor;
-    window->source = new CollectionViewModel(this);
-    // The transcript is the one view held newest-first. Its live edge is the
-    // bottom of the screen, and a BottomToTop ListView draws row 0 there, so
-    // pinning the newest message at row 0 makes the end the reader is looking
-    // at the end the view measures from. Everything upward of it is then
-    // estimated history, which is where an estimate belongs.
-    window->source->setReverseOrder(true);
-    window->presentation = new ProtocolMessageModel(window->source, this);
-    window->presentation->setTransfersSource(m_transfersModel);
-    connectMessageWindow(window);
-
-    m_messageWindows[slot] = window;
-    m_messageWindowUse.removeAll(slot);
-    m_messageWindowUse.prepend(slot);
-    return window;
-}
-
-void ProtocolController::closeMessageWindow(ConversationSession *window)
-{
-    if (!window) {
-        return;
-    }
-    const int slot = m_messageWindows.indexOf(window);
-    if (slot >= 0) {
-        m_messageWindows[slot] = nullptr;
-        m_messageWindowUse.removeAll(slot);
-    }
-    if (window == m_session) {
-        // Back to the empty stand-in rather than to nullptr: everything that
-        // reads the active transcript is entitled to find one there.
-        m_session = m_idleSession;
-        m_messagesModel = m_idleMessagesModel;
-        m_messagePresentationModel = m_idleMessagePresentation;
-        m_messagesSub = nullptr;
-    }
-    delete window->sub;
-    delete window->presentation;
-    delete window->source;
-    delete window;
-}
-
-void ProtocolController::closeAllMessageWindows()
-{
-    const QList<ConversationSession *> windows = m_messageWindows;
-    for (ConversationSession *window : windows) {
-        closeMessageWindow(window);
-    }
-    m_messageWindows.fill(nullptr, kWarmChatWindows);
-    m_messageWindowUse.clear();
-    Q_EMIT warmWindowsChanged();
-}
-
-void ProtocolController::activateMessageWindow(ConversationSession *window)
-{
-    if (!window) {
-        return;
-    }
-    m_session = window;
-    m_messagesModel = window->source;
-    m_messagePresentationModel = window->presentation;
-    m_messagesSub = window->sub;
-
-    const int slot = m_messageWindows.indexOf(window);
-    if (slot >= 0) {
-        m_messageWindowUse.removeAll(slot);
-        m_messageWindowUse.prepend(slot);
-    }
-    Q_EMIT warmWindowsChanged();
-}
-
-// Leaving the conversation: no chat is on screen, but every chat that was warm
-// stays warm. The transcript models are deliberately not reset here, which is
-// the whole point of the pool; the panes hide themselves because none of their
-// chat ids matches the (now empty) selection, and the rows they hold are still
-// there when one of them does again.
-void ProtocolController::detachVisibleMessageWindow()
-{
-    // The session keeps everything it holds; only the pointer that says which
-    // one is on screen moves. Coming back to this chat is then taking its own
-    // state back, rather than rebuilding it from a copy.
-    m_session = m_idleSession;
-    m_messagesModel = m_idleMessagesModel;
-    m_messagePresentationModel = m_idleMessagePresentation;
-    m_messagesSub = nullptr;
-}
-
 void ProtocolController::subscribeMessages(const QString &anchor, const QString &jumpMessageId)
 {
     // An explicit anchor (including a same-chat jump) supersedes a pending
     // default unread/latest choice from the selected `chat` row.
     m_waitingForSelectedChatItem = false;
-    if (m_session->phoneHistoryRequesting) {
-        m_session->phoneHistoryRequesting = false;
+    if (m_phoneHistoryRequesting) {
+        m_phoneHistoryRequesting = false;
         m_phoneHistoryTimer->stop();
         m_phoneHistorySettleTimer->stop();
     }
-    if (m_readTimer->isActive() && !m_session->pendingReadWatermark.isEmpty()) {
+    if (m_readTimer->isActive() && !m_pendingReadWatermark.isEmpty()) {
         m_readTimer->stop();
-        const QString watermark = std::exchange(m_session->pendingReadWatermark, {});
-        m_session->lastReadWatermark = watermark;
+        const QString watermark = std::exchange(m_pendingReadWatermark, {});
+        m_lastReadWatermark = watermark;
         m_client->request(QStringLiteral("chat.mark_read"),
                           {{QStringLiteral("chat_id"), m_selectedChatId},
                            {QStringLiteral("up_to_message_id"), watermark}});
     }
-    if (perfLogging()) {
-        m_openClock.start();
-        m_openPhaseRows = 0;
-        qInfo("[perf] open %-10s %6.1f ms  chat=%s anchor=%s", "subscribe", 0.0,
-              qPrintable(m_selectedChatId), qPrintable(anchor));
-    }
+    delete m_messagesSub;
+    m_messagesSub = nullptr;
+    ++m_messagesGeneration;
 
-    // Already warm *at the anchor being asked for*: its pane still holds its
-    // rows and its subscription has been keeping them right the whole time it
-    // was off screen. Switching to it is taking back the state it was left in,
-    // and nothing else at all. No round trip, no reset, no rows rebuilt.
-    //
-    // A different anchor over the same chat is a different window (the unread
-    // divider and the live edge put the reader in different places), so it
-    // falls through and is rebuilt into this chat's one slot rather than
-    // claiming a second.
-    if (ConversationSession *warm = warmWindowFor(m_selectedChatId, anchor)) {
-        activateMessageWindow(warm);
-        m_session->pendingJumpMessageId = jumpMessageId;
-        m_session->reloading = false;
-        m_session->displayedChatId = m_selectedChatId;
-        Q_EMIT unreadAnchorChanged();
-        Q_EMIT messagesChanged();
-        markChatOpenPhase(QStringLiteral("warm"));
-        if (!jumpMessageId.isEmpty()) {
-            // The rows are already here, so the jump can be answered now rather
-            // than waiting for a fill that is not coming.
-            const QString jumpId = std::exchange(m_session->pendingJumpMessageId, {});
-            if (m_messagePresentationModel->indexOf(jumpId) >= 0) {
-                Q_EMIT messageJumpReady(jumpId);
-            } else {
-                Q_EMIT messageJumpUnavailable(jumpId);
-            }
-        }
-        return;
-    }
-
-    // Cold: a slot has to hold this chat, and the daemon has to be asked.
-    ConversationSession *window = openMessageWindow(m_selectedChatId, anchor);
-    activateMessageWindow(window);
-    ++m_session->generation;
-
-    m_session->requestedAnchor = anchor;
-    m_session->effectiveAnchor = anchor;
-    m_session->pendingJumpMessageId = jumpMessageId;
-    m_session->pendingExtendDirection.clear();
+    m_requestedAnchor = anchor;
+    m_effectiveAnchor = anchor;
+    m_pendingJumpMessageId = jumpMessageId;
+    m_pendingExtendDirection.clear();
     // A re-subscribe within the chat already on screen is a reload, not an open.
     // The rows go away for a round trip, but the conversation does not, and the
     // pane must not collapse to its empty state and back in between.
-    m_session->reloading = m_session->displayedChatId == m_selectedChatId && !m_selectedChatId.isEmpty();
-    m_session->displayedChatId.clear();
-    m_session->errorText.clear();
-    m_session->waitingInitialMessages = true;
-    m_session->refillingAfterReset = false;
-    m_session->olderLoading = false;
-    m_session->newerLoading = false;
-    m_session->canLoadOlder = false;
-    m_session->canLoadNewer = false;
-    m_session->olderFailed = false;
-    m_session->newerFailed = false;
-    m_session->atLiveEdge = anchor == QLatin1String("latest");
-    m_session->unreadAnchorMessageId.clear();
-    m_session->unreadAnchorCount = anchor == QLatin1String("unread") ? selectedChatUnreadCount() : 0;
-    m_session->unreadAnchorResolving = anchor == QLatin1String("unread");
+    m_messagesReloading = m_displayedMessagesChatId == m_selectedChatId && !m_selectedChatId.isEmpty();
+    m_displayedMessagesChatId.clear();
+    m_messageErrorText.clear();
+    m_waitingInitialMessages = true;
+    m_refillingAfterReset = false;
+    m_olderMessagesLoading = false;
+    m_newerMessagesLoading = false;
+    m_canLoadOlderMessages = false;
+    m_canLoadNewerMessages = false;
+    m_olderMessagesFailed = false;
+    m_newerMessagesFailed = false;
+    m_messagesAtLiveEdge = anchor == QLatin1String("latest");
+    m_unreadAnchorMessageId.clear();
+    m_unreadAnchorCount = anchor == QLatin1String("unread") ? selectedChatUnreadCount() : 0;
+    m_unreadAnchorResolving = anchor == QLatin1String("unread");
     m_messagesModel->onReset();
     Q_EMIT unreadAnchorChanged();
     Q_EMIT messagesChanged();
-    Q_EMIT warmWindowsChanged();
 
     m_messagesSub = m_client->subscribe(
         QStringLiteral("messages"),
@@ -1287,230 +1171,201 @@ void ProtocolController::subscribeMessages(const QString &anchor, const QString 
          {QStringLiteral("limit"), kMessagePageSize},
          {QStringLiteral("anchor"), anchor}},
         m_messagesModel);
-    window->sub = m_messagesSub;
-    // A reconnect re-issues every warm subscription at once, so these fire for
-    // chats that are not on screen. Each one writes its own session, which is
-    // what used to need a guard: a background window's subscribe result was
-    // landing on the visible conversation's unread anchor and error text.
-    connect(m_messagesSub, &Subscription::subscribed, this, [this, window](const QVariantMap &meta) {
-        onMessagesSubscribed(window, meta);
-    });
-    connect(m_messagesSub, &Subscription::failed, this,
-            [this, window](const QString &code, const QString &message) {
-                onMessagesFailed(window, code, message);
-            });
+    connect(m_messagesSub, &Subscription::subscribed, this, &ProtocolController::onMessagesSubscribed);
+    connect(m_messagesSub, &Subscription::failed, this, &ProtocolController::onMessagesFailed);
     connect(m_messagesSub, &Subscription::extendFailed, this,
-            [this, window](const QString &code, const QString &message) {
+            [this](const QString &code, const QString &message) {
+                const QString direction = std::exchange(m_pendingExtendDirection, {});
+                if (direction == QLatin1String("older")) {
+                    m_olderMessagesLoading = false;
+                    m_olderMessagesFailed = true;
+                } else if (direction == QLatin1String("newer")) {
+                    m_newerMessagesLoading = false;
+                    m_newerMessagesFailed = true;
+                }
                 Q_UNUSED(code)
                 Q_UNUSED(message)
-                const QString direction = std::exchange(window->pendingExtendDirection, {});
-                if (direction == QLatin1String("older")) {
-                    window->olderLoading = false;
-                    window->olderFailed = true;
-                } else if (direction == QLatin1String("newer")) {
-                    window->newerLoading = false;
-                    window->newerFailed = true;
-                }
-                publishSession(window);
+                Q_EMIT messagesChanged();
             });
 }
 
-void ProtocolController::onMessagesSubscribed(ConversationSession *session, const QVariantMap &meta)
+void ProtocolController::onMessagesSubscribed(const QVariantMap &meta)
 {
-    if (session == m_session) {
-        markChatOpenPhase(QStringLiteral("subscribed"));
-    }
-    session->failed = false;
-    session->errorText.clear();
-    if (session->requestedAnchor == QLatin1String("unread")) {
-        session->unreadAnchorMessageId = meta.value(QStringLiteral("anchor_id")).toString();
-        session->unreadAnchorResolving = false;
-        if (session->unreadAnchorMessageId.isEmpty()) {
+    m_messageErrorText.clear();
+    if (m_requestedAnchor == QLatin1String("unread")) {
+        m_unreadAnchorMessageId = meta.value(QStringLiteral("anchor_id")).toString();
+        m_unreadAnchorResolving = false;
+        if (m_unreadAnchorMessageId.isEmpty()) {
             // No unread anchor means the daemon deliberately degraded to the
             // live edge; there is no divider to render.
-            session->unreadAnchorCount = 0;
-            noteReachedLiveEdge(session);
+            m_unreadAnchorCount = 0;
+            noteReachedLiveEdge();
         }
-        publishUnreadAnchor(session);
+        Q_EMIT unreadAnchorChanged();
     }
 }
 
-void ProtocolController::onMessagesReady(ConversationSession *session, bool exhausted)
+void ProtocolController::onMessagesReady(bool exhausted)
 {
-    session->errorText.clear();
-    if (!session->pendingExtendDirection.isEmpty()) {
-        const QString direction = std::exchange(session->pendingExtendDirection, {});
+    m_messageErrorText.clear();
+    if (!m_pendingExtendDirection.isEmpty()) {
+        const QString direction = std::exchange(m_pendingExtendDirection, {});
         if (direction == QLatin1String("older")) {
-            session->olderLoading = false;
-            session->olderFailed = false;
-            session->canLoadOlder = !exhausted;
+            m_olderMessagesLoading = false;
+            m_olderMessagesFailed = false;
+            m_canLoadOlderMessages = !exhausted;
         } else {
-            session->newerLoading = false;
-            session->newerFailed = false;
-            session->canLoadNewer = !exhausted;
+            m_newerMessagesLoading = false;
+            m_newerMessagesFailed = false;
+            m_canLoadNewerMessages = !exhausted;
             if (exhausted) {
-                noteReachedLiveEdge(session);
+                noteReachedLiveEdge();
             }
         }
-        if (session->refillingAfterReset) {
-            session->refillingAfterReset = false;
-            session->waitingInitialMessages = false;
-            session->displayedChatId = session->chatId;
-            session->reloading = false;
+        if (m_refillingAfterReset) {
+            m_refillingAfterReset = false;
+            m_waitingInitialMessages = false;
+            m_displayedMessagesChatId = m_selectedChatId;
+            m_messagesReloading = false;
         }
-        publishSession(session);
+        Q_EMIT messagesChanged();
         return;
     }
 
-    if (!session->waitingInitialMessages) {
+    if (!m_waitingInitialMessages) {
         return;
     }
-    if (session == m_session) {
-        markChatOpenPhase(QStringLiteral("ready"));
-    }
-    session->waitingInitialMessages = false;
-    session->displayedChatId = session->chatId;
-    session->reloading = false;
-    if (session->refillingAfterReset) {
-        session->refillingAfterReset = false;
-        session->olderFailed = false;
-        session->newerFailed = false;
-        publishSession(session);
+    m_waitingInitialMessages = false;
+    m_displayedMessagesChatId = m_selectedChatId;
+    m_messagesReloading = false;
+    if (m_refillingAfterReset) {
+        m_refillingAfterReset = false;
+        m_olderMessagesFailed = false;
+        m_newerMessagesFailed = false;
+        Q_EMIT messagesChanged();
         return;
     }
-    if (session->effectiveAnchor == QLatin1String("latest")) {
-        session->canLoadOlder = !exhausted;
-        session->canLoadNewer = false;
-        noteReachedLiveEdge(session);
+    if (m_effectiveAnchor == QLatin1String("latest")) {
+        m_canLoadOlderMessages = !exhausted;
+        m_canLoadNewerMessages = false;
+        noteReachedLiveEdge();
     } else {
         // Initial anchored exhaustion describes both frontiers together. When
         // false, probe each independently as the viewport approaches it.
-        session->atLiveEdge = exhausted;
-        session->canLoadOlder = !exhausted;
-        session->canLoadNewer = !exhausted;
+        m_messagesAtLiveEdge = exhausted;
+        m_canLoadOlderMessages = !exhausted;
+        m_canLoadNewerMessages = !exhausted;
         if (exhausted) {
-            noteReachedLiveEdge(session);
+            noteReachedLiveEdge();
         }
     }
 
-    publishSession(session);
-    const QString jumpId = std::exchange(session->pendingJumpMessageId, {});
-    if (jumpId.isEmpty()) {
-        return;
-    }
-    if (session->presentation->indexOf(jumpId) >= 0) {
-        session->jumpFallbackAnchor.clear();
-        if (session == m_session) {
+    Q_EMIT messagesChanged();
+    const QString jumpId = std::exchange(m_pendingJumpMessageId, {});
+    if (!jumpId.isEmpty()) {
+        if (m_messagePresentationModel->indexOf(jumpId) >= 0) {
+            m_jumpFallbackAnchor.clear();
             Q_EMIT messageJumpReady(jumpId);
+        } else {
+            Q_EMIT messageJumpUnavailable(jumpId);
+            const QString fallback = m_jumpFallbackAnchor.isEmpty() ? QStringLiteral("latest")
+                                                                     : std::exchange(m_jumpFallbackAnchor, {});
+            const QString chatId = m_selectedChatId;
+            const int generation = m_messagesGeneration;
+            QTimer::singleShot(0, this, [this, fallback, chatId, generation] {
+                if (m_selectedChatId == chatId && m_messagesGeneration == generation
+                    && m_conversationVisible) {
+                    subscribeMessages(fallback);
+                }
+            });
         }
-        return;
     }
-    if (session == m_session) {
-        Q_EMIT messageJumpUnavailable(jumpId);
-    }
-    retryJumpAtFallbackAnchor(session);
 }
 
-// The jump landed in a window that does not hold it. Come back on the next
-// turn of the loop and ask for the chat at the fallback anchor, unless the
-// reader has moved on in the meantime.
-void ProtocolController::retryJumpAtFallbackAnchor(ConversationSession *session)
+void ProtocolController::onMessagesFailed(const QString &code, const QString &message)
 {
-    const QString fallback = session->jumpFallbackAnchor.isEmpty()
-        ? QStringLiteral("latest")
-        : std::exchange(session->jumpFallbackAnchor, {});
-    const int generation = session->generation;
-    QTimer::singleShot(0, this, [this, session, fallback, generation] {
-        if (m_session == session && session->generation == generation && m_conversationVisible) {
-            subscribeMessages(fallback);
-        }
-    });
-}
-
-void ProtocolController::onMessagesFailed(ConversationSession *session, const QString &code,
-                                          const QString &message)
-{
-    if (code == QLatin1String("io") && session->sub) {
+    if (code == QLatin1String("io") && m_messagesSub) {
         return; // live subscriptions auto-resubscribe after reconnect
     }
-    // Whatever happens next, this window will never fill: the daemon refused
-    // it. Say so on the session so a re-open, and the Retry button in
-    // particular, builds a new subscription rather than finding this one warm.
-    session->failed = true;
-    session->waitingInitialMessages = false;
-    session->unreadAnchorResolving = false;
-    const QString jumpId = std::exchange(session->pendingJumpMessageId, {});
+    m_waitingInitialMessages = false;
+    m_unreadAnchorResolving = false;
+    const QString jumpId = std::exchange(m_pendingJumpMessageId, {});
     if (!jumpId.isEmpty()) {
-        if (session == m_session) {
-            Q_EMIT messageJumpUnavailable(jumpId);
-        }
-        retryJumpAtFallbackAnchor(session);
+        Q_EMIT messageJumpUnavailable(jumpId);
+        const QString fallback = m_jumpFallbackAnchor.isEmpty() ? QStringLiteral("latest")
+                                                                 : std::exchange(m_jumpFallbackAnchor, {});
+        const QString chatId = m_selectedChatId;
+        const int generation = m_messagesGeneration;
+        QTimer::singleShot(0, this, [this, fallback, chatId, generation] {
+            if (m_selectedChatId == chatId && m_messagesGeneration == generation
+                && m_conversationVisible) {
+                subscribeMessages(fallback);
+            }
+        });
     } else {
-        session->errorText = message;
-        session->reloading = false;
+        m_messageErrorText = message;
+        m_messagesReloading = false;
     }
-    publishUnreadAnchor(session);
-    publishSession(session);
+    Q_EMIT unreadAnchorChanged();
+    Q_EMIT messagesChanged();
 }
 
-void ProtocolController::onMessagesReset(ConversationSession *session)
+void ProtocolController::onMessagesReset()
 {
-    if (session->chatId.isEmpty()) {
+    if (m_selectedChatId.isEmpty()) {
         return;
     }
     // Reached both from a daemon-side `reset` (queue overflow) and from
-    // subscribeMessages() resetting the model itself. Either way the chat is
-    // not going anywhere, so the rows come back rather than the pane falling
-    // through to its empty state.
-    session->reloading = session->reloading || session->displayedChatId == session->chatId;
-    session->displayedChatId.clear();
-    // Off screen there is nothing to hold a spinner for; the refill lands on
-    // its own and the session is correct again by the time it comes back.
-    if (session != m_session || !m_conversationVisible) {
-        session->reloading = false;
-        session->waitingInitialMessages = session != m_session;
-        publishSession(session);
+    // subscribeMessages() resetting the model itself. Either way the chat on
+    // screen is not going anywhere, so the rows come back rather than the pane
+    // falling through to its empty state.
+    m_messagesReloading = m_messagesReloading || m_displayedMessagesChatId == m_selectedChatId;
+    m_displayedMessagesChatId.clear();
+    if (!m_conversationVisible) {
+        m_messagesReloading = false;
+        m_waitingInitialMessages = false;
+        Q_EMIT messagesChanged();
         return;
     }
-    const bool wasWaitingInitial = session->waitingInitialMessages;
-    session->waitingInitialMessages = true;
-    const bool inConnectionReset = m_clientReady && session->sub && session->sub->isActive();
-    session->refillingAfterReset = inConnectionReset && !wasWaitingInitial;
+    const bool wasWaitingInitial = m_waitingInitialMessages;
+    m_waitingInitialMessages = true;
+    const bool inConnectionReset = m_clientReady && m_messagesSub && m_messagesSub->isActive();
+    m_refillingAfterReset = inConnectionReset && !wasWaitingInitial;
     if (!inConnectionReset) {
-        session->pendingExtendDirection.clear();
+        m_pendingExtendDirection.clear();
     }
-    if (!inConnectionReset || session->pendingExtendDirection.isEmpty()) {
-        session->olderLoading = false;
-        session->newerLoading = false;
+    if (!inConnectionReset || m_pendingExtendDirection.isEmpty()) {
+        m_olderMessagesLoading = false;
+        m_newerMessagesLoading = false;
     }
     if (!inConnectionReset) {
-        session->canLoadOlder = false;
-        session->canLoadNewer = false;
+        m_canLoadOlderMessages = false;
+        m_canLoadNewerMessages = false;
     }
-    if (!inConnectionReset && session->requestedAnchor == QLatin1String("unread")) {
-        session->unreadAnchorMessageId.clear();
-        session->unreadAnchorResolving = true;
-        publishUnreadAnchor(session);
+    if (!inConnectionReset && m_requestedAnchor == QLatin1String("unread")) {
+        m_unreadAnchorMessageId.clear();
+        m_unreadAnchorResolving = true;
+        Q_EMIT unreadAnchorChanged();
     }
-    publishSession(session);
+    Q_EMIT messagesChanged();
 }
 
 void ProtocolController::extendMessages(const QString &direction, bool force)
 {
-    if (!m_messagesSub || !m_session->pendingExtendDirection.isEmpty()) {
+    if (!m_messagesSub || !m_pendingExtendDirection.isEmpty()) {
         return;
     }
-    if (!force && direction == QLatin1String("older") && !m_session->canLoadOlder) {
+    if (!force && direction == QLatin1String("older") && !m_canLoadOlderMessages) {
         return;
     }
-    if (!force && direction == QLatin1String("newer") && !m_session->canLoadNewer) {
+    if (!force && direction == QLatin1String("newer") && !m_canLoadNewerMessages) {
         return;
     }
-    m_session->pendingExtendDirection = direction;
+    m_pendingExtendDirection = direction;
     if (direction == QLatin1String("older")) {
-        m_session->olderLoading = true;
+        m_olderMessagesLoading = true;
     } else {
-        m_session->newerLoading = true;
+        m_newerMessagesLoading = true;
     }
     Q_EMIT messagesChanged();
     m_messagesSub->extend(kMessagePageSize, direction);
@@ -1518,8 +1373,8 @@ void ProtocolController::extendMessages(const QString &direction, bool force)
 
 void ProtocolController::loadOlderMessages()
 {
-    if (m_session->olderFailed) {
-        m_session->olderFailed = false;
+    if (m_olderMessagesFailed) {
+        m_olderMessagesFailed = false;
         Q_EMIT messagesChanged();
     }
     extendMessages(QStringLiteral("older"));
@@ -1527,8 +1382,8 @@ void ProtocolController::loadOlderMessages()
 
 void ProtocolController::loadNewerMessages()
 {
-    if (m_session->newerFailed) {
-        m_session->newerFailed = false;
+    if (m_newerMessagesFailed) {
+        m_newerMessagesFailed = false;
         Q_EMIT messagesChanged();
     }
     extendMessages(QStringLiteral("newer"));
@@ -1536,24 +1391,24 @@ void ProtocolController::loadNewerMessages()
 
 void ProtocolController::requestOlderMessagesFromPhone()
 {
-    if (m_selectedChatId.isEmpty() || m_session->phoneHistoryRequesting || selectedChatHistoryExhausted()) {
+    if (m_selectedChatId.isEmpty() || m_phoneHistoryRequesting || selectedChatHistoryExhausted()) {
         return;
     }
     const QString chatId = m_selectedChatId;
-    const int generation = m_session->generation;
-    m_session->phoneHistoryRequesting = true;
-    m_session->phoneHistoryOldestId = m_messagePresentationModel->oldestMessageId();
-    m_session->phoneHistoryGeneration = generation;
+    const int generation = m_messagesGeneration;
+    m_phoneHistoryRequesting = true;
+    m_phoneHistoryOldestId = m_messagePresentationModel->messageIdAt(0);
+    m_phoneHistoryGeneration = generation;
     m_phoneHistoryTimer->start();
     Q_EMIT messagesChanged();
     m_client->request(QStringLiteral("chat.request_older"),
                       {{QStringLiteral("chat_id"), chatId}},
                       [this, chatId, generation](const QJsonObject &result, const ProtocolError &error) {
-                          if (chatId != m_selectedChatId || generation != m_session->generation) {
+                          if (chatId != m_selectedChatId || generation != m_messagesGeneration) {
                               return;
                           }
                           if (error.isError() || !result.value(QStringLiteral("requested")).toBool()) {
-                              m_session->phoneHistoryRequesting = false;
+                              m_phoneHistoryRequesting = false;
                               m_phoneHistoryTimer->stop();
                               Q_EMIT messagesChanged();
                               return;
@@ -1574,38 +1429,22 @@ void ProtocolController::jumpToMessage(const QString &messageId)
         QTimer::singleShot(0, this, [this, messageId] { Q_EMIT messageJumpReady(messageId); });
         return;
     }
-    m_session->jumpFallbackAnchor = m_session->effectiveAnchor.isEmpty() ? QStringLiteral("latest") : m_session->effectiveAnchor;
+    m_jumpFallbackAnchor = m_effectiveAnchor.isEmpty() ? QStringLiteral("latest") : m_effectiveAnchor;
     subscribeMessages(messageId, messageId);
 }
 
 // noteReachedLiveEdge records that the window now contains the newest message.
 //
 // The anchor is where the window was *opened*, which is not where it is: a chat
-// opened on its unread divider keeps `m_session->effectiveAnchor == "unread"` for the
+// opened on its unread divider keeps `m_effectiveAnchor == "unread"` for the
 // rest of the session even after extending forward to the newest message. Every
 // caller that treats the anchor as "where we are" was therefore wrong about a
 // chat with unread messages, and jumpToBottom() below re-subscribed on every
 // single send because of it.
-void ProtocolController::publishSession(ConversationSession *session)
+void ProtocolController::noteReachedLiveEdge()
 {
-    session->notifyChanged();
-    if (session == m_session) {
-        Q_EMIT messagesChanged();
-    }
-}
-
-void ProtocolController::publishUnreadAnchor(ConversationSession *session)
-{
-    session->notifyUnreadAnchorChanged();
-    if (session == m_session) {
-        Q_EMIT unreadAnchorChanged();
-    }
-}
-
-void ProtocolController::noteReachedLiveEdge(ConversationSession *session)
-{
-    session->atLiveEdge = true;
-    session->effectiveAnchor = QStringLiteral("latest");
+    m_messagesAtLiveEdge = true;
+    m_effectiveAnchor = QStringLiteral("latest");
 }
 
 void ProtocolController::jumpToBottom()
@@ -1614,8 +1453,8 @@ void ProtocolController::jumpToBottom()
     // delegate and blanks the conversation column for a socket round trip. Only
     // worth it when the window genuinely does not reach the newest message:
     // while it does, the caller's own scroll is the whole job.
-    if (m_selectedChatId.isEmpty() || m_session->effectiveAnchor == QLatin1String("latest")
-        || (m_session->atLiveEdge && !m_session->canLoadNewer)) {
+    if (m_selectedChatId.isEmpty() || m_effectiveAnchor == QLatin1String("latest")
+        || (m_messagesAtLiveEdge && !m_canLoadNewerMessages)) {
         return;
     }
     subscribeMessages(QStringLiteral("latest"));
@@ -1627,7 +1466,7 @@ void ProtocolController::showMessageInChat(const QString &chatId, const QString 
         Q_EMIT messageJumpUnavailable(messageId);
         return;
     }
-    m_session->jumpFallbackAnchor = QStringLiteral("latest");
+    m_jumpFallbackAnchor = QStringLiteral("latest");
     setSelectedChat(chatId, messageId, messageId);
 }
 
@@ -1636,8 +1475,8 @@ void ProtocolController::retryMessages()
     if (m_selectedChatId.isEmpty()) {
         return;
     }
-    const QString anchor = m_session->requestedAnchor.isEmpty() ? QStringLiteral("latest") : m_session->requestedAnchor;
-    subscribeMessages(anchor, m_session->pendingJumpMessageId);
+    const QString anchor = m_requestedAnchor.isEmpty() ? QStringLiteral("latest") : m_requestedAnchor;
+    subscribeMessages(anchor, m_pendingJumpMessageId);
 }
 
 void ProtocolController::markSelectedChatViewed(const QString &upToMessageId)
@@ -1646,27 +1485,29 @@ void ProtocolController::markSelectedChatViewed(const QString &upToMessageId)
         return;
     }
     const int candidate = m_messagePresentationModel->indexOf(upToMessageId);
-    const int pending = m_messagePresentationModel->indexOf(m_session->pendingReadWatermark);
-    const int sent = m_messagePresentationModel->indexOf(m_session->lastReadWatermark);
-    if (!m_session->pendingReadWatermark.isEmpty() && pending < 0) {
+    const int pending = m_messagePresentationModel->indexOf(m_pendingReadWatermark);
+    const int sent = m_messagePresentationModel->indexOf(m_lastReadWatermark);
+    if (!m_pendingReadWatermark.isEmpty() && pending < 0) {
         return;
     }
-    // A watermark only ever moves forward in time. The rows are held
-    // newest-first, so "older than what we already marked" is a *larger* index,
-    // not a smaller one.
-    //
-    // Each side is guarded on the watermark existing at all, rather than
-    // leaning on -1 comparing the way we want. Under the old ordering a missing
-    // watermark's -1 was smaller than every real row and so was harmless; with
-    // the comparison the other way round it would read as newer than
-    // everything, and the very first watermark of a chat would be refused.
-    const bool wouldRegress = (pending >= 0 && candidate > pending)
-        || (sent >= 0 && candidate > sent);
-    if (candidate >= 0 && wouldRegress) {
+    if (candidate >= 0 && (candidate < pending || candidate < sent)) {
         return;
     }
-    m_session->pendingReadWatermark = upToMessageId;
+    m_pendingReadWatermark = upToMessageId;
     m_readTimer->start();
+}
+
+void ProtocolController::markAllChatsRead()
+{
+    // Ack-then-lifecycle like its siblings: badges clear through the `chats`
+    // view, failures surface as a transient message action error.
+    m_client->request(QStringLiteral("chat.mark_all_read"), {},
+                      [this](const QJsonObject &, const ProtocolError &error) {
+                          if (error.isError()) {
+                              Q_EMIT messageActionFailed(error.message.isEmpty() ? i18nc("@info", "Unable to mark all chats read")
+                                                                                 : error.message);
+                          }
+                      });
 }
 
 void ProtocolController::setConversationVisible(bool visible)
@@ -1682,13 +1523,17 @@ void ProtocolController::setConversationVisible(bool visible)
     // The pinned banner and the composer's mention roster are part of that same
     // conversation view.
     updatePinnedSubscription();
-    updateLiveLocationsSubscription();
     updateChatMembersSubscription();
     if (!visible) {
-        m_session->phoneHistoryRequesting = false;
+        m_phoneHistoryRequesting = false;
         m_phoneHistoryTimer->stop();
         m_phoneHistorySettleTimer->stop();
-        detachVisibleMessageWindow();
+        delete m_messagesSub;
+        m_messagesSub = nullptr;
+        m_displayedMessagesChatId.clear();
+        m_messagesReloading = false;
+        m_waitingInitialMessages = false;
+        m_messagesModel->onReset();
         sendSessionUpdate();
         Q_EMIT messagesChanged();
         return;
@@ -1698,8 +1543,8 @@ void ProtocolController::setConversationVisible(bool visible)
         if (m_waitingForSelectedChatItem) {
             return;
         }
-        const QString fresh = selectedChatUnreadCount() > 0 ? QStringLiteral("unread") : QStringLiteral("latest");
-        subscribeMessages(anchorForOpening(m_selectedChatId, fresh));
+        const QString anchor = selectedChatUnreadCount() > 0 ? QStringLiteral("unread") : QStringLiteral("latest");
+        subscribeMessages(anchor);
     }
 }
 
@@ -1837,15 +1682,26 @@ QVariantMap ProtocolController::directMessageReceipt() const
 
 bool ProtocolController::composerEnabled() const
 {
-    return hasSelectedChat() && m_clientReady;
+    return hasSelectedChat() && m_clientReady && selectedChatCanSend();
+}
+
+bool ProtocolController::selectedChatCanSend() const
+{
+    if (!m_selectedChatId.endsWith(QStringLiteral("@g.us"))) {
+        return true;
+    }
+    const QVariantMap policy = m_groupPolicyModel->value();
+    const QString role = policy.value(QStringLiteral("my_role")).toString();
+    return !policy.value(QStringLiteral("announce")).toBool()
+           || role == QLatin1String("admin") || role == QLatin1String("superadmin");
 }
 
 void ProtocolController::dismissUnreadAnchor()
 {
-    const bool changed = !m_session->unreadAnchorMessageId.isEmpty() || m_session->unreadAnchorCount != 0 || m_session->unreadAnchorResolving;
-    m_session->unreadAnchorMessageId.clear();
-    m_session->unreadAnchorCount = 0;
-    m_session->unreadAnchorResolving = false;
+    const bool changed = !m_unreadAnchorMessageId.isEmpty() || m_unreadAnchorCount != 0 || m_unreadAnchorResolving;
+    m_unreadAnchorMessageId.clear();
+    m_unreadAnchorCount = 0;
+    m_unreadAnchorResolving = false;
     if (changed) {
         Q_EMIT unreadAnchorChanged();
     }
@@ -1854,7 +1710,7 @@ void ProtocolController::dismissUnreadAnchor()
 void ProtocolController::sendText(const QString &text, const QString &replyToMessageId, const QStringList &mentionedJids)
 {
     const QString trimmed = plainTextFromQtRichText(text).trimmed();
-    if (m_selectedChatId.isEmpty() || trimmed.isEmpty() || m_sendInFlight) {
+    if (m_selectedChatId.isEmpty() || trimmed.isEmpty() || m_sendInFlight || !selectedChatCanSend()) {
         return;
     }
 
@@ -1883,9 +1739,70 @@ void ProtocolController::sendText(const QString &text, const QString &replyToMes
     });
 }
 
-void ProtocolController::sendMedia(const QString &fileUrl, const QString &caption, const QString &replyToMessageId)
+void ProtocolController::scheduleText(const QString &text, qint64 sendAt)
 {
-    if (m_selectedChatId.isEmpty() || fileUrl.isEmpty() || m_sendInFlight) {
+    const QString trimmed = plainTextFromQtRichText(text).trimmed();
+    if (m_selectedChatId.isEmpty() || trimmed.isEmpty() || sendAt <= QDateTime::currentSecsSinceEpoch()) {
+        return;
+    }
+    m_client->request(QStringLiteral("schedule.text"),
+                      {{QStringLiteral("chat_id"), m_selectedChatId},
+                       {QStringLiteral("text"), trimmed},
+                       {QStringLiteral("send_at"), sendAt}},
+                      [this](const QJsonObject &, const ProtocolError &error) {
+                          if (error.isError()) {
+                              Q_EMIT messageActionFailed(error.message.isEmpty()
+                                                             ? i18nc("@info", "Unable to schedule message")
+                                                             : error.message);
+                          }
+                      });
+}
+
+QVariantList ProtocolController::scheduledMessages() const
+{
+    return m_scheduledMessages;
+}
+
+void ProtocolController::refreshScheduledMessages(const QString &chatId)
+{
+    m_client->request(QStringLiteral("schedule.list"),
+                      {{QStringLiteral("chat_id"), chatId}},
+                      [this](const QJsonObject &result, const ProtocolError &error) {
+                          if (error.isError()) {
+                              Q_EMIT messageActionFailed(error.message.isEmpty()
+                                                             ? i18nc("@info", "Unable to load scheduled messages")
+                                                             : error.message);
+                              return;
+                          }
+                          m_scheduledMessages.clear();
+                          for (const QJsonValue &value : result.value(QStringLiteral("messages")).toArray()) {
+                              m_scheduledMessages.append(value.toObject().toVariantMap());
+                          }
+                          Q_EMIT scheduledMessagesChanged();
+                      });
+}
+
+void ProtocolController::cancelScheduledMessage(qlonglong id, const QString &chatId)
+{
+    if (id <= 0) {
+        return;
+    }
+    m_client->request(QStringLiteral("schedule.cancel"),
+                      {{QStringLiteral("id"), id}},
+                      [this, chatId](const QJsonObject &, const ProtocolError &error) {
+                          if (error.isError()) {
+                              Q_EMIT messageActionFailed(error.message.isEmpty()
+                                                             ? i18nc("@info", "Unable to cancel scheduled message")
+                                                             : error.message);
+                              return;
+                          }
+                          refreshScheduledMessages(chatId);
+                      });
+}
+
+void ProtocolController::sendMedia(const QString &fileUrl, const QString &caption, const QString &replyToMessageId, const QString &kind, bool viewOnce)
+{
+    if (m_selectedChatId.isEmpty() || fileUrl.isEmpty() || m_sendInFlight || !selectedChatCanSend()) {
         return;
     }
 
@@ -1905,6 +1822,12 @@ void ProtocolController::sendMedia(const QString &fileUrl, const QString &captio
     if (const QString reply = replyToMessageId.trimmed(); !reply.isEmpty()) {
         params.insert(QStringLiteral("reply_to"), reply);
     }
+    if (!kind.trimmed().isEmpty()) {
+        params.insert(QStringLiteral("kind"), kind.trimmed());
+    }
+    if (viewOnce) {
+        params.insert(QStringLiteral("view_once"), true);
+    }
 
     m_sendInFlight = true;
     m_composerErrorText.clear();
@@ -1913,8 +1836,69 @@ void ProtocolController::sendMedia(const QString &fileUrl, const QString &captio
     m_client->request(QStringLiteral("send.media"), params, [this](const QJsonObject &, const ProtocolError &error) {
         m_sendInFlight = false;
         m_composerErrorText = error.isError()
-            ? (error.message.isEmpty() ? i18nc("@info", "Unable to send image") : error.message)
+            ? (error.message.isEmpty() ? i18nc("@info", "Unable to send media") : error.message)
             : QString();
+        Q_EMIT composerChanged();
+    });
+}
+
+// Batch twin of sendMedia: the daemon serializes the files, so a multi-pick
+// (or a multi-file drop) goes out as one request instead of N racing ones
+// that the single in-flight guard would drop after the first.
+void ProtocolController::sendMediaBatch(const QVariantList &fileUrls, const QString &caption, const QString &replyToMessageId, const QString &kind, bool viewOnce)
+{
+    if (m_selectedChatId.isEmpty() || fileUrls.isEmpty() || m_sendInFlight || !selectedChatCanSend()) {
+        return;
+    }
+    QJsonArray files;
+    bool first = true;
+    for (const QVariant &entry : fileUrls) {
+        const QUrl url(entry.toString());
+        const QString filePath = url.isLocalFile() ? url.toLocalFile() : entry.toString();
+        if (filePath.isEmpty()) {
+            continue;
+        }
+        QJsonObject file;
+        file.insert(QStringLiteral("path"), filePath);
+        // The shared caption rides on the first file only.
+        file.insert(QStringLiteral("caption"), first ? plainTextFromQtRichText(caption).trimmed() : QString());
+        files.append(file);
+        first = false;
+    }
+    if (files.isEmpty()) {
+        return;
+    }
+
+    setSelectedChatComposing(false);
+    dismissUnreadAnchor();
+    Q_EMIT messageSent();
+
+    QJsonObject params{{QStringLiteral("chat_id"), m_selectedChatId},
+                       {QStringLiteral("files"), files}};
+    if (const QString reply = replyToMessageId.trimmed(); !reply.isEmpty()) {
+        params.insert(QStringLiteral("reply_to"), reply);
+    }
+    if (!kind.trimmed().isEmpty()) {
+        params.insert(QStringLiteral("kind"), kind.trimmed());
+    }
+    if (viewOnce) {
+        params.insert(QStringLiteral("view_once"), true);
+    }
+
+    m_sendInFlight = true;
+    m_composerErrorText.clear();
+    Q_EMIT composerChanged();
+
+    m_client->request(QStringLiteral("send.media_batch"), params, [this](const QJsonObject &result, const ProtocolError &error) {
+        m_sendInFlight = false;
+        if (error.isError()) {
+            m_composerErrorText = error.message.isEmpty() ? i18nc("@info", "Unable to send media") : error.message;
+        } else {
+            const QVariantList failures = result.value(QStringLiteral("errors")).toArray().toVariantList();
+            if (!failures.isEmpty()) {
+                m_composerErrorText = i18nc("@info", "Some files could not be sent");
+            }
+        }
         Q_EMIT composerChanged();
     });
 }
@@ -1992,6 +1976,107 @@ bool ProtocolController::sendClipboardImage(const QString &caption, const QStrin
     }
 
     return false;
+}
+
+void ProtocolController::sendPoll(const QString &question, const QStringList &options, bool multiSelect, const QString &replyToMessageId)
+{
+    const QString trimmed = question.trimmed();
+    if (m_selectedChatId.isEmpty() || trimmed.isEmpty() || options.isEmpty() || m_sendInFlight || !selectedChatCanSend()) {
+        return;
+    }
+
+    setSelectedChatComposing(false);
+    dismissUnreadAnchor();
+    Q_EMIT messageSent();
+
+    QJsonArray opts;
+    for (const QString &opt : options) {
+        if (!opt.trimmed().isEmpty()) {
+            opts.append(opt.trimmed());
+        }
+    }
+
+    QJsonObject params{{QStringLiteral("chat_id"), m_selectedChatId},
+                       {QStringLiteral("question"), trimmed},
+                       {QStringLiteral("options"), opts},
+                       {QStringLiteral("multi"), multiSelect}};
+    if (const QString reply = replyToMessageId.trimmed(); !reply.isEmpty()) {
+        params.insert(QStringLiteral("reply_to"), reply);
+    }
+
+    m_sendInFlight = true;
+    m_composerErrorText.clear();
+    Q_EMIT composerChanged();
+
+    m_client->request(QStringLiteral("send.poll"), params, [this](const QJsonObject &, const ProtocolError &error) {
+        m_sendInFlight = false;
+        m_composerErrorText = error.isError()
+            ? (error.message.isEmpty() ? i18nc("@info", "Unable to send poll") : error.message)
+            : QString();
+        Q_EMIT composerChanged();
+    });
+}
+
+void ProtocolController::sendContact(const QString &name, const QString &phone, const QString &replyToMessageId)
+{
+    if (m_selectedChatId.isEmpty() || name.trimmed().isEmpty() || phone.trimmed().isEmpty() || m_sendInFlight || !selectedChatCanSend()) {
+        return;
+    }
+
+    setSelectedChatComposing(false);
+    dismissUnreadAnchor();
+    Q_EMIT messageSent();
+
+    QJsonObject params{{QStringLiteral("chat_id"), m_selectedChatId},
+                       {QStringLiteral("name"), name.trimmed()},
+                       {QStringLiteral("phone"), phone.trimmed()}};
+    if (const QString reply = replyToMessageId.trimmed(); !reply.isEmpty()) {
+        params.insert(QStringLiteral("reply_to"), reply);
+    }
+
+    m_sendInFlight = true;
+    m_composerErrorText.clear();
+    Q_EMIT composerChanged();
+
+    m_client->request(QStringLiteral("send.contact"), params, [this](const QJsonObject &, const ProtocolError &error) {
+        m_sendInFlight = false;
+        m_composerErrorText = error.isError()
+            ? (error.message.isEmpty() ? i18nc("@info", "Unable to send contact") : error.message)
+            : QString();
+        Q_EMIT composerChanged();
+    });
+}
+
+void ProtocolController::sendLocation(double latitude, double longitude, const QString &name, const QString &address, const QString &replyToMessageId)
+{
+    if (m_selectedChatId.isEmpty() || (latitude == 0.0 && longitude == 0.0) || m_sendInFlight || !selectedChatCanSend()) {
+        return;
+    }
+
+    setSelectedChatComposing(false);
+    dismissUnreadAnchor();
+    Q_EMIT messageSent();
+
+    QJsonObject params{{QStringLiteral("chat_id"), m_selectedChatId},
+                       {QStringLiteral("lat"), latitude},
+                       {QStringLiteral("long"), longitude},
+                       {QStringLiteral("name"), name},
+                       {QStringLiteral("address"), address}};
+    if (const QString reply = replyToMessageId.trimmed(); !reply.isEmpty()) {
+        params.insert(QStringLiteral("reply_to"), reply);
+    }
+
+    m_sendInFlight = true;
+    m_composerErrorText.clear();
+    Q_EMIT composerChanged();
+
+    m_client->request(QStringLiteral("send.location"), params, [this](const QJsonObject &, const ProtocolError &error) {
+        m_sendInFlight = false;
+        m_composerErrorText = error.isError()
+            ? (error.message.isEmpty() ? i18nc("@info", "Unable to send location") : error.message)
+            : QString();
+        Q_EMIT composerChanged();
+    });
 }
 
 void ProtocolController::setSelectedChatComposing(bool composing)
@@ -2161,292 +2246,6 @@ void ProtocolController::markMessagePlayed(const QString &messageId)
                       [](const QJsonObject &, const ProtocolError &) {});
 }
 
-void ProtocolController::requestMessageFromPhone(const QString &messageId)
-{
-    if (messageId.isEmpty()) {
-        return;
-    }
-    // The daemon answers by upserting the waiting row with the request on it,
-    // so the button's effect arrives through the view like everything else. A
-    // refusal is worth saying out loud: this is a button somebody pressed on
-    // purpose, having already waited.
-    sendMessageCommand(QStringLiteral("message.request_from_phone"),
-                       {{QStringLiteral("message_id"), messageId}},
-                       i18nc("@info:status", "Could not ask your phone for this message"));
-}
-
-void ProtocolController::votePoll(const QString &messageId, const QVariantList &optionIndexes)
-{
-    if (messageId.isEmpty()) {
-        return;
-    }
-
-    QJsonArray ids;
-    for (const QVariant &index : optionIndexes) {
-        bool ok = false;
-        const int value = index.toInt(&ok);
-        if (ok && value >= 0) {
-            ids.append(value);
-        }
-    }
-
-    // The tap is answered here rather than one round trip later. The daemon
-    // publishes its own version of the tally within a few milliseconds, but the
-    // send behind it takes a couple of hundred, and holding the row still for
-    // either of those makes the poll feel like it did not hear the tap.
-    m_pendingPollVotes.insert(messageId, optionIndexes);
-    Q_EMIT pollVotesChanged();
-
-    m_client->request(QStringLiteral("poll.vote"),
-                      {{QStringLiteral("message_id"), messageId}, {QStringLiteral("option_ids"), ids}},
-                      [this, messageId](const QJsonObject &, const ProtocolError &error) {
-                          // Whether it worked or not, the daemon's tally is now
-                          // the truth: on success it already carries this vote,
-                          // and on failure it has put the previous one back.
-                          m_pendingPollVotes.remove(messageId);
-                          Q_EMIT pollVotesChanged();
-                          if (error.isError()) {
-                              Q_EMIT messageActionFailed(error.message.isEmpty()
-                                                             ? i18nc("@info", "Unable to vote in the poll")
-                                                             : error.message);
-                          }
-                      });
-}
-
-QVariant ProtocolController::pendingPollSelection(const QString &messageId) const
-{
-    return m_pendingPollVotes.value(messageId);
-}
-
-void ProtocolController::respondToEvent(const QString &messageId, const QString &response, int extraGuests)
-{
-    if (messageId.trimmed().isEmpty() || response.trimmed().isEmpty()) {
-        return;
-    }
-    if (extraGuests < 0) {
-        extraGuests = 0;
-    }
-
-    // Answered here rather than one round trip later, for the reason the poll
-    // rows are: the daemon's own echo lands in a few milliseconds, but the send
-    // behind it takes a couple of hundred, and a chip that does not light on
-    // the tap reads as the card not having heard it.
-    m_pendingEventRSVPs.insert(messageId,
-                               QVariantMap{{QStringLiteral("response"), response},
-                                           {QStringLiteral("extra_guests"), extraGuests}});
-    Q_EMIT eventRSVPsChanged();
-
-    m_client->request(QStringLiteral("event.rsvp"),
-                      {{QStringLiteral("message_id"), messageId},
-                       {QStringLiteral("response"), response},
-                       {QStringLiteral("extra_guests"), extraGuests}},
-                      [this, messageId](const QJsonObject &, const ProtocolError &error) {
-                          // Either way the daemon's copy is now the truth: on
-                          // success it carries this answer, and on failure it
-                          // has put the previous one back.
-                          m_pendingEventRSVPs.remove(messageId);
-                          Q_EMIT eventRSVPsChanged();
-                          if (error.isError()) {
-                              Q_EMIT messageActionFailed(error.message.isEmpty()
-                                                             ? i18nc("@info", "Unable to answer the event")
-                                                             : error.message);
-                          }
-                      });
-}
-
-namespace
-{
-/// Escapes one iCalendar text value: RFC 5545 §3.3.11 gives backslash,
-/// semicolon and comma special meaning inside one, and a literal newline ends
-/// the property outright.
-QString icsText(const QString &value)
-{
-    QString out = value;
-    out.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
-    out.replace(QLatin1Char(';'), QStringLiteral("\\;"));
-    out.replace(QLatin1Char(','), QStringLiteral("\\,"));
-    out.replace(QStringLiteral("\r\n"), QStringLiteral("\\n"));
-    out.replace(QLatin1Char('\n'), QStringLiteral("\\n"));
-    out.replace(QLatin1Char('\r'), QStringLiteral("\\n"));
-    return out;
-}
-
-/// Folds a content line to 75 octets, continuing with a leading space, as
-/// §3.1 requires. Long descriptions are exactly the case where a calendar that
-/// enforces this rejects the whole file.
-QString icsFold(const QString &line)
-{
-    const QByteArray utf8 = line.toUtf8();
-    if (utf8.size() <= 75) {
-        return line;
-    }
-    QString folded;
-    int consumed = 0;
-    while (consumed < utf8.size()) {
-        int take = qMin(consumed == 0 ? 75 : 74, utf8.size() - consumed);
-        // Never split a UTF-8 sequence: if the next byte is a continuation, the
-        // cut lands mid-character, so back off to the lead byte before it. The
-        // bounds check is the whole point of the first condition: on the last
-        // chunk there is no next byte to look at, and reading it anyway is an
-        // out-of-bounds access that aborts the app rather than folding badly.
-        while (consumed + take < utf8.size() && take > 1
-               && (utf8.at(consumed + take) & 0xC0) == 0x80) {
-            --take;
-        }
-        if (!folded.isEmpty()) {
-            folded += QStringLiteral("\r\n ");
-        }
-        folded += QString::fromUtf8(utf8.mid(consumed, take));
-        consumed += take;
-    }
-    return folded;
-}
-
-QString icsStamp(qint64 unixSeconds)
-{
-    return QDateTime::fromSecsSinceEpoch(unixSeconds, QTimeZone::UTC)
-        .toString(QStringLiteral("yyyyMMdd'T'HHmmss'Z'"));
-}
-} // namespace
-
-QString ProtocolController::eventCalendarEntry(const QString &messageId, const QVariantMap &event)
-{
-    const qint64 startsAt = event.value(QStringLiteral("starts_at")).toLongLong();
-    if (startsAt <= 0) {
-        return {};
-    }
-
-    QString name = event.value(QStringLiteral("name")).toString().simplified();
-    if (name.isEmpty()) {
-        name = i18nc("@title fallback name for an event with none", "Event");
-    }
-
-    // The venue as one line: the place's name and its address say different
-    // things and a calendar has one field for both.
-    const QVariantMap location = event.value(QStringLiteral("location")).toMap();
-    QStringList placeParts;
-    for (const auto &key : {QStringLiteral("name"), QStringLiteral("address")}) {
-        const QString part = location.value(key).toString().simplified();
-        if (!part.isEmpty() && !placeParts.contains(part)) {
-            placeParts.append(part);
-        }
-    }
-
-    QStringList lines{
-        QStringLiteral("BEGIN:VCALENDAR"),
-        QStringLiteral("VERSION:2.0"),
-        QStringLiteral("PRODID:-//whatevr//whatkevr//EN"),
-        QStringLiteral("CALSCALE:GREGORIAN"),
-        QStringLiteral("BEGIN:VEVENT"),
-        // The message id is already unique and stable, so re-importing the same
-        // event updates the entry the user already has instead of adding a
-        // second copy of it.
-        QStringLiteral("UID:") + icsText(messageId) + QStringLiteral("@whatevr"),
-        QStringLiteral("DTSTAMP:") + icsStamp(QDateTime::currentSecsSinceEpoch()),
-        QStringLiteral("DTSTART:") + icsStamp(startsAt),
-        QStringLiteral("SUMMARY:") + icsText(name),
-    };
-
-    const qint64 endsAt = event.value(QStringLiteral("ends_at")).toLongLong();
-    if (endsAt > startsAt) {
-        lines.append(QStringLiteral("DTEND:") + icsStamp(endsAt));
-    }
-    const QString description = event.value(QStringLiteral("description")).toString();
-    if (!description.isEmpty()) {
-        lines.append(QStringLiteral("DESCRIPTION:") + icsText(description));
-    }
-    if (!placeParts.isEmpty()) {
-        lines.append(QStringLiteral("LOCATION:") + icsText(placeParts.join(QStringLiteral(", "))));
-    }
-    const QString joinLink = event.value(QStringLiteral("join_link")).toString();
-    if (!joinLink.isEmpty()) {
-        lines.append(QStringLiteral("URL:") + icsText(joinLink));
-    }
-    // A cancelled event is still worth importing: it updates the entry the user
-    // already accepted rather than leaving it sitting in their week.
-    if (event.value(QStringLiteral("canceled")).toBool()) {
-        lines.append(QStringLiteral("STATUS:CANCELLED"));
-    }
-    lines.append(QStringLiteral("END:VEVENT"));
-    lines.append(QStringLiteral("END:VCALENDAR"));
-
-    QString body;
-    for (const QString &line : std::as_const(lines)) {
-        body += icsFold(line) + QStringLiteral("\r\n");
-    }
-    return body;
-}
-
-bool ProtocolController::saveEventToCalendar(const QString &messageId, const QVariantMap &event)
-{
-    const QString body = eventCalendarEntry(messageId, event);
-    if (body.isEmpty()) {
-        Q_EMIT messageActionFailed(i18nc("@info", "This event has no start time"));
-        return false;
-    }
-
-    const QString directory =
-        QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + QStringLiteral("/events");
-    if (!QDir().mkpath(directory)) {
-        Q_EMIT messageActionFailed(i18nc("@info", "Unable to write the calendar entry"));
-        return false;
-    }
-
-    // The filename comes from the message id rather than the event's name: the
-    // name is attacker-controlled text arriving over the network and must never
-    // be able to steer where this writes.
-    QString base = messageId;
-    base.replace(QRegularExpression(QStringLiteral("[^\\w.-]")), QStringLiteral("_"));
-    base.truncate(96);
-    if (base.isEmpty()) {
-        base = QStringLiteral("event");
-    }
-
-    const QString path = directory + QLatin1Char('/') + base + QStringLiteral(".ics");
-    QFile file(path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)
-        || file.write(body.toUtf8()) < 0) {
-        Q_EMIT messageActionFailed(i18nc("@info", "Unable to write the calendar entry"));
-        return false;
-    }
-    file.close();
-
-    if (!QDesktopServices::openUrl(QUrl::fromLocalFile(path))) {
-        Q_EMIT messageActionFailed(i18nc("@info", "No application is set up to open calendar entries"));
-        return false;
-    }
-    return true;
-}
-
-void ProtocolController::joinGroupInvite(const QString &messageId)
-{
-    if (messageId.trimmed().isEmpty()) {
-        return;
-    }
-    m_client->request(QStringLiteral("group.join_invite"), {{QStringLiteral("message_id"), messageId}},
-                      [this](const QJsonObject &result, const ProtocolError &error) {
-                          if (error.isError()) {
-                              Q_EMIT messageActionFailed(error.message.isEmpty()
-                                                             ? i18nc("@info", "Unable to join the group")
-                                                             : error.message);
-                              return;
-                          }
-                          const QString chatId = result.value(QStringLiteral("chat_id")).toString();
-                          if (chatId.isEmpty()) {
-                              Q_EMIT messageActionFailed(i18nc("@info", "Unable to join the group"));
-                              return;
-                          }
-                          // Joining and then leaving the reader in the chat they
-                          // were already in is half the action. The row itself
-                          // arrives through the `chats` view; this only selects
-                          // it and drives the column navigation, exactly as
-                          // opening a contact's chat does.
-                          clearSearch();
-                          selectChat(chatId);
-                          Q_EMIT openChatRequested(chatId);
-                      });
-}
-
 bool ProtocolController::openLocalFile(const QString &localPath)
 {
     if (localPath.isEmpty() || !QFileInfo::exists(localPath)) {
@@ -2455,39 +2254,19 @@ bool ProtocolController::openLocalFile(const QString &localPath)
     return QDesktopServices::openUrl(QUrl::fromLocalFile(localPath));
 }
 
+bool ProtocolController::openLogDirectory()
+{
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation)
+        + QStringLiteral("/whatevrd");
+    if (!QFileInfo::exists(dir)) {
+        return false;
+    }
+    return QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
+}
+
 QUrl ProtocolController::localFileUrl(const QString &localPath) const
 {
     return localPath.isEmpty() ? QUrl() : QUrl::fromLocalFile(localPath);
-}
-
-bool ProtocolController::openLocation(double latitude, double longitude, const QString &label)
-{
-    if (latitude == 0.0 && longitude == 0.0) {
-        return false;
-    }
-
-    // RFC 5870 with the `q=` extension every map application understands: the
-    // coordinates place the view, the query drops a labelled pin on it.
-    const QString coordinates = QStringLiteral("%1,%2")
-                                    .arg(latitude, 0, 'f', 6)
-                                    .arg(longitude, 0, 'f', 6);
-    QString geo = QStringLiteral("geo:") + coordinates;
-    if (label.isEmpty()) {
-        geo += QStringLiteral("?q=") + coordinates;
-    } else {
-        geo += QStringLiteral("?q=") + coordinates + QStringLiteral("(")
-            + QString::fromUtf8(QUrl::toPercentEncoding(label)) + QStringLiteral(")");
-    }
-    if (QDesktopServices::openUrl(QUrl(geo))) {
-        return true;
-    }
-
-    // Nothing registered for geo:. OpenStreetMap in a browser is the honest
-    // fallback: it is the same data the daemon drew the map from.
-    const QUrl web(QStringLiteral("https://www.openstreetmap.org/?mlat=%1&mlon=%2#map=17/%1/%2")
-                       .arg(latitude, 0, 'f', 6)
-                       .arg(longitude, 0, 'f', 6));
-    return QDesktopServices::openUrl(web);
 }
 
 void ProtocolController::forwardMessage(const QString &messageId, const QStringList &chatIds)
@@ -2524,6 +2303,20 @@ void ProtocolController::forwardMessage(const QString &messageId, const QStringL
     });
 }
 
+void ProtocolController::votePoll(const QString &messageId, const QStringList &selectedOptions)
+{
+    if (messageId.isEmpty() || selectedOptions.isEmpty()) {
+        return;
+    }
+    QJsonArray opts;
+    for (const QString &opt : selectedOptions) {
+        opts.append(opt);
+    }
+    sendMessageCommand(QStringLiteral("message.vote"),
+                       {{QStringLiteral("message_id"), messageId}, {QStringLiteral("options"), opts}},
+                       i18nc("@info", "Unable to record your vote"));
+}
+
 bool ProtocolController::canEditAt(qint64 timestampUnix) const
 {
     // Mirrors whatsmeow.EditWindow (20 minutes); the daemon is authoritative and
@@ -2552,48 +2345,6 @@ void ProtocolController::updatePinnedSubscription()
                                           {{QStringLiteral("chat_id"), target}}, m_pinnedModel);
     }
     Q_EMIT pinnedMessagesChanged();
-}
-
-// --- live-location strip ----------------------------------------------------
-
-void ProtocolController::updateLiveLocationsSubscription()
-{
-    const QString target = m_conversationVisible ? m_selectedChatId : QString();
-    if (target == m_liveLocationsChatId) {
-        return;
-    }
-    m_liveLocationsChatId = target;
-    delete m_liveLocationsSub;
-    m_liveLocationsSub = nullptr;
-    m_liveLocationsModel->onReset();
-    if (!target.isEmpty()) {
-        m_liveLocationsSub = m_client->subscribe(QStringLiteral("live_locations"),
-                                                 {{QStringLiteral("chat_id"), target}}, m_liveLocationsModel);
-    }
-    Q_EMIT liveLocationsChanged();
-}
-
-int ProtocolController::liveLocationsCount() const
-{
-    return m_liveLocationsModel->count();
-}
-
-QVariantMap ProtocolController::liveLocationAt(int index) const
-{
-    if (index < 0 || index >= m_liveLocationsModel->count()) {
-        return {};
-    }
-    const QVariantMap item =
-        m_liveLocationsModel->data(m_liveLocationsModel->index(index, 0), CollectionViewModel::ItemRole)
-            .toMap();
-    const QVariantMap sender = item.value(QStringLiteral("sender")).toMap();
-    return {
-        {QStringLiteral("messageId"), item.value(QStringLiteral("id")).toString()},
-        {QStringLiteral("senderName"), sender.value(QStringLiteral("name")).toString()},
-        {QStringLiteral("senderAvatarLocalPath"), sender.value(QStringLiteral("avatar_path")).toString()},
-        {QStringLiteral("expiresAt"), item.value(QStringLiteral("expires_at")).toLongLong()},
-        {QStringLiteral("updatedAt"), item.value(QStringLiteral("updated_at")).toLongLong()},
-    };
 }
 
 bool ProtocolController::pinnedMessagesReady() const
@@ -2929,6 +2680,574 @@ void ProtocolController::loadMoreStarredMessages()
     m_starredSub->extend(kStarredPageSize, QStringLiteral("older"));
 }
 
+// --- status tab -------------------------------------------------------------
+
+QAbstractItemModel *ProtocolController::statusModel() const
+{
+    return m_statusModel;
+}
+
+bool ProtocolController::statusLoading() const
+{
+    // The page groups over three views; a rebuild with any of them unready
+    // flashes contacts in the wrong section before settling.
+    return m_statusSub != nullptr
+        && (!m_statusModel->isReady() || !m_keptStatusModel->isReady() || !m_mutedStatusModel->isReady());
+}
+
+bool ProtocolController::statusExhausted() const
+{
+    return m_statusSub == nullptr || m_statusModel->isExhausted();
+}
+
+void ProtocolController::openStatus()
+{
+    delete m_statusSub;
+    m_statusSub = nullptr;
+    m_statusModel->onReset();
+    delete m_keptStatusSub;
+    m_keptStatusSub = nullptr;
+    m_keptStatusModel->onReset();
+    delete m_mutedStatusSub;
+    m_mutedStatusSub = nullptr;
+    m_mutedStatusModel->onReset();
+
+    QJsonObject params{{QStringLiteral("limit"), kStatusPageSize}};
+    m_statusSub = m_client->subscribe(QStringLiteral("status"), params, m_statusModel);
+    m_keptStatusSub = m_client->subscribe(QStringLiteral("status.kept"), {}, m_keptStatusModel);
+    m_mutedStatusSub = m_client->subscribe(QStringLiteral("status.muted"), {}, m_mutedStatusModel);
+    Q_EMIT statusChanged();
+}
+
+QAbstractItemModel *ProtocolController::keptStatusModel() const
+{
+    return m_keptStatusModel;
+}
+
+void ProtocolController::setStatusKeepSender(const QString &senderId, bool kept)
+{
+    if (senderId.isEmpty()) {
+        return;
+    }
+    // Ack-then-lifecycle like markStatusViewed: the `status.kept` view (and
+    // the `status` view) refresh off the StatusChanged event the command
+    // publishes.
+    sendMessageCommand(QStringLiteral("status.keep_sender"),
+                       {{QStringLiteral("sender_id"), senderId}, {QStringLiteral("kept"), kept}},
+                       i18nc("@info", "Unable to update the keep setting"));
+}
+
+void ProtocolController::requestEditHistory(const QString &messageId)
+{
+    if (messageId.isEmpty()) {
+        return;
+    }
+    m_client->request(QStringLiteral("message.edit_history"), {{QStringLiteral("message_id"), messageId}},
+                      [this, messageId](const QJsonObject &result, const ProtocolError &error) {
+                          if (error.isError()) {
+                              Q_EMIT messageActionFailed(error.message.isEmpty() ? i18nc("@info", "Unable to load edit history")
+                                                                                 : error.message);
+                              return;
+                          }
+                          Q_EMIT editHistoryReady(messageId, result.value(QStringLiteral("edits")).toArray().toVariantList());
+                      });
+}
+
+QAbstractItemModel *ProtocolController::mutedStatusModel() const
+{
+    return m_mutedStatusModel;
+}
+
+void ProtocolController::setStatusMuteSender(const QString &senderId, bool muted)
+{
+    if (senderId.isEmpty()) {
+        return;
+    }
+    // Ack-then-lifecycle like setStatusKeepSender: the `status.muted` view
+    // (and the `status` view) refresh off the StatusChanged event the
+    // command publishes.
+    sendMessageCommand(QStringLiteral("status.mute_sender"),
+                       {{QStringLiteral("sender_id"), senderId}, {QStringLiteral("muted"), muted}},
+                       i18nc("@info", "Unable to update the mute setting"));
+}
+
+void ProtocolController::closeStatus()
+{
+    if (!m_statusSub && !m_keptStatusSub && !m_mutedStatusSub) {
+        return;
+    }
+    delete m_statusSub;
+    m_statusSub = nullptr;
+    m_statusModel->onReset();
+    delete m_keptStatusSub;
+    m_keptStatusSub = nullptr;
+    m_keptStatusModel->onReset();
+    delete m_mutedStatusSub;
+    m_mutedStatusSub = nullptr;
+    m_mutedStatusModel->onReset();
+    Q_EMIT statusChanged();
+}
+
+void ProtocolController::loadMoreStatus()
+{
+    // Live-edge window: only ever grows `older`.
+    if (!m_statusSub || m_statusModel->isExhausted() || !m_statusModel->isReady()) {
+        return;
+    }
+    m_statusSub->extend(kStatusPageSize, QStringLiteral("older"));
+}
+
+void ProtocolController::markStatusViewed(const QString &statusId)
+{
+    if (statusId.isEmpty()) {
+        return;
+    }
+    sendMessageCommand(QStringLiteral("status.mark_viewed"), {{QStringLiteral("status_id"), statusId}},
+                       i18nc("@info", "Unable to mark the status viewed"));
+}
+
+void ProtocolController::postStatusText(const QString &text, int background, int font)
+{
+    if (text.trimmed().isEmpty()) {
+        return;
+    }
+    m_client->request(QStringLiteral("status.post"), {{QStringLiteral("text"), text},
+                                                       {QStringLiteral("background"), background},
+                                                       {QStringLiteral("font"), font}},
+                      [this](const QJsonObject &, const ProtocolError &error) {
+                          if (error.isError()) {
+                              Q_EMIT messageActionFailed(error.message.isEmpty() ? i18nc("@info", "Unable to post the status")
+                                                                                 : error.message);
+                          }
+                      });
+}
+
+void ProtocolController::postStatusMedia(const QString &fileUrl, const QString &caption, int background, int font)
+{
+    const QUrl url(fileUrl);
+    const QString filePath = url.isLocalFile() ? url.toLocalFile() : fileUrl;
+    if (filePath.isEmpty()) {
+        return;
+    }
+    m_client->request(QStringLiteral("status.post"),
+                      {{QStringLiteral("path"), filePath}, {QStringLiteral("caption"), caption.trimmed()},
+                       {QStringLiteral("background"), background}, {QStringLiteral("font"), font}},
+                      [this](const QJsonObject &, const ProtocolError &error) {
+                          if (error.isError()) {
+                              Q_EMIT messageActionFailed(error.message.isEmpty() ? i18nc("@info", "Unable to post the status")
+                                                                                 : error.message);
+                          }
+                      });
+}
+
+void ProtocolController::replyToStatus(const QString &statusId, const QString &text)
+{
+    if (statusId.trimmed().isEmpty() || text.trimmed().isEmpty()) {
+        return;
+    }
+    m_client->request(QStringLiteral("status.reply"),
+                      {{QStringLiteral("status_id"), statusId}, {QStringLiteral("text"), text.trimmed()}},
+                      [this](const QJsonObject &, const ProtocolError &error) {
+                          if (error.isError()) {
+                              Q_EMIT messageActionFailed(error.message.isEmpty()
+                                                             ? i18nc("@info", "Unable to reply to the status")
+                                                             : error.message);
+                          }
+                      });
+}
+
+void ProtocolController::downloadStatus(const QString &statusId)
+{
+    if (statusId.isEmpty()) {
+        return;
+    }
+    // Ack-then-lifecycle like media.download: the row upserts with media.path,
+    // failures surface only as a log line daemon-side, same as its twin.
+    m_client->request(QStringLiteral("status.download"), {{QStringLiteral("status_id"), statusId}});
+}
+
+void ProtocolController::saveRemoteMedia(const QString &messageId, const QString &statusId, const QString &jid, const QUrl &destUrl){
+    if (!destUrl.isLocalFile()) {
+        return;
+    }
+    const QString destination = destUrl.toLocalFile();
+    if (destination.isEmpty()) {
+        return;
+    }
+    // The dialog already confirmed overwriting; QFile::copy refuses to.
+    if (QFile::exists(destination) && !QFile::remove(destination)) {
+        Q_EMIT messageActionFailed(i18nc("@info", "Unable to overwrite the existing file"));
+        return;
+    }
+    QJsonObject params{{QStringLiteral("path"), destination}};
+    if (!messageId.isEmpty()) {
+        params.insert(QStringLiteral("message_id"), messageId);
+    }
+    if (!statusId.isEmpty()) {
+        params.insert(QStringLiteral("status_id"), statusId);
+    }
+    if (!jid.isEmpty()) {
+        params.insert(QStringLiteral("jid"), jid);
+    }
+    m_client->request(QStringLiteral("media.save"), params,
+                      [this](const QJsonObject &result, const ProtocolError &error) {
+                          if (error.isError()) {
+                              Q_EMIT messageActionFailed(
+                                  error.message.isEmpty() ? i18nc("@info", "Unable to save the file") : error.message);
+                              return;
+                          }
+                          Q_EMIT remoteMediaSaved(result.value(QStringLiteral("path")).toString());
+                      });
+}
+
+void ProtocolController::exportChat(const QString &chatId, const QUrl &destUrl)
+{
+    if (chatId.isEmpty() || !destUrl.isLocalFile()) {
+        return;
+    }
+    const QString destination = destUrl.toLocalFile();
+    if (destination.isEmpty()) {
+        return;
+    }
+    // The dialog already confirmed overwriting; QFile::copy refuses to.
+    if (QFile::exists(destination) && !QFile::remove(destination)) {
+        Q_EMIT messageActionFailed(i18nc("@info", "Unable to overwrite the existing file"));
+        return;
+    }
+    QJsonObject params{{QStringLiteral("chat_id"), chatId},
+                       {QStringLiteral("path"), destination}};
+    m_client->request(QStringLiteral("chat.export"), params,
+                      [this](const QJsonObject &result, const ProtocolError &error) {
+                          if (error.isError()) {
+                              Q_EMIT messageActionFailed(
+                                  error.message.isEmpty() ? i18nc("@info", "Unable to export the chat") : error.message);
+                              return;
+                          }
+                          Q_EMIT chatExported(result.value(QStringLiteral("path")).toString());
+                      });
+}
+
+void ProtocolController::exportBackup(const QUrl &destUrl, const QString &passphrase, bool useKeyring)
+{
+    if (!destUrl.isLocalFile()) {
+        Q_EMIT messageActionFailed(i18nc("@info", "Choose a local backup file"));
+        return;
+    }
+    const QString path = destUrl.toLocalFile();
+    if (path.isEmpty()) {
+        Q_EMIT messageActionFailed(i18nc("@info", "Choose a backup destination"));
+        return;
+    }
+    m_client->request(QStringLiteral("daemon.backup_export"),
+                      {{QStringLiteral("path"), path},
+                       {QStringLiteral("passphrase"), passphrase},
+                       {QStringLiteral("use_keyring"), useKeyring}},
+                      [this](const QJsonObject &result, const ProtocolError &error) {
+                          if (error.isError()) {
+                              Q_EMIT messageActionFailed(error.message.isEmpty()
+                                                             ? i18nc("@info", "Unable to export backup")
+                                                             : error.message);
+                              return;
+                          }
+                          Q_EMIT backupExported(result.value(QStringLiteral("path")).toString());
+                      });
+}
+
+void ProtocolController::setBackupPassphrase(const QString &passphrase)
+{
+    if (passphrase.trimmed().isEmpty()) {
+        Q_EMIT messageActionFailed(i18nc("@info", "Enter a backup passphrase"));
+        return;
+    }
+    m_client->request(QStringLiteral("daemon.backup_set_passphrase"),
+                      {{QStringLiteral("passphrase"), passphrase}},
+                      [this](const QJsonObject &, const ProtocolError &error) {
+                          if (error.isError()) {
+                              Q_EMIT messageActionFailed(error.message.isEmpty()
+                                                             ? i18nc("@info", "Unable to store backup passphrase")
+                                                             : error.message);
+                          }
+                      });
+}
+
+// --- calls tab --------------------------------------------------------------
+
+QAbstractItemModel *ProtocolController::callsModel() const
+{
+    return m_callsModel;
+}
+
+int ProtocolController::callsRingingCount() const
+{
+    return m_callsModel ? m_callsModel->count() : 0;
+}
+
+QAbstractItemModel *ProtocolController::logsModel() const
+{
+    return m_logsModel;
+}
+
+void ProtocolController::openCalls()
+{
+    delete m_callsSub;
+    m_callsSub = nullptr;
+    m_callsModel->onReset();
+
+    m_callsSub = m_client->subscribe(QStringLiteral("calls"), {}, m_callsModel);
+    Q_EMIT callsChanged();
+}
+
+void ProtocolController::closeCalls()
+{
+    if (!m_callsSub) {
+        return;
+    }
+    delete m_callsSub;
+    m_callsSub = nullptr;
+    m_callsModel->onReset();
+    Q_EMIT callsChanged();
+}
+
+void ProtocolController::openLogs()
+{
+    if (m_logsSub) {
+        return;
+    }
+    m_logsLoading = true;
+    m_logsErrorText.clear();
+    Q_EMIT logsLoadingChanged();
+
+    delete m_logsSub;
+    m_logsSub = nullptr;
+    m_logsModel->onReset();
+
+    m_logsSub = m_client->subscribe(
+        QStringLiteral("daemon.logs"),
+        // Full ring for debug: the daemon caps at its 1000-line ring anyway.
+        {{QStringLiteral("limit"), 1000}},
+        m_logsModel);
+    connect(m_logsSub, &Subscription::failed, this,
+            [this](const QString &code, const QString &message) {
+                m_logsLoading = false;
+                m_logsErrorText = message.isEmpty()
+                    ? i18nc("@info", "Could not load daemon logs (%1)", code)
+                    : message;
+                Q_EMIT logsLoadingChanged();
+            });
+    connect(m_logsModel, &CollectionViewModel::readyChanged, this, [this] {
+        if (m_logsLoading && m_logsModel->isReady()) {
+            m_logsLoading = false;
+            Q_EMIT logsLoadingChanged();
+        }
+    });
+}
+
+void ProtocolController::closeLogs()
+{
+    if (!m_logsSub) {
+        return;
+    }
+    delete m_logsSub;
+    m_logsSub = nullptr;
+    m_logsModel->onReset();
+    if (m_logsLoading) {
+        m_logsLoading = false;
+        Q_EMIT logsLoadingChanged();
+    }
+}
+
+void ProtocolController::rejectCall(const QString &chatId)
+{
+    if (chatId.isEmpty()) {
+        return;
+    }
+    sendMessageCommand(QStringLiteral("call.reject"), {{QStringLiteral("chat_id"), chatId}},
+                       i18nc("@info", "Unable to reject the call"));
+}
+
+// --- channels tab -----------------------------------------------------------
+
+QAbstractItemModel *ProtocolController::channelsModel() const
+{
+    return m_channelsModel;
+}
+
+bool ProtocolController::channelsLoading() const
+{
+    return m_channelsSub != nullptr && !m_channelsModel->isReady();
+}
+
+QAbstractItemModel *ProtocolController::channelMessagesModel() const
+{
+    return m_channelMessagesModel;
+}
+
+bool ProtocolController::channelMessagesLoading() const
+{
+    return m_channelMessagesSub != nullptr && !m_channelMessagesModel->isReady();
+}
+
+QString ProtocolController::selectedChannelJid() const
+{
+    return m_selectedChannelJid;
+}
+
+QString ProtocolController::selectedChannelName() const
+{
+    return m_selectedChannelName;
+}
+
+void ProtocolController::openChannels()
+{
+    delete m_channelsSub;
+    m_channelsSub = nullptr;
+    m_channelsModel->onReset();
+
+    m_channelsSub = m_client->subscribe(QStringLiteral("channels"), {}, m_channelsModel);
+    // The directory is server state: refresh on every open so follows made on
+    // the phone (or in another window) appear. The view refreshes off the
+    // ChannelsChanged event the command publishes.
+    m_client->request(QStringLiteral("channels.refresh"), {});
+    Q_EMIT channelsChanged();
+}
+
+void ProtocolController::closeChannels()
+{
+    if (!m_channelsSub) {
+        return;
+    }
+    delete m_channelsSub;
+    m_channelsSub = nullptr;
+    m_channelsModel->onReset();
+    Q_EMIT channelsChanged();
+}
+
+void ProtocolController::openChannelMessages(const QString &jid, const QString &name)
+{
+    closeChannelMessages();
+    m_selectedChannelJid = jid;
+    m_selectedChannelName = name;
+    Q_EMIT channelMessagesChanged();
+
+    m_channelMessagesSub = m_client->subscribe(
+        QStringLiteral("channel_messages"),
+        {{QStringLiteral("channel"), jid}},
+        m_channelMessagesModel);
+}
+
+void ProtocolController::closeChannelMessages()
+{
+    if (!m_channelMessagesSub) {
+        return;
+    }
+    delete m_channelMessagesSub;
+    m_channelMessagesSub = nullptr;
+    m_channelMessagesModel->onReset();
+    m_selectedChannelJid.clear();
+    m_selectedChannelName.clear();
+    Q_EMIT channelMessagesChanged();
+}
+
+void ProtocolController::followChannel(const QString &jidOrLink)
+{
+    if (jidOrLink.trimmed().isEmpty()) {
+        return;
+    }
+    QJsonObject params;
+    if (jidOrLink.contains(QLatin1Char('/')) || jidOrLink.startsWith(QStringLiteral("http")))
+        params[QStringLiteral("invite")] = jidOrLink;
+    else
+        params[QStringLiteral("jid")] = jidOrLink;
+    m_client->request(QStringLiteral("channel.follow"), params);
+}
+
+void ProtocolController::unfollowChannel(const QString &jid)
+{
+    if (jid.isEmpty()) {
+        return;
+    }
+    m_client->request(QStringLiteral("channel.unfollow"), {{QStringLiteral("jid"), jid}});
+}
+
+void ProtocolController::muteChannel(const QString &jid, bool muted)
+{
+    if (jid.isEmpty()) {
+        return;
+    }
+    m_client->request(QStringLiteral("channel.mute"),
+                      {{QStringLiteral("jid"), jid}, {QStringLiteral("muted"), muted}});
+}
+
+void ProtocolController::reactToChannelMessage(const QString &channelId, qint64 serverId, const QString &emoji)
+{
+    if (channelId.trimmed().isEmpty() || serverId <= 0) {
+        return;
+    }
+    m_client->request(QStringLiteral("channel.react"),
+                      {{QStringLiteral("channel_id"), channelId},
+                       {QStringLiteral("server_id"), serverId},
+                       {QStringLiteral("emoji"), emoji}},
+                      [this](const QJsonObject &, const ProtocolError &error) {
+                          if (error.isError()) {
+                              Q_EMIT messageActionFailed(error.message.isEmpty()
+                                                             ? i18nc("@info", "Unable to react to channel post")
+                                                             : error.message);
+                          }
+                      });
+}
+
+void ProtocolController::markChannelViewed(const QString &channelId, const QVariantList &serverIds)
+{
+    if (channelId.trimmed().isEmpty() || serverIds.isEmpty()) {
+        return;
+    }
+    QJsonArray ids;
+    for (const QVariant &value : serverIds) {
+        const qint64 id = value.toLongLong();
+        if (id > 0) {
+            ids.append(id);
+        }
+    }
+    if (ids.isEmpty()) {
+        return;
+    }
+    m_client->request(QStringLiteral("channel.mark_viewed"),
+                      {{QStringLiteral("channel_id"), channelId},
+                       {QStringLiteral("server_ids"), ids}},
+                      [this](const QJsonObject &, const ProtocolError &error) {
+                          if (error.isError()) {
+                              Q_EMIT messageActionFailed(error.message.isEmpty()
+                                                             ? i18nc("@info", "Unable to mark channel posts viewed")
+                                                             : error.message);
+                          }
+                      });
+}
+
+void ProtocolController::leaveGroup(const QString &chatId)
+{
+    if (chatId.isEmpty()) {
+        return;
+    }
+    sendMessageCommand(QStringLiteral("group.leave"), {{QStringLiteral("chat_id"), chatId}},
+                       i18nc("@info", "Unable to leave the group"));
+}
+
+void ProtocolController::copyGroupInviteLink(const QString &chatId)
+{
+    if (chatId.isEmpty()) {
+        return;
+    }
+    m_client->request(QStringLiteral("group.invite_link"), {{QStringLiteral("chat_id"), chatId}},
+                      [this](const QJsonObject &result, const ProtocolError &error) {
+                          if (error.isError()) {
+                              Q_EMIT messageActionFailed(
+                                  error.message.isEmpty() ? i18nc("@info", "Unable to get the invite link") : error.message);
+                              return;
+                          }
+                          copyToClipboard(result.value(QStringLiteral("link")).toString());
+                      });
+}
+
 // --- per-chat media gallery -------------------------------------------------
 
 QAbstractItemModel *ProtocolController::chatMediaModel() const
@@ -2946,7 +3265,7 @@ bool ProtocolController::chatMediaExhausted() const
     return m_chatMediaSub == nullptr || m_chatMediaModel->isExhausted();
 }
 
-void ProtocolController::openChatMedia(const QString &chatId)
+void ProtocolController::openChatMedia(const QString &chatId, const QString &kind)
 {
     delete m_chatMediaSub;
     m_chatMediaSub = nullptr;
@@ -2956,10 +3275,13 @@ void ProtocolController::openChatMedia(const QString &chatId)
         return;
     }
 
-    m_chatMediaSub = m_client->subscribe(QStringLiteral("chat_media"),
-                                         {{QStringLiteral("chat_id"), chatId},
-                                          {QStringLiteral("limit"), kChatMediaPageSize}},
-                                         m_chatMediaModel);
+    QJsonObject params{
+        {QStringLiteral("chat_id"), chatId},
+        {QStringLiteral("limit"), kChatMediaPageSize}};
+    if (!kind.isEmpty())
+        params[QStringLiteral("kinds")] = QJsonArray{kind};
+
+    m_chatMediaSub = m_client->subscribe(QStringLiteral("chat_media"), params, m_chatMediaModel);
     Q_EMIT chatMediaChanged();
 }
 
@@ -3395,7 +3717,8 @@ void ProtocolController::setAppPreference(const QString &key, bool value)
         QStringLiteral("notifications_enabled"), QStringLiteral("notification_sound"),
         QStringLiteral("notification_preview"), QStringLiteral("auto_download_photos"),
         QStringLiteral("auto_download_videos"), QStringLiteral("auto_download_audio"),
-        QStringLiteral("auto_download_documents"), QStringLiteral("auto_download_stickers")};
+        QStringLiteral("auto_download_documents"), QStringLiteral("auto_download_stickers"),
+        QStringLiteral("anti_delete"), QStringLiteral("send_typing_indicators")};
     if (!keys.contains(key)) {
         return;
     }
@@ -3419,6 +3742,16 @@ void ProtocolController::setProfileStatus(const QString &text)
 void ProtocolController::logout()
 {
     sendSettingsCommand(QStringLiteral("account.logout"), {}, i18nc("@info", "Logout failed"));
+}
+
+void ProtocolController::shutdownDaemon()
+{
+    // Fire-and-forget: the daemon acks, then exits on its own timer. The
+    // frontend quits regardless so a dead/absent daemon never blocks exit.
+    if (!m_client) {
+        return;
+    }
+    m_client->request(QStringLiteral("daemon.shutdown"), {}, [](const QJsonObject &, const ProtocolError &) {});
 }
 
 // --- history-sync strip (D2b2) --------------------------------------------
@@ -3802,31 +4135,6 @@ bool ProtocolController::perfLogging()
     return enabled;
 }
 
-void ProtocolController::markChatOpenPhase(const QString &phase)
-{
-    if (!perfLogging() || !m_openClock.isValid()) {
-        return;
-    }
-    const int rows = m_messagePresentationModel ? m_messagePresentationModel->rowCount() : 0;
-    // The view reaches its settled state once before the rows do: a switch
-    // clears the window, and for a turn or two the pane is a laid-out, painted,
-    // empty list. Stamping that would report a four-millisecond open and stop
-    // the clock before the work happened, so an empty window is not an open
-    // yet and the clock keeps running.
-    if (rows == 0 && (phase == QLatin1String("settled") || phase == QLatin1String("painted"))) {
-        return;
-    }
-    const int delta = rows - m_openPhaseRows;
-    m_openPhaseRows = rows;
-    qInfo("[perf] open %-10s %6.1f ms  rows=%d (+%d)",
-          qPrintable(phase), m_openClock.nsecsElapsed() / 1e6, rows, delta);
-    // `painted` is the last phase there is: the transcript is on screen, and
-    // anything stamped after it belongs to the next open rather than this one.
-    if (phase == QLatin1String("painted")) {
-        m_openClock.invalidate();
-    }
-}
-
 void ProtocolController::setChatDraft(const QString &chatId, const QString &text)
 {
     if (chatId.isEmpty()) {
@@ -3911,58 +4219,6 @@ void ProtocolController::copyFileToClipboard(const QString &localPath)
     clipboard->setMimeData(mime);
 }
 
-bool ProtocolController::saveContactCard(const QString &displayName, const QString &vcard)
-{
-    if (vcard.isEmpty()) {
-        return false;
-    }
-
-    const QString directory =
-        QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + QStringLiteral("/contacts");
-    if (!QDir().mkpath(directory)) {
-        Q_EMIT messageActionFailed(i18nc("@info", "Unable to write the contact card"));
-        return false;
-    }
-
-    // Anything that is not plainly a filename character becomes an underscore:
-    // a contact's name is attacker-controlled text arriving over the network,
-    // and it must never be able to steer where this writes.
-    QString base = displayName.simplified();
-    base.replace(QRegularExpression(QStringLiteral("[^\\w .-]"), QRegularExpression::UseUnicodePropertiesOption),
-                 QStringLiteral("_"));
-    base = base.trimmed();
-    if (base.isEmpty()) {
-        base = QStringLiteral("contact");
-    }
-    base.truncate(64);
-
-    const QString path = directory + QLatin1Char('/') + base + QStringLiteral(".vcf");
-    QFile file(path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        Q_EMIT messageActionFailed(i18nc("@info", "Unable to write the contact card"));
-        return false;
-    }
-    // vCard is a CRLF format, and some contact managers are strict about it.
-    QString normalized = vcard;
-    normalized.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
-    normalized.replace(QLatin1Char('\n'), QStringLiteral("\r\n"));
-    if (!normalized.endsWith(QStringLiteral("\r\n"))) {
-        normalized += QStringLiteral("\r\n");
-    }
-    if (file.write(normalized.toUtf8()) < 0) {
-        file.close();
-        Q_EMIT messageActionFailed(i18nc("@info", "Unable to write the contact card"));
-        return false;
-    }
-    file.close();
-
-    if (!QDesktopServices::openUrl(QUrl::fromLocalFile(path))) {
-        Q_EMIT messageActionFailed(i18nc("@info", "No application is set up to open contact cards"));
-        return false;
-    }
-    return true;
-}
-
 bool ProtocolController::saveMediaAs(const QString &localPath, const QUrl &destUrl)
 {
     if (localPath.isEmpty() || !destUrl.isLocalFile()) {
@@ -4007,8 +4263,7 @@ int ProtocolController::previousGraphemeBoundary(const QString &text, int cursor
 }
 
 void ProtocolController::handleCommandLine(const QStringList &arguments)
-{
-    QString uri;
+{    QString uri;
     for (const QString &arg : arguments) {
         if (arg.startsWith(QStringLiteral("whatevr:"), Qt::CaseInsensitive)) {
             uri = arg;
@@ -4020,6 +4275,20 @@ void ProtocolController::handleCommandLine(const QStringList &arguments)
         return;
     }
     openChatFromUri(uri);
+}
+
+void ProtocolController::openChatInNewWindow(const QString &chatId)
+{
+    if (chatId.isEmpty()) {
+        return;
+    }
+    // A second process with its own controller and daemon connection; the
+    // deep link selects the chat once its shell is up (same path as a
+    // notification cold-start).
+    const QString link = QStringLiteral("whatevr://chat/")
+        + QString::fromUtf8(QUrl::toPercentEncoding(chatId));
+    QProcess::startDetached(QCoreApplication::applicationFilePath(),
+                            {QStringLiteral("--new-window"), link});
 }
 
 void ProtocolController::openChatFromUri(const QString &uri)
