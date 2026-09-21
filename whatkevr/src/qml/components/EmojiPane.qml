@@ -556,12 +556,6 @@ Item {
                              : Whatevr.I18n.i18nc("@info", "The bundled Google Fonts emoji metadata resource is unavailable.")
             }
         }
-
-            KineticWheelScroller {
-                anchors.fill: emojiGrid
-                target: emojiGrid
-                wheelStep: Kirigami.Units.gridUnit * 4
-            }
         }
 
         Label {

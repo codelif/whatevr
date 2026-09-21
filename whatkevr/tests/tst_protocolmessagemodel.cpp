@@ -52,6 +52,7 @@ private Q_SLOTS:
         item.insert(QStringLiteral("text"), QStringLiteral("caption"));
         item.insert(QStringLiteral("edited"), true);
         item.insert(QStringLiteral("starred"), true);
+        item.insert(QStringLiteral("forwarded"), true);
         item.insert(QStringLiteral("media"), QJsonObject{
             {QStringLiteral("mime"), QStringLiteral("image/jpeg")},
             {QStringLiteral("width"), 640},
@@ -91,6 +92,7 @@ private Q_SLOTS:
         QCOMPARE(role(model, 0, ProtocolMessageModel::ReplyToMediaKindRole).toString(), QString());
         QVERIFY(role(model, 0, ProtocolMessageModel::IsEditedRole).toBool());
         QVERIFY(role(model, 0, ProtocolMessageModel::IsStarredRole).toBool());
+        QVERIFY(role(model, 0, ProtocolMessageModel::IsForwardedRole).toBool());
         const QVariantMap reaction = role(model, 0, ProtocolMessageModel::ReactionsRole).toList().first().toMap();
         QCOMPARE(reaction.value(QStringLiteral("senderId")).toString(), QStringLiteral("me"));
         QVERIFY(reaction.value(QStringLiteral("fromMe")).toBool());

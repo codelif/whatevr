@@ -1,5 +1,7 @@
 import QtQuick
 import QtQuick.Controls as QQC2
+import QtQuick.Layouts
+import QtQuick.Window
 import org.kde.kirigami as Kirigami
 import Whatevr as Whatevr
 
@@ -17,7 +19,11 @@ Kirigami.ApplicationWindow {
     // page when not in chat mode.
     property var chatListPageItem: null
     property var conversationPageItem: null
+    property var workspacePageItem: null
     property var transientPageItem: null
+    // Secondary tabs share the same two-column shell. Pages are cached by URL
+    // so switching tabs changes the right column without rebuilding the chat
+    // list or reloading an already-open tab.
     // The chat id the settled navigation state must show ("" = chat list).
     // Every open/close intent writes it; applyNavTarget() applies it once the
     // column view has been still for a quiet period. The last intent always
@@ -37,6 +43,35 @@ Kirigami.ApplicationWindow {
     minimumHeight: 680
     title: Whatevr.I18n.i18nc("@title:window", "Whatevr")
     visible: true
+    property bool quitting: false
+    function quitApplication() {
+        quitting = true
+        // Ask the daemon to exit too (tray icon is daemon-owned), then quit
+        // the frontend even if the daemon is already gone.
+        Whatevr.ProtocolController.shutdownDaemon()
+        Qt.quit()
+    }
+    // Sidebar Home/DMs/Groups/Unread/Favorites entry point: reset the left
+    // column to chats and show the conversation column.
+    function openConversation() {
+        if (currentMode !== "chat") {
+            return
+        }
+        ensureChatPages()
+        if (chatListPageItem)
+            chatListPageItem.workspaceMode = "chats"
+        navTargetChatId = Whatevr.ProtocolController.selectedChatId
+        workspacePageItem.openConversation()
+        navProgrammaticIndexChange = true
+        pageStack.currentIndex = Whatevr.ProtocolController.hasSelectedChat ? 1 : 0
+        navProgrammaticIndexChange = false
+    }
+    onClosing: closeEvent => {
+        if (Whatevr.Settings.closeToTray && !quitting) {
+            closeEvent.accepted = false
+            root.hide()
+        }
+    }
 
     SettingsView {
         id: settingsView
@@ -44,14 +79,170 @@ Kirigami.ApplicationWindow {
         window: root
     }
 
+    Connections {
+        target: Whatevr.Settings
+        function onAppLockChanged() {
+            if (Whatevr.Settings.appLocked)
+                settingsView.close()
+        }
+    }
+
+    Rectangle {
+        id: appLockOverlay
+        anchors.fill: parent
+        z: 10000
+        visible: Whatevr.Settings.appLocked
+        focus: visible
+        activeFocusOnTab: visible
+        color: Kirigami.Theme.backgroundColor
+
+        ColumnLayout {
+            anchors.centerIn: parent
+            width: Math.min(parent.width - Kirigami.Units.largeSpacing * 4,
+                            Kirigami.Units.gridUnit * 20)
+            spacing: Kirigami.Units.largeSpacing
+
+            Kirigami.Icon {
+                Layout.alignment: Qt.AlignHCenter
+                source: "object-locked-symbolic"
+                implicitWidth: Kirigami.Units.iconSizes.large
+                implicitHeight: implicitWidth
+            }
+            Kirigami.Heading {
+                Layout.alignment: Qt.AlignHCenter
+                text: Whatevr.I18n.i18nc("@title app lock", "Whatevr is locked")
+            }
+            QQC2.TextField {
+                id: unlockPin
+                Layout.fillWidth: true
+                echoMode: TextInput.Password
+                placeholderText: Whatevr.I18n.i18nc("@info:placeholder app unlock PIN", "PIN")
+                onAccepted: unlockButton.clicked()
+                Component.onCompleted: if (appLockOverlay.visible) forceActiveFocus()
+            }
+            QQC2.Button {
+                id: unlockButton
+                Layout.alignment: Qt.AlignHCenter
+                text: Whatevr.I18n.i18nc("@action:button unlock app", "Unlock")
+                enabled: unlockPin.text.length > 0
+                onClicked: {
+                    if (Whatevr.Settings.unlockApp(unlockPin.text)) {
+                        unlockPin.clear()
+                    } else {
+                        unlockPin.selectAll()
+                    }
+                }
+            }
+        }
+    }
+
+    // Tray right-click menu (daemon `show_tray_menu` event). A top-level
+    // Popup-flag window, not an in-window Menu: only a separate window can
+    // render over the system panel where the click happened. It opens upward
+    // from the click point like a native tray menu and dismisses on outside
+    // click. Coordinates are screen space (0,0 when the platform supplies
+    // none → bottom-right of the screen, where trays usually live).
+    Window {
+        id: trayMenuWindow
+
+        // A Qt.Popup keeps a native pointer grab. If it survives the main
+        // window's close-to-tray hide/show cycle, scrolling still works but
+        // every chat-row and button click is swallowed. Keep it non-modal.
+        flags: Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+        color: "transparent"
+        visible: false
+
+        width: Math.max(1, trayMenuCard.implicitWidth)
+        height: Math.max(1, trayMenuCard.implicitHeight)
+
+        Rectangle {
+            id: trayMenuCard
+
+            anchors.fill: parent
+            radius: Kirigami.Units.cornerRadius
+            color: Kirigami.Theme.backgroundColor
+            border.width: 1
+            border.color: Qt.alpha(Kirigami.Theme.textColor, 0.2)
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: Kirigami.Units.smallSpacing
+                spacing: 0
+
+                QQC2.Button {
+                    flat: true
+                    Layout.fillWidth: true
+                    text: Whatevr.I18n.i18nc("@action:inmenu open the main window", "Open Whatevr")
+                    onClicked: {
+                        trayMenuWindow.visible = false
+                        root.activateWindow()
+                    }
+                }
+
+                QQC2.CheckBox {
+                    id: notificationsItem
+
+                    Layout.fillWidth: true
+                    text: Whatevr.I18n.i18nc("@action:inmenu toggle desktop notifications", "Notifications")
+                    onToggled: Whatevr.ProtocolController.setAppPreference("notifications_enabled", checked)
+                }
+
+                QQC2.Button {
+                    flat: true
+                    Layout.fillWidth: true
+                    text: Whatevr.I18n.i18nc("@action:inmenu mark all chats read from tray", "Mark all as read")
+                    onClicked: {
+                        trayMenuWindow.visible = false
+                        Whatevr.ProtocolController.markAllChatsRead()
+                    }
+                }
+
+                QQC2.CheckBox {
+                    id: muteNotificationsItem
+                    Layout.fillWidth: true
+                    text: Whatevr.I18n.i18nc("@action:inmenu mute desktop notifications", "Mute notifications")
+                    checked: !(Whatevr.ProtocolController.appPreferences.notifications_enabled ?? true)
+                    onToggled: Whatevr.ProtocolController.setAppPreference("notifications_enabled", !checked)
+                }
+
+                Kirigami.Separator {
+                    Layout.fillWidth: true
+                }
+
+                QQC2.Button {
+                    flat: true
+                    Layout.fillWidth: true
+                    text: Whatevr.I18n.i18nc("@action:inmenu quit the application", "Quit")
+                    onClicked: root.quitApplication()
+                }
+            }
+        }
+
+        function showAt(sx, sy) {
+            notificationsItem.checked = Whatevr.ProtocolController.appPreferences.notifications_enabled ?? true
+            muteNotificationsItem.checked = !notificationsItem.checked
+            const screenW = Screen.desktopAvailableWidth > 0 ? Screen.desktopAvailableWidth : Screen.width
+            const screenH = Screen.desktopAvailableHeight > 0 ? Screen.desktopAvailableHeight : Screen.height
+            const w = trayMenuWindow.width
+            const h = trayMenuWindow.height
+            trayMenuWindow.x = sx > 0 ? Math.max(0, Math.min(sx - w / 2, screenW - w)) : screenW - w
+            // Open upward from the click: panel trays sit at a screen edge.
+            trayMenuWindow.y = sy > 0 ? Math.max(0, sy - h) : Math.max(0, screenH - h)
+            trayMenuWindow.visible = true
+        }
+    }
+
     // Ctrl+, — the KDE-standard accelerator for opening preferences. Lives at
     // window scope so it fires regardless of which column has focus.
     Shortcut {
         sequences: [StandardKey.Preferences]
+        enabled: !Whatevr.Settings.appLocked
         onActivated: settingsView.open()
     }
 
     function openSettings(moduleId) {
+        if (Whatevr.Settings.appLocked)
+            return
         if (moduleId)
             settingsView.open(moduleId)
         else
@@ -131,15 +322,16 @@ Kirigami.ApplicationWindow {
     }
 
     Component {
-        id: conversationPaneComponent
+        id: workspacePaneComponent
 
-        ConversationPane {}
+        WorkspacePane {}
     }
 
     function destroyChatPages() {
         pageStack.clear()
-        if (conversationPageItem) {
-            conversationPageItem.destroy()
+        if (workspacePageItem) {
+            workspacePageItem.destroy()
+            workspacePageItem = null
             conversationPageItem = null
         }
         if (chatListPageItem) {
@@ -181,16 +373,19 @@ Kirigami.ApplicationWindow {
                 if (listPage.chatSelected) {
                     listPage.chatSelected.connect(showConversation)
                 }
+                listPage.statusSelected.connect(showStatusViewer)
+                listPage.channelSelected.connect(showChannelMessages)
             }
         }
 
-        if (!conversationPageItem) {
-            const conversationPage = conversationPaneComponent.createObject(pageStack)
-            if (conversationPage) {
-                conversationPageItem = conversationPage
-                pageStack.push(conversationPage)
-                if (conversationPage.closeChatRequested) {
-                    conversationPage.closeChatRequested.connect(closeConversation)
+        if (!workspacePageItem) {
+            const workspacePage = workspacePaneComponent.createObject(pageStack)
+            if (workspacePage) {
+                workspacePageItem = workspacePage
+                conversationPageItem = workspacePage.conversationPane
+                pageStack.push(workspacePage)
+                if (workspacePage.closeChatRequested) {
+                    workspacePage.closeChatRequested.connect(closeConversation)
                 }
             }
         }
@@ -199,8 +394,42 @@ Kirigami.ApplicationWindow {
         // the actual selection so the very first wide -> single-column switch
         // shows the right column instead of an empty conversation pane.
         navTargetChatId = Whatevr.ProtocolController.selectedChatId
+        workspacePageItem.openConversation()
         pageStack.currentIndex = Whatevr.ProtocolController.hasSelectedChat ? 1 : 0
         navProgrammaticIndexChange = false
+    }
+
+    function openWorkspace(tab) {
+        if (currentMode !== "chat") {
+            return
+        }
+        ensureChatPages()
+        // Status/Channels lists live in the left column; their content opens
+        // in the right column only once an item is picked. Other tabs render
+        // directly in the right column.
+        if (tab === "status" || tab === "channels") {
+            chatListPageItem.workspaceMode = tab
+            navProgrammaticIndexChange = true
+            workspacePageItem.openConversation()
+            pageStack.currentIndex = 1
+            navProgrammaticIndexChange = false
+            return
+        }
+        chatListPageItem.workspaceMode = "chats"
+        navProgrammaticIndexChange = true
+        workspacePageItem.openTab(String(tab))
+        pageStack.currentIndex = 1
+        navProgrammaticIndexChange = false
+    }
+
+    function showStatusViewer(senderId, senderName) {
+        workspacePageItem.openStatusViewer(senderId, senderName)
+        pageStack.currentIndex = 1
+    }
+
+    function showChannelMessages(channelId, channelName) {
+        workspacePageItem.openChannelMessages(channelId, channelName)
+        pageStack.currentIndex = 1
     }
 
     function showConversation(chatId) {
@@ -208,6 +437,9 @@ Kirigami.ApplicationWindow {
             return
         }
         navTargetChatId = chatId || Whatevr.ProtocolController.selectedChatId
+        if (chatListPageItem)
+            chatListPageItem.workspaceMode = "chats"
+        workspacePageItem.openConversation()
         navProgrammaticIndexChange = true
         pageStack.currentIndex = 1
         navProgrammaticIndexChange = false
@@ -302,6 +534,7 @@ Kirigami.ApplicationWindow {
     }
 
     function activateWindow() {
+        trayMenuWindow.close()
         root.show()
         root.raise()
         root.requestActivate()
@@ -414,6 +647,14 @@ Kirigami.ApplicationWindow {
 
         function onActivateWindowRequested() {
             root.activateWindow()
+        }
+
+        // Tray right-click: show the tray menu window at the click point (see
+        // above). show() alone unhides a hidden main window without stealing
+        // focus; the menu positions itself.
+        function onShowTrayMenuRequested(x, y) {
+            root.show()
+            trayMenuWindow.showAt(x, y)
         }
 
         // The daemon's `open_chat` (notification click, whatevr:// URL) and the

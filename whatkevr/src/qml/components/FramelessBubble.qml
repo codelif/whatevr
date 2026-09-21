@@ -141,7 +141,7 @@ Item {
             anchors.fill: parent
             radius: Kirigami.Units.cornerRadius
             visible: !parent.stickerContentReady
-                     && !(framelessRoot.row.isSticker && framelessRoot.row.hasThumbnailImage && stickerThumb.status === Image.Ready)
+                     && !(framelessRoot.row.isSticker && framelessRoot.row.hasStickerThumbnail && stickerThumb.status === Image.Ready)
             color: Qt.alpha(Kirigami.Theme.textColor, 0.06)
         }
 
@@ -151,7 +151,7 @@ Item {
             anchors.fill: parent
             // Hold the thumbnail until the real sticker is showing, so a fling
             // (which defers the full sticker decode) still has a placeholder.
-            visible: framelessRoot.row.isSticker && framelessRoot.row.hasThumbnailImage && !parent.stickerContentReady
+            visible: framelessRoot.row.isSticker && framelessRoot.row.hasStickerThumbnail && !parent.stickerContentReady
             opacity: status === Image.Ready ? 0.7 : 0
             source: framelessRoot.row.mediaSourceActive && stickerSlot.visible && visible ? Whatevr.ProtocolController.localFileUrl(framelessRoot.row.mediaThumbnailLocalPath) : ""
             fillMode: Image.PreserveAspectFit
@@ -277,7 +277,7 @@ Item {
                 BusyIndicator {
                     anchors.horizontalCenter: parent.horizontalCenter
                     visible: (framelessRoot.row.mediaDownloading && framelessRoot.row.mediaDownloadProgress < 0)
-                             || (!framelessRoot.row.mediaDownloading && !framelessRoot.row.hasLocalSticker && framelessRoot.row.hasThumbnailImage && stickerThumb.status === Image.Loading)
+                             || (!framelessRoot.row.mediaDownloading && !framelessRoot.row.hasLocalSticker && framelessRoot.row.hasStickerThumbnail && stickerThumb.status === Image.Loading)
                              || (framelessRoot.row.hasLocalSticker && (staticSticker.status === Image.Loading
                                                           || animatedSticker.status === AnimatedImage.Loading
                                                           || lottieSticker.status === Whatevr.RlottieSticker.Loading))

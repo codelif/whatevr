@@ -12,6 +12,8 @@
 #include <QStandardPaths>
 #include <QUrl>
 #include <QVariantMap>
+#include <QCryptographicHash>
+#include <QUuid>
 
 #include <KColorSchemeManager>
 #include <KColorSchemeModel>
@@ -46,7 +48,10 @@ constexpr auto kSnapToBottomOnSend = "settings/snapToBottomOnSend";
 constexpr auto kRememberWindowGeometry = "settings/rememberWindowGeometry";
 constexpr auto kRememberColumnWidth = "settings/rememberColumnWidth";
 constexpr auto kChatListColumnWidth = "settings/chatListColumnWidth";
+constexpr auto kCloseToTray = "settings/closeToTray";
 constexpr auto kDefaultSkinTone = "settings/defaultSkinTone";
+constexpr auto kAppLockSalt = "settings/appLockSalt";
+constexpr auto kAppLockHash = "settings/appLockHash";
 constexpr auto kWindowX = "settings/window/x";
 constexpr auto kWindowY = "settings/window/y";
 constexpr auto kWindowWidth = "settings/window/width";
@@ -134,7 +139,72 @@ void Settings::load()
     m_rememberWindowGeometry = settings.value(QLatin1String(kRememberWindowGeometry), true).toBool();
     m_rememberColumnWidth = settings.value(QLatin1String(kRememberColumnWidth), true).toBool();
     m_chatListColumnWidth = settings.value(QLatin1String(kChatListColumnWidth), 0).toInt();
+    m_closeToTray = settings.value(QLatin1String(kCloseToTray), true).toBool();
     m_defaultSkinTone = settings.value(QLatin1String(kDefaultSkinTone), 0).toInt();
+    m_appLocked = !settings.value(QLatin1String(kAppLockHash)).toByteArray().isEmpty();
+}
+
+bool Settings::closeToTray() const { return m_closeToTray; }
+
+void Settings::setCloseToTray(bool enabled)
+{
+    if (m_closeToTray == enabled)
+        return;
+    m_closeToTray = enabled;
+    QSettings().setValue(QLatin1String(kCloseToTray), enabled);
+    Q_EMIT closeToTrayChanged();
+}
+
+bool Settings::appLockEnabled() const
+{
+    return !QSettings().value(QLatin1String(kAppLockHash)).toByteArray().isEmpty();
+}
+
+bool Settings::appLocked() const
+{
+    return appLockEnabled() && m_appLocked;
+}
+
+bool Settings::setAppLockPin(const QString &pin)
+{
+    const QByteArray value = pin.trimmed().toUtf8();
+    if (value.size() < 4) {
+        return false;
+    }
+    QSettings settings;
+    QByteArray salt = settings.value(QLatin1String(kAppLockSalt)).toByteArray();
+    if (salt.isEmpty()) {
+        salt = QUuid::createUuid().toByteArray(QUuid::WithoutBraces);
+        settings.setValue(QLatin1String(kAppLockSalt), salt);
+    }
+    const QByteArray input = salt + value;
+    settings.setValue(QLatin1String(kAppLockHash), QCryptographicHash::hash(input, QCryptographicHash::Sha256).toHex());
+    m_appLocked = false;
+    Q_EMIT appLockChanged();
+    return true;
+}
+
+bool Settings::unlockApp(const QString &pin)
+{
+    const QSettings settings;
+    const QByteArray salt = settings.value(QLatin1String(kAppLockSalt)).toByteArray();
+    const QByteArray expected = settings.value(QLatin1String(kAppLockHash)).toByteArray();
+    const QByteArray input = salt + pin.trimmed().toUtf8();
+    const QByteArray actual = QCryptographicHash::hash(input, QCryptographicHash::Sha256).toHex();
+    if (expected.isEmpty() || actual != expected) {
+        return false;
+    }
+    m_appLocked = false;
+    Q_EMIT appLockChanged();
+    return true;
+}
+
+void Settings::lockApp()
+{
+    if (appLockEnabled()) {
+        m_appLocked = true;
+        Q_EMIT appLockChanged();
+    }
 }
 
 void Settings::applyColorScheme()

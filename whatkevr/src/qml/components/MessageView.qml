@@ -13,6 +13,9 @@ Item {
 
     property string chatId: ""
     property alias model: list.model
+    // Export dialog lives inside this component; QML callers cannot reach a
+    // nested id without an alias.
+    property alias exportChatDialog: exportChatDialog
     // Whether this is the pane the conversation is showing. Jump results are
     // broadcast to every warm pane, and a parked one that answers them reports
     // the target missing (it does not hold it) and leaves its highlight behind.
@@ -500,10 +503,9 @@ Item {
         editMessageRequested(String(snapshot.messageId), String(snapshot.text || ""))
     }
 
-    function openMessageInfo(messageId) {
-        messageInfoDialog.openFor(messageId)
+    function openMessageInfo(messageId, senderDevice) {
+        messageInfoDialog.openFor(messageId, senderDevice || 0)
     }
-
     function confirmDeleteSelection(forEveryone) {
         if (selectedCount > 0) {
             deleteConfirmDialog.openFor(selectedMessageIdList(), forEveryone)
@@ -2156,6 +2158,10 @@ Item {
     Connections {
         target: Whatevr.ProtocolController
 
+        function onChatExported(destPath) {
+            root.showNotification(Whatevr.I18n.i18nc("@info:status chat transcript saved", "Chat exported"))
+        }
+
         function onUnreadAnchorChanged() {
             root.traceViewport("onUnreadAnchorChanged")
             // The anchor can resolve after the chat already opened from the
@@ -2560,6 +2566,7 @@ Item {
         readonly property real ctxTimestampUnix: ctxValid ? Number(ctx.timestampUnix || 0) : 0
         readonly property bool ctxMediaDownloading: ctxValid && Boolean(ctx.mediaDownloading)
         readonly property string ctxMediaDownloadError: ctxValid ? String(ctx.mediaDownloadError || "") : ""
+        readonly property int ctxSenderDevice: ctxValid ? Number(ctx.senderDevice || 0) : 0
         // Anything with media that is not on disk and not already coming down.
         readonly property bool ctxCanDownload: !ctxIsRevoked
                                                && !ctxHasMediaFile
@@ -2569,6 +2576,7 @@ Item {
         readonly property bool ctxHasText: ctxText.length > 0 && !ctxIsRevoked
         readonly property bool ctxIsStarred: ctxValid && Boolean(ctx.isStarred)
         readonly property bool ctxIsPinned: ctxValid && Boolean(ctx.isPinned)
+        readonly property bool ctxIsEdited: ctxValid && Boolean(ctx.isEdited)
         readonly property bool ctxCanReply: root.canReplyToSnapshot(ctx)
         readonly property bool ctxCanRevoke: root.canRevokeSnapshot(ctx)
         readonly property bool ctxCanEdit: root.canEditSnapshot(ctx)
@@ -2712,6 +2720,13 @@ Item {
             text: Whatevr.I18n.i18nc("@action:inmenu", "Edit")
             visible: messageContextMenu.ctxCanEdit
             onTriggered: root.editSnapshot(messageContextMenu.ctx)
+        }
+
+        MenuItem {
+            icon.name: "view-history-symbolic"
+            text: Whatevr.I18n.i18nc("@action:inmenu show previous versions of an edited message", "Edit history")
+            visible: messageContextMenu.ctxIsEdited
+            onTriggered: editHistoryDialog.openFor(messageContextMenu.ctxMessageId, messageContextMenu.ctxText)
         }
 
         MenuItem {
@@ -2964,7 +2979,7 @@ Item {
             icon.name: "documentinfo-symbolic"
             text: Whatevr.I18n.i18nc("@action:inmenu delivery/read details", "Info")
             visible: messageContextMenu.ctxOutgoing
-            onTriggered: root.openMessageInfo(messageContextMenu.ctxMessageId)
+            onTriggered: root.openMessageInfo(messageContextMenu.ctxMessageId, messageContextMenu.ctxSenderDevice)
         }
 
         MenuSeparator {}
@@ -3040,6 +3055,36 @@ Item {
             if (Whatevr.ProtocolController.saveMediaAs(sourcePath, file)) {
                 root.showNotification(Whatevr.I18n.i18nc("@info:status", "File saved"))
             }
+        }
+    }
+
+    Platform.FileDialog {
+        id: exportChatDialog
+
+        property string exportChatId: ""
+
+        fileMode: Platform.FileDialog.SaveFile
+        title: Whatevr.I18n.i18nc("@title:window save a chat transcript", "Export chat")
+
+        // Official clients suggest "WhatsApp Chat with <name>.txt" into
+        // Documents; the name is sanitized to one path segment.
+        function openFor(chatId, chatName) {
+            exportChatId = chatId
+            let base = "WhatsApp Chat with " + (chatName || chatId)
+            base = base.replace(/[\/\\]/g, "_").trim()
+            if (base.length === 0) {
+                base = "WhatsApp Chat"
+            }
+            const preferred = Whatevr.Settings.mediaSaveDirectory
+            const directory = preferred.length > 0
+                ? preferred
+                : Platform.StandardPaths.writableLocation(Platform.StandardPaths.DocumentsLocation)
+            currentFile = directory + "/" + base + ".txt"
+            open()
+        }
+
+        onAccepted: {
+            Whatevr.ProtocolController.exportChat(exportChatId, file)
         }
     }
 
@@ -3132,6 +3177,10 @@ Item {
 
     ReactionDetailsDialog {
         id: reactionDetailsDialog
+    }
+
+    EditHistoryDialog {
+        id: editHistoryDialog
     }
 
     PollVotersDialog {

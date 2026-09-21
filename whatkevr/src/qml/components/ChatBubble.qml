@@ -77,6 +77,12 @@ Item {
     required property var waiting
     required property bool isRevoked
     required property bool isEdited
+    // WhatsApp forward marker (daemon `forwarded`), rendered as a header
+    // above the bubble content in framed bubbles.
+    required property bool isForwarded
+    // Sender device id: 0 is the primary phone app, anything else a linked
+    // device (Web/Desktop or another companion). Drives the footer mark.
+    required property int senderDevice
     required property bool isStarred
     required property bool isPinned
     required property bool mediaDownloading
@@ -218,6 +224,12 @@ Item {
     property real listWidth: 0
     readonly property bool showDateSeparator: dateSeparatorText.length > 0
     readonly property bool hasReplyPreview: replyToMessageId.length > 0
+    // Forwarded header: framed bubbles only; frameless rows (stickers/jumbo/
+    // video notes) draw no plate to hang it on.
+    readonly property bool showForwardedHeader: isForwarded && !frameless
+    readonly property real forwardedHeaderHeight: showForwardedHeader
+        ? forwardedLoader.height
+        : 0
     readonly property bool canReply: messageId.length > 0
                                      && !isRevoked
                                      && !centeredPill
@@ -644,6 +656,17 @@ Item {
     readonly property bool showEditMark: isEdited && !isRevoked
     readonly property real editMarkSize: Math.max(1, Math.round(footerMetrics.height * 0.92))
     readonly property real editMarkReserve: showEditMark ? editMarkSize + tntSpacing : 0
+    // A small trash shown for a deleted message whose content was kept
+    // (anti-delete): the body stays readable, so the mark is what tells it
+    // apart from an ordinary message.
+    readonly property bool showDeletedMark: isRevoked && hasBody
+    readonly property real deletedMarkSize: Math.max(1, Math.round(footerMetrics.height * 0.92))
+    readonly property real deletedMarkReserve: showDeletedMark ? deletedMarkSize + tntSpacing : 0
+    // A small device shown when the sender wrote from a linked device rather
+    // than their primary phone app (senderDevice > 0).
+    readonly property bool showLinkedMark: senderDevice > 0
+    readonly property real linkedMarkSize: Math.max(1, Math.round(footerMetrics.height * 0.92))
+    readonly property real linkedMarkReserve: showLinkedMark ? linkedMarkSize + tntSpacing : 0
     // A small star shown left of the edit mark / timestamp when the message is
     // starred (mirrors the edit-mark reserve so the footer width stays correct).
     readonly property bool showStarMark: isStarred && !isRevoked
@@ -660,12 +683,16 @@ Item {
     readonly property real keepMarkReserve: showKeepMark ? keepMarkSize + tntSpacing : 0
     readonly property real tntWidth: Math.ceil(footerMetrics.advanceWidth
                                                + editMarkReserve
+                                               + deletedMarkReserve
+                                               + linkedMarkReserve
                                                + starMarkReserve
                                                + pinMarkReserve
                                                + keepMarkReserve
                                                + (showStatusIcon ? statusAreaWidth + tntSpacing : 0))
     readonly property real tntHeight: Math.ceil(Math.max(footerMetrics.height, showStatusIcon ? statusIconSize : 0,
                                                          showEditMark ? editMarkSize : 0,
+                                                         showDeletedMark ? deletedMarkSize : 0,
+                                                         showLinkedMark ? linkedMarkSize : 0,
                                                          showStarMark ? starMarkSize : 0,
                                                          showPinMark ? pinMarkSize : 0,
                                                          showKeepMark ? keepMarkSize : 0))
@@ -748,19 +775,21 @@ Item {
     // The reply preview and caption text are inset by innerPadding; media is
     // edge-to-edge and sits flush at the top when it is the first region.
     function contentOffsetBeforeMedia() {
+        const top = root.innerPadding + root.forwardedHeaderHeight
         return root.hasReplyPreview
-            ? root.innerPadding + replyPreviewLoader.height + Kirigami.Units.smallSpacing
-            : 0
+            ? top + replyPreviewLoader.height + Kirigami.Units.smallSpacing
+            : (root.showForwardedHeader ? top : 0)
     }
 
     function contentOffsetBeforeBody() {
+        const top = root.innerPadding + root.forwardedHeaderHeight
         if (mediaSlot.visible) {
             return mediaSlot.y + mediaSlot.height + Kirigami.Units.smallSpacing
         }
         if (root.hasReplyPreview) {
-            return root.innerPadding + replyPreviewLoader.height + Kirigami.Units.smallSpacing - root.bodyTopInsetCorrection
+            return top + replyPreviewLoader.height + Kirigami.Units.smallSpacing - root.bodyTopInsetCorrection
         }
-        return root.innerPadding - root.bodyTopInsetCorrection
+        return top - root.bodyTopInsetCorrection
     }
 
     function contentOffsetBeforeFooter() {
@@ -774,9 +803,9 @@ Item {
             return mediaSlot.y + mediaSlot.height
         }
         if (root.hasReplyPreview) {
-            return root.innerPadding + replyPreviewLoader.height + Kirigami.Units.smallSpacing
+            return root.innerPadding + root.forwardedHeaderHeight + replyPreviewLoader.height + Kirigami.Units.smallSpacing
         }
-        return root.innerPadding
+        return root.innerPadding + root.forwardedHeaderHeight
     }
 
     // Natural width the reply preview wants for its content, floored so a tiny
@@ -1131,11 +1160,31 @@ Item {
             }
 
             Loader {
+                id: forwardedLoader
+
+                active: root.showForwardedHeader
+                x: root.innerPadding
+                y: root.innerPadding
+                width: root.textRegionWidth
+                height: active && item ? item.implicitHeight : 0
+
+                sourceComponent: Label {
+                    width: parent.width
+                    text: Whatevr.I18n.i18nc("@label forwarded message header", "Forwarded")
+                    font.italic: true
+                    font.pointSize: Kirigami.Theme.smallFont.pointSize
+                    color: Kirigami.Theme.highlightColor
+                    elide: Text.ElideRight
+                    maximumLineCount: 1
+                }
+            }
+
+            Loader {
                 id: replyPreviewLoader
 
                 active: root.hasReplyPreview
                 x: root.innerPadding
-                y: root.innerPadding
+                y: root.innerPadding + root.forwardedHeaderHeight
                 width: root.textRegionWidth
 
                 sourceComponent: ReplyPreview {
@@ -1604,12 +1653,13 @@ Item {
                     font.pointSize: root.footerTimePointSize
                 }
 
-                // Keep / pin / star / edit marks. Most messages carry none, so
-                // the icons (and the anchor chain that used to thread them
-                // together) are built only when at least one applies; the Row
-                // drops the ones that do not, so ordering stays automatic.
+                // Keep / pin / star / edit / deleted / linked marks. Most messages
+                // carry none, so the icons (and the anchor chain that used to
+                // thread them together) are built only when at least one
+                // applies; the Row drops the ones that do not, so ordering
+                // stays automatic.
                 Loader {
-                    active: root.showKeepMark || root.showPinMark || root.showStarMark || root.showEditMark
+                    active: root.showKeepMark || root.showPinMark || root.showStarMark || root.showEditMark || root.showDeletedMark || root.showLinkedMark
                     anchors.right: timeLabel.left
                     anchors.rightMargin: root.tntSpacing
                     anchors.verticalCenter: parent.verticalCenter
@@ -1649,6 +1699,24 @@ Item {
                             source: "document-edit-symbolic"
                             width: root.editMarkSize
                             height: root.editMarkSize
+                            color: root.footerTextColor
+                            isMask: true
+                        }
+
+                        Kirigami.Icon {
+                            visible: root.showDeletedMark
+                            source: "edit-delete-remove-symbolic"
+                            width: root.deletedMarkSize
+                            height: root.deletedMarkSize
+                            color: root.footerTextColor
+                            isMask: true
+                        }
+
+                        Kirigami.Icon {
+                            visible: root.showLinkedMark
+                            source: "computer-symbolic"
+                            width: root.linkedMarkSize
+                            height: root.linkedMarkSize
                             color: root.footerTextColor
                             isMask: true
                         }

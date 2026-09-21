@@ -6,6 +6,7 @@ import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 import org.kde.kirigami.dialogs as KDialogs
 import Whatevr as Whatevr
+import "Initials.js" as Initials
 
 // Multi-select chat picker for forwarding messages. The daemon accepts at most
 // five target chats per forward, mirroring WhatsApp: selected chats show as
@@ -15,8 +16,8 @@ import Whatevr as Whatevr
 // Kirigami.Dialog's wrapper ScrollView: the dialog sizes itself to its content
 // (no forced preferredHeight) and the chat list is capped at `listMax`, so the
 // dialog's outer Flickable always fits and never scrolls — only the inner list
-// does. The list uses the same flick wiring as ChatListPane (Qt.NoButton +
-// KineticWheelScroller + DiscreetScrollBar) so its kinetic feel is identical.
+// does. The list uses the same flick wiring as ChatListPane (native wheel +
+// DiscreetScrollBar) so its kinetic feel is identical.
 CenteredDialog {
     id: root
 
@@ -84,18 +85,6 @@ CenteredDialog {
 
     onClosed: Whatevr.ProtocolController.closeForwardTargets()
 
-    // Presentation-only avatar fallback: the daemon chat row carries no
-    // precomputed initials (same helper as the chat list).
-    function initialsFor(name) {
-        const parts = (name || "").trim().split(/\s+/).filter(p => p.length > 0)
-        if (parts.length === 0)
-            return "?"
-        let initials = parts[0].charAt(0)
-        if (parts.length > 1)
-            initials += parts[parts.length - 1].charAt(0)
-        return initials.toUpperCase()
-    }
-
     function isChatSelected(chatId) {
         return selectedChatIds[chatId] !== undefined
     }
@@ -114,7 +103,7 @@ CenteredDialog {
         return {
             name: String(chat.name || ""),
             avatarLocalPath: String(chat.avatar_path || ""),
-            initials: root.initialsFor(String(chat.name || ""))
+            initials: Initials.firstLast(String(chat.name || ""))
         }
     }
 
@@ -320,7 +309,7 @@ CenteredDialog {
 
         // Viewport for the chat list. The list is capped at listMax so the dialog
         // stays bounded and its outer Flickable never scrolls; the inner list owns
-        // all scrolling, driven by KineticWheelScroller to match the app's lists.
+        // all scrolling natively like the app's lists.
         Item {
             id: chatListViewport
 
@@ -382,7 +371,7 @@ CenteredDialog {
                             Layout.preferredWidth: Kirigami.Units.gridUnit * 1.65
                             Layout.preferredHeight: Kirigami.Units.gridUnit * 1.65
                             avatarLocalPath: String(chatDelegate.modelData.avatar_path || "")
-                            initials: root.initialsFor(String(chatDelegate.modelData.name || ""))
+                            initials: Initials.firstLast(String(chatDelegate.modelData.name || ""))
                         }
 
                         Label {
@@ -400,12 +389,6 @@ CenteredDialog {
                         }
                     }
                 }
-            }
-
-            KineticWheelScroller {
-                anchors.fill: chatList
-                target: chatList
-                wheelStep: Kirigami.Units.gridUnit * 4
             }
         }
     }

@@ -5,6 +5,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 import Whatevr as Whatevr
+import "Initials.js" as Initials
 
 // Delivery/read details for one of our own messages: sent/delivered/read rows
 // for direct chats, per-member sections (Read by / Delivered to) for groups.
@@ -15,6 +16,10 @@ CenteredDialog {
     id: root
 
     property string messageId: ""
+    // Sender device id for the message being inspected (0 = primary phone
+    // app, anything else a linked device). Passed in by the opener, which has
+    // the row snapshot; the receipts view carries no sender facts.
+    property int senderDevice: 0
 
     // Always-active highlight so the read ticks stay vivid when the window is
     // unfocused (Kirigami.Theme.highlightColor greys out on focus loss).
@@ -36,6 +41,7 @@ CenteredDialog {
     // owns their order (rule 3), which each section preserves.
     readonly property var readBy: receipts.filter(r => Number(r.read_ts_unix) > 0)
     readonly property var deliveredTo: receipts.filter(r => Number(r.read_ts_unix) <= 0 && Number(r.delivered_ts_unix) > 0)
+    readonly property var playedBy: receipts.filter(r => Number(r.played_ts_unix) > 0)
 
     title: Whatevr.I18n.i18nc("@title:dialog delivery details of a message", "Message Info")
     standardButtons: Kirigami.Dialog.Close
@@ -43,14 +49,16 @@ CenteredDialog {
     preferredWidth: Kirigami.Units.gridUnit * 22
     maximumHeight: Kirigami.Units.gridUnit * 28
 
-    function openFor(id) {
+    function openFor(id, device) {
         messageId = id
+        senderDevice = device || 0
         Whatevr.ProtocolController.openMessageReceipts(id)
         open()
     }
 
     onClosed: {
         messageId = ""
+        senderDevice = 0
         Whatevr.ProtocolController.closeMessageReceipts()
     }
 
@@ -67,20 +75,6 @@ CenteredDialog {
         return sameDay
             ? Qt.formatTime(date, Qt.locale().timeFormat(Locale.ShortFormat))
             : Qt.formatDateTime(date, Qt.locale().dateTimeFormat(Locale.ShortFormat))
-    }
-
-    function initialsFor(name) {
-        const parts = String(name || "").trim().split(/\s+/)
-        let initials = ""
-        for (const part of parts) {
-            if (part.length > 0) {
-                initials += part.charAt(0).toUpperCase()
-            }
-            if (initials.length >= 2) {
-                break
-            }
-        }
-        return initials.length > 0 ? initials : "?"
     }
 
     // Sent shows a single tick, delivered/read show overlapping double ticks,
@@ -170,7 +164,7 @@ CenteredDialog {
             Layout.preferredWidth: Kirigami.Units.gridUnit * 1.5
             Layout.preferredHeight: Kirigami.Units.gridUnit * 1.5
             avatarLocalPath: String(participantRow.receipt.avatar_path || "")
-            initials: root.initialsFor(participantRow.receipt.name || participantRow.receipt.id)
+            initials: Initials.firstTwo(participantRow.receipt.name || participantRow.receipt.id)
         }
 
         Label {
@@ -248,6 +242,25 @@ CenteredDialog {
 
         StatusRow {
             visible: !root.loading && root.errorText.length === 0 && !root.isGroup
+                     && Number(root.directReceipt.played_ts_unix) > 0
+            iconName: "qrc:/data/icons/checkmark-bold.svg"
+            doubleTick: true
+            iconColor: activePalette.highlight
+            label: Whatevr.I18n.i18nc("@label time the message was listened to", "Played")
+            value: root.formatTimestamp(root.directReceipt.played_ts_unix)
+        }
+
+        StatusRow {
+            visible: !root.loading && root.errorText.length === 0
+            iconName: root.senderDevice > 0 ? "computer-symbolic" : "smartphone-symbolic"
+            label: Whatevr.I18n.i18nc("@label which client sent the message", "Sent from")
+            value: root.senderDevice > 0
+                   ? Whatevr.I18n.i18nc("@info sender client", "Linked device")
+                   : Whatevr.I18n.i18nc("@info sender client", "Phone app")
+        }
+
+        StatusRow {
+            visible: !root.loading && root.errorText.length === 0 && !root.isGroup
             iconName: "qrc:/data/icons/checkmark-bold.svg"
             doubleTick: true
             label: Whatevr.I18n.i18nc("@label time the message was delivered", "Delivered")
@@ -278,6 +291,23 @@ CenteredDialog {
                 required property var modelData
                 receipt: modelData
                 timestampKey: "read_ts_unix"
+            }
+        }
+
+        SectionHeading {
+            visible: root.isGroup && root.playedBy.length > 0
+            iconName: "qrc:/data/icons/checkmark-bold.svg"
+            doubleTick: true
+            iconColor: activePalette.highlight
+            label: Whatevr.I18n.i18nc("@title group members who listened", "Played by %1", root.playedBy.length)
+        }
+
+        Repeater {
+            model: root.isGroup ? root.playedBy : []
+            delegate: ParticipantRow {
+                required property var modelData
+                receipt: modelData
+                timestampKey: "played_ts_unix"
             }
         }
 

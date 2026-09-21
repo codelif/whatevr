@@ -70,6 +70,15 @@ int CollectionViewModel::indexOfId(const QString &id) const
     return m_indexById.value(id, -1);
 }
 
+QString CollectionViewModel::idAt(int index) const
+{
+    const_cast<CollectionViewModel *>(this)->flushBatch();
+    if (index < 0 || index >= m_items.size()) {
+        return {};
+    }
+    return m_items.at(index).id;
+}
+
 bool CollectionViewModel::ascends(const Item &lhs, const Item &rhs)
 {
     if (lhs.sortKey != rhs.sortKey) {

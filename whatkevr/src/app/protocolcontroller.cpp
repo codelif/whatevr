@@ -71,6 +71,9 @@ constexpr int kChatPageSize = 24;
 constexpr int kStarredPageSize = 50;
 // A gallery page is a grid, so it shows more per screen than the starred list.
 constexpr int kChatMediaPageSize = 60;
+// The status feed is windowed like any other collection; statuses expire after
+// 24h server-side, so one page already spans most of a day's stories.
+constexpr int kStatusPageSize = 100;
 // In-chat search asks for one generous page of matches: the match cursor walks
 // that list, it is not a scrollable surface.
 constexpr int kChatSearchLimit = 100;
@@ -214,6 +217,10 @@ ProtocolController::ProtocolController(QString socketPath, QObject *parent)
     connect(m_client, &ProtocolClient::ready, this, &ProtocolController::onClientReady);
     connect(m_client, &ProtocolClient::disconnected, this, &ProtocolController::onClientDisconnected);
     connect(m_client, &ProtocolClient::openChatRequested, this, &ProtocolController::openChatRequested);
+    connect(m_client, &ProtocolClient::activateWindowRequested, this,
+            &ProtocolController::activateWindowRequested);
+    connect(m_client, &ProtocolClient::showTrayMenuRequested, this,
+            &ProtocolController::showTrayMenuRequested);
     connect(m_client, &ProtocolClient::mediaStreamUpdated, this,
             [this](const QString &streamId,
                    const QString &messageId,
@@ -251,10 +258,13 @@ ProtocolController::ProtocolController(QString socketPath, QObject *parent)
     m_archivedModel = new CollectionViewModel(this);
     connect(m_archivedModel, &CollectionViewModel::countChanged, this, &ProtocolController::archivedChanged);
     connect(m_archivedModel, &CollectionViewModel::readyChanged, this, &ProtocolController::archivedChanged);
+    m_chatFoldersModel = new CollectionViewModel(this);
 
     // The selected conversation has its own `chat` object view, independent of
     // the sidebar's current filter and loaded window.
     m_selectedChatModel = new ObjectViewModel(this);
+    m_groupPolicyModel = new ObjectViewModel(this);
+    connect(m_groupPolicyModel, &ObjectViewModel::valueChanged, this, [this] { Q_EMIT composerChanged(); });
     connect(m_selectedChatModel, &ObjectViewModel::valueChanged, this, [this] {
         if (!m_selectedChatId.isEmpty()) {
             if (m_session->phoneHistoryRequesting && selectedChatHistoryExhausted()) {
@@ -393,6 +403,45 @@ ProtocolController::ProtocolController(QString socketPath, QObject *parent)
     connect(m_starredModel, &CollectionViewModel::readyChanged, this, &ProtocolController::starredMessagesChanged);
     connect(m_starredModel, &CollectionViewModel::modelReset, this, &ProtocolController::starredMessagesChanged);
 
+    // Status and calls tabs: plain collection models over the `status` and
+    // `calls` views. The status page groups rows per contact itself; the calls
+    // count doubles as the rail badge.
+    m_statusModel = new CollectionViewModel(this);
+    connect(m_statusModel, &CollectionViewModel::countChanged, this, &ProtocolController::statusChanged);
+    connect(m_statusModel, &CollectionViewModel::readyChanged, this, &ProtocolController::statusChanged);
+    connect(m_statusModel, &CollectionViewModel::modelReset, this, &ProtocolController::statusChanged);
+    // Row content changes (viewed flags, downloaded paths) carry no count or
+    // ready edge but must still refresh pages holding snapshots — notably the
+    // status viewer, which otherwise keeps showing Load after the bytes land.
+    connect(m_statusModel, &CollectionViewModel::dataChanged, this, &ProtocolController::statusChanged);
+    // Kept senders ride the status tab's lifetime; any churn rebuilds groups.
+    m_keptStatusModel = new CollectionViewModel(this);
+    connect(m_keptStatusModel, &CollectionViewModel::countChanged, this, &ProtocolController::statusChanged);
+    connect(m_keptStatusModel, &CollectionViewModel::readyChanged, this, &ProtocolController::statusChanged);
+    connect(m_keptStatusModel, &CollectionViewModel::modelReset, this, &ProtocolController::statusChanged);
+    connect(m_keptStatusModel, &CollectionViewModel::dataChanged, this, &ProtocolController::statusChanged);
+    // Muted senders ride the same lifetime into the page's Muted section.
+    m_mutedStatusModel = new CollectionViewModel(this);
+    connect(m_mutedStatusModel, &CollectionViewModel::countChanged, this, &ProtocolController::statusChanged);
+    connect(m_mutedStatusModel, &CollectionViewModel::readyChanged, this, &ProtocolController::statusChanged);
+    connect(m_mutedStatusModel, &CollectionViewModel::modelReset, this, &ProtocolController::statusChanged);
+    connect(m_mutedStatusModel, &CollectionViewModel::dataChanged, this, &ProtocolController::statusChanged);
+    m_callsModel = new CollectionViewModel(this);
+    connect(m_callsModel, &CollectionViewModel::countChanged, this, &ProtocolController::callsChanged);
+    connect(m_callsModel, &CollectionViewModel::readyChanged, this, &ProtocolController::callsChanged);
+    connect(m_callsModel, &CollectionViewModel::modelReset, this, &ProtocolController::callsChanged);
+
+    m_channelsModel = new CollectionViewModel(this);
+    connect(m_channelsModel, &CollectionViewModel::countChanged, this, &ProtocolController::channelsChanged);
+    connect(m_channelsModel, &CollectionViewModel::readyChanged, this, &ProtocolController::channelsChanged);
+    connect(m_channelsModel, &CollectionViewModel::modelReset, this, &ProtocolController::channelsChanged);
+    m_channelMessagesModel = new CollectionViewModel(this);
+    connect(m_channelMessagesModel, &CollectionViewModel::countChanged, this, &ProtocolController::channelMessagesChanged);
+    connect(m_channelMessagesModel, &CollectionViewModel::readyChanged, this, &ProtocolController::channelMessagesChanged);
+    connect(m_channelMessagesModel, &CollectionViewModel::modelReset, this, &ProtocolController::channelMessagesChanged);
+
+    m_logsModel = new CollectionViewModel(this);
+
     // Info card (D5): one object view (either `contact` or `group`, whichever
     // the open dialog asked for) plus the group's member roster. Two-phase
     // enrichment arrives as ordinary upserts on both.
@@ -527,10 +576,12 @@ ProtocolController::~ProtocolController()
     delete m_loginSub;
     delete m_chatsSub;
     delete m_archivedSub;
+    delete m_chatFoldersSub;
     delete m_typingSub;
     delete m_syncSub;
     // The transcript subscriptions belong to the warm windows, one each.
     closeAllMessageWindows();
+    delete m_groupPolicySub;
     delete m_presenceSub;
     delete m_receiptsSub;
     delete m_pinnedSub;
@@ -546,6 +597,9 @@ ProtocolController::~ProtocolController()
     delete m_privacySub;
     delete m_preferencesSub;
     delete m_selfSub;
+    delete m_logsSub;
+    delete m_channelsSub;
+    delete m_channelMessagesSub;
     m_chatMembersSub = nullptr;
     m_starredSub = nullptr;
     m_chatMediaSub = nullptr;
@@ -555,15 +609,18 @@ ProtocolController::~ProtocolController()
     m_privacySub = nullptr;
     m_preferencesSub = nullptr;
     m_selfSub = nullptr;
+    m_logsSub = nullptr;
     m_connectionSub = nullptr;
     m_loginSub = nullptr;
     m_chatsSub = nullptr;
     m_archivedSub = nullptr;
+    m_chatFoldersSub = nullptr;
     m_chatsExtendPending = false;
     m_archivedExtendPending = false;
     m_typingSub = nullptr;
     m_syncSub = nullptr;
     m_messagesSub = nullptr;
+    m_groupPolicySub = nullptr;
     m_presenceSub = nullptr;
     m_receiptsSub = nullptr;
     m_pinnedSub = nullptr;
@@ -612,6 +669,7 @@ void ProtocolController::start()
     // reports state otherwise).
     m_connectionSub = m_client->subscribe(QStringLiteral("connection"), {}, m_connectionModel);
     m_loginSub = m_client->subscribe(QStringLiteral("login"), {}, m_loginModel);
+    m_chatFoldersSub = m_client->subscribe(QStringLiteral("chat_folders"), {}, m_chatFoldersModel);
     subscribeChats();
     // The typing, sync and transfers views are global (unfiltered) and observed
     // for the whole session, like connection/login. `transfers` carries only
@@ -636,6 +694,10 @@ QString ProtocolController::chatFilterName() const
         return QStringLiteral("direct");
     case 2:
         return QStringLiteral("groups");
+    case 3:
+        return QStringLiteral("unread");
+    case 4:
+        return QStringLiteral("favorite");
     default:
         return QStringLiteral("all");
     }
@@ -660,14 +722,16 @@ void ProtocolController::subscribeChats()
     // way the active list does.
     m_chatsSub = m_client->subscribe(
         QStringLiteral("chats"),
-        {{QStringLiteral("filter"), chatFilterName()},
-         {QStringLiteral("archived"), false},
+         {{QStringLiteral("filter"), chatFilterName()},
+          {QStringLiteral("archived"), false},
+          {QStringLiteral("folder_id"), m_chatFolder > 0 ? QJsonValue(m_chatFolder) : QJsonValue()},
          {QStringLiteral("limit"), kChatPageSize}},
         m_chatsModel);
     m_archivedSub = m_client->subscribe(
         QStringLiteral("chats"),
-        {{QStringLiteral("filter"), chatFilterName()},
-         {QStringLiteral("archived"), true},
+         {{QStringLiteral("filter"), chatFilterName()},
+          {QStringLiteral("archived"), true},
+          {QStringLiteral("folder_id"), m_chatFolder > 0 ? QJsonValue(m_chatFolder) : QJsonValue()},
          {QStringLiteral("limit"), kChatPageSize}},
         m_archivedModel);
     // A rejected extend must not leave the list stuck refusing to ask again.
@@ -720,6 +784,19 @@ QAbstractItemModel *ProtocolController::chatsModel() const
     return m_chatsModel;
 }
 
+QAbstractItemModel *ProtocolController::chatFoldersModel() const
+{
+    return m_chatFoldersModel;
+}
+
+void ProtocolController::setChatFolder(int folder)
+{
+    if (folder < 0 || folder == m_chatFolder) return;
+    m_chatFolder = folder;
+    if (m_chatsSub) subscribeChats();
+    Q_EMIT chatFolderChanged();
+}
+
 QAbstractItemModel *ProtocolController::archivedChatsModel() const
 {
     return m_archivedModel;
@@ -735,6 +812,11 @@ bool ProtocolController::archivedExhausted() const
     return m_archivedSub == nullptr || m_archivedModel->isExhausted();
 }
 
+bool ProtocolController::archivedLoading() const
+{
+    return m_archivedSub != nullptr && !m_archivedModel->isReady();
+}
+
 bool ProtocolController::chatTyping(const QString &chatId) const
 {
     // The typing view is keyed by chat_id; a present row means someone is
@@ -744,7 +826,7 @@ bool ProtocolController::chatTyping(const QString &chatId) const
 
 void ProtocolController::setChatFilter(int filter)
 {
-    if (filter < 0 || filter > 2) {
+    if (filter < 0 || filter > 4) {
         filter = 0;
     }
     if (filter == m_chatFilter) {
@@ -785,6 +867,15 @@ void ProtocolController::setChatPinned(const QString &chatId, bool pinned)
                       {{QStringLiteral("chat_id"), chatId}, {QStringLiteral("pinned"), pinned}});
 }
 
+void ProtocolController::setChatFavorite(const QString &chatId, bool favorite)
+{
+    if (chatId.isEmpty()) {
+        return;
+    }
+    m_client->request(QStringLiteral("chat.favorite"),
+                      {{QStringLiteral("chat_id"), chatId}, {QStringLiteral("favorite"), favorite}});
+}
+
 void ProtocolController::setChatArchived(const QString &chatId, bool archived)
 {
     if (chatId.isEmpty()) {
@@ -803,6 +894,40 @@ void ProtocolController::setChatMuted(const QString &chatId, bool muted, int dur
                       {{QStringLiteral("chat_id"), chatId},
                        {QStringLiteral("muted"), muted},
                        {QStringLiteral("duration_secs"), durationSecs}});
+}
+
+void ProtocolController::createChatFolder(const QString &name)
+{
+    m_client->request(QStringLiteral("chat_folder.create"), {{QStringLiteral("name"), name}},
+                      [this](const QJsonObject &, const ProtocolError &) {
+                          delete m_chatFoldersSub;
+                          m_chatFoldersModel->onReset();
+                          m_chatFoldersSub = m_client->subscribe(QStringLiteral("chat_folders"), {}, m_chatFoldersModel);
+                      });
+}
+void ProtocolController::renameChatFolder(qint64 id, const QString &name)
+{
+    m_client->request(QStringLiteral("chat_folder.rename"), {{QStringLiteral("id"), id}, {QStringLiteral("name"), name}},
+                      [this](const QJsonObject &, const ProtocolError &) {
+                          delete m_chatFoldersSub;
+                          m_chatFoldersModel->onReset();
+                          m_chatFoldersSub = m_client->subscribe(QStringLiteral("chat_folders"), {}, m_chatFoldersModel);
+                      });
+}
+void ProtocolController::deleteChatFolder(qint64 id)
+{
+    m_client->request(QStringLiteral("chat_folder.delete"), {{QStringLiteral("id"), id}},
+                      [this](const QJsonObject &, const ProtocolError &) {
+                          delete m_chatFoldersSub;
+                          m_chatFoldersModel->onReset();
+                          m_chatFoldersSub = m_client->subscribe(QStringLiteral("chat_folders"), {}, m_chatFoldersModel);
+                      });
+}
+void ProtocolController::assignChatFolder(const QString &chatId, qint64 id)
+{
+    QJsonObject params{{QStringLiteral("chat_id"), chatId}};
+    if (id > 0) params.insert(QStringLiteral("folder_id"), id);
+    m_client->request(QStringLiteral("chat_folder.set_chat"), params);
 }
 
 // --- conversation + messages (D3b) ---------------------------------------
@@ -911,6 +1036,9 @@ void ProtocolController::setSelectedChat(const QString &chatId, const QString &a
         m_waitingForSelectedChatItem = false;
         delete m_selectedChatSub;
         m_selectedChatSub = nullptr;
+        delete m_groupPolicySub;
+        m_groupPolicySub = nullptr;
+        m_groupPolicyModel->onReset();
         m_selectedChatModel->onReset();
         if (!chatId.isEmpty()) {
             // Waiting on the `chat` view before asking for messages made every
@@ -931,6 +1059,10 @@ void ProtocolController::setSelectedChat(const QString &chatId, const QString &a
             m_waitingForSelectedChatItem = anchor.isEmpty() && resolvedAnchor.isEmpty();
             m_selectedChatSub = m_client->subscribe(
                 QStringLiteral("chat"), {{QStringLiteral("chat_id"), chatId}}, m_selectedChatModel);
+            if (chatId.endsWith(QStringLiteral("@g.us"))) {
+                m_groupPolicySub = m_client->subscribe(
+                    QStringLiteral("group"), {{QStringLiteral("chat_id"), chatId}}, m_groupPolicyModel);
+            }
             connect(m_selectedChatSub, &Subscription::failed, this,
                     [this, chatId](const QString &code, const QString &message) {
                         selectedChatLookupFailed(chatId, code, message);
@@ -1669,6 +1801,19 @@ void ProtocolController::markSelectedChatViewed(const QString &upToMessageId)
     m_readTimer->start();
 }
 
+void ProtocolController::markAllChatsRead()
+{
+    // Ack-then-lifecycle like its siblings: badges clear through the `chats`
+    // view, failures surface as a transient message action error.
+    m_client->request(QStringLiteral("chat.mark_all_read"), {},
+                      [this](const QJsonObject &, const ProtocolError &error) {
+                          if (error.isError()) {
+                              Q_EMIT messageActionFailed(error.message.isEmpty() ? i18nc("@info", "Unable to mark all chats read")
+                                                                                 : error.message);
+                          }
+                      });
+}
+
 void ProtocolController::setConversationVisible(bool visible)
 {
     if (visible == m_conversationVisible) {
@@ -1837,7 +1982,18 @@ QVariantMap ProtocolController::directMessageReceipt() const
 
 bool ProtocolController::composerEnabled() const
 {
-    return hasSelectedChat() && m_clientReady;
+    return hasSelectedChat() && m_clientReady && selectedChatCanSend();
+}
+
+bool ProtocolController::selectedChatCanSend() const
+{
+    if (!m_selectedChatId.endsWith(QStringLiteral("@g.us"))) {
+        return true;
+    }
+    const QVariantMap policy = m_groupPolicyModel->value();
+    const QString role = policy.value(QStringLiteral("my_role")).toString();
+    return !policy.value(QStringLiteral("announce")).toBool()
+           || role == QLatin1String("admin") || role == QLatin1String("superadmin");
 }
 
 void ProtocolController::dismissUnreadAnchor()
@@ -1854,7 +2010,7 @@ void ProtocolController::dismissUnreadAnchor()
 void ProtocolController::sendText(const QString &text, const QString &replyToMessageId, const QStringList &mentionedJids)
 {
     const QString trimmed = plainTextFromQtRichText(text).trimmed();
-    if (m_selectedChatId.isEmpty() || trimmed.isEmpty() || m_sendInFlight) {
+    if (m_selectedChatId.isEmpty() || trimmed.isEmpty() || m_sendInFlight || !selectedChatCanSend()) {
         return;
     }
 
@@ -1883,9 +2039,70 @@ void ProtocolController::sendText(const QString &text, const QString &replyToMes
     });
 }
 
-void ProtocolController::sendMedia(const QString &fileUrl, const QString &caption, const QString &replyToMessageId)
+void ProtocolController::scheduleText(const QString &text, qint64 sendAt)
 {
-    if (m_selectedChatId.isEmpty() || fileUrl.isEmpty() || m_sendInFlight) {
+    const QString trimmed = plainTextFromQtRichText(text).trimmed();
+    if (m_selectedChatId.isEmpty() || trimmed.isEmpty() || sendAt <= QDateTime::currentSecsSinceEpoch()) {
+        return;
+    }
+    m_client->request(QStringLiteral("schedule.text"),
+                      {{QStringLiteral("chat_id"), m_selectedChatId},
+                       {QStringLiteral("text"), trimmed},
+                       {QStringLiteral("send_at"), sendAt}},
+                      [this](const QJsonObject &, const ProtocolError &error) {
+                          if (error.isError()) {
+                              Q_EMIT messageActionFailed(error.message.isEmpty()
+                                                             ? i18nc("@info", "Unable to schedule message")
+                                                             : error.message);
+                          }
+                      });
+}
+
+QVariantList ProtocolController::scheduledMessages() const
+{
+    return m_scheduledMessages;
+}
+
+void ProtocolController::refreshScheduledMessages(const QString &chatId)
+{
+    m_client->request(QStringLiteral("schedule.list"),
+                      {{QStringLiteral("chat_id"), chatId}},
+                      [this](const QJsonObject &result, const ProtocolError &error) {
+                          if (error.isError()) {
+                              Q_EMIT messageActionFailed(error.message.isEmpty()
+                                                             ? i18nc("@info", "Unable to load scheduled messages")
+                                                             : error.message);
+                              return;
+                          }
+                          m_scheduledMessages.clear();
+                          for (const QJsonValue &value : result.value(QStringLiteral("messages")).toArray()) {
+                              m_scheduledMessages.append(value.toObject().toVariantMap());
+                          }
+                          Q_EMIT scheduledMessagesChanged();
+                      });
+}
+
+void ProtocolController::cancelScheduledMessage(qlonglong id, const QString &chatId)
+{
+    if (id <= 0) {
+        return;
+    }
+    m_client->request(QStringLiteral("schedule.cancel"),
+                      {{QStringLiteral("id"), id}},
+                      [this, chatId](const QJsonObject &, const ProtocolError &error) {
+                          if (error.isError()) {
+                              Q_EMIT messageActionFailed(error.message.isEmpty()
+                                                             ? i18nc("@info", "Unable to cancel scheduled message")
+                                                             : error.message);
+                              return;
+                          }
+                          refreshScheduledMessages(chatId);
+                      });
+}
+
+void ProtocolController::sendMedia(const QString &fileUrl, const QString &caption, const QString &replyToMessageId, const QString &kind, bool viewOnce)
+{
+    if (m_selectedChatId.isEmpty() || fileUrl.isEmpty() || m_sendInFlight || !selectedChatCanSend()) {
         return;
     }
 
@@ -1905,6 +2122,12 @@ void ProtocolController::sendMedia(const QString &fileUrl, const QString &captio
     if (const QString reply = replyToMessageId.trimmed(); !reply.isEmpty()) {
         params.insert(QStringLiteral("reply_to"), reply);
     }
+    if (!kind.trimmed().isEmpty()) {
+        params.insert(QStringLiteral("kind"), kind.trimmed());
+    }
+    if (viewOnce) {
+        params.insert(QStringLiteral("view_once"), true);
+    }
 
     m_sendInFlight = true;
     m_composerErrorText.clear();
@@ -1913,8 +2136,69 @@ void ProtocolController::sendMedia(const QString &fileUrl, const QString &captio
     m_client->request(QStringLiteral("send.media"), params, [this](const QJsonObject &, const ProtocolError &error) {
         m_sendInFlight = false;
         m_composerErrorText = error.isError()
-            ? (error.message.isEmpty() ? i18nc("@info", "Unable to send image") : error.message)
+            ? (error.message.isEmpty() ? i18nc("@info", "Unable to send media") : error.message)
             : QString();
+        Q_EMIT composerChanged();
+    });
+}
+
+// Batch twin of sendMedia: the daemon serializes the files, so a multi-pick
+// (or a multi-file drop) goes out as one request instead of N racing ones
+// that the single in-flight guard would drop after the first.
+void ProtocolController::sendMediaBatch(const QVariantList &fileUrls, const QString &caption, const QString &replyToMessageId, const QString &kind, bool viewOnce)
+{
+    if (m_selectedChatId.isEmpty() || fileUrls.isEmpty() || m_sendInFlight || !selectedChatCanSend()) {
+        return;
+    }
+    QJsonArray files;
+    bool first = true;
+    for (const QVariant &entry : fileUrls) {
+        const QUrl url(entry.toString());
+        const QString filePath = url.isLocalFile() ? url.toLocalFile() : entry.toString();
+        if (filePath.isEmpty()) {
+            continue;
+        }
+        QJsonObject file;
+        file.insert(QStringLiteral("path"), filePath);
+        // The shared caption rides on the first file only.
+        file.insert(QStringLiteral("caption"), first ? plainTextFromQtRichText(caption).trimmed() : QString());
+        files.append(file);
+        first = false;
+    }
+    if (files.isEmpty()) {
+        return;
+    }
+
+    setSelectedChatComposing(false);
+    dismissUnreadAnchor();
+    Q_EMIT messageSent();
+
+    QJsonObject params{{QStringLiteral("chat_id"), m_selectedChatId},
+                       {QStringLiteral("files"), files}};
+    if (const QString reply = replyToMessageId.trimmed(); !reply.isEmpty()) {
+        params.insert(QStringLiteral("reply_to"), reply);
+    }
+    if (!kind.trimmed().isEmpty()) {
+        params.insert(QStringLiteral("kind"), kind.trimmed());
+    }
+    if (viewOnce) {
+        params.insert(QStringLiteral("view_once"), true);
+    }
+
+    m_sendInFlight = true;
+    m_composerErrorText.clear();
+    Q_EMIT composerChanged();
+
+    m_client->request(QStringLiteral("send.media_batch"), params, [this](const QJsonObject &result, const ProtocolError &error) {
+        m_sendInFlight = false;
+        if (error.isError()) {
+            m_composerErrorText = error.message.isEmpty() ? i18nc("@info", "Unable to send media") : error.message;
+        } else {
+            const QVariantList failures = result.value(QStringLiteral("errors")).toArray().toVariantList();
+            if (!failures.isEmpty()) {
+                m_composerErrorText = i18nc("@info", "Some files could not be sent");
+            }
+        }
         Q_EMIT composerChanged();
     });
 }
@@ -1992,6 +2276,107 @@ bool ProtocolController::sendClipboardImage(const QString &caption, const QStrin
     }
 
     return false;
+}
+
+void ProtocolController::sendPoll(const QString &question, const QStringList &options, bool multiSelect, const QString &replyToMessageId)
+{
+    const QString trimmed = question.trimmed();
+    if (m_selectedChatId.isEmpty() || trimmed.isEmpty() || options.isEmpty() || m_sendInFlight || !selectedChatCanSend()) {
+        return;
+    }
+
+    setSelectedChatComposing(false);
+    dismissUnreadAnchor();
+    Q_EMIT messageSent();
+
+    QJsonArray opts;
+    for (const QString &opt : options) {
+        if (!opt.trimmed().isEmpty()) {
+            opts.append(opt.trimmed());
+        }
+    }
+
+    QJsonObject params{{QStringLiteral("chat_id"), m_selectedChatId},
+                       {QStringLiteral("question"), trimmed},
+                       {QStringLiteral("options"), opts},
+                       {QStringLiteral("multi"), multiSelect}};
+    if (const QString reply = replyToMessageId.trimmed(); !reply.isEmpty()) {
+        params.insert(QStringLiteral("reply_to"), reply);
+    }
+
+    m_sendInFlight = true;
+    m_composerErrorText.clear();
+    Q_EMIT composerChanged();
+
+    m_client->request(QStringLiteral("send.poll"), params, [this](const QJsonObject &, const ProtocolError &error) {
+        m_sendInFlight = false;
+        m_composerErrorText = error.isError()
+            ? (error.message.isEmpty() ? i18nc("@info", "Unable to send poll") : error.message)
+            : QString();
+        Q_EMIT composerChanged();
+    });
+}
+
+void ProtocolController::sendContact(const QString &name, const QString &phone, const QString &replyToMessageId)
+{
+    if (m_selectedChatId.isEmpty() || name.trimmed().isEmpty() || phone.trimmed().isEmpty() || m_sendInFlight || !selectedChatCanSend()) {
+        return;
+    }
+
+    setSelectedChatComposing(false);
+    dismissUnreadAnchor();
+    Q_EMIT messageSent();
+
+    QJsonObject params{{QStringLiteral("chat_id"), m_selectedChatId},
+                       {QStringLiteral("name"), name.trimmed()},
+                       {QStringLiteral("phone"), phone.trimmed()}};
+    if (const QString reply = replyToMessageId.trimmed(); !reply.isEmpty()) {
+        params.insert(QStringLiteral("reply_to"), reply);
+    }
+
+    m_sendInFlight = true;
+    m_composerErrorText.clear();
+    Q_EMIT composerChanged();
+
+    m_client->request(QStringLiteral("send.contact"), params, [this](const QJsonObject &, const ProtocolError &error) {
+        m_sendInFlight = false;
+        m_composerErrorText = error.isError()
+            ? (error.message.isEmpty() ? i18nc("@info", "Unable to send contact") : error.message)
+            : QString();
+        Q_EMIT composerChanged();
+    });
+}
+
+void ProtocolController::sendLocation(double latitude, double longitude, const QString &name, const QString &address, const QString &replyToMessageId)
+{
+    if (m_selectedChatId.isEmpty() || (latitude == 0.0 && longitude == 0.0) || m_sendInFlight || !selectedChatCanSend()) {
+        return;
+    }
+
+    setSelectedChatComposing(false);
+    dismissUnreadAnchor();
+    Q_EMIT messageSent();
+
+    QJsonObject params{{QStringLiteral("chat_id"), m_selectedChatId},
+                       {QStringLiteral("lat"), latitude},
+                       {QStringLiteral("long"), longitude},
+                       {QStringLiteral("name"), name},
+                       {QStringLiteral("address"), address}};
+    if (const QString reply = replyToMessageId.trimmed(); !reply.isEmpty()) {
+        params.insert(QStringLiteral("reply_to"), reply);
+    }
+
+    m_sendInFlight = true;
+    m_composerErrorText.clear();
+    Q_EMIT composerChanged();
+
+    m_client->request(QStringLiteral("send.location"), params, [this](const QJsonObject &, const ProtocolError &error) {
+        m_sendInFlight = false;
+        m_composerErrorText = error.isError()
+            ? (error.message.isEmpty() ? i18nc("@info", "Unable to send location") : error.message)
+            : QString();
+        Q_EMIT composerChanged();
+    });
 }
 
 void ProtocolController::setSelectedChatComposing(bool composing)
@@ -2455,6 +2840,16 @@ bool ProtocolController::openLocalFile(const QString &localPath)
     return QDesktopServices::openUrl(QUrl::fromLocalFile(localPath));
 }
 
+bool ProtocolController::openLogDirectory()
+{
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation)
+        + QStringLiteral("/whatevrd");
+    if (!QFileInfo::exists(dir)) {
+        return false;
+    }
+    return QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
+}
+
 QUrl ProtocolController::localFileUrl(const QString &localPath) const
 {
     return localPath.isEmpty() ? QUrl() : QUrl::fromLocalFile(localPath);
@@ -2523,6 +2918,7 @@ void ProtocolController::forwardMessage(const QString &messageId, const QStringL
         }
     });
 }
+
 
 bool ProtocolController::canEditAt(qint64 timestampUnix) const
 {
@@ -2929,6 +3325,574 @@ void ProtocolController::loadMoreStarredMessages()
     m_starredSub->extend(kStarredPageSize, QStringLiteral("older"));
 }
 
+// --- status tab -------------------------------------------------------------
+
+QAbstractItemModel *ProtocolController::statusModel() const
+{
+    return m_statusModel;
+}
+
+bool ProtocolController::statusLoading() const
+{
+    // The page groups over three views; a rebuild with any of them unready
+    // flashes contacts in the wrong section before settling.
+    return m_statusSub != nullptr
+        && (!m_statusModel->isReady() || !m_keptStatusModel->isReady() || !m_mutedStatusModel->isReady());
+}
+
+bool ProtocolController::statusExhausted() const
+{
+    return m_statusSub == nullptr || m_statusModel->isExhausted();
+}
+
+void ProtocolController::openStatus()
+{
+    delete m_statusSub;
+    m_statusSub = nullptr;
+    m_statusModel->onReset();
+    delete m_keptStatusSub;
+    m_keptStatusSub = nullptr;
+    m_keptStatusModel->onReset();
+    delete m_mutedStatusSub;
+    m_mutedStatusSub = nullptr;
+    m_mutedStatusModel->onReset();
+
+    QJsonObject params{{QStringLiteral("limit"), kStatusPageSize}};
+    m_statusSub = m_client->subscribe(QStringLiteral("status"), params, m_statusModel);
+    m_keptStatusSub = m_client->subscribe(QStringLiteral("status.kept"), {}, m_keptStatusModel);
+    m_mutedStatusSub = m_client->subscribe(QStringLiteral("status.muted"), {}, m_mutedStatusModel);
+    Q_EMIT statusChanged();
+}
+
+QAbstractItemModel *ProtocolController::keptStatusModel() const
+{
+    return m_keptStatusModel;
+}
+
+void ProtocolController::setStatusKeepSender(const QString &senderId, bool kept)
+{
+    if (senderId.isEmpty()) {
+        return;
+    }
+    // Ack-then-lifecycle like markStatusViewed: the `status.kept` view (and
+    // the `status` view) refresh off the StatusChanged event the command
+    // publishes.
+    sendMessageCommand(QStringLiteral("status.keep_sender"),
+                       {{QStringLiteral("sender_id"), senderId}, {QStringLiteral("kept"), kept}},
+                       i18nc("@info", "Unable to update the keep setting"));
+}
+
+void ProtocolController::requestEditHistory(const QString &messageId)
+{
+    if (messageId.isEmpty()) {
+        return;
+    }
+    m_client->request(QStringLiteral("message.edit_history"), {{QStringLiteral("message_id"), messageId}},
+                      [this, messageId](const QJsonObject &result, const ProtocolError &error) {
+                          if (error.isError()) {
+                              Q_EMIT messageActionFailed(error.message.isEmpty() ? i18nc("@info", "Unable to load edit history")
+                                                                                 : error.message);
+                              return;
+                          }
+                          Q_EMIT editHistoryReady(messageId, result.value(QStringLiteral("edits")).toArray().toVariantList());
+                      });
+}
+
+QAbstractItemModel *ProtocolController::mutedStatusModel() const
+{
+    return m_mutedStatusModel;
+}
+
+void ProtocolController::setStatusMuteSender(const QString &senderId, bool muted)
+{
+    if (senderId.isEmpty()) {
+        return;
+    }
+    // Ack-then-lifecycle like setStatusKeepSender: the `status.muted` view
+    // (and the `status` view) refresh off the StatusChanged event the
+    // command publishes.
+    sendMessageCommand(QStringLiteral("status.mute_sender"),
+                       {{QStringLiteral("sender_id"), senderId}, {QStringLiteral("muted"), muted}},
+                       i18nc("@info", "Unable to update the mute setting"));
+}
+
+void ProtocolController::closeStatus()
+{
+    if (!m_statusSub && !m_keptStatusSub && !m_mutedStatusSub) {
+        return;
+    }
+    delete m_statusSub;
+    m_statusSub = nullptr;
+    m_statusModel->onReset();
+    delete m_keptStatusSub;
+    m_keptStatusSub = nullptr;
+    m_keptStatusModel->onReset();
+    delete m_mutedStatusSub;
+    m_mutedStatusSub = nullptr;
+    m_mutedStatusModel->onReset();
+    Q_EMIT statusChanged();
+}
+
+void ProtocolController::loadMoreStatus()
+{
+    // Live-edge window: only ever grows `older`.
+    if (!m_statusSub || m_statusModel->isExhausted() || !m_statusModel->isReady()) {
+        return;
+    }
+    m_statusSub->extend(kStatusPageSize, QStringLiteral("older"));
+}
+
+void ProtocolController::markStatusViewed(const QString &statusId)
+{
+    if (statusId.isEmpty()) {
+        return;
+    }
+    sendMessageCommand(QStringLiteral("status.mark_viewed"), {{QStringLiteral("status_id"), statusId}},
+                       i18nc("@info", "Unable to mark the status viewed"));
+}
+
+void ProtocolController::postStatusText(const QString &text, int background, int font)
+{
+    if (text.trimmed().isEmpty()) {
+        return;
+    }
+    m_client->request(QStringLiteral("status.post"), {{QStringLiteral("text"), text},
+                                                       {QStringLiteral("background"), background},
+                                                       {QStringLiteral("font"), font}},
+                      [this](const QJsonObject &, const ProtocolError &error) {
+                          if (error.isError()) {
+                              Q_EMIT messageActionFailed(error.message.isEmpty() ? i18nc("@info", "Unable to post the status")
+                                                                                 : error.message);
+                          }
+                      });
+}
+
+void ProtocolController::postStatusMedia(const QString &fileUrl, const QString &caption, int background, int font)
+{
+    const QUrl url(fileUrl);
+    const QString filePath = url.isLocalFile() ? url.toLocalFile() : fileUrl;
+    if (filePath.isEmpty()) {
+        return;
+    }
+    m_client->request(QStringLiteral("status.post"),
+                      {{QStringLiteral("path"), filePath}, {QStringLiteral("caption"), caption.trimmed()},
+                       {QStringLiteral("background"), background}, {QStringLiteral("font"), font}},
+                      [this](const QJsonObject &, const ProtocolError &error) {
+                          if (error.isError()) {
+                              Q_EMIT messageActionFailed(error.message.isEmpty() ? i18nc("@info", "Unable to post the status")
+                                                                                 : error.message);
+                          }
+                      });
+}
+
+void ProtocolController::replyToStatus(const QString &statusId, const QString &text)
+{
+    if (statusId.trimmed().isEmpty() || text.trimmed().isEmpty()) {
+        return;
+    }
+    m_client->request(QStringLiteral("status.reply"),
+                      {{QStringLiteral("status_id"), statusId}, {QStringLiteral("text"), text.trimmed()}},
+                      [this](const QJsonObject &, const ProtocolError &error) {
+                          if (error.isError()) {
+                              Q_EMIT messageActionFailed(error.message.isEmpty()
+                                                             ? i18nc("@info", "Unable to reply to the status")
+                                                             : error.message);
+                          }
+                      });
+}
+
+void ProtocolController::downloadStatus(const QString &statusId)
+{
+    if (statusId.isEmpty()) {
+        return;
+    }
+    // Ack-then-lifecycle like media.download: the row upserts with media.path,
+    // failures surface only as a log line daemon-side, same as its twin.
+    m_client->request(QStringLiteral("status.download"), {{QStringLiteral("status_id"), statusId}});
+}
+
+void ProtocolController::saveRemoteMedia(const QString &messageId, const QString &statusId, const QString &jid, const QUrl &destUrl){
+    if (!destUrl.isLocalFile()) {
+        return;
+    }
+    const QString destination = destUrl.toLocalFile();
+    if (destination.isEmpty()) {
+        return;
+    }
+    // The dialog already confirmed overwriting; QFile::copy refuses to.
+    if (QFile::exists(destination) && !QFile::remove(destination)) {
+        Q_EMIT messageActionFailed(i18nc("@info", "Unable to overwrite the existing file"));
+        return;
+    }
+    QJsonObject params{{QStringLiteral("path"), destination}};
+    if (!messageId.isEmpty()) {
+        params.insert(QStringLiteral("message_id"), messageId);
+    }
+    if (!statusId.isEmpty()) {
+        params.insert(QStringLiteral("status_id"), statusId);
+    }
+    if (!jid.isEmpty()) {
+        params.insert(QStringLiteral("jid"), jid);
+    }
+    m_client->request(QStringLiteral("media.save"), params,
+                      [this](const QJsonObject &result, const ProtocolError &error) {
+                          if (error.isError()) {
+                              Q_EMIT messageActionFailed(
+                                  error.message.isEmpty() ? i18nc("@info", "Unable to save the file") : error.message);
+                              return;
+                          }
+                          Q_EMIT remoteMediaSaved(result.value(QStringLiteral("path")).toString());
+                      });
+}
+
+void ProtocolController::exportChat(const QString &chatId, const QUrl &destUrl)
+{
+    if (chatId.isEmpty() || !destUrl.isLocalFile()) {
+        return;
+    }
+    const QString destination = destUrl.toLocalFile();
+    if (destination.isEmpty()) {
+        return;
+    }
+    // The dialog already confirmed overwriting; QFile::copy refuses to.
+    if (QFile::exists(destination) && !QFile::remove(destination)) {
+        Q_EMIT messageActionFailed(i18nc("@info", "Unable to overwrite the existing file"));
+        return;
+    }
+    QJsonObject params{{QStringLiteral("chat_id"), chatId},
+                       {QStringLiteral("path"), destination}};
+    m_client->request(QStringLiteral("chat.export"), params,
+                      [this](const QJsonObject &result, const ProtocolError &error) {
+                          if (error.isError()) {
+                              Q_EMIT messageActionFailed(
+                                  error.message.isEmpty() ? i18nc("@info", "Unable to export the chat") : error.message);
+                              return;
+                          }
+                          Q_EMIT chatExported(result.value(QStringLiteral("path")).toString());
+                      });
+}
+
+void ProtocolController::exportBackup(const QUrl &destUrl, const QString &passphrase, bool useKeyring)
+{
+    if (!destUrl.isLocalFile()) {
+        Q_EMIT messageActionFailed(i18nc("@info", "Choose a local backup file"));
+        return;
+    }
+    const QString path = destUrl.toLocalFile();
+    if (path.isEmpty()) {
+        Q_EMIT messageActionFailed(i18nc("@info", "Choose a backup destination"));
+        return;
+    }
+    m_client->request(QStringLiteral("daemon.backup_export"),
+                      {{QStringLiteral("path"), path},
+                       {QStringLiteral("passphrase"), passphrase},
+                       {QStringLiteral("use_keyring"), useKeyring}},
+                      [this](const QJsonObject &result, const ProtocolError &error) {
+                          if (error.isError()) {
+                              Q_EMIT messageActionFailed(error.message.isEmpty()
+                                                             ? i18nc("@info", "Unable to export backup")
+                                                             : error.message);
+                              return;
+                          }
+                          Q_EMIT backupExported(result.value(QStringLiteral("path")).toString());
+                      });
+}
+
+void ProtocolController::setBackupPassphrase(const QString &passphrase)
+{
+    if (passphrase.trimmed().isEmpty()) {
+        Q_EMIT messageActionFailed(i18nc("@info", "Enter a backup passphrase"));
+        return;
+    }
+    m_client->request(QStringLiteral("daemon.backup_set_passphrase"),
+                      {{QStringLiteral("passphrase"), passphrase}},
+                      [this](const QJsonObject &, const ProtocolError &error) {
+                          if (error.isError()) {
+                              Q_EMIT messageActionFailed(error.message.isEmpty()
+                                                             ? i18nc("@info", "Unable to store backup passphrase")
+                                                             : error.message);
+                          }
+                      });
+}
+
+// --- calls tab --------------------------------------------------------------
+
+QAbstractItemModel *ProtocolController::callsModel() const
+{
+    return m_callsModel;
+}
+
+int ProtocolController::callsRingingCount() const
+{
+    return m_callsModel ? m_callsModel->count() : 0;
+}
+
+QAbstractItemModel *ProtocolController::logsModel() const
+{
+    return m_logsModel;
+}
+
+void ProtocolController::openCalls()
+{
+    delete m_callsSub;
+    m_callsSub = nullptr;
+    m_callsModel->onReset();
+
+    m_callsSub = m_client->subscribe(QStringLiteral("calls"), {}, m_callsModel);
+    Q_EMIT callsChanged();
+}
+
+void ProtocolController::closeCalls()
+{
+    if (!m_callsSub) {
+        return;
+    }
+    delete m_callsSub;
+    m_callsSub = nullptr;
+    m_callsModel->onReset();
+    Q_EMIT callsChanged();
+}
+
+void ProtocolController::openLogs()
+{
+    if (m_logsSub) {
+        return;
+    }
+    m_logsLoading = true;
+    m_logsErrorText.clear();
+    Q_EMIT logsLoadingChanged();
+
+    delete m_logsSub;
+    m_logsSub = nullptr;
+    m_logsModel->onReset();
+
+    m_logsSub = m_client->subscribe(
+        QStringLiteral("daemon.logs"),
+        // Full ring for debug: the daemon caps at its 1000-line ring anyway.
+        {{QStringLiteral("limit"), 1000}},
+        m_logsModel);
+    connect(m_logsSub, &Subscription::failed, this,
+            [this](const QString &code, const QString &message) {
+                m_logsLoading = false;
+                m_logsErrorText = message.isEmpty()
+                    ? i18nc("@info", "Could not load daemon logs (%1)", code)
+                    : message;
+                Q_EMIT logsLoadingChanged();
+            });
+    connect(m_logsModel, &CollectionViewModel::readyChanged, this, [this] {
+        if (m_logsLoading && m_logsModel->isReady()) {
+            m_logsLoading = false;
+            Q_EMIT logsLoadingChanged();
+        }
+    });
+}
+
+void ProtocolController::closeLogs()
+{
+    if (!m_logsSub) {
+        return;
+    }
+    delete m_logsSub;
+    m_logsSub = nullptr;
+    m_logsModel->onReset();
+    if (m_logsLoading) {
+        m_logsLoading = false;
+        Q_EMIT logsLoadingChanged();
+    }
+}
+
+void ProtocolController::rejectCall(const QString &chatId)
+{
+    if (chatId.isEmpty()) {
+        return;
+    }
+    sendMessageCommand(QStringLiteral("call.reject"), {{QStringLiteral("chat_id"), chatId}},
+                       i18nc("@info", "Unable to reject the call"));
+}
+
+// --- channels tab -----------------------------------------------------------
+
+QAbstractItemModel *ProtocolController::channelsModel() const
+{
+    return m_channelsModel;
+}
+
+bool ProtocolController::channelsLoading() const
+{
+    return m_channelsSub != nullptr && !m_channelsModel->isReady();
+}
+
+QAbstractItemModel *ProtocolController::channelMessagesModel() const
+{
+    return m_channelMessagesModel;
+}
+
+bool ProtocolController::channelMessagesLoading() const
+{
+    return m_channelMessagesSub != nullptr && !m_channelMessagesModel->isReady();
+}
+
+QString ProtocolController::selectedChannelJid() const
+{
+    return m_selectedChannelJid;
+}
+
+QString ProtocolController::selectedChannelName() const
+{
+    return m_selectedChannelName;
+}
+
+void ProtocolController::openChannels()
+{
+    delete m_channelsSub;
+    m_channelsSub = nullptr;
+    m_channelsModel->onReset();
+
+    m_channelsSub = m_client->subscribe(QStringLiteral("channels"), {}, m_channelsModel);
+    // The directory is server state: refresh on every open so follows made on
+    // the phone (or in another window) appear. The view refreshes off the
+    // ChannelsChanged event the command publishes.
+    m_client->request(QStringLiteral("channels.refresh"), {});
+    Q_EMIT channelsChanged();
+}
+
+void ProtocolController::closeChannels()
+{
+    if (!m_channelsSub) {
+        return;
+    }
+    delete m_channelsSub;
+    m_channelsSub = nullptr;
+    m_channelsModel->onReset();
+    Q_EMIT channelsChanged();
+}
+
+void ProtocolController::openChannelMessages(const QString &jid, const QString &name)
+{
+    closeChannelMessages();
+    m_selectedChannelJid = jid;
+    m_selectedChannelName = name;
+    Q_EMIT channelMessagesChanged();
+
+    m_channelMessagesSub = m_client->subscribe(
+        QStringLiteral("channel_messages"),
+        {{QStringLiteral("channel"), jid}},
+        m_channelMessagesModel);
+}
+
+void ProtocolController::closeChannelMessages()
+{
+    if (!m_channelMessagesSub) {
+        return;
+    }
+    delete m_channelMessagesSub;
+    m_channelMessagesSub = nullptr;
+    m_channelMessagesModel->onReset();
+    m_selectedChannelJid.clear();
+    m_selectedChannelName.clear();
+    Q_EMIT channelMessagesChanged();
+}
+
+void ProtocolController::followChannel(const QString &jidOrLink)
+{
+    if (jidOrLink.trimmed().isEmpty()) {
+        return;
+    }
+    QJsonObject params;
+    if (jidOrLink.contains(QLatin1Char('/')) || jidOrLink.startsWith(QStringLiteral("http")))
+        params[QStringLiteral("invite")] = jidOrLink;
+    else
+        params[QStringLiteral("jid")] = jidOrLink;
+    m_client->request(QStringLiteral("channel.follow"), params);
+}
+
+void ProtocolController::unfollowChannel(const QString &jid)
+{
+    if (jid.isEmpty()) {
+        return;
+    }
+    m_client->request(QStringLiteral("channel.unfollow"), {{QStringLiteral("jid"), jid}});
+}
+
+void ProtocolController::muteChannel(const QString &jid, bool muted)
+{
+    if (jid.isEmpty()) {
+        return;
+    }
+    m_client->request(QStringLiteral("channel.mute"),
+                      {{QStringLiteral("jid"), jid}, {QStringLiteral("muted"), muted}});
+}
+
+void ProtocolController::reactToChannelMessage(const QString &channelId, qint64 serverId, const QString &emoji)
+{
+    if (channelId.trimmed().isEmpty() || serverId <= 0) {
+        return;
+    }
+    m_client->request(QStringLiteral("channel.react"),
+                      {{QStringLiteral("channel_id"), channelId},
+                       {QStringLiteral("server_id"), serverId},
+                       {QStringLiteral("emoji"), emoji}},
+                      [this](const QJsonObject &, const ProtocolError &error) {
+                          if (error.isError()) {
+                              Q_EMIT messageActionFailed(error.message.isEmpty()
+                                                             ? i18nc("@info", "Unable to react to channel post")
+                                                             : error.message);
+                          }
+                      });
+}
+
+void ProtocolController::markChannelViewed(const QString &channelId, const QVariantList &serverIds)
+{
+    if (channelId.trimmed().isEmpty() || serverIds.isEmpty()) {
+        return;
+    }
+    QJsonArray ids;
+    for (const QVariant &value : serverIds) {
+        const qint64 id = value.toLongLong();
+        if (id > 0) {
+            ids.append(id);
+        }
+    }
+    if (ids.isEmpty()) {
+        return;
+    }
+    m_client->request(QStringLiteral("channel.mark_viewed"),
+                      {{QStringLiteral("channel_id"), channelId},
+                       {QStringLiteral("server_ids"), ids}},
+                      [this](const QJsonObject &, const ProtocolError &error) {
+                          if (error.isError()) {
+                              Q_EMIT messageActionFailed(error.message.isEmpty()
+                                                             ? i18nc("@info", "Unable to mark channel posts viewed")
+                                                             : error.message);
+                          }
+                      });
+}
+
+void ProtocolController::leaveGroup(const QString &chatId)
+{
+    if (chatId.isEmpty()) {
+        return;
+    }
+    sendMessageCommand(QStringLiteral("group.leave"), {{QStringLiteral("chat_id"), chatId}},
+                       i18nc("@info", "Unable to leave the group"));
+}
+
+void ProtocolController::copyGroupInviteLink(const QString &chatId)
+{
+    if (chatId.isEmpty()) {
+        return;
+    }
+    m_client->request(QStringLiteral("group.invite_link"), {{QStringLiteral("chat_id"), chatId}},
+                      [this](const QJsonObject &result, const ProtocolError &error) {
+                          if (error.isError()) {
+                              Q_EMIT messageActionFailed(
+                                  error.message.isEmpty() ? i18nc("@info", "Unable to get the invite link") : error.message);
+                              return;
+                          }
+                          copyToClipboard(result.value(QStringLiteral("link")).toString());
+                      });
+}
+
 // --- per-chat media gallery -------------------------------------------------
 
 QAbstractItemModel *ProtocolController::chatMediaModel() const
@@ -2946,7 +3910,7 @@ bool ProtocolController::chatMediaExhausted() const
     return m_chatMediaSub == nullptr || m_chatMediaModel->isExhausted();
 }
 
-void ProtocolController::openChatMedia(const QString &chatId)
+void ProtocolController::openChatMedia(const QString &chatId, const QString &kind)
 {
     delete m_chatMediaSub;
     m_chatMediaSub = nullptr;
@@ -2956,10 +3920,13 @@ void ProtocolController::openChatMedia(const QString &chatId)
         return;
     }
 
-    m_chatMediaSub = m_client->subscribe(QStringLiteral("chat_media"),
-                                         {{QStringLiteral("chat_id"), chatId},
-                                          {QStringLiteral("limit"), kChatMediaPageSize}},
-                                         m_chatMediaModel);
+    QJsonObject params{
+        {QStringLiteral("chat_id"), chatId},
+        {QStringLiteral("limit"), kChatMediaPageSize}};
+    if (!kind.isEmpty())
+        params[QStringLiteral("kinds")] = QJsonArray{kind};
+
+    m_chatMediaSub = m_client->subscribe(QStringLiteral("chat_media"), params, m_chatMediaModel);
     Q_EMIT chatMediaChanged();
 }
 
@@ -3395,7 +4362,8 @@ void ProtocolController::setAppPreference(const QString &key, bool value)
         QStringLiteral("notifications_enabled"), QStringLiteral("notification_sound"),
         QStringLiteral("notification_preview"), QStringLiteral("auto_download_photos"),
         QStringLiteral("auto_download_videos"), QStringLiteral("auto_download_audio"),
-        QStringLiteral("auto_download_documents"), QStringLiteral("auto_download_stickers")};
+        QStringLiteral("auto_download_documents"), QStringLiteral("auto_download_stickers"),
+        QStringLiteral("anti_delete"), QStringLiteral("send_typing_indicators")};
     if (!keys.contains(key)) {
         return;
     }
@@ -3419,6 +4387,16 @@ void ProtocolController::setProfileStatus(const QString &text)
 void ProtocolController::logout()
 {
     sendSettingsCommand(QStringLiteral("account.logout"), {}, i18nc("@info", "Logout failed"));
+}
+
+void ProtocolController::shutdownDaemon()
+{
+    // Fire-and-forget: the daemon acks, then exits on its own timer. The
+    // frontend quits regardless so a dead/absent daemon never blocks exit.
+    if (!m_client) {
+        return;
+    }
+    m_client->request(QStringLiteral("daemon.shutdown"), {}, [](const QJsonObject &, const ProtocolError &) {});
 }
 
 // --- history-sync strip (D2b2) --------------------------------------------
@@ -4007,8 +4985,7 @@ int ProtocolController::previousGraphemeBoundary(const QString &text, int cursor
 }
 
 void ProtocolController::handleCommandLine(const QStringList &arguments)
-{
-    QString uri;
+{    QString uri;
     for (const QString &arg : arguments) {
         if (arg.startsWith(QStringLiteral("whatevr:"), Qt::CaseInsensitive)) {
             uri = arg;
@@ -4020,6 +4997,20 @@ void ProtocolController::handleCommandLine(const QStringList &arguments)
         return;
     }
     openChatFromUri(uri);
+}
+
+void ProtocolController::openChatInNewWindow(const QString &chatId)
+{
+    if (chatId.isEmpty()) {
+        return;
+    }
+    // A second process with its own controller and daemon connection; the
+    // deep link selects the chat once its shell is up (same path as a
+    // notification cold-start).
+    const QString link = QStringLiteral("whatevr://chat/")
+        + QString::fromUtf8(QUrl::toPercentEncoding(chatId));
+    QProcess::startDetached(QCoreApplication::applicationFilePath(),
+                            {QStringLiteral("--new-window"), link});
 }
 
 void ProtocolController::openChatFromUri(const QString &uri)

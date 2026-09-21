@@ -48,6 +48,10 @@ public:
     // Look up a row's current item by id (empty map if absent).
     [[nodiscard]] Q_INVOKABLE QVariantMap itemById(const QString &id) const;
     [[nodiscard]] Q_INVOKABLE int indexOfId(const QString &id) const;
+    // The id at a sorted row ("" if out of range). Lets QML enumerate the
+    // model in order — e.g. to group status rows per contact — without any
+    // C++-side copy of the rows.
+    [[nodiscard]] Q_INVOKABLE QString idAt(int index) const;
 
     [[nodiscard]] bool isReady() const { return m_ready; }
     [[nodiscard]] bool isExhausted() const { return m_exhausted; }

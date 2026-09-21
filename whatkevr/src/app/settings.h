@@ -97,10 +97,13 @@ class Settings final : public QObject
     Q_PROPERTY(bool rememberColumnWidth READ rememberColumnWidth WRITE setRememberColumnWidth NOTIFY rememberColumnWidthChanged FINAL)
     // Persisted chat-list column width in pixels; 0 means "use the computed default".
     Q_PROPERTY(int chatListColumnWidth READ chatListColumnWidth WRITE setChatListColumnWidth NOTIFY chatListColumnWidthChanged FINAL)
+    Q_PROPERTY(bool closeToTray READ closeToTray WRITE setCloseToTray NOTIFY closeToTrayChanged FINAL)
 
     // --- Emoji ---
     // Default skin tone applied to tone-capable emoji; 0 == neutral, 1..5 == light..dark.
     Q_PROPERTY(int defaultSkinTone READ defaultSkinTone WRITE setDefaultSkinTone NOTIFY defaultSkinToneChanged FINAL)
+    Q_PROPERTY(bool appLockEnabled READ appLockEnabled NOTIFY appLockChanged FINAL)
+    Q_PROPERTY(bool appLocked READ appLocked NOTIFY appLockChanged FINAL)
 
 public:
     enum Density {
@@ -182,9 +185,16 @@ public:
     void setRememberColumnWidth(bool remember);
     [[nodiscard]] int chatListColumnWidth() const;
     void setChatListColumnWidth(int width);
+    [[nodiscard]] bool closeToTray() const;
+    void setCloseToTray(bool enabled);
 
     [[nodiscard]] int defaultSkinTone() const;
     void setDefaultSkinTone(int tone);
+    [[nodiscard]] bool appLockEnabled() const;
+    [[nodiscard]] bool appLocked() const;
+    Q_INVOKABLE bool setAppLockPin(const QString &pin);
+    Q_INVOKABLE bool unlockApp(const QString &pin);
+    Q_INVOKABLE void lockApp();
 
     // Color-scheme list for the Appearance combo: each entry is a map with
     // "id" and "name". The system-default entry has an empty "id".
@@ -244,7 +254,9 @@ Q_SIGNALS:
     void rememberWindowGeometryChanged();
     void rememberColumnWidthChanged();
     void chatListColumnWidthChanged();
+    void closeToTrayChanged();
     void defaultSkinToneChanged();
+    void appLockChanged();
     // Emitted after the media cache is cleared so QML re-queries the size.
     void cacheChanged();
 
@@ -279,5 +291,7 @@ private:
     bool m_rememberWindowGeometry = true;
     bool m_rememberColumnWidth = true;
     int m_chatListColumnWidth = 0;
+    bool m_closeToTray = true;
     int m_defaultSkinTone = 0;
+    bool m_appLocked = false;
 };

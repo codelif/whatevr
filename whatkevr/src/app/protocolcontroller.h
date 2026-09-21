@@ -82,6 +82,8 @@ class ProtocolController final : public QObject
     // no frontend-side filtering. loading/empty drive the list placeholders.
     Q_PROPERTY(QAbstractItemModel *chatsModel READ chatsModel CONSTANT FINAL)
     Q_PROPERTY(int chatFilter READ chatFilter WRITE setChatFilter NOTIFY chatFilterChanged FINAL)
+    Q_PROPERTY(QAbstractItemModel *chatFoldersModel READ chatFoldersModel CONSTANT FINAL)
+    Q_PROPERTY(int chatFolder READ chatFolder WRITE setChatFolder NOTIFY chatFolderChanged FINAL)
     Q_PROPERTY(bool chatsLoading READ chatsLoading NOTIFY chatsChanged FINAL)
     Q_PROPERTY(bool chatsEmpty READ chatsEmpty NOTIFY chatsChanged FINAL)
     // The list is windowed (DN6): the sidebar extends it as it scrolls instead
@@ -96,6 +98,8 @@ class ProtocolController final : public QObject
     // Windowed like the active list, so archivedCount is the loaded window, not
     // the true total; the header renders "N+" while more remain.
     Q_PROPERTY(bool archivedExhausted READ archivedExhausted NOTIFY archivedChanged FINAL)
+    // Subscribed but the initial archived window hasn't landed yet.
+    Q_PROPERTY(bool archivedLoading READ archivedLoading NOTIFY archivedChanged FINAL)
 
     // Typing overlay (D2b2): the global `typing` view, keyed by chat_id. The
     // delegate reads chatTyping(chatId); typingRevision bumps on every change so
@@ -170,6 +174,7 @@ class ProtocolController final : public QObject
     // applied locally — they arrive back through the `messages` view upsert
     // like any other message.
     Q_PROPERTY(bool composerEnabled READ composerEnabled NOTIFY composerChanged FINAL)
+    Q_PROPERTY(bool selectedChatCanSend READ selectedChatCanSend NOTIFY composerChanged FINAL)
     Q_PROPERTY(bool sendInFlight READ sendInFlight NOTIFY composerChanged FINAL)
     Q_PROPERTY(QString composerErrorText READ composerErrorText NOTIFY composerChanged FINAL)
 
@@ -214,6 +219,43 @@ class ProtocolController final : public QObject
     Q_PROPERTY(QAbstractItemModel *starredMessagesModel READ starredMessagesModel CONSTANT FINAL)
     Q_PROPERTY(bool starredMessagesLoading READ starredMessagesLoading NOTIFY starredMessagesChanged FINAL)
     Q_PROPERTY(bool starredMessagesExhausted READ starredMessagesExhausted NOTIFY starredMessagesChanged FINAL)
+
+    // Status tab: the `status` view, subscribed while the status page is on
+    // screen. Rows are per-update items (id, sender, kind, fallback, media);
+    // the page groups them per contact itself over the rows it already holds.
+    Q_PROPERTY(QAbstractItemModel *statusModel READ statusModel CONSTANT FINAL)
+    Q_PROPERTY(bool statusLoading READ statusLoading NOTIFY statusChanged FINAL)
+    Q_PROPERTY(bool statusExhausted READ statusExhausted NOTIFY statusChanged FINAL)
+    // Status keep: the `status.kept` view, subscribed alongside the status
+    // page. One row per keep-enabled sender id; the page archives those
+    // contacts' expired statuses instead of hiding them.
+    Q_PROPERTY(QAbstractItemModel *keptStatusModel READ keptStatusModel CONSTANT FINAL)
+    // Status mute: the `status.muted` view, subscribed alongside the status
+    // page. One row per muted sender id; the page collects those contacts
+    // under a Muted section instead of the main list.
+    Q_PROPERTY(QAbstractItemModel *mutedStatusModel READ mutedStatusModel CONSTANT FINAL)
+
+    // Calls tab: the `calls` view, subscribed while the calls page is on
+    // screen. One item per ringing call; callsRingingCount drives the rail
+    // badge. The desktop cannot answer (no media stack upstream): the page
+    // offers Reject and "answer on your phone".
+    Q_PROPERTY(QAbstractItemModel *callsModel READ callsModel CONSTANT FINAL)
+    Q_PROPERTY(int callsRingingCount READ callsRingingCount NOTIFY callsChanged FINAL)
+
+    // Logs tab: the `daemon.logs` view, subscribed while the logs page is on
+    // screen. Rows are log entries with time, level, and text.
+    Q_PROPERTY(QAbstractItemModel *logsModel READ logsModel CONSTANT FINAL)
+    Q_PROPERTY(bool logsLoading READ logsLoading NOTIFY logsLoadingChanged FINAL)
+    Q_PROPERTY(QString logsErrorText READ logsErrorText NOTIFY logsLoadingChanged FINAL)
+
+    // Channels tab: the `channels` view, subscribed while the channels page is
+    // on screen. One item per followed channel; tapping opens its messages.
+    Q_PROPERTY(QAbstractItemModel *channelsModel READ channelsModel CONSTANT FINAL)
+    Q_PROPERTY(bool channelsLoading READ channelsLoading NOTIFY channelsChanged FINAL)
+    Q_PROPERTY(QAbstractItemModel *channelMessagesModel READ channelMessagesModel CONSTANT FINAL)
+    Q_PROPERTY(bool channelMessagesLoading READ channelMessagesLoading NOTIFY channelMessagesChanged FINAL)
+    Q_PROPERTY(QString selectedChannelJid READ selectedChannelJid NOTIFY channelMessagesChanged FINAL)
+    Q_PROPERTY(QString selectedChannelName READ selectedChannelName NOTIFY channelMessagesChanged FINAL)
 
     // Per-chat media gallery: the `chat_media` view, subscribed while the
     // gallery page is open. Rows are ordinary `messages` items, so the gallery
@@ -312,8 +354,11 @@ public:
     [[nodiscard]] QString qrExpiryText() const;
 
     [[nodiscard]] QAbstractItemModel *chatsModel() const;
+    [[nodiscard]] QAbstractItemModel *chatFoldersModel() const;
     [[nodiscard]] int chatFilter() const { return m_chatFilter; }
+    [[nodiscard]] int chatFolder() const { return m_chatFolder; }
     void setChatFilter(int filter);
+    void setChatFolder(int folder);
     [[nodiscard]] bool chatsLoading() const;
     [[nodiscard]] bool chatsEmpty() const;
     [[nodiscard]] bool chatsExhausted() const;
@@ -322,6 +367,7 @@ public:
     [[nodiscard]] QAbstractItemModel *archivedChatsModel() const;
     [[nodiscard]] int archivedCount() const;
     [[nodiscard]] bool archivedExhausted() const;
+    [[nodiscard]] bool archivedLoading() const;
     Q_INVOKABLE void loadMoreArchivedChats();
 
     [[nodiscard]] int typingRevision() const { return m_typingRevision; }
@@ -380,6 +426,7 @@ public:
     [[nodiscard]] Q_INVOKABLE QVariantMap directMessageReceipt() const;
 
     [[nodiscard]] bool composerEnabled() const;
+    [[nodiscard]] bool selectedChatCanSend() const;
     [[nodiscard]] bool sendInFlight() const { return m_sendInFlight; }
     [[nodiscard]] QString composerErrorText() const { return m_composerErrorText; }
 
@@ -425,6 +472,20 @@ public:
     [[nodiscard]] QAbstractItemModel *starredMessagesModel() const;
     [[nodiscard]] bool starredMessagesLoading() const;
     [[nodiscard]] bool starredMessagesExhausted() const;
+    [[nodiscard]] QAbstractItemModel *statusModel() const;
+    [[nodiscard]] bool statusLoading() const;
+    [[nodiscard]] bool statusExhausted() const;
+    [[nodiscard]] QAbstractItemModel *callsModel() const;
+    [[nodiscard]] int callsRingingCount() const;
+     [[nodiscard]] QAbstractItemModel *logsModel() const;
+    [[nodiscard]] bool logsLoading() const { return m_logsLoading; }
+    [[nodiscard]] QString logsErrorText() const { return m_logsErrorText; }
+    [[nodiscard]] QAbstractItemModel *channelsModel() const;
+    [[nodiscard]] bool channelsLoading() const;
+    [[nodiscard]] QAbstractItemModel *channelMessagesModel() const;
+    [[nodiscard]] bool channelMessagesLoading() const;
+    [[nodiscard]] QString selectedChannelJid() const;
+    [[nodiscard]] QString selectedChannelName() const;
     [[nodiscard]] QAbstractItemModel *chatMediaModel() const;
     [[nodiscard]] bool chatMediaLoading() const;
     [[nodiscard]] bool chatMediaExhausted() const;
@@ -433,6 +494,67 @@ public:
     Q_INVOKABLE void openStarredMessages(const QString &chatId);
     Q_INVOKABLE void closeStarredMessages();
     Q_INVOKABLE void loadMoreStarredMessages();
+    // Subscribe/drop the `status` view for the status tab's lifetime, and grow
+    // its live-edge window older on scroll.
+    Q_INVOKABLE void openStatus();
+    Q_INVOKABLE void closeStatus();
+    Q_INVOKABLE void loadMoreStatus();
+    // Maps to `status.mark_viewed`; the row upserts viewed through the view.
+    Q_INVOKABLE void markStatusViewed(const QString &statusId);
+    // Maps to `status.post` (text or a media file with an optional caption).
+    Q_INVOKABLE void postStatusText(const QString &text, int background = 0, int font = 0);
+    Q_INVOKABLE void postStatusMedia(const QString &fileUrl, const QString &caption, int background = 0, int font = 0);
+    Q_INVOKABLE void replyToStatus(const QString &statusId, const QString &text);
+    // Maps to `status.download`; the row upserts with media.path on success.
+    Q_INVOKABLE void downloadStatus(const QString &statusId);
+    // Maps to `status.keep_sender`; kept contacts grow an archived section.
+    Q_INVOKABLE void setStatusKeepSender(const QString &senderId, bool kept);
+    [[nodiscard]] QAbstractItemModel *keptStatusModel() const;
+    // Maps to `status.mute_sender`; muted contacts collect under Muted.
+    Q_INVOKABLE void setStatusMuteSender(const QString &senderId, bool muted);
+    [[nodiscard]] QAbstractItemModel *mutedStatusModel() const;
+    // Subscribe/drop the `calls` view for the calls tab's lifetime.
+    Q_INVOKABLE void openCalls();
+    Q_INVOKABLE void closeCalls();
+    // Subscribe/drop the `daemon.logs` view for the logs page's lifetime.
+    Q_INVOKABLE void openLogs();
+    Q_INVOKABLE void closeLogs();
+
+    // Subscribe/drop the `chat_media` view for the gallery filter.
+    Q_INVOKABLE void openChatMedia(const QString &chatId, const QString &kind = QString());
+    Q_INVOKABLE void closeChatMedia();
+    Q_INVOKABLE void extendChatMedia(int count = 60);
+
+    // Signals for logs and chat media.
+    void logsChanged();
+
+    // Maps to `call.reject` for the latest ringing call in the chat.
+    Q_INVOKABLE void rejectCall(const QString &chatId);
+    // Subscribe/drop the `channels` view for the channels tab's lifetime.
+    Q_INVOKABLE void openChannels();
+    Q_INVOKABLE void closeChannels();
+    Q_INVOKABLE void openChannelMessages(const QString &jid, const QString &name);
+    Q_INVOKABLE void closeChannelMessages();
+    Q_INVOKABLE void followChannel(const QString &jidOrLink);
+    Q_INVOKABLE void unfollowChannel(const QString &jid);
+    Q_INVOKABLE void muteChannel(const QString &jid, bool muted);
+    Q_INVOKABLE void reactToChannelMessage(const QString &channelId, qint64 serverId, const QString &emoji);
+    Q_INVOKABLE void markChannelViewed(const QString &channelId, const QVariantList &serverIds);
+    // Group management for the group info card. Invite-link fetch copies the
+    // link to the clipboard on success.
+    Q_INVOKABLE void leaveGroup(const QString &chatId);
+    Q_INVOKABLE void copyGroupInviteLink(const QString &chatId);
+    // Maps to `media.save`: copies a chat message, status, or profile picture
+    // out of the daemon cache to a local file, downloading first when the row
+    // carries keys but no bytes yet (explicit per-item save, including for
+    // inbound view-once rows). Exactly one source id may be set.
+    Q_INVOKABLE void saveRemoteMedia(const QString &messageId, const QString &statusId, const QString &jid, const QUrl &destUrl);
+    // Maps to `chat.export`: writes the chat transcript (.txt, official
+    // export shape) to a local file. Failures surface through
+    // messageActionFailed; success through chatExported.
+    Q_INVOKABLE void exportChat(const QString &chatId, const QUrl &destUrl);
+    Q_INVOKABLE void exportBackup(const QUrl &destUrl, const QString &passphrase, bool useKeyring);
+    Q_INVOKABLE void setBackupPassphrase(const QString &passphrase);
     // Display fields (`messageId`, `chatId`, `chatName`, `senderName`,
     // `preview`, `timeText`, `isOutgoing`) derived from one daemon message-row
     // item. A pure function of its argument, so a delegate can call it on the
@@ -496,17 +618,38 @@ public:
     Q_INVOKABLE void setAutoDownloadLimit(qint64 maxBytes);
     Q_INVOKABLE void setProfileStatus(const QString &text);
     Q_INVOKABLE void logout();
+    // Asks the daemon to exit (tray icon is daemon-owned) for a full quit.
+    // Fire-and-forget: safe to call when the daemon is already gone.
+    Q_INVOKABLE void shutdownDaemon();
 
     // Composer send paths (D4a): map straight to `send.text`/`send.media`; the
     // daemon acks with an id only, the rendered message arrives via the
     // `messages` view. mentionedJids/replyToMessageId/caption may be empty.
     Q_INVOKABLE void sendText(const QString &text, const QString &replyToMessageId, const QStringList &mentionedJids);
-    Q_INVOKABLE void sendMedia(const QString &fileUrl, const QString &caption, const QString &replyToMessageId);
+    Q_INVOKABLE void scheduleText(const QString &text, qint64 sendAt);
+    // Scheduled-messages viewer session: one-shot list for the page plus
+    // cancel. Rows are {id, chat_id, text, send_at}.
+    Q_PROPERTY(QVariantList scheduledMessages READ scheduledMessages NOTIFY scheduledMessagesChanged FINAL)
+    [[nodiscard]] QVariantList scheduledMessages() const;
+    Q_INVOKABLE void refreshScheduledMessages(const QString &chatId);
+    Q_INVOKABLE void cancelScheduledMessage(qlonglong id, const QString &chatId);
+    // kind is "", "image", "video", "audio", "voice" or "document" ("" classifies
+    // from the file); viewOnce sends photo/video/audio view-once. QML may keep
+    // calling with three arguments — the defaults preserve the old behavior.
+    Q_INVOKABLE void sendMedia(const QString &fileUrl, const QString &caption, const QString &replyToMessageId, const QString &kind = {}, bool viewOnce = false);
+    Q_INVOKABLE void sendMediaBatch(const QVariantList &fileUrls, const QString &caption, const QString &replyToMessageId, const QString &kind = {}, bool viewOnce = false);
     // Sends whatever image the clipboard currently holds (pasted bitmap or a
     // local image file URL), same as sendMedia. Returns false when the
     // clipboard had nothing sendable, so the caller can fall back to a normal
     // paste-as-text.
     Q_INVOKABLE bool sendClipboardImage(const QString &caption, const QString &replyToMessageId);
+    // Maps to `send.poll`; follows the send.text/send.media in-flight shape so
+    // the composer shows the same ack/error behaviour. replyToMessageId may be empty.
+    Q_INVOKABLE void sendPoll(const QString &question, const QStringList &options, bool multiSelect, const QString &replyToMessageId);
+    // Maps to `send.contact`; shares a name+phone vCard into the selected chat.
+    Q_INVOKABLE void sendContact(const QString &name, const QString &phone, const QString &replyToMessageId);
+    // Maps to `send.location`; shares a pin with optional name/address.
+    Q_INVOKABLE void sendLocation(double latitude, double longitude, const QString &name, const QString &address, const QString &replyToMessageId);
     // Maps to `chat.typing`; the composer calls this on every start/stop and
     // periodically while composing (WhatsApp's composing indicator has a TTL).
     Q_INVOKABLE void setSelectedChatComposing(bool composing);
@@ -571,6 +714,8 @@ public:
     [[nodiscard]] Q_INVOKABLE QVariant pendingPollSelection(const QString &messageId) const;
     /// Hands a downloaded file to the system's default application.
     Q_INVOKABLE bool openLocalFile(const QString &localPath);
+    // Opens the daemon's log directory in the file manager.
+    Q_INVOKABLE bool openLogDirectory();
     /// A local path as a properly encoded file URL. QML used to concatenate
     /// "file://" + path, which breaks on any path containing '#', '?' or '%'.
     Q_INVOKABLE QUrl localFileUrl(const QString &localPath) const;
@@ -582,6 +727,9 @@ public:
 
     Q_INVOKABLE void sendReaction(const QString &messageId, const QString &emoji);
     Q_INVOKABLE void editMessage(const QString &messageId, const QString &newText);
+    // Maps to `message.edit_history`; answers through editHistoryReady with
+    // the superseded bodies, oldest first (the live row is the current one).
+    Q_INVOKABLE void requestEditHistory(const QString &messageId);
     Q_INVOKABLE void revokeMessage(const QString &messageId);
     Q_INVOKABLE void deleteMessageForMe(const QString &messageId);
     Q_INVOKABLE void setMessageStarred(const QString &messageId, bool starred);
@@ -602,8 +750,13 @@ public:
     // Chat-list mutations, mapped to the daemon's `chat.*` commands (acks only;
     // the row change lands back through the `chats` view — no local state).
     Q_INVOKABLE void setChatPinned(const QString &chatId, bool pinned);
+    Q_INVOKABLE void setChatFavorite(const QString &chatId, bool favorite);
     Q_INVOKABLE void setChatArchived(const QString &chatId, bool archived);
     Q_INVOKABLE void setChatMuted(const QString &chatId, bool muted, int durationSecs);
+    Q_INVOKABLE void createChatFolder(const QString &name);
+    Q_INVOKABLE void renameChatFolder(qint64 id, const QString &name);
+    Q_INVOKABLE void deleteChatFolder(qint64 id);
+    Q_INVOKABLE void assignChatFolder(const QString &chatId, qint64 id);
 
     Q_INVOKABLE void selectChat(const QString &chatId);
     Q_INVOKABLE void retryMessages();
@@ -614,6 +767,8 @@ public:
     Q_INVOKABLE void jumpToBottom();
     Q_INVOKABLE void showMessageInChat(const QString &chatId, const QString &messageId);
     Q_INVOKABLE void markSelectedChatViewed(const QString &upToMessageId);
+    // Maps to `chat.mark_all_read`; clears every badge at once.
+    Q_INVOKABLE void markAllChatsRead();
     Q_INVOKABLE void setConversationVisible(bool visible);
 
     // Subscribe/drop the `receipts` view for one message: the dialog's lifetime is
@@ -647,10 +802,6 @@ public:
     /// opens it in whatever manages contacts. That is "add this person" on a
     /// Linux desktop; a Save As dialog would only put a .vcf somewhere.
     Q_INVOKABLE bool saveContactCard(const QString &displayName, const QString &vcard);
-    /// Subscribes the per-chat media gallery; unsubscribing releases the window.
-    Q_INVOKABLE void openChatMedia(const QString &chatId);
-    Q_INVOKABLE void closeChatMedia();
-    Q_INVOKABLE void extendChatMedia(int count);
     // WhatsApp markup -> CommonMark, for "Copy as Markdown".
     [[nodiscard]] Q_INVOKABLE QString toCommonMark(const QString &text) const;
     // Start of the grapheme cluster before the cursor, so Backspace deletes a
@@ -673,12 +824,16 @@ public:
     // `whatevr://chat/<id>` URL selects that chat once the shell is up;
     // anything else just raises the window.
     void handleCommandLine(const QStringList &arguments);
+    // Pop a conversation into its own window: launches a second whatkevr
+    // process showing this chat (deep link applied once its shell is up).
+    Q_INVOKABLE void openChatInNewWindow(const QString &chatId);
 
     // The daemon's protocol socket, `$XDG_RUNTIME_DIR/whatevr/whatevrd.sock`.
     // Empty if XDG_RUNTIME_DIR is unset.
     [[nodiscard]] static QString daemonSocketPath();
 
-Q_SIGNALS:
+    Q_SIGNALS:
+    void chatFolderChanged();
     void stateChanged();
     void chatFilterChanged();
     void chatsChanged();
@@ -701,6 +856,16 @@ Q_SIGNALS:
     void chatSearchChanged();
     void starredMessagesChanged();
     void chatMediaChanged();
+    void statusChanged();
+    void callsChanged();
+    void channelsChanged();
+    void channelMessagesChanged();
+    void logsLoadingChanged();
+    // Answer to saveRemoteMedia: the bytes reached the destination path.
+    void remoteMediaSaved(const QString &destPath);
+    // Answer to exportChat: the transcript reached the destination path.
+    void chatExported(const QString &destPath);
+    void backupExported(const QString &destPath);
     /// Answer to streamMessageMedia: where a player can read this message from
     /// while it is still downloading.
     void mediaStreamReady(const QString &messageId, const QString &streamId, const QUrl &url);
@@ -731,16 +896,23 @@ Q_SIGNALS:
     void messageForwarded(int chatCount);
     void messageJumpReady(const QString &messageId);
     void messageJumpUnavailable(const QString &messageId);
+    // Answer to requestEditHistory: edits are {text, edited_at} maps, oldest
+    // first; failures surface through messageActionFailed instead.
+    void editHistoryReady(const QString &messageId, const QVariantList &edits);
     // The user put a message into the open chat's timeline (text, media or
     // sticker — not a reaction). The timeline uses it to follow the live edge
     // again when Settings.snapToBottomOnSend is set. Emitted when the command
     // is issued, not when it is acked: the snap should feel immediate, and the
     // row lands through the messages view either way.
     void messageSent();
+    void scheduledMessagesChanged();
     void openChatRequested(const QString &chatId);
     // Raise and focus the window: a second launch, or a deep link arriving
     // before the chat shell exists.
     void activateWindowRequested();
+    // Tray right-click: show the tray context menu at (x, y); coordinates may
+    // be 0,0 when the platform did not supply them.
+    void showTrayMenuRequested(int x, int y);
 
 private:
     // Transport reachability, independent of the daemon-reported WhatsApp state.
@@ -781,7 +953,7 @@ private:
     // Clears the models first so a filter switch never briefly shows the old
     // filter's rows.
     void subscribeChats();
-    // "all" / "direct" / "groups" for the current m_chatFilter (0/1/2).
+    // "all" / "direct" / "groups" / "unread" / "favorite" for m_chatFilter (0..4).
     [[nodiscard]] QString chatFilterName() const;
 
     // Recompute the derived history-sync strip state from the `sync` view item.
@@ -874,9 +1046,11 @@ private:
     whatevr::proto::ObjectViewModel *m_loginModel = nullptr;
     whatevr::proto::CollectionViewModel *m_chatsModel = nullptr;
     whatevr::proto::CollectionViewModel *m_archivedModel = nullptr;
+    whatevr::proto::CollectionViewModel *m_chatFoldersModel = nullptr;
     whatevr::proto::CollectionViewModel *m_typingModel = nullptr;
     whatevr::proto::ObjectViewModel *m_syncModel = nullptr;
     whatevr::proto::ObjectViewModel *m_selectedChatModel = nullptr;
+    whatevr::proto::ObjectViewModel *m_groupPolicyModel = nullptr;
     whatevr::proto::CollectionViewModel *m_messagesModel = nullptr;
     whatevr::proto::CollectionViewModel *m_presenceModel = nullptr;
     whatevr::proto::CollectionViewModel *m_receiptsModel = nullptr;
@@ -888,6 +1062,13 @@ private:
     whatevr::proto::CollectionViewModel *m_transfersModel = nullptr;
     whatevr::proto::CollectionViewModel *m_starredModel = nullptr;
     whatevr::proto::CollectionViewModel *m_chatMediaModel = nullptr;
+    whatevr::proto::CollectionViewModel *m_statusModel = nullptr;
+    whatevr::proto::CollectionViewModel *m_keptStatusModel = nullptr;
+    whatevr::proto::CollectionViewModel *m_mutedStatusModel = nullptr;
+    whatevr::proto::CollectionViewModel *m_callsModel = nullptr;
+    whatevr::proto::CollectionViewModel *m_channelsModel = nullptr;
+    whatevr::proto::CollectionViewModel *m_channelMessagesModel = nullptr;
+    whatevr::proto::CollectionViewModel *m_logsModel = nullptr;
     whatevr::proto::CollectionViewModel *m_groupMembersModel = nullptr;
     whatevr::proto::CollectionViewModel *m_chatMembersModel = nullptr;
     whatevr::proto::CollectionViewModel *m_blocklistModel = nullptr;
@@ -902,10 +1083,12 @@ private:
     whatevr::proto::Subscription *m_connectionSub = nullptr;
     whatevr::proto::Subscription *m_loginSub = nullptr;
     whatevr::proto::Subscription *m_chatsSub = nullptr;
+    whatevr::proto::Subscription *m_chatFoldersSub = nullptr;
     whatevr::proto::Subscription *m_archivedSub = nullptr;
     whatevr::proto::Subscription *m_typingSub = nullptr;
     whatevr::proto::Subscription *m_syncSub = nullptr;
     whatevr::proto::Subscription *m_selectedChatSub = nullptr;
+    whatevr::proto::Subscription *m_groupPolicySub = nullptr;
     whatevr::proto::Subscription *m_messagesSub = nullptr;
     whatevr::proto::Subscription *m_presenceSub = nullptr;
     whatevr::proto::Subscription *m_receiptsSub = nullptr;
@@ -914,6 +1097,13 @@ private:
     whatevr::proto::Subscription *m_transfersSub = nullptr;
     whatevr::proto::Subscription *m_starredSub = nullptr;
     whatevr::proto::Subscription *m_chatMediaSub = nullptr;
+    whatevr::proto::Subscription *m_statusSub = nullptr;
+    whatevr::proto::Subscription *m_keptStatusSub = nullptr;
+    whatevr::proto::Subscription *m_mutedStatusSub = nullptr;
+    whatevr::proto::Subscription *m_callsSub = nullptr;
+    whatevr::proto::Subscription *m_channelsSub = nullptr;
+    whatevr::proto::Subscription *m_channelMessagesSub = nullptr;
+    whatevr::proto::Subscription *m_logsSub = nullptr;
     whatevr::proto::Subscription *m_infoCardSub = nullptr;
     whatevr::proto::Subscription *m_groupMembersSub = nullptr;
     whatevr::proto::Subscription *m_chatMembersSub = nullptr;
@@ -921,7 +1111,8 @@ private:
     whatevr::proto::Subscription *m_privacySub = nullptr;
     whatevr::proto::Subscription *m_preferencesSub = nullptr;
     whatevr::proto::Subscription *m_selfSub = nullptr;
-    int m_chatFilter = 0; // 0 = all, 1 = direct, 2 = groups
+    int m_chatFilter = 0; // 0 = all, 1 = direct, 2 = groups, 3 = unread
+    int m_chatFolder = 0; // 0 = all folders, otherwise the folder id
     int m_typingRevision = 0;
 
     // Derived history-sync strip state (see recomputeHistorySync).
@@ -1009,6 +1200,8 @@ private:
     // Composer send state (D4a).
     bool m_sendInFlight = false;
     QString m_composerErrorText;
+    // Scheduled-messages viewer session (one-shot list, refreshed per open).
+    QVariantList m_scheduledMessages;
     // The chat a local "composing" was last sent true for, so a stop is only
     // sent to the chat that actually owns the composing state (mirrors
     // AppController::m_localComposingChatId).
@@ -1057,6 +1250,14 @@ private:
     int m_chatMembersRevision = 0;
     // Set once the mention picker asks for the roster; cleared on chat change.
     bool m_chatMembersWanted = false;
+    bool m_logsLoading = false;
+    QString m_logsErrorText;
+
+    // Channels tab state.
+    bool m_channelsLoading = false;
+    bool m_channelMessagesLoading = false;
+    QString m_selectedChannelJid;
+    QString m_selectedChannelName;
 
     // message id -> the selection a tap asked for, held only until `poll.vote`
     // answers. Never persisted, never merged with the daemon's tally.

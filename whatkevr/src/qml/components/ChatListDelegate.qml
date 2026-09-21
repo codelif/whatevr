@@ -17,6 +17,7 @@ ItemDelegate {
     property string initials: "?"
     property int unreadCount: 0
     property bool isPinned: false
+    property bool isFavorite: false
     property bool isArchived: false
     property bool isMuted: false
     // Threaded from the pane: archived rows collapse to nothing until the
@@ -26,6 +27,9 @@ ItemDelegate {
     property bool hasDraft: false
     property string draftText: ""
     property bool current: false
+    // Daemon status ring: "unviewed"/"viewed" when the DM sender has an
+    // unexpired status, "" otherwise. Tapping the avatar opens the viewer.
+    property string statusState: ""
     readonly property bool hasLastMessage: lastMessage.length > 0
     readonly property bool lastMessageIsOutgoing: lastMessageDirection === 2
     // A live "typing…" takes priority over a stored draft, which in turn replaces
@@ -63,8 +67,11 @@ ItemDelegate {
     }
 
     signal selected(string chatId)
+    signal openInNewWindowRequested(string chatId)
+    // Avatar tapped while the sender has an unexpired status: open it.
+    signal openStatusRequested(string chatId)
     signal pinToggled(string chatId, bool pinned)
-    signal contextMenuRequested(string chatId, bool pinned, bool archived, bool muted, real x, real y)
+    signal contextMenuRequested(string chatId, bool pinned, bool favorite, bool archived, bool muted, real x, real y)
 
     // Archived rows stay in the model (so the section header can count them) but
     // collapse to zero height while the "Archived" section is collapsed.
@@ -94,13 +101,22 @@ ItemDelegate {
 
     MouseArea {
         anchors.fill: parent
-        acceptedButtons: Qt.RightButton
+        acceptedButtons: Qt.LeftButton | Qt.RightButton
         hoverEnabled: false
         z: 1
 
         onPressed: mouse => {
-            root.contextMenuRequested(root.chatId, root.isPinned, root.isArchived, root.isMuted, mouse.x, mouse.y)
-            mouse.accepted = true
+            if (mouse.button === Qt.RightButton) {
+                root.contextMenuRequested(root.chatId, root.isPinned, root.isFavorite, root.isArchived, root.isMuted, mouse.x, mouse.y)
+                mouse.accepted = true
+            } else if ((mouse.modifiers & Qt.ControlModifier) && mouse.button === Qt.LeftButton) {
+                // Ctrl+click pops the conversation into its own window.
+                root.openInNewWindowRequested(root.chatId)
+                mouse.accepted = true
+            } else {
+                // Ordinary click: let the delegate handle selection itself.
+                mouse.accepted = false
+            }
         }
     }
 
@@ -144,6 +160,26 @@ ItemDelegate {
             // demand-driven by the `chats` subscription itself (PROTOCOL.md
             // "the daemon knows what is visible"), and a refreshed path arrives
             // as an ordinary row upsert. Until then the initials show.
+
+            // Status ring: highlight while any status is unviewed.
+            Rectangle {
+                visible: root.statusState.length > 0
+                anchors.centerIn: parent
+                width: parent.width + Math.max(4, Kirigami.Units.smallSpacing)
+                height: width
+                radius: width / 2
+                color: "transparent"
+                border.width: root.statusState === "unviewed" ? Math.max(2, Kirigami.Units.smallSpacing / 2) : 1
+                border.color: root.statusState === "unviewed"
+                    ? Kirigami.Theme.highlightColor
+                    : Qt.alpha(Kirigami.Theme.textColor, 0.25)
+                z: -1
+            }
+
+            TapHandler {
+                enabled: root.statusState.length > 0
+                onTapped: root.openStatusRequested(root.chatId)
+            }
         }
 
         Column {

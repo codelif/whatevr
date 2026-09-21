@@ -7,8 +7,8 @@ import org.kde.kirigami as Kirigami
 import Whatevr as Whatevr
 
 // Full text of a long ("Read more") message, shown verbatim with the same markup
-// the bubble renders. The body scrolls inside our own kinetic Flickable (custom
-// scroller + DiscreetScrollBar), fully selectable/copyable, with a dedicated Copy
+// the bubble renders. The body scrolls inside our own Flickable (native wheel
+// + DiscreetScrollBar), fully selectable/copyable, with a dedicated Copy
 // button.
 CenteredDialog {
     id: root
@@ -45,8 +45,8 @@ CenteredDialog {
     standardButtons: Kirigami.Dialog.Close
 
     // Kirigami.Dialog wraps its content in a QQC2.ScrollView with its own vertical
-    // scrollbar; our body Flickable already scrolls via the custom kinetic
-    // scroller + DiscreetScrollBar, so suppress the dialog's duplicate bar.
+    // scrollbar; our body Flickable already scrolls natively with a
+    // DiscreetScrollBar, so suppress the dialog's duplicate bar.
     Component.onCompleted: contentItem.ScrollBar.vertical.policy = ScrollBar.AlwaysOff
 
     function openFor(snapshot) {
@@ -117,12 +117,6 @@ CenteredDialog {
                     cursorShape: (root.useRichText && contentText.linkAt(mouseX, mouseY))
                                  ? Qt.PointingHandCursor : Qt.IBeamCursor
                 }
-            }
-
-            KineticWheelScroller {
-                anchors.fill: parent
-                target: bodyFlick
-                wheelStep: Kirigami.Units.gridUnit * 3
             }
         }
     }

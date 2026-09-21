@@ -53,5 +53,17 @@ SettingsPage {
             text: Whatevr.I18n.i18nc("@label keyboard shortcut", "Paste image from clipboard")
             keys: "Ctrl+V"
         }
+        FormCard.FormDelegateSeparator {}
+        ShortcutRow {
+            objectName: "shortcuts.bold"
+            text: Whatevr.I18n.i18nc("@label keyboard shortcut", "Bold / italic / strikethrough selection")
+            keys: "Ctrl+B / Ctrl+I / Ctrl+U"
+        }
+        FormCard.FormDelegateSeparator {}
+        ShortcutRow {
+            objectName: "shortcuts.popout"
+            text: Whatevr.I18n.i18nc("@label keyboard shortcut", "Open chat in a new window")
+            keys: "Ctrl+Click"
+        }
     }
 }

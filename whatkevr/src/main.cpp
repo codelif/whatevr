@@ -173,17 +173,21 @@ int main(int argc, char *argv[])
     });
     QObject::connect(VideoPlaybackArbiter::instance(), &VideoPlaybackArbiter::audiblePlaybackStarted, AudioPlayer::instance(), &AudioPlayer::pause);
 
-    // Single-instance: a second launch (e.g. clicking a notification, which runs
-    // `whatkevr whatevr://chat/<id>` via the desktop scheme handler) forwards its
-    // command line to the running instance through activateRequested instead of
-    // starting a new window.
-    KDBusService service(KDBusService::Unique);
-    QObject::connect(&service,
-                     &KDBusService::activateRequested,
-                     &protocolController,
-                     [&protocolController](const QStringList &arguments, const QString &) {
-                         protocolController.handleCommandLine(arguments);
-                     });
+    // Pop-out conversation windows (ctrl+click a chat) run as a second
+    // process sharing the daemon socket: each process owns its singleton
+    // controller and protocol connection, so the window needs no shared
+    // state. Unique stays the default so notification clicks and deep links
+    // keep landing in the running instance.
+    const bool newWindow = app.arguments().contains(QStringLiteral("--new-window"));
+    KDBusService service(newWindow ? KDBusService::Multiple : KDBusService::Unique);
+    if (!newWindow) {
+        QObject::connect(&service,
+                         &KDBusService::activateRequested,
+                         &protocolController,
+                         [&protocolController](const QStringList &arguments, const QString &) {
+                             protocolController.handleCommandLine(arguments);
+                         });
+    }
 
     QObject::connect(
         &engine,

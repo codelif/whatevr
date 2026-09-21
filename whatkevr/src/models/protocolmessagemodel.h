@@ -136,6 +136,11 @@ public:
         // A message that arrived but would not decrypt, and has been asked for
         // again. The row turns into the real message, in place, if it comes.
         WaitingRole,
+        // Sender device id: 0 is the primary phone app, anything else a linked
+        // device (Web/Desktop or another companion). Drives the footer mark.
+        SenderDeviceRole,
+        // WhatsApp forward marker (daemon `forwarded`).
+        IsForwardedRole,
     };
     Q_ENUM(Role)
 

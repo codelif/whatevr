@@ -63,9 +63,13 @@ Item {
         border.width: 1
     }
 
-    RowLayout {
+    ColumnLayout {
         anchors.fill: parent
         anchors.margins: Kirigami.Units.smallSpacing
+
+    RowLayout {
+        Layout.fillWidth: true
+        Layout.fillHeight: true
         spacing: Kirigami.Units.smallSpacing
 
         Item {
@@ -136,6 +140,7 @@ Item {
             color: Kirigami.Theme.disabledTextColor
         }
     }
+    } // ColumnLayout: preview strip above, filename row below
 
     MediaDragArea {
         anchors.fill: parent

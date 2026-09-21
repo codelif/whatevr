@@ -37,6 +37,7 @@ set(KDE_COMPILERSETTINGS_LEVEL ${KF_MIN_VERSION})
 find_package(Qt6 ${QT_MIN_VERSION} REQUIRED COMPONENTS
     Core
     Gui
+    Multimedia
     Network
     OpenGL
     Qml

@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import QtQuick.Controls as QQC2
 import QtQuick.Controls
 import QtQuick.Layouts
 import Qt.labs.platform as Platform
@@ -30,6 +31,10 @@ Frame {
     property string editingMessageId: ""
     property string editingOriginalText: ""
     readonly property bool editing: editingMessageId.length > 0
+    // View-once arms the next attach only; it resets after every send. The
+    // daemon rejects it for kinds with no view-once form (documents etc.).
+    property bool viewOnceSend: false
+    property var recorder: null
 
     // Inline suggestion state, shared by the `:keyword` emoji bar and the `@`
     // mention bar. suggestionMode selects which kind the current results are.
@@ -62,7 +67,8 @@ Frame {
     property var pendingMentions: []
 
     signal sendTextRequested(string text, string replyToMessageId, var mentionedJids)
-    signal sendImageRequested(string fileUrl, string caption, string replyToMessageId)
+    signal sendImageRequested(string fileUrl, string caption, string replyToMessageId, string kind, bool viewOnce)
+    signal sendMediaBatchRequested(var fileUrls, string caption, string replyToMessageId, string kind, bool viewOnce)
     signal composingChanged(bool composing)
     signal clearReplyRequested()
     signal replyConsumed()
@@ -93,6 +99,35 @@ Frame {
 
     function inputPlainText() {
         return input.getText(0, input.length).trim()
+    }
+
+    // Wrap the selection (or the word under a collapsed cursor) in a markup
+    // marker, toggling it off when already wrapped.
+    function wrapSelectionWith(mark) {
+        let start = input.selectionStart
+        let end = input.selectionEnd
+        if (start === end) {
+            const text = input.getText(0, input.length)
+            start = end
+            while (start > 0 && /[^\s]/.test(text.charAt(start - 1))) {
+                start -= 1
+            }
+            while (end < text.length && /[^\s]/.test(text.charAt(end))) {
+                end += 1
+            }
+            if (start === end) {
+                return
+            }
+        }
+        const text = input.getText(0, input.length)
+        const inner = text.substring(start, end)
+        if (inner.length >= 2 && inner.startsWith(mark) && inner.endsWith(mark)) {
+            input.remove(start, start + 1)
+            input.remove(end - 2, end - 1)
+            return
+        }
+        input.insert(end, mark)
+        input.insert(start, mark)
     }
 
     Kirigami.Theme.colorSet: Kirigami.Theme.View
@@ -271,6 +306,10 @@ Frame {
         if (q.length === 0 || "everyone".indexOf(q) === 0 || "all".indexOf(q) === 0) {
             results.push({ jid: "", displayName: "all", label: "Everyone", avatar: "", isAll: true })
         }
+        // "Admins" (@admins) mentions just the group's admins.
+        if (q.length === 0 || "admins".indexOf(q) === 0) {
+            results.push({ jid: "", displayName: "admins", label: "Admins", avatar: "", isAll: false, isAdmins: true })
+        }
         for (const member of root.mentionMembers) {
             const name = member.display_name || member.phone || member.jid
             if (q.length === 0 || name.toLowerCase().indexOf(q) >= 0) {
@@ -310,7 +349,7 @@ Frame {
         input.remove(start, end)
         input.insert(start, inserted)
         const updated = root.pendingMentions.slice()
-        updated.push({ jid: item.jid, displayName: item.displayName, isAll: item.isAll === true })
+        updated.push({ jid: item.jid, displayName: item.displayName, isAll: item.isAll === true, isAdmins: item.isAdmins === true })
         root.pendingMentions = updated
         root.hideSuggestions()
     }
@@ -331,6 +370,14 @@ Frame {
             if (mention.isAll) {
                 for (const member of root.mentionMembers) {
                     if (member.jid && jids.indexOf(member.jid) < 0) {
+                        jids.push(member.jid)
+                    }
+                }
+                continue
+            }
+            if (mention.isAdmins) {
+                for (const member of root.mentionMembers) {
+                    if ((member.role === "admin" || member.role === "superadmin") && member.jid && jids.indexOf(member.jid) < 0) {
                         jids.push(member.jid)
                     }
                 }
@@ -471,6 +518,8 @@ Frame {
 
     onEnabledForChatChanged: {
         if (!enabledForChat) {
+            if (root.recorder && root.recorder.recording)
+                root.recorder.cancel()
             root.setComposing(false)
             emojiPicker.close()
             root.hideSuggestions()
@@ -663,6 +712,37 @@ Frame {
             spacing: Kirigami.Units.smallSpacing
 
             ToolButton {
+                id: recordButton
+                visible: !root.editing
+                icon.name: recorder && recorder.recording ? "media-playback-stop-symbolic" : "audio-input-microphone-symbolic"
+                text: recorder && recorder.recording
+                      ? Whatevr.I18n.i18nc("@action:button stop voice recording", "Stop recording")
+                      : Whatevr.I18n.i18nc("@action:button record voice message", "Record voice message")
+                display: AbstractButton.IconOnly
+                enabled: root.enabledForChat && !root.sending
+                onClicked: {
+                    if (!root.recorder)
+                        root.recorder = recorderComponent.createObject(root)
+                    if (root.recorder.recording) {
+                        root.recorder.stop()
+                    } else {
+                        root.recorder.start()
+                    }
+                }
+                Layout.alignment: Qt.AlignVCenter
+            }
+
+            ToolButton {
+                visible: !root.editing
+                icon.name: "appointment-new-symbolic"
+                text: Whatevr.I18n.i18nc("@action:button schedule message", "Schedule message")
+                display: AbstractButton.IconOnly
+                enabled: root.enabledForChat && !root.sending && input.text.trim().length > 0
+                onClicked: scheduleDialog.open()
+                Layout.alignment: Qt.AlignVCenter
+            }
+
+            ToolButton {
                 id: emojiButton
 
                 text: Whatevr.I18n.i18nc("@action:button", "Choose emoji or sticker")
@@ -755,6 +835,18 @@ Frame {
                             return
                         }
 
+                        // *bold*, _italic_, ~strike~: wrap the selection (or
+                        // the word under the cursor) like WhatsApp Desktop.
+                        if ((event.modifiers & Qt.ControlModifier) || (event.modifiers & Qt.MetaModifier)) {
+                            const mark = event.key === Qt.Key_B ? "*"
+                                : event.key === Qt.Key_I ? "_"
+                                : event.key === Qt.Key_U ? "~" : ""
+                            if (mark.length > 0) {
+                                root.wrapSelectionWith(mark)
+                                event.accepted = true
+                                return
+                            }
+                        }
                         if ((event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab)
                                 && root.suggestionsActive) {
                             root.cycleSuggestion(event.key === Qt.Key_Backtab ? -1 : 1)
@@ -786,15 +878,71 @@ Frame {
             }
 
             ToolButton {
+                id: attachButton
                 // Attaching media isn't part of an in-place edit (only the
                 // caption/body changes), so hide it while editing.
                 visible: !root.editing
-                icon.name: "image-x-generic-symbolic"
-                text: Whatevr.I18n.i18nc("@action:button", "Attach image")
+                icon.name: "mail-attachment-symbolic"
+                text: Whatevr.I18n.i18nc("@action:button", "Attach file")
                 display: AbstractButton.IconOnly
                 enabled: root.enabledForChat && !root.sending
-                onClicked: imageDialog.open()
+                onClicked: attachMenu.open()
                 Layout.alignment: Qt.AlignVCenter
+
+                Menu {
+                    id: attachMenu
+                    y: -height
+
+                    MenuItem {
+                        text: Whatevr.I18n.i18nc("@action:inmenu attach", "Photo & Video")
+                        icon.name: "image-x-generic-symbolic"
+                        onTriggered: photoVideoDialog.open()
+                    }
+                    MenuItem {
+                        text: Whatevr.I18n.i18nc("@action:inmenu attach", "Document")
+                        icon.name: "document-open-symbolic"
+                        onTriggered: documentDialog.open()
+                    }
+                    MenuItem {
+                        text: Whatevr.I18n.i18nc("@action:inmenu attach", "Audio")
+                        icon.name: "audio-x-generic-symbolic"
+                        onTriggered: audioDialog.open()
+                    }
+                    MenuItem {
+                        text: Whatevr.I18n.i18nc("@action:inmenu attach", "Contact")
+                        icon.name: "contact-new-symbolic"
+                        onTriggered: contactDialog.open()
+                    }
+                    MenuItem {
+                        text: Whatevr.I18n.i18nc("@action:inmenu attach", "Location")
+                        icon.name: "mark-location-symbolic"
+                        onTriggered: locationDialog.open()
+                    }
+                    MenuItem {
+                        text: Whatevr.I18n.i18nc("@action:inmenu attach", "Poll")
+                        icon.name: "view-list-symbolic"
+                        onTriggered: pollDialog.open()
+                    }
+                }
+            }
+
+            ToolButton {
+                // View-once applies to the next photo/video/audio attach only;
+                // it resets after every send. Documents and stickers have no
+                // view-once form, so the daemon rejects those combinations.
+                visible: !root.editing
+                icon.name: "view-hidden-symbolic"
+                text: Whatevr.I18n.i18nc("@action:button send the next attachment view-once", "View once")
+                display: AbstractButton.IconOnly
+                checkable: true
+                checked: root.viewOnceSend
+                enabled: root.enabledForChat && !root.sending
+                onToggled: root.viewOnceSend = checked
+                Layout.alignment: Qt.AlignVCenter
+
+                ToolTip.visible: hovered
+                ToolTip.text: text
+                ToolTip.delay: Kirigami.Units.toolTipDelay
             }
 
             ToolButton {
@@ -807,6 +955,55 @@ Frame {
                 onClicked: root.submitText()
                 Layout.alignment: Qt.AlignVCenter
             }
+        }
+    }
+
+    Component {
+        id: recorderComponent
+        Whatevr.AudioRecorder {}
+    }
+
+    QQC2.Dialog {
+        id: scheduleDialog
+        title: Whatevr.I18n.i18nc("@title:dialog schedule message", "Schedule message")
+        modal: true
+        standardButtons: QQC2.Dialog.Ok | QQC2.Dialog.Cancel
+        ColumnLayout {
+            width: parent.width
+            QQC2.Label { text: Whatevr.I18n.i18nc("@info", "Choose when this message should be sent.") }
+            QQC2.SpinBox {
+                id: scheduleMinutes
+                from: 1
+                to: 60 * 24 * 30
+                value: 10
+                editable: true
+                textFromValue: value => value + " min"
+            }
+        }
+        onAccepted: {
+            Whatevr.ProtocolController.scheduleText(input.text, Math.floor(Date.now() / 1000) + scheduleMinutes.value * 60)
+            input.clear()
+            root.hideSuggestions()
+            root.replyConsumed()
+        }
+    }
+
+    Connections {
+        target: root.recorder
+        ignoreUnknownSignals: true
+        function onRecordingFinished(path) {
+            if (path.length > 0 && root.enabledForChat) {
+                Whatevr.ProtocolController.sendMedia(
+                    Whatevr.ProtocolController.localFileUrl(path), "", root.replyToMessageId, "voice", false)
+                root.recorder.resetAfterSend()
+            } else if (root.recorder) {
+                root.recorder.cancel()
+            }
+        }
+        function onErrorOccurred(message) {
+            console.warn("Voice recording failed:", message)
+            if (root.recorder)
+                root.recorder.cancel()
         }
     }
 
@@ -960,17 +1157,141 @@ Frame {
     }
 
     Platform.FileDialog {
-        id: imageDialog
+        id: photoVideoDialog
 
-        title: Whatevr.I18n.i18nc("@title:window", "Attach image")
-        nameFilters: [Whatevr.I18n.i18nc("@item:inlistbox", "Images (*.png *.jpg *.jpeg *.webp)")]
-        fileMode: Platform.FileDialog.OpenFile
+        title: Whatevr.I18n.i18nc("@title:window", "Attach photo or video")
+        nameFilters: [
+            Whatevr.I18n.i18nc("@item:inlistbox", "Images (*.png *.jpg *.jpeg *.webp)"),
+            Whatevr.I18n.i18nc("@item:inlistbox", "Videos (*.mp4 *.mov *.webm *.3gp)"),
+            Whatevr.I18n.i18nc("@item:inlistbox", "All files (*)")
+        ]
+        fileMode: Platform.FileDialog.OpenFiles
         onAccepted: {
+            attachConfirmDialog.stage(files, "", root.viewOnceSend)
+        }
+    }
+
+    Platform.FileDialog {
+        id: documentDialog
+
+        title: Whatevr.I18n.i18nc("@title:window", "Attach document")
+        nameFilters: [
+            Whatevr.I18n.i18nc("@item:inlistbox", "All files (*)")
+        ]
+        fileMode: Platform.FileDialog.OpenFiles
+        onAccepted: {
+            attachConfirmDialog.stage(files, "document", false)
+        }
+    }
+
+    Platform.FileDialog {
+        id: audioDialog
+
+        title: Whatevr.I18n.i18nc("@title:window", "Attach audio")
+        nameFilters: [
+            Whatevr.I18n.i18nc("@item:inlistbox", "Audio (*.ogg *.oga *.opus *.mp3 *.m4a *.aac *.wav *.flac *.amr)"),
+            Whatevr.I18n.i18nc("@item:inlistbox", "All files (*)")
+        ]
+        fileMode: Platform.FileDialog.OpenFiles
+        onAccepted: {
+            attachConfirmDialog.stage(files, "audio", root.viewOnceSend)
+        }
+    }
+
+    // Drops from the conversation's two drop halves land here: same staging
+    // dialog as picked files, minus view-once (a drop is never armed).
+    function stageDrop(urls, kind) {
+        attachConfirmDialog.stage(urls, kind, false)
+    }
+
+    // Staging gate: every pick lands here first; Send fires the batch with
+    // the dialog's caption (not the composer's half-typed text — the files
+    // send as their own messages, exactly like the old direct path did).
+    AttachConfirmDialog {
+        id: attachConfirmDialog
+
+        onConfirmed: (fileUrls, caption, kind, viewOnce) => {
             root.setComposing(false)
-            root.sendImageRequested(file, root.inputPlainText(), root.replyToMessageId)
+            root.sendMediaBatchRequested(fileUrls, caption, root.replyToMessageId, kind, viewOnce)
+            root.viewOnceSend = false
             root.replyConsumed()
             input.clear()
             root.hideSuggestions()
+        }
+    }
+
+    PollCreateDialog {
+        id: pollDialog
+        replyToMessageId: root.replyToMessageId
+    }
+
+    Platform.FileDialog {
+        id: contactDialog
+
+        title: Whatevr.I18n.i18nc("@title:window", "Attach contact")
+        fileMode: Platform.FileDialog.OpenFile
+        nameFilters: [
+            Whatevr.I18n.i18nc("@item:inlistbox", "vCard files (*.vcf)"),
+            Whatevr.I18n.i18nc("@item:inlistbox", "All files (*)")
+        ]
+        onAccepted: {
+            // `file` is the picked URL (file:///...). XHR fetches file URLs
+            // directly; the basename fallback decodes the percent-encoding a
+            // URL carries for spaces and other special characters.
+            const base = decodeURI(file.substring(file.lastIndexOf("/") + 1))
+            // Extract name and phone from the vCard, falling back to the filename.
+            // The daemon sends contacts as name+phone so we parse the minimal vCard
+            // fields the frontend has without depending on a vcard library.
+            let name = ""
+            let phone = ""
+            try {
+                const req = new XMLHttpRequest()
+                req.open("GET", file, false)
+                req.send(null)
+                const txt = req.responseText
+                const fnMatch = txt.match(/FN[:;][^:\n]*/i)
+                if (fnMatch) name = fnMatch[0].replace(/^FN[:;]/i, "").trim()
+                const telMatch = txt.match(/TEL[^:\n]*:([0-9+#\s()-]+)/i)
+                if (telMatch) phone = telMatch[1].trim()
+            } catch (e) {
+                name = base
+            }
+            if (!name) name = base
+            root.setComposing(false)
+            Whatevr.ProtocolController.sendContact(name, phone, root.replyToMessageId)
+            root.replyConsumed()
+            input.clear()
+            root.hideSuggestions()
+        }
+    }
+
+    Platform.FileDialog {
+        id: locationDialog
+
+        title: Whatevr.I18n.i18nc("@title:window", "Attach location")
+        fileMode: Platform.FileDialog.OpenFile
+        onAccepted: {
+            let sent = false
+            try {
+                const req = new XMLHttpRequest()
+                req.open("GET", file, false)
+                req.send(null)
+                const data = JSON.parse(req.responseText)
+                if (!Number.isFinite(Number(data.lat)) || !Number.isFinite(Number(data.long)))
+                    throw new Error("location requires numeric lat and long")
+                root.setComposing(false)
+                Whatevr.ProtocolController.sendLocation(
+                    Number(data.lat), Number(data.long),
+                    data.name || "", data.address || "", root.replyToMessageId)
+                sent = true
+            } catch (e) {
+                console.warn("Location file parse error:", e)
+            }
+            if (sent) {
+                root.replyConsumed()
+                input.clear()
+                root.hideSuggestions()
+            }
         }
     }
 }

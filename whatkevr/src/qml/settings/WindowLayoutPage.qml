@@ -23,6 +23,16 @@ SettingsPage {
         FormCard.FormDelegateSeparator {}
 
         FormCard.FormSwitchDelegate {
+            objectName: "window.closeToTray"
+            text: Whatevr.I18n.i18nc("@option:check", "Close to system tray")
+            description: Whatevr.I18n.i18nc("@info", "Closing the window keeps Whatevr running in the tray. Use the tray menu to reopen or quit.")
+            checked: Whatevr.Settings.closeToTray
+            onToggled: Whatevr.Settings.closeToTray = checked
+        }
+
+        FormCard.FormDelegateSeparator {}
+
+        FormCard.FormSwitchDelegate {
             objectName: "window.rememberColumnWidth"
             text: Whatevr.I18n.i18nc("@option:check", "Remember chat list width")
             description: Whatevr.I18n.i18nc("@info", "Restore the width you set for the chat list column.")

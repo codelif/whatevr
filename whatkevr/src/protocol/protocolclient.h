@@ -172,6 +172,12 @@ Q_SIGNALS:
     void errorOccurred(const QString &message);
     // A connection-directed `open_chat` event (notification click / URL).
     void openChatRequested(const QString &chatId);
+    // A connection-directed `activate_window` event (tray left-click, second
+    // launch): raise and focus the window.
+    void activateWindowRequested();
+    // A connection-directed `show_tray_menu` event (tray right-click): show
+    // the tray context menu at (x, y); coordinates may be 0,0.
+    void showTrayMenuRequested(int x, int y);
     // Terminal recovery for one media.stream request on this connection.
     void mediaStreamUpdated(const QString &streamId,
                             const QString &messageId,

@@ -5,6 +5,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 import Whatevr as Whatevr
+import "Initials.js" as Initials
 import "Wallpapers.js" as Wallpapers
 
 Kirigami.Page {
@@ -120,20 +121,6 @@ Kirigami.Page {
     padding: 0
     focus: true
     Kirigami.Theme.colorSet: Kirigami.Theme.Window
-
-    function initialsForName(name) {
-        const parts = name.trim().split(/\s+/)
-        let initials = ""
-        for (const part of parts) {
-            if (part.length > 0) {
-                initials += part.charAt(0).toUpperCase()
-            }
-            if (initials.length >= 2) {
-                break
-            }
-        }
-        return initials.length > 0 ? initials : "?"
-    }
 
     // Opens the contact/group info page for the currently selected chat. Group
     // JIDs end with "@g.us"; everything else is a 1:1 user.
@@ -335,6 +322,7 @@ Kirigami.Page {
         readonly property real avatarSize: Kirigami.Units.gridUnit * 1.8
         readonly property real subtextPixelSize: Math.max(8, Math.round(Kirigami.Theme.smallFont.pixelSize * 0.82))
 
+        visible: false
         Layout.fillWidth: true
         Layout.minimumWidth: 0
         implicitHeight: avatarSize
@@ -370,11 +358,58 @@ Kirigami.Page {
             Layout.preferredWidth: headerTitle.avatarSize
             Layout.preferredHeight: headerTitle.avatarSize
             avatarLocalPath: Whatevr.ProtocolController.selectedChatAvatarLocalPath
-            initials: root.initialsForName(Whatevr.ProtocolController.selectedChatName)
+            initials: Initials.firstTwo(Whatevr.ProtocolController.selectedChatName)
 
-            TapHandler {
-                enabled: Whatevr.ProtocolController.hasSelectedChat
-                onTapped: root.openChatInfo()
+             TapHandler {
+                 enabled: Whatevr.ProtocolController.hasSelectedChat
+                onTapped: Whatevr.ProtocolController.viewProfilePicture(
+                              Whatevr.ProtocolController.selectedChatId)
+             }
+        }
+
+        ToolButton {
+            visible: !headerTitle.selectionActive && Whatevr.ProtocolController.hasSelectedChat
+            Layout.alignment: Qt.AlignVCenter
+            icon.name: "view-more-symbolic"
+            text: Whatevr.I18n.i18nc("@action:button chat header menu", "Chat menu")
+            display: AbstractButton.IconOnly
+            onClicked: chatHeaderMenu.open()
+        }
+
+        Menu {
+            id: chatHeaderMenu
+
+            MenuItem {
+                text: Whatevr.I18n.i18nc("@action:menu chat info", "Chat info")
+                icon.name: "dialog-information-symbolic"
+                onTriggered: root.openChatInfo()
+            }
+            MenuItem {
+                text: Whatevr.I18n.i18nc("@action:menu chat media", "Media, links and documents")
+                icon.name: "folder-pictures-symbolic"
+                onTriggered: applicationWindow().pageStack.layers.push(
+                    Qt.resolvedUrl("ChatMediaGalleryPage.qml"), {
+                        chatId: Whatevr.ProtocolController.selectedChatId,
+                        chatName: Whatevr.ProtocolController.selectedChatName
+                    })
+            }
+            MenuItem {
+                text: Whatevr.I18n.i18nc("@action:menu starred chat messages", "Starred messages")
+                icon.name: "starred-symbolic"
+                onTriggered: applicationWindow().openWorkspace("starred")
+            }
+            MenuItem {
+                text: Whatevr.I18n.i18nc("@action:menu export chat", "Export chat…")
+                icon.name: "document-save-symbolic"
+                onTriggered: messageView.exportChatDialog.openFor(
+                    Whatevr.ProtocolController.selectedChatId,
+                    Whatevr.ProtocolController.selectedChatName)
+            }
+            MenuSeparator {}
+            MenuItem {
+                text: Whatevr.I18n.i18nc("@action:menu close chat", "Close chat")
+                icon.name: "dialog-close-symbolic"
+                onTriggered: root.closeChatRequested()
             }
         }
 
@@ -428,6 +463,13 @@ Kirigami.Page {
 
     property list<Kirigami.Action> defaultActions: [
         Kirigami.Action {
+            icon.name: "view-more-symbolic"
+            text: Whatevr.I18n.i18nc("@action:button chat header menu", "Chat menu")
+            displayHint: Kirigami.DisplayHint.IconOnly
+            visible: Whatevr.ProtocolController.hasSelectedChat
+            onTriggered: chatHeaderMenu.open()
+        },
+        Kirigami.Action {
             icon.name: "search-symbolic"
             text: Whatevr.I18n.i18nc("@action:button search within this chat", "Search")
             displayHint: Kirigami.DisplayHint.IconOnly
@@ -454,6 +496,15 @@ Kirigami.Page {
                                                     "Starred in %1", Whatevr.ProtocolController.selectedChatName)
                 })
             }
+        },
+        Kirigami.Action {
+            icon.name: "document-save-symbolic"
+            text: Whatevr.I18n.i18nc("@action:button export this chat to a text file", "Export chat…")
+            displayHint: Kirigami.DisplayHint.AlwaysHide
+            visible: Whatevr.ProtocolController.hasSelectedChat
+            onTriggered: messageView.exportChatDialog.openFor(
+                Whatevr.ProtocolController.selectedChatId,
+                Whatevr.ProtocolController.selectedChatName)
         },
         Kirigami.Action {
             icon.name: "dialog-close-symbolic"
@@ -570,6 +621,122 @@ Kirigami.Page {
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
+
+        // Explicit in-page header. Kirigami's titleDelegate is not consistently
+        // rendered when this pane lives inside WorkspacePane's StackLayout.
+        // Keep the chat identity/actions in normal layout flow so they cannot
+        // disappear when switching between workspace tabs.
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.preferredHeight: Kirigami.Units.gridUnit * 3.2
+            Layout.leftMargin: Kirigami.Units.largeSpacing
+            Layout.rightMargin: Kirigami.Units.smallSpacing
+            spacing: Kirigami.Units.smallSpacing
+            visible: Whatevr.ProtocolController.hasSelectedChat
+
+            AvatarImage {
+                Layout.preferredWidth: Kirigami.Units.gridUnit * 2.1
+                Layout.preferredHeight: Kirigami.Units.gridUnit * 2.1
+                avatarLocalPath: Whatevr.ProtocolController.selectedChatAvatarLocalPath
+                initials: Initials.firstTwo(Whatevr.ProtocolController.selectedChatName)
+                TapHandler { onTapped: root.openChatInfo() }
+            }
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 0
+                Label {
+                    Layout.fillWidth: true
+                    text: Whatevr.ProtocolController.selectedChatName
+                    elide: Text.ElideRight
+                    font.weight: Font.DemiBold
+                }
+                Label {
+                    Layout.fillWidth: true
+                    text: Whatevr.ProtocolController.selectedChatPresenceText
+                    visible: text.length > 0
+                    color: Kirigami.Theme.disabledTextColor
+                    font: Kirigami.Theme.smallFont
+                    elide: Text.ElideRight
+                }
+            }
+
+            ToolButton {
+                icon.name: "search-symbolic"
+                display: AbstractButton.IconOnly
+                text: Whatevr.I18n.i18nc("@action:button search this chat", "Search in chat")
+                onClicked: {
+                    if (Whatevr.ProtocolController.chatSearchActive)
+                        Whatevr.ProtocolController.closeChatSearch()
+                    else
+                        Whatevr.ProtocolController.openChatSearch()
+                }
+            }
+
+            ToolButton {
+                id: chatMenuButton
+
+                icon.name: "view-more-symbolic"
+                display: AbstractButton.IconOnly
+                text: Whatevr.I18n.i18nc("@action:button chat header menu", "Chat menu")
+                // Anchor the popup under the button, right-aligned, instead
+                // of open() which drops it at a default (left) position.
+                onClicked: {
+                    const pos = chatMenuButton.mapToItem(explicitChatHeaderMenu.parent,
+                                                         0, chatMenuButton.height)
+                    explicitChatHeaderMenu.x = pos.x + chatMenuButton.width
+                        - explicitChatHeaderMenu.implicitWidth
+                    explicitChatHeaderMenu.y = pos.y
+                    explicitChatHeaderMenu.open()
+                }
+            }
+
+            Menu {
+                id: explicitChatHeaderMenu
+
+                MenuItem {
+                    text: Whatevr.I18n.i18nc("@action:menu chat info", "Chat info")
+                    icon.name: "dialog-information-symbolic"
+                    onTriggered: root.openChatInfo()
+                }
+                MenuItem {
+                    text: Whatevr.I18n.i18nc("@action:menu chat media", "Media, links and documents")
+                    icon.name: "folder-pictures-symbolic"
+                    onTriggered: applicationWindow().pageStack.layers.push(
+                        Qt.resolvedUrl("ChatMediaGalleryPage.qml"), {
+                            chatId: Whatevr.ProtocolController.selectedChatId,
+                            chatName: Whatevr.ProtocolController.selectedChatName
+                        })
+                }
+                MenuItem {
+                    text: Whatevr.I18n.i18nc("@action:menu starred chat messages", "Starred messages")
+                    icon.name: "starred-symbolic"
+                    onTriggered: applicationWindow().openWorkspace("starred")
+                }
+                MenuItem {
+                    text: Whatevr.I18n.i18nc("@action:menu scheduled messages", "Scheduled messages")
+                    icon.name: "appointment-new-symbolic"
+                    onTriggered: applicationWindow().pageStack.layers.push(
+                        Qt.resolvedUrl("ScheduledMessagesPage.qml"), {
+                            chatId: Whatevr.ProtocolController.selectedChatId,
+                            chatName: Whatevr.ProtocolController.selectedChatName
+                        })
+                }
+                MenuItem {
+                    text: Whatevr.I18n.i18nc("@action:menu export chat", "Export chat…")
+                    icon.name: "document-save-symbolic"
+                    onTriggered: messageView.exportChatDialog.openFor(
+                        Whatevr.ProtocolController.selectedChatId,
+                        Whatevr.ProtocolController.selectedChatName)
+                }
+                MenuSeparator {}
+                MenuItem {
+                    text: Whatevr.I18n.i18nc("@action:menu close chat", "Close chat")
+                    icon.name: "dialog-close-symbolic"
+                    onTriggered: root.closeChatRequested()
+                }
+            }
+        }
 
         // In-chat search strip: matches navigation with a live n/m counter.
         // Driven entirely by the protocol controller's chat-search state.
@@ -944,6 +1111,7 @@ Kirigami.Page {
             Layout.fillWidth: true
             visible: Whatevr.ProtocolController.hasSelectedChat
             enabledForChat: Whatevr.ProtocolController.composerEnabled
+            opacity: Whatevr.ProtocolController.selectedChatCanSend ? 1 : 0.72
             sending: Whatevr.ProtocolController.sendInFlight
             errorText: Whatevr.ProtocolController.composerErrorText
             replyToMessageId: root.replyToMessageId
@@ -955,7 +1123,8 @@ Kirigami.Page {
             editingMessageId: root.editingMessageId
             editingOriginalText: root.editingOriginalText
             onSendTextRequested: (text, replyToMessageId, mentionedJids) => Whatevr.ProtocolController.sendText(text, replyToMessageId, mentionedJids)
-            onSendImageRequested: (fileUrl, caption, replyToMessageId) => Whatevr.ProtocolController.sendMedia(fileUrl, caption, replyToMessageId)
+            onSendImageRequested: (fileUrl, caption, replyToMessageId, kind, viewOnce) => Whatevr.ProtocolController.sendMedia(fileUrl, caption, replyToMessageId, kind, viewOnce)
+            onSendMediaBatchRequested: (fileUrls, caption, replyToMessageId, kind, viewOnce) => Whatevr.ProtocolController.sendMediaBatch(fileUrls, caption, replyToMessageId, kind, viewOnce)
             onComposingChanged: composing => Whatevr.ProtocolController.setSelectedChatComposing(composing)
             onClearReplyRequested: root.clearReplyTarget()
             onReplyConsumed: root.clearReplyTarget()
@@ -967,6 +1136,80 @@ Kirigami.Page {
 
     ContactInfoDialog {
         id: contactInfoDialog
+    }
+
+    // Drag-and-drop in two halves: upper stages as documents, lower as
+    // photos/video. Drops land in the staging dialog (caption + Send/Cancel),
+    // never straight onto the wire.
+    DropArea {
+        id: documentDropArea
+
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: parent.height / 2
+        enabled: Whatevr.ProtocolController.hasSelectedChat && Whatevr.ProtocolController.composerEnabled
+        onDropped: drop => {
+            if (drop.hasUrls) {
+                composer.stageDrop(drop.urls, "document")
+            }
+        }
+    }
+
+    DropArea {
+        id: mediaDropArea
+
+        anchors.bottom: parent.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: parent.height / 2
+        enabled: documentDropArea.enabled
+        onDropped: drop => {
+            if (drop.hasUrls) {
+                composer.stageDrop(drop.urls, "")
+            }
+        }
+    }
+
+    Rectangle {
+        anchors.fill: parent
+        visible: documentDropArea.containsDrag || mediaDropArea.containsDrag
+        color: Qt.alpha(Kirigami.Theme.highlightColor, 0.10)
+        border.color: Kirigami.Theme.highlightColor
+        border.width: 2
+        radius: Kirigami.Units.cornerRadius
+        z: 1000
+
+        // Divider between the document (top) and media (bottom) halves.
+        Rectangle {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            height: 1
+            color: Kirigami.Theme.highlightColor
+        }
+
+        Label {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.topMargin: parent.height / 4
+            horizontalAlignment: Text.AlignHCenter
+            text: Whatevr.I18n.i18nc("@info drag-and-drop hint", "Drop here to send as documents")
+            font.weight: Font.Bold
+            color: documentDropArea.containsDrag ? Kirigami.Theme.highlightColor : Kirigami.Theme.textColor
+        }
+
+        Label {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: parent.height / 4
+            horizontalAlignment: Text.AlignHCenter
+            text: Whatevr.I18n.i18nc("@info drag-and-drop hint", "Drop here to send as photos or video")
+            font.weight: Font.Bold
+            color: mediaDropArea.containsDrag ? Kirigami.Theme.highlightColor : Kirigami.Theme.textColor
+        }
     }
 
 }

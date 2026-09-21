@@ -5,6 +5,7 @@ import QtQuick.Controls as QQC2
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 import Whatevr as Whatevr
+import "Initials.js" as Initials
 
 // Drill-in page (pushed onto pageStack.layers) listing starred messages, either
 // across all chats (chatId == "") or scoped to one. Each row shows who sent the
@@ -28,26 +29,13 @@ Kirigami.ScrollablePage {
     Kirigami.Theme.colorSet: Kirigami.Theme.View
 
     Component.onCompleted: Whatevr.ProtocolController.openStarredMessages(root.chatId)
-    Component.onDestruction: Whatevr.ProtocolController.closeStarredMessages()
+    // Guarded: at engine teardown the singleton may already be null.
+    Component.onDestruction: { const c = Whatevr.ProtocolController; if (c) c.closeStarredMessages() }
 
     function showInChat(targetChatId, messageId) {
         Whatevr.ProtocolController.showMessageInChat(targetChatId, messageId)
         applicationWindow().pageStack.layers.pop()
         applicationWindow().showConversation()
-    }
-
-    function initialsForName(name) {
-        const parts = name.trim().split(/\s+/)
-        let initials = ""
-        for (const part of parts) {
-            if (part.length > 0) {
-                initials += part[0].toUpperCase()
-            }
-            if (initials.length >= 2) {
-                break
-            }
-        }
-        return initials.length > 0 ? initials : "?"
     }
 
     ListView {
@@ -102,7 +90,7 @@ Kirigami.ScrollablePage {
                     Layout.alignment: Qt.AlignTop
                     Layout.preferredWidth: Kirigami.Units.gridUnit * 2
                     Layout.preferredHeight: Kirigami.Units.gridUnit * 2
-                    initials: root.initialsForName(starredDelegate.row.senderName)
+                    initials: Initials.firstTwo(starredDelegate.row.senderName)
                     backgroundColor: Qt.alpha(Kirigami.Theme.highlightColor, 0.18)
                 }
 
@@ -155,6 +143,26 @@ Kirigami.ScrollablePage {
             }
 
             onClicked: root.showInChat(starredDelegate.row.chatId, starredDelegate.row.messageId)
+
+            QQC2.Menu {
+                id: starredContextMenu
+                QQC2.MenuItem {
+                    text: Whatevr.I18n.i18nc("@action:menu unstar message", "Remove star")
+                    icon.name: "starred-symbolic"
+                    onTriggered: Whatevr.ProtocolController.setMessageStarred(
+                        starredDelegate.row.messageId, false)
+                }
+                QQC2.MenuItem {
+                    text: Whatevr.I18n.i18nc("@action:menu show starred message", "Show in chat")
+                    icon.name: "go-jump-symbolic"
+                    onTriggered: root.showInChat(starredDelegate.row.chatId, starredDelegate.row.messageId)
+                }
+            }
+
+            TapHandler {
+                acceptedButtons: Qt.RightButton
+                onTapped: starredContextMenu.popup()
+            }
         }
     }
 }

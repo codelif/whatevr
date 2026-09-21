@@ -21,6 +21,8 @@ set(WHATKEVR_SOURCES
     models/protocolsearchmodel.h
     media/audioplayer.cpp
     media/audioplayer.h
+    media/audiorecorder.cpp
+    media/audiorecorder.h
     media/mpvcore.cpp
     media/mpvcore.h
     media/mpvvideoitem.cpp
@@ -54,6 +56,7 @@ set(WHATKEVR_SOURCES
 set(WHATKEVR_LINK_LIBRARIES
     Qt6::Core
     Qt6::Gui
+    Qt6::Multimedia
     Qt6::Network
     Qt6::OpenGL
     Qt6::Qml
@@ -97,6 +100,7 @@ target_include_directories(whatkevr PRIVATE ${WHATKEVR_INCLUDE_DIRS})
 
 set(WHATKEVR_QML_FILES
         qml/Main.qml
+        qml/WorkspacePane.qml
         qml/I18n.qml
         qml/Palette.qml
         qml/components/AvatarImage.qml
@@ -108,6 +112,15 @@ set(WHATKEVR_QML_FILES
         qml/components/ChatListPane.qml
         qml/components/ConversationPane.qml
         qml/components/StarredMessagesPage.qml
+        qml/components/ScheduledMessagesPage.qml
+        qml/components/StatusPage.qml
+        qml/components/StatusViewerPage.qml
+        qml/components/StatusPostDialog.qml
+        qml/components/CallsPage.qml
+        qml/components/ChannelsPage.qml
+        qml/components/ChannelMessagesPage.qml
+        qml/components/LogsPage.qml
+        qml/components/PollCreateDialog.qml
         qml/components/ContactInfoDialog.qml
         qml/components/ProfilePictureViewer.qml
         qml/components/SearchResultDelegate.qml
@@ -173,12 +186,14 @@ set(WHATKEVR_QML_FILES
         qml/components/MessageComposer.qml
         qml/components/CenteredDialog.qml
         qml/components/MessageInfoDialog.qml
+        qml/components/EditHistoryDialog.qml
+        qml/components/AttachConfirmDialog.qml
         qml/components/MessageContentDialog.qml
         qml/components/ForwardChatPickerDialog.qml
         qml/components/ChatListSidebar.qml
         qml/components/Wallpapers.js
+        qml/components/Initials.js
         qml/pages/LoginPage.qml
-        qml/pages/StatusPage.qml
         qml/settings/SettingsSearch.js
         qml/settings/SettingsView.qml
         qml/settings/SettingsWindow.qml

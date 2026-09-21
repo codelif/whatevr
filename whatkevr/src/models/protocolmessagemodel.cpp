@@ -420,6 +420,10 @@ QVariant ProtocolMessageModel::data(const QModelIndex &index, int role) const
         return senderData().value(QStringLiteral("avatar_path")).toString();
     case SenderInitialsRole:
         return initialsForName(senderDisplayName(item));
+    case SenderDeviceRole:
+        return senderData().value(QStringLiteral("device")).toInt();
+    case IsForwardedRole:
+        return item.value(QStringLiteral("forwarded")).toBool();
     case TextRole:
         return displayText(item);
     case LayoutTextRole: {
@@ -671,6 +675,8 @@ QHash<int, QByteArray> ProtocolMessageModel::roleNames() const
         {CallLogRole, "callLog"},
         {SystemRole, "system"},
         {WaitingRole, "waiting"},
+        {SenderDeviceRole, "senderDevice"},
+        {IsForwardedRole, "isForwarded"},
     };
 }
 
@@ -1214,6 +1220,7 @@ QVariantMap ProtocolMessageModel::snapshotOfItem(const QVariantMap &item, const 
         {QStringLiteral("mediaPlayed"), mediaData.value(QStringLiteral("played"))},
         {QStringLiteral("isRevoked"), item.value(QStringLiteral("revoked"))},
         {QStringLiteral("isEdited"), item.value(QStringLiteral("edited"))},
+        {QStringLiteral("isForwarded"), item.value(QStringLiteral("forwarded")).toBool()},
         {QStringLiteral("isStarred"), item.value(QStringLiteral("starred"))},
         {QStringLiteral("isPinned"), pinnedUntil > QDateTime::currentSecsSinceEpoch()},
         {QStringLiteral("reactions"), reactions(item)},
@@ -1279,7 +1286,8 @@ QVariantMap ProtocolMessageModel::nextVoiceMessage(const QString &messageId) con
             {QStringLiteral("messageId"), item.value(QStringLiteral("id")).toString()},
             {QStringLiteral("localPath"), path},
             {QStringLiteral("durationSecs"), mediaData.value(QStringLiteral("duration_secs"))},
-            {QStringLiteral("senderName"), senderDisplayName(item)},
+        {QStringLiteral("senderName"), senderDisplayName(item)},
+        {QStringLiteral("senderDevice"), sender(item).value(QStringLiteral("device")).toInt()},
             {QStringLiteral("avatarPath"), sender(item).value(QStringLiteral("avatar_path"))},
             {QStringLiteral("waveform"), mediaData.value(QStringLiteral("waveform"))},
             {QStringLiteral("isOutgoing"), item.value(QStringLiteral("direction")).toString() == QLatin1String("outgoing")},

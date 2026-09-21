@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls as QQC2
 import org.kde.kirigami as Kirigami
 import org.kde.kirigamiaddons.formcard as FormCard
 
@@ -70,6 +71,44 @@ SettingsPage {
                 source: "audio-x-generic"
                 implicitWidth: Kirigami.Units.iconSizes.medium
                 implicitHeight: Kirigami.Units.iconSizes.medium
+            }
+        }
+    }
+
+    FormCard.FormHeader {
+        title: Whatevr.I18n.i18nc("@title:group", "App lock")
+    }
+
+    FormCard.FormCard {
+        FormCard.FormButtonDelegate {
+            text: Whatevr.Settings.appLockEnabled
+                ? Whatevr.I18n.i18nc("@action:button lock app", "Lock now")
+                : Whatevr.I18n.i18nc("@action:button set app lock", "Set app lock PIN")
+            icon.name: "object-locked-symbolic"
+            onClicked: {
+                if (Whatevr.Settings.appLockEnabled) {
+                    Whatevr.Settings.lockApp()
+                } else {
+                    pinDialog.open()
+                }
+            }
+        }
+    }
+
+    Kirigami.PromptDialog {
+        id: pinDialog
+        title: Whatevr.I18n.i18nc("@title:dialog", "Set app lock PIN")
+        subtitle: Whatevr.I18n.i18nc("@info", "Use at least four characters. This locks the frontend only; the daemon remains available to same-user processes.")
+        standardButtons: Kirigami.Dialog.Ok | Kirigami.Dialog.Cancel
+        QQC2.TextField {
+            id: appLockPin
+            placeholderText: Whatevr.I18n.i18nc("@info:placeholder", "PIN")
+            echoMode: QQC2.TextInput.Password
+        }
+        onAccepted: {
+            if (Whatevr.Settings.setAppLockPin(appLockPin.text)) {
+                appLockPin.clear()
+                pinDialog.close()
             }
         }
     }

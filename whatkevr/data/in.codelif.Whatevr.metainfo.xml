@@ -19,6 +19,109 @@
   </provides>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.8.8" date="2026-09-20">
+      <description>
+        <p>Forwarded-message header borrowed from Telegram Desktop (bubbles show a Forwarded header; doc/tdesktop-notes.md adds the full whatkevr-vs-tdesktop verdict table). Inbound stickers now enter Recents, and the sticker picker stays open for multi-send like WhatsApp mobile (plain click sends and keeps it open, Ctrl+click closes).</p>
+      </description>
+    </release>
+    <release version="0.8.7" date="2026-09-19">
+      <description>
+        <p><em>Whatevr 0.8.7\n\nDesktop parity and workspace improvements.\n\n## Highlights\n\n- Persistent two-column workspace for chats, status, calls, channels, logs, and starred messages.\n- Mobile-style status autoplay with embedded video playback, timed stills, and next-person progression.\n- Desktop microphone voice recording through Qt Multimedia and the existing voice send path.\n- Durable one-shot scheduled text messages.\n- Local chat favorites and daemon-owned custom chat folders.\n- Channel message loading, viewed receipts, and reactions.\n- Message Info sent, delivered, read, and played details.\n- Notification mark-read and capability-gated inline reply actions.\n- Expanded tray menu and right-click actions.\n- Frontend app lock and backup controls.\n\nGIF provider search, multi-account support, live SQLCipher encryption, and full desktop call media remain deferred.</em></p>
+      </description>
+    </release>
+    <release version="0.8.6" date="2026-09-19">
+      <description>
+        <p><em>Whatevr 0.8.6</em></p>
+        <ul>
+          <li>Chat export: "Export chat…" in the conversation menu writes the transcript (.txt, official export shape with timestamps, names, markup, media markers) through a save dialog.</li>
+          <li>Document sends keep their real filenames end to end (regression-tested).</li>
+        </ul>
+      </description>
+    </release>
+    <release version="0.8.5" date="2026-09-17">
+      <description>
+        <p><em>Whatevr 0.8.5</em></p>
+        <ul>
+          <li>Tray menu is a real popup window at the click point; the icon never pulses.</li>
+          <li>Channel pages load older messages on scroll.</li>
+          <li>Status viewer refreshes the moment downloads land.</li>
+          <li><code>scripts/verify_features.py</code>: local checks for every README feature row.</li>
+        </ul>
+      </description>
+    </release>
+    <release version="0.8.4" date="2026-09-17">
+      <description>
+        <p><em>Whatevr 0.8.3</em></p>
+        <p>Screenshot-driven fixes plus the tray/status/notification follow-through.</p>
+        <ul>
+          <li>Logs tab actually fills now (rows carry ids), with copy actions and an open-log-folder button.</li>
+          <li>Chat media gallery filters work again, and Channels refreshes on open.</li>
+          <li>Status rings on chat avatars with tap-to-view, thumbnail avatars in the status list, and auto-download when a status opens.</li>
+          <li>Tray right-click menu fixed, unread tooltip corrected, channel posts notify, misfiled newsletter chats purged and blocked from returning.</li>
+          <li>Plus the extra-features batch: anti-delete, edit history, status keep and archive, sender client indicator, unread filter, pop-out windows, typing toggle, multi-file attach, markup shortcuts, @admins, and a new <code>doc/</code> folder with build, safety, and troubleshooting guides.</li>
+        </ul>
+      </description>
+    </release>
+    <release version="0.8.3" date="2026-09-17">
+      <description>
+        <p><em>Whatevr 0.8.3</em></p>
+        <p>Screenshot-driven fixes plus the tray/status/notification follow-through.</p>
+        <ul>
+          <li>Logs tab actually fills now (rows carry ids), with copy actions and an open-log-folder button.</li>
+          <li>Chat media gallery filters work again, and Channels refreshes on open.</li>
+          <li>Status rings on chat avatars with tap-to-view, thumbnail avatars in the status list, and auto-download when a status opens.</li>
+          <li>Tray right-click menu fixed, unread tooltip corrected, channel posts notify, misfiled newsletter chats purged and blocked from returning.</li>
+          <li>Plus the extra-features batch: anti-delete, edit history, status keep and archive, sender client indicator, unread filter, pop-out windows, typing toggle, multi-file attach, markup shortcuts, @admins, and a new <code>doc/</code> folder with build, safety, and troubleshooting guides.</li>
+        </ul>
+      </description>
+    </release>
+    <release version="0.8.2" date="2026-09-17">
+      <description>
+        <p><em>Whatevr 0.8.2</em></p>
+        <p>Statuses, tray follow-ups, and everyday sending improvements on top of 0.8.1.</p>
+        <ul>
+          <li>The <code>status@broadcast</code> chat is back: statuses are filed there as ordinary messages alongside the Status tab, silently — no unread bump, no notification. Disable it in Settings, Chats, Status.</li>
+          <li>Old statuses gain their thumbnails automatically on connect, and video statuses now play in the viewer.</li>
+          <li>Drop files onto a conversation to send them.</li>
+          <li>Saving a profile picture prefills the chat or contact name.</li>
+          <li>The Logs page reports load failures instead of staying blank.</li>
+        </ul>
+      </description>
+    </release>
+    <release version="0.8.1" date="2026-09-16">
+      <description>
+        <p><em>Whatevr 0.8.1</em></p>
+        <p>Fix release on top of 0.8.0: the Logs tab, status thumbnails, and the tray icon all work now.</p>
+        <ul>
+          <li>The Logs tab was always empty because only the command existed, not the view. The <code>daemon.logs</code> view now streams recent log lines into the page.</li>
+          <li>Statuses render thumbnail-first: sender thumbnails are cached at ingest, and opening a status auto-downloads the full media.</li>
+          <li>Tray left-click raises the window; right-click shows a menu with Open, a Notifications toggle, and Quit. The icon pulses only while unread chats exist.</li>
+          <li>Status rows show sender avatars instead of initials-only, and the profile-picture viewer gained a Save button.</li>
+          <li>Fixed a non-idempotent database migration, a missing import, and the chat-bubble performance test's properties and budgets.</li>
+          <li>whatsmeow pinned to the 2026-09-15 commit; no API changes.</li>
+        </ul>
+      </description>
+    </release>
+    <release version="0.8.0" date="2026-09-15">
+      <description>
+        <p><em>GUI fixed and stickers un-stuck</em></p>
+        <ul>
+          <li><em>Fixed a launch-blocking bug</em>: since the last release the frontend failed to open at all — one QML file used a qualified <code>QQC2.Button</code> without its import, which made the whole interface fail to load. Whatevr now starts.</li>
+          <li><em>The expression picker no longer freezes on the stickers tab</em> when switching back to emoji or closing the picker.</li>
+        </ul>
+        <p><em>Everything new since 0.7.0</em></p>
+        <ul>
+          <li>Sending: video, audio, voice notes and documents (not just images), view-once sending, quoted replies and caption edits for all media, and attaching any file type.</li>
+          <li>New Status tab: post text/photo/video/audio statuses, view contacts statuses with a stepped viewer, download and save them.</li>
+          <li>Calls tab: incoming 1:1 and group calls ring with a desktop notification (answer on your phone), call rejection, and missed-call tombstones.</li>
+          <li>Groups and communities: create, leave, rename, topic, photo, invite links, join by link, member management, announce/lock settings, and community sub-groups with admin link/unlink.</li>
+          <li>Backups: AES-256-GCM encrypted export bundles, offline <code>whatevrd --restore</code> import, and backup passphrase storage in the OS keyring (Secret Service).</li>
+          <li>Media saving: copy any chat media, status, or profile photo to a path of your choice; inbound view-once media can be saved on demand.</li>
+          <li>Polls, channels, contacts, locations and a daemon log viewer in the frontend.</li>
+          <li>Tray icon with connection state and unread indicator, rotated debug log file, and a <code>daemon.logs</code> query over the in-memory ring.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.7.0" date="2026-08-11">
       <description>
         <p><em>gRPC is dead. Long live the daemon!</em></p>

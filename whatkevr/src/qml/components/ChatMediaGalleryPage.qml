@@ -18,13 +18,51 @@ Kirigami.ScrollablePage {
 
     required property string chatId
     property string chatName: ""
+    property string mediaFilter: ""
 
     title: chatName.length > 0
         ? Whatevr.I18n.i18nc("@title:window", "Media in %1", chatName)
         : Whatevr.I18n.i18nc("@title:window", "Media")
 
     Component.onCompleted: Whatevr.ProtocolController.openChatMedia(chatId)
-    Component.onDestruction: Whatevr.ProtocolController.closeChatMedia()
+    // Guarded: at engine teardown the singleton may already be null.
+    Component.onDestruction: { const c = Whatevr.ProtocolController; if (c) c.closeChatMedia() }
+
+    function applyFilter(kind) {
+        mediaFilter = kind
+        Whatevr.ProtocolController.closeChatMedia()
+        Whatevr.ProtocolController.openChatMedia(chatId, kind)
+    }
+
+    header: Row {
+        spacing: Kirigami.Units.smallSpacing
+        padding: Kirigami.Units.smallSpacing
+        leftPadding: Kirigami.Units.largeSpacing
+
+        Repeater {
+            model: [
+                { label: Whatevr.I18n.i18nc("@action:button gallery filter", "All"),    kind: "" },
+                { label: Whatevr.I18n.i18nc("@action:button gallery filter", "Photos"), kind: "image" },
+                { label: Whatevr.I18n.i18nc("@action:button gallery filter", "Videos"), kind: "video" },
+                { label: Whatevr.I18n.i18nc("@action:button gallery filter", "Voice"),  kind: "voice" },
+                { label: Whatevr.I18n.i18nc("@action:button gallery filter", "Audio"),  kind: "audio" },
+                { label: Whatevr.I18n.i18nc("@action:button gallery filter", "Docs"),   kind: "document" },
+                { label: Whatevr.I18n.i18nc("@action:button gallery filter", "Polls"),   kind: "poll" },
+                { label: Whatevr.I18n.i18nc("@action:button gallery filter", "Contacts"), kind: "contact" },
+                { label: Whatevr.I18n.i18nc("@action:button gallery filter", "Locations"), kind: "location" }
+            ]
+
+            delegate: QQC2.ToolButton {
+                required property var modelData
+                text: modelData.label
+                checked: root.mediaFilter === modelData.kind
+                checkable: true
+                autoExclusive: true
+                onClicked: root.applyFilter(modelData.kind)
+                font.weight: checked ? Font.DemiBold : Font.Normal
+            }
+        }
+    }
 
     GridView {
         id: grid
@@ -164,6 +202,12 @@ Kirigami.ScrollablePage {
                                 return "audio-input-microphone-symbolic"
                             if (cell.kind === "audio")
                                 return "audio-x-generic"
+                            if (cell.kind === "poll")
+                                return "view-list-symbolic"
+                            if (cell.kind === "contact")
+                                return "im-user-symbolic"
+                            if (cell.kind === "location")
+                                return "mark-location-symbolic"
                             return "text-x-generic"
                         }
                     }
@@ -189,12 +233,35 @@ Kirigami.ScrollablePage {
                 }
 
                 TapHandler {
+                    acceptedButtons: Qt.LeftButton | Qt.RightButton
                     onTapped: {
+                        if (point.device && point.device.type === PointerDevice.Mouse
+                                && point.button === Qt.RightButton) {
+                            galleryContextMenu.popup()
+                            return
+                        }
                         // Move the keyboard's idea of "current" to whatever was
                         // clicked, so arrowing on from here starts in the right
                         // place.
                         grid.currentIndex = cell.model.index
                         cell.activate()
+                    }
+                }
+
+                QQC2.Menu {
+                    id: galleryContextMenu
+
+                    QQC2.MenuItem {
+                        text: Whatevr.I18n.i18nc("@action:menu save gallery media", "Save as…")
+                        icon.name: "document-save-symbolic"
+                        enabled: cell.localPath.length > 0
+                        onTriggered: Whatevr.ProtocolController.openLocalFile(cell.localPath)
+                    }
+                    QQC2.MenuItem {
+                        text: Whatevr.I18n.i18nc("@action:menu copy gallery filename", "Copy path")
+                        icon.name: "edit-copy-symbolic"
+                        enabled: cell.localPath.length > 0
+                        onTriggered: Whatevr.ProtocolController.copyToClipboard(cell.localPath)
                     }
                 }
             }

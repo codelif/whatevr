@@ -16,6 +16,8 @@ SettingsPage {
         audioSwitch.checked = Qt.binding(() => Whatevr.ProtocolController.appPreferences.auto_download_audio ?? false)
         documentsSwitch.checked = Qt.binding(() => Whatevr.ProtocolController.appPreferences.auto_download_documents ?? false)
         stickersSwitch.checked = Qt.binding(() => Whatevr.ProtocolController.appPreferences.auto_download_stickers ?? false)
+        antiDeleteSwitch.checked = Qt.binding(() => Whatevr.ProtocolController.appPreferences.anti_delete ?? true)
+        typingSwitch.checked = Qt.binding(() => Whatevr.ProtocolController.appPreferences.send_typing_indicators ?? true)
     }
 
     Connections {
@@ -59,6 +61,32 @@ SettingsPage {
             out.push({ value: presets[i].value, label: presets[i].label, bg: presets[i].bg });
         }
         return out;
+    }
+
+    FormCard.FormHeader {
+        title: Whatevr.I18n.i18nc("@title:group", "Deleted messages")
+    }
+
+    FormCard.FormCard {
+        FormCard.FormSwitchDelegate {
+            id: antiDeleteSwitch
+            objectName: "chats.antiDelete"
+            text: Whatevr.I18n.i18nc("@option:check", "Keep deleted messages")
+            description: Whatevr.I18n.i18nc("@info", "Messages deleted for everyone stay visible with a Deleted mark instead of vanishing. Local display only.")
+            checked: Whatevr.ProtocolController.appPreferences.anti_delete ?? true
+            onToggled: Whatevr.ProtocolController.setAppPreference("anti_delete", checked)
+        }
+
+        FormCard.FormDelegateSeparator {}
+
+        FormCard.FormSwitchDelegate {
+            id: typingSwitch
+            objectName: "chats.sendTyping"
+            text: Whatevr.I18n.i18nc("@option:check", "Send typing indicators")
+            description: Whatevr.I18n.i18nc("@info", "Let others see when you are typing. Turning it off only omits the announcement.")
+            checked: Whatevr.ProtocolController.appPreferences.send_typing_indicators ?? true
+            onToggled: Whatevr.ProtocolController.setAppPreference("send_typing_indicators", checked)
+        }
     }
 
     FormCard.FormHeader {
