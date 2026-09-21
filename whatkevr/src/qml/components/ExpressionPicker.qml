@@ -15,8 +15,9 @@ Popup {
     id: root
 
     signal emojiSelected(string emoji)
-    // Emitted after a sticker click was dispatched; keepOpen is true for
-    // Ctrl+click multi-send.
+    // Emitted after a sticker click was dispatched; keepOpen is true for a
+    // plain send (the picker stays open for multi-send, like WhatsApp
+    // mobile) and false for Ctrl+click, which closes back to the composer.
     signal stickerChosen(bool keepOpen)
 
     property string replyToMessageId: ""

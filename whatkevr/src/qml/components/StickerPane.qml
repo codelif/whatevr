@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Controls as QQC2
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 import Whatevr as Whatevr
@@ -13,7 +14,9 @@ import Whatevr as Whatevr
 Item {
     id: pane
 
-    // keepOpen is true for Ctrl+click multi-send.
+    // keepOpen is true for plain click/Enter multi-send: the picker stays
+    // open so several stickers can go out in a row, like WhatsApp mobile.
+    // Ctrl+click closes it and returns focus to the composer.
     signal stickerChosen(bool keepOpen)
 
     property Item searchField: null
@@ -35,6 +38,13 @@ Item {
         pane.stickers.activate()
     }
 
+    // ExpressionPicker calls this when switching back to the emoji pane or on
+    // close: it tears the stickers view subscription down so the daemon stops
+    // streaming pack updates nobody is looking at.
+    function deactivate() {
+        pane.stickers.deactivate()
+    }
+
     function applySearchFilter(query) {
         pane.sendErrorText = ""
         if (query.length > 0) {
@@ -52,7 +62,7 @@ Item {
         stickerGrid.currentIndex = 0
         const item = stickerGrid.itemAtIndex(0)
         if (item) {
-            pane.sendSticker(item.cacheKey, false)
+            pane.sendSticker(item.cacheKey, true)
             event.accepted = true
         }
     }
@@ -304,14 +314,14 @@ Item {
                 Keys.onReturnPressed: event => {
                     const item = stickerGrid.itemAtIndex(stickerGrid.currentIndex)
                     if (item) {
-                        pane.sendSticker(item.cacheKey, (event.modifiers & Qt.ControlModifier) !== 0)
+                        pane.sendSticker(item.cacheKey, (event.modifiers & Qt.ControlModifier) === 0)
                         event.accepted = true
                     }
                 }
                 Keys.onEnterPressed: event => {
                     const item = stickerGrid.itemAtIndex(stickerGrid.currentIndex)
                     if (item) {
-                        pane.sendSticker(item.cacheKey, (event.modifiers & Qt.ControlModifier) !== 0)
+                        pane.sendSticker(item.cacheKey, (event.modifiers & Qt.ControlModifier) === 0)
                         event.accepted = true
                     }
                 }
@@ -437,12 +447,30 @@ Item {
 
                     MouseArea {
                         anchors.fill: parent
-                        acceptedButtons: Qt.LeftButton
+                        acceptedButtons: Qt.LeftButton | Qt.RightButton
                         hoverEnabled: false
 
-                        onClicked: mouse => {
+                        QQC2.Menu {
+                            id: stickerContextMenu
+
+                            QQC2.MenuItem {
+                                text: stickerTile.item.favorite === true
+                                    ? Whatevr.I18n.i18nc("@action:menu unfavorite sticker", "Remove favorite")
+                                    : Whatevr.I18n.i18nc("@action:menu favorite sticker", "Add to favorites")
+                                icon.name: "starred-symbolic"
+                                onTriggered: pane.stickers.setStickerFavorite(
+                                    stickerTile.cacheKey, "", stickerTile.item.favorite !== true)
+                            }
+                        }
+
+                        onPressed: mouse => {
+                            if (mouse.button === Qt.RightButton) {
+                                stickerContextMenu.popup()
+                                mouse.accepted = true
+                                return
+                            }
                             stickerGrid.currentIndex = stickerTile.index
-                            pane.sendSticker(stickerTile.cacheKey, (mouse.modifiers & Qt.ControlModifier) !== 0)
+                            pane.sendSticker(stickerTile.cacheKey, (mouse.modifiers & Qt.ControlModifier) === 0)
                             mouse.accepted = true
                         }
                     }
@@ -481,12 +509,6 @@ Item {
                     anchors.centerIn: parent
                     running: stickerGrid.count === 0 && (pane.stickers.loading || pane.stickers.downloading)
                 }
-            }
-
-            KineticWheelScroller {
-                anchors.fill: stickerGrid
-                target: stickerGrid
-                wheelStep: Kirigami.Units.gridUnit * 4
             }
             }
 
@@ -620,12 +642,6 @@ Item {
                         running: packList.count === 0 && pane.stickers.packsLoading
                     }
                 }
-
-                KineticWheelScroller {
-                    anchors.fill: packList
-                    target: packList
-                    wheelStep: Kirigami.Units.gridUnit * 4
-                }
                 }
             }
         }
@@ -639,7 +655,7 @@ Item {
                 if (pane.hoverInfo.length > 0) {
                     return pane.hoverInfo
                 }
-                return Whatevr.I18n.i18nc("@info", "Click to send · Ctrl+click to send several")
+                return Whatevr.I18n.i18nc("@info", "Click to send · Ctrl+click to send and close")
             }
             color: pane.sendErrorText.length > 0 ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.disabledTextColor
             font: Kirigami.Theme.smallFont
