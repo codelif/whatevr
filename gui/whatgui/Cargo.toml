@@ -1,0 +1,16 @@
+[package]
+name = "whatgui"
+version = "0.1.0"
+description = "Native Wayland frontend for whatevr."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+what-core.workspace = true
+what-platform.workspace = true
+what-render.workspace = true
+anyhow = { workspace = true, features = ["std"] }
+log.workspace = true

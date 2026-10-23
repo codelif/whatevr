@@ -1,0 +1,11 @@
+[package]
+name = "scroll-lab"
+version = "0.1.0"
+description = "Scrolling stress harness: a 100k-row fake chat."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]

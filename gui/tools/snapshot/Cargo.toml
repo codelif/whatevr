@@ -1,0 +1,11 @@
+[package]
+name = "snapshot"
+version = "0.1.0"
+description = "Renders scripted UI states to PNG for pixel diffs."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]

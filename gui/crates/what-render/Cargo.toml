@@ -1,0 +1,17 @@
+[package]
+name = "what-render"
+version = "0.1.0"
+description = "wgpu device and surface, instanced pipelines, atlases, headless PNG output."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+wgpu = { workspace = true, features = ["std", "vulkan", "gles", "wgsl"] }
+pollster.workspace = true
+raw-window-handle = { workspace = true, features = ["std"] }
+thiserror = { workspace = true, features = ["std"] }
+log.workspace = true
+what-core.workspace = true

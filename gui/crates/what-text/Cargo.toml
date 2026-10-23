@@ -1,0 +1,11 @@
+[package]
+name = "what-text"
+version = "0.1.0"
+description = "Text layout and glyph rasterization: Parley wrapper, ellipsis, max lines, raster cache, COLRv1 painter."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]

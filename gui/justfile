@@ -1,0 +1,19 @@
+set shell := ["bash", "-euo", "pipefail", "-c"]
+
+# Debug build of the GUI workspace.
+build: _linux
+    cargo build --workspace
+
+# Format check, clippy and tests.
+test: _linux
+    cargo fmt --all --check
+    cargo clippy --workspace --all-targets
+    cargo test --workspace
+
+# Run whatgui.
+run *args: _linux
+    cargo run -p whatgui -- {{args}}
+
+[private]
+_linux:
+    @if [ "$(uname -s)" != Linux ]; then printf 'whatgui is linux-only\n' >&2; exit 1; fi

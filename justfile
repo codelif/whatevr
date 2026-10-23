@@ -3,6 +3,9 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 build_dir := "build"
 version := `scripts/version.py full`
 
+# Native GUI (Linux only): just gui build, just gui test, just gui run.
+mod gui 'gui/justfile'
+
 default:
     @just --list
 

@@ -1,0 +1,11 @@
+[package]
+name = "what-media"
+version = "0.1.0"
+description = "Image decode, texture cache and the media playback trait."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]

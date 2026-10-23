@@ -1,0 +1,11 @@
+[package]
+name = "what-proto"
+version = "0.1.0"
+description = "whatevr protocol types and a framed unix-socket client."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]

@@ -1,0 +1,20 @@
+[package]
+name = "what-platform"
+version = "0.1.0"
+description = "Wayland client: windows, frame clock, pointer, keyboard, IME, clipboard, activation, portals."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+wayland-client.workspace = true
+wayland-backend = { workspace = true, features = ["client_system", "rwh_06"] }
+wayland-protocols = { workspace = true, features = ["client", "staging", "unstable"] }
+xkbcommon = { workspace = true, features = ["wayland"] }
+rustix = { workspace = true, features = ["std", "event", "time"] }
+raw-window-handle = { workspace = true, features = ["std"] }
+thiserror = { workspace = true, features = ["std"] }
+log.workspace = true
+what-core.workspace = true
