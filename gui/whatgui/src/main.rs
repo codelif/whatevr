@@ -3,17 +3,19 @@
 use std::path::PathBuf;
 
 use anyhow::Context;
-use log::{LevelFilter, debug, error};
+use log::{LevelFilter, debug, error, warn};
 use what_core::{KeyEvent, Keysym, LogicalSize, Modifiers, Srgba8, WindowId};
 use what_platform::{App, FrameInfo, Platform, PlatformConfig, WindowConfig, WindowSize};
-use what_render::{Gpu, Presenter, WindowSurface};
+use what_render::{Gpu, Presenter, Renderer, WindowSurface, scenes};
 
-// test colour until step 2 draws real content
 const CLEAR: Srgba8 = Srgba8::hex(0x202020);
 
 struct Whatgui {
     gpu: Gpu,
     surface: Option<WindowSurface>,
+    renderer: Option<Renderer>,
+    /// WHATGUI_SCENE: a what-render test scene instead of the plain clear
+    scene: Option<(String, scenes::Assets)>,
 }
 
 struct Commit<'a> {
@@ -38,7 +40,22 @@ impl App for Whatgui {
         };
         // SAFETY: close_requested drops the surface before closing the window
         match unsafe { WindowSurface::new(&self.gpu, display, window, size.buffer) } {
-            Ok(s) => self.surface = Some(s),
+            Ok(s) => {
+                let mut renderer = Renderer::new(&self.gpu, s.format());
+                if let Some(name) = std::env::var("WHATGUI_SCENE")
+                    .ok()
+                    .filter(|n| !n.is_empty())
+                {
+                    if scenes::NAMES.contains(&name.as_str()) {
+                        let assets = scenes::Assets::new(&mut renderer, &self.gpu);
+                        self.scene = Some((name, assets));
+                    } else {
+                        warn!("no scene {name:?}, have {:?}", scenes::NAMES);
+                    }
+                }
+                self.renderer = Some(renderer);
+                self.surface = Some(s);
+            }
             Err(e) => {
                 error!("{e}");
                 platform.quit();
@@ -47,12 +64,31 @@ impl App for Whatgui {
     }
 
     fn frame(&mut self, platform: &mut Platform, id: WindowId, _: FrameInfo) {
-        if let Some(s) = &self.surface {
-            s.clear(&self.gpu, CLEAR.to_linear(), &mut Commit { platform, id });
+        let (Some(surface), Some(renderer), Some(size)) =
+            (&self.surface, &mut self.renderer, platform.window_size(id))
+        else {
+            return;
+        };
+        let scene = match &self.scene {
+            Some((name, assets)) => scenes::build(name, assets, size.scale),
+            None => None,
         }
+        .unwrap_or_default();
+        let Some(mut frame) = surface.begin(&self.gpu) else {
+            return;
+        };
+        renderer.draw(
+            &self.gpu,
+            &mut frame,
+            &scene,
+            CLEAR.to_linear(),
+            size.physical,
+        );
+        surface.present(&self.gpu, frame, &mut Commit { platform, id });
     }
 
     fn close_requested(&mut self, platform: &mut Platform, id: WindowId) {
+        self.renderer = None;
         self.surface = None;
         platform.close_window(id);
         platform.quit();
@@ -77,7 +113,12 @@ fn main() -> anyhow::Result<()> {
         size: LogicalSize::new(960.0, 640.0),
         min_size: Some(LogicalSize::new(360.0, 480.0)),
     });
-    let mut app = Whatgui { gpu, surface: None };
+    let mut app = Whatgui {
+        gpu,
+        surface: None,
+        renderer: None,
+        scene: None,
+    };
     platform.run(&mut app)?;
     Ok(())
 }

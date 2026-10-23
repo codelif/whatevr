@@ -15,3 +15,13 @@ raw-window-handle = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
 log.workspace = true
 what-core.workspace = true
+bytemuck = { workspace = true, features = ["derive"] }
+etagere.workspace = true
+png = { workspace = true, optional = true }
+
+[features]
+# headless pixmaps to and from png files
+png = ["dep:png"]
+
+[dev-dependencies]
+what-render = { path = ".", features = ["png"] }

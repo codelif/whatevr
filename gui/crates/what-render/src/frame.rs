@@ -1,9 +1,8 @@
 use std::time::Instant;
 
 use log::{debug, error, trace, warn};
-use what_core::LinearRgba;
 
-use crate::surface::ms;
+use crate::surface::{COPY, ms};
 use crate::{Gpu, WindowSurface};
 
 /// runs after the gpu work is submitted and before the commit that shows it.
@@ -13,10 +12,12 @@ pub trait Presenter {
 }
 
 pub struct Frame {
-    texture: wgpu::SurfaceTexture,
+    pub(crate) texture: wgpu::SurfaceTexture,
     pub view: wgpu::TextureView,
     pub encoder: wgpu::CommandEncoder,
     suboptimal: bool,
+    /// the surface allows copies, so the resize edge can be repeated
+    pub(crate) copyable: bool,
 }
 
 impl WindowSurface {
@@ -63,6 +64,7 @@ impl WindowSurface {
             view,
             encoder,
             suboptimal,
+            copyable: self.config.usage.contains(COPY),
         })
     }
 
@@ -77,34 +79,5 @@ impl WindowSurface {
         if frame.suboptimal {
             self.reconfigure(gpu);
         }
-    }
-
-    /// step 1's whole renderer
-    pub fn clear(&self, gpu: &Gpu, color: LinearRgba, presenter: &mut impl Presenter) -> bool {
-        let Some(mut frame) = self.begin(gpu) else {
-            return false;
-        };
-        frame
-            .encoder
-            .begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("clear"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &frame.view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: color.r as f64,
-                            g: color.g as f64,
-                            b: color.b as f64,
-                            a: color.a as f64,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                ..Default::default()
-            });
-        self.present(gpu, frame, presenter);
-        true
     }
 }

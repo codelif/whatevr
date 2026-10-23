@@ -6,6 +6,9 @@ use what_core::PhysicalSize;
 
 use crate::{Error, Gpu};
 
+pub(crate) const COPY: wgpu::TextureUsages =
+    wgpu::TextureUsages::COPY_SRC.union(wgpu::TextureUsages::COPY_DST);
+
 pub struct WindowSurface {
     pub(crate) surface: wgpu::Surface<'static>,
     pub(crate) config: wgpu::SurfaceConfiguration,
@@ -29,6 +32,7 @@ impl WindowSurface {
                 })
         }?;
         let caps = surface.get_capabilities(&gpu.adapter);
+        debug!("surface usages {:?}", caps.usages);
         let Some(&format) = caps
             .formats
             .iter()
@@ -48,8 +52,14 @@ impl WindowSurface {
         } else {
             caps.alpha_modes[0]
         };
+        // copies repeat the content edge during a resize; without them it's just the clear colour
+        let copy = if caps.usages.contains(COPY) {
+            COPY
+        } else {
+            wgpu::TextureUsages::empty()
+        };
         let config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | copy,
             format,
             width: size.width.max(1),
             height: size.height.max(1),

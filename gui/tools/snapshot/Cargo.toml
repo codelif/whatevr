@@ -9,3 +9,8 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+anyhow = { workspace = true, features = ["std"] }
+log.workspace = true
+clap = { workspace = true, features = ["std", "derive", "help", "usage", "error-context"] }
+what-core.workspace = true
+what-render = { workspace = true, features = ["png"] }

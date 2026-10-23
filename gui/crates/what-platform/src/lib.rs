@@ -68,8 +68,8 @@ pub struct WindowSize {
     pub physical: PhysicalSize,
     pub scale: Scale,
     /// configure the surface to this. bigger than `physical` only during an
-    /// interactive resize; the viewport crops it, and the pixels just past the
-    /// crop must repeat the content's edge (hyprland samples past it)
+    /// interactive resize; the viewport crops it. hyprland samples ~1 px past
+    /// the crop, so the area past the content must repeat its edge
     pub buffer: PhysicalSize,
 }
 
