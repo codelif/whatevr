@@ -1,6 +1,6 @@
 //! render a scene into an offscreen texture and read the pixels back
 
-use what_core::{LinearRgba, PhysicalSize};
+use what_core::{PhysicalSize, PremulRgba};
 
 use crate::atlas::extent;
 use crate::{Error, Gpu, Renderer, Scene};
@@ -28,7 +28,7 @@ impl Renderer {
         scene: &Scene,
         size: PhysicalSize,
         content: PhysicalSize,
-        clear: LinearRgba,
+        clear: PremulRgba,
     ) -> Result<Pixmap, Error> {
         let (w, h) = (size.width.max(1), size.height.max(1));
         let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
@@ -100,7 +100,7 @@ impl Renderer {
         drop(mapped);
         if matches!(
             self.format(),
-            wgpu::TextureFormat::Bgra8UnormSrgb | wgpu::TextureFormat::Bgra8Unorm
+            wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
         ) {
             for px in rgba.chunks_exact_mut(4) {
                 px.swap(0, 2);
@@ -127,22 +127,30 @@ impl Pixmap {
         w.finish().map_err(std::io::Error::other)
     }
 
-    /// 8-bit rgba only, which is all save_png writes
+    /// 8-bit rgba, which is all save_png writes, or 8-bit rgb
     pub fn load_png(path: &std::path::Path) -> std::io::Result<Self> {
         let file = std::io::BufReader::new(std::fs::File::open(path)?);
         let mut reader = png::Decoder::new(file)
             .read_info()
             .map_err(std::io::Error::other)?;
         let info = reader.info();
-        if (info.color_type, info.bit_depth) != (png::ColorType::Rgba, png::BitDepth::Eight) {
-            return Err(std::io::Error::other("not an 8-bit rgba png"));
-        }
+        let rgb = match (info.color_type, info.bit_depth) {
+            (png::ColorType::Rgba, png::BitDepth::Eight) => false,
+            (png::ColorType::Rgb, png::BitDepth::Eight) => true,
+            _ => return Err(std::io::Error::other("not an 8-bit rgba or rgb png")),
+        };
         let size = PhysicalSize::new(info.width, info.height);
         let mut rgba = vec![0; reader.output_buffer_size().unwrap_or(0)];
         let frame = reader
             .next_frame(&mut rgba)
             .map_err(std::io::Error::other)?;
         rgba.truncate(frame.buffer_size());
+        if rgb {
+            rgba = rgba
+                .chunks_exact(3)
+                .flat_map(|p| [p[0], p[1], p[2], 255])
+                .collect();
+        }
         Ok(Self { size, rgba })
     }
 }

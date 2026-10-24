@@ -21,27 +21,28 @@ impl Srgba8 {
         Self::rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)
     }
 
-    pub fn to_linear(self) -> LinearRgba {
+    pub fn premultiply(self) -> PremulRgba {
         let a = self.a as f32 / 255.0;
-        LinearRgba {
-            r: srgb_to_linear(self.r) * a,
-            g: srgb_to_linear(self.g) * a,
-            b: srgb_to_linear(self.b) * a,
+        PremulRgba {
+            r: self.r as f32 / 255.0 * a,
+            g: self.g as f32 / 255.0 * a,
+            b: self.b as f32 / 255.0 * a,
             a,
         }
     }
 }
 
-/// linear light, premultiplied alpha. what the renderer blends in.
+/// sRGB encoded, premultiplied alpha. what the renderer blends in, like
+/// browsers do.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct LinearRgba {
+pub struct PremulRgba {
     pub r: f32,
     pub g: f32,
     pub b: f32,
     pub a: f32,
 }
 
-impl LinearRgba {
+impl PremulRgba {
     pub const TRANSPARENT: Self = Self {
         r: 0.0,
         g: 0.0,
@@ -50,18 +51,9 @@ impl LinearRgba {
     };
 }
 
-impl From<Srgba8> for LinearRgba {
+impl From<Srgba8> for PremulRgba {
     fn from(c: Srgba8) -> Self {
-        c.to_linear()
-    }
-}
-
-fn srgb_to_linear(c: u8) -> f32 {
-    let c = c as f32 / 255.0;
-    if c <= 0.04045 {
-        c / 12.92
-    } else {
-        ((c + 0.055) / 1.055).powf(2.4)
+        c.premultiply()
     }
 }
 
@@ -71,11 +63,12 @@ mod tests {
 
     #[test]
     fn endpoints_and_premultiply() {
-        let white = Srgba8::rgb(255, 255, 255).to_linear();
+        let white = Srgba8::rgb(255, 255, 255).premultiply();
         assert_eq!((white.r, white.a), (1.0, 1.0));
-        let half = Srgba8::new(255, 0, 0, 0).to_linear();
-        assert_eq!(half.r, 0.0);
-        let mid = Srgba8::rgb(128, 128, 128).to_linear();
-        assert!((mid.r - 0.2158).abs() < 1e-3);
+        let clear = Srgba8::new(255, 0, 0, 0).premultiply();
+        assert_eq!(clear.r, 0.0);
+        let half = Srgba8::new(255, 128, 0, 51).premultiply();
+        assert_eq!((half.r, half.a), (0.2, 0.2));
+        assert!((half.g - 128.0 / 255.0 * 0.2).abs() < 1e-6);
     }
 }

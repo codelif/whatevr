@@ -36,7 +36,14 @@ impl WindowSurface {
         let Some(&format) = caps
             .formats
             .iter()
-            .find(|f| f.is_srgb())
+            // blending happens on the encoded values, like browsers; an srgb
+            // target would make it linear
+            .find(|f| {
+                matches!(
+                    f,
+                    wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Rgba8Unorm
+                )
+            })
             .or(caps.formats.first())
         else {
             return Err(Error::Unsupported);

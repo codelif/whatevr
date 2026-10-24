@@ -3,6 +3,7 @@
 mod atlas;
 mod edge;
 mod frame;
+mod glyphs;
 mod gpu;
 mod headless;
 mod renderer;
@@ -13,10 +14,11 @@ mod surface;
 
 pub use atlas::Alpha;
 pub use frame::{Frame, Presenter};
+pub use glyphs::{GlyphFormat, GlyphImage};
 pub use gpu::{Adapter, Gpu};
 pub use headless::Pixmap;
 pub use renderer::Renderer;
-pub use scene::{Clip, Corners, Edges, Fill, Image, ImageId, Quad, Rect, Scene, Shadow};
+pub use scene::{Clip, Corners, Edges, Fill, Glyph, Image, ImageId, Quad, Rect, Scene, Shadow};
 pub use surface::WindowSurface;
 /// what [`Renderer::new`] takes, so callers don't need wgpu themselves
 pub use wgpu::TextureFormat;

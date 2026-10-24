@@ -1,7 +1,7 @@
 //! named test scenes, laid out in logical px and snapped. the golden tests,
 //! tools/snapshot and `WHATGUI_SCENE` all draw these.
 
-use what_core::{LinearRgba, LogicalPoint, LogicalRect, LogicalSize, PhysicalSize, Scale, Srgba8};
+use what_core::{LogicalPoint, LogicalRect, LogicalSize, PhysicalSize, PremulRgba, Scale, Srgba8};
 
 use crate::snap::{hairline, px, snap_rect};
 use crate::{
@@ -58,13 +58,13 @@ const LIGHT: u32 = 0xf4f4f4;
 const DARK: u32 = 0x202020;
 const INK: u32 = 0x333333;
 
-fn c(hex: u32) -> LinearRgba {
-    Srgba8::hex(hex).to_linear()
+fn c(hex: u32) -> PremulRgba {
+    Srgba8::hex(hex).premultiply()
 }
 
-fn ca(hex: u32, a: u8) -> LinearRgba {
+fn ca(hex: u32, a: u8) -> PremulRgba {
     let s = Srgba8::hex(hex);
-    Srgba8::new(s.r, s.g, s.b, a).to_linear()
+    Srgba8::new(s.r, s.g, s.b, a).premultiply()
 }
 
 struct Builder {

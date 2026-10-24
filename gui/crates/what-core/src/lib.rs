@@ -7,7 +7,7 @@ pub mod input;
 pub mod log;
 pub mod time;
 
-pub use color::{LinearRgba, Srgba8};
+pub use color::{PremulRgba, Srgba8};
 pub use geom::{
     LogicalPoint, LogicalRect, LogicalSize, PhysicalPoint, PhysicalRect, PhysicalSize, Scale,
 };

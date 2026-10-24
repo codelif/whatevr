@@ -39,7 +39,7 @@ fn vs(@builtin(vertex_index) vi: u32, i: Image) -> Varyings {
 @fragment
 fn fs(v: Varyings) -> @location(0) vec4<f32> {
     let p = v.position.xy;
-    // pages hold premultiplied linear light, srgb encoded, so filtering happens in linear
+    // pages hold premultiplied srgb, filtered as is like browsers do
     let texel = textureSample(page, page_sampler, v.uv);
     let shape = coverage(sd_rounded(p, v.rect, v.radii));
     return texel * (v.params.x * shape * clip_coverage(p, v.clip_rect, v.clip_radii));

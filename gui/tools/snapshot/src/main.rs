@@ -45,12 +45,12 @@ fn main() -> anyhow::Result<()> {
     } else {
         Adapter::Lavapipe
     })?;
-    let mut renderer = Renderer::new(&gpu, TextureFormat::Rgba8UnormSrgb);
+    let mut renderer = Renderer::new(&gpu, TextureFormat::Rgba8Unorm);
     let assets = scenes::Assets::new(&mut renderer, &gpu);
     let scene = scenes::build(&name, &assets, scale)
         .with_context(|| format!("no scene {name:?}, see --list"))?;
     let size = scale.to_physical(scenes::SIZE);
-    let pixmap = renderer.render_pixmap(&gpu, &scene, size, size, Srgba8::hex(0).to_linear())?;
+    let pixmap = renderer.render_pixmap(&gpu, &scene, size, size, Srgba8::hex(0).premultiply())?;
     let out = args
         .out
         .unwrap_or_else(|| PathBuf::from(format!("{name}@{}.png", args.scale)));

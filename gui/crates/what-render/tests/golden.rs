@@ -4,7 +4,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use what_core::{LinearRgba, PhysicalSize, Scale, Srgba8};
+use what_core::{PhysicalSize, PremulRgba, Scale, Srgba8};
 use what_render::{
     Adapter, Corners, Gpu, Pixmap, Quad, Rect, Renderer, Scene, Shadow, TextureFormat, scenes,
 };
@@ -13,12 +13,12 @@ const SCALES: [(u32, &str); 3] = [(120, "1"), (150, "1.25"), (240, "2")];
 
 fn setup() -> (Gpu, Renderer) {
     let gpu = Gpu::headless(Adapter::Lavapipe).unwrap_or_else(|e| panic!("{e}"));
-    let renderer = Renderer::new(&gpu, TextureFormat::Rgba8UnormSrgb);
+    let renderer = Renderer::new(&gpu, TextureFormat::Rgba8Unorm);
     (gpu, renderer)
 }
 
-fn black() -> LinearRgba {
-    Srgba8::hex(0).to_linear()
+fn black() -> PremulRgba {
+    Srgba8::hex(0).premultiply()
 }
 
 fn render(
@@ -196,7 +196,7 @@ fn shadow_matches_gaussian() {
         rect: Rect::new(bx, by, bw, bh),
         radii: Corners::all(radius),
         blur: sigma * 2.0,
-        color: Srgba8::hex(0xffffff).to_linear(),
+        color: Srgba8::hex(0xffffff).premultiply(),
         ..Default::default()
     });
     let p = render(&gpu, &mut r, &scene, size, size);
@@ -234,21 +234,12 @@ fn shadow_matches_gaussian() {
                 sy += step;
             }
             let want = sum / total;
-            let got = srgb_to_linear(p.pixel(x, y)[0]);
+            let got = p.pixel(x, y)[0] as f32 / 255.0;
             worst = worst.max((got - want).abs());
         }
     }
     // 8 bit quantisation alone is up to ~0.005 near white
     assert!(worst < 0.02, "worst coverage error {worst}");
-}
-
-fn srgb_to_linear(c: u8) -> f32 {
-    let c = c as f32 / 255.0;
-    if c <= 0.04045 {
-        c / 12.92
-    } else {
-        ((c + 0.055) / 1.055).powf(2.4)
-    }
 }
 
 #[test]
@@ -260,7 +251,7 @@ fn quad_with_no_scene_clears() {
     let mut s = Scene::new();
     s.quad(Quad {
         rect: Rect::new(2.0, 2.0, 4.0, 4.0),
-        fill: Srgba8::hex(0xffffff).to_linear().into(),
+        fill: Srgba8::hex(0xffffff).premultiply().into(),
         ..Default::default()
     });
     let p = render(&gpu, &mut r, &s, size, size);

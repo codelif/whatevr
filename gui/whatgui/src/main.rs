@@ -81,7 +81,7 @@ impl App for Whatgui {
             &self.gpu,
             &mut frame,
             &scene,
-            CLEAR.to_linear(),
+            CLEAR.premultiply(),
             size.physical,
         );
         surface.present(&self.gpu, frame, &mut Commit { platform, id });

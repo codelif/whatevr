@@ -1,0 +1,16 @@
+[package]
+name = "textcompare"
+version = "0.1.0"
+description = "Renders sample text in headless Firefox and in what-text, side by side with the difference."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+anyhow = { workspace = true, features = ["std"] }
+clap = { workspace = true, features = ["std", "derive", "help", "usage", "error-context"] }
+what-core.workspace = true
+what-render = { workspace = true, features = ["png"] }
+what-text.workspace = true

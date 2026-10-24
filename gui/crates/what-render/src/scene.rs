@@ -2,7 +2,7 @@
 //! at the top left of the target. rebuilt every frame; `clear` keeps the
 //! allocations.
 
-use what_core::LinearRgba;
+use what_core::PremulRgba;
 
 /// physical pixels. edges of quads, images and clips must sit on whole
 /// pixels (debug builds check); use [`crate::snap`] to get there.
@@ -140,33 +140,33 @@ impl Default for Clip {
 }
 
 /// gradient points are in the quad's own 0..1 box, so they follow it around.
-/// colours mix premultiplied in linear light.
+/// colours mix premultiplied in srgb space, like css.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Fill {
-    Solid(LinearRgba),
+    Solid(PremulRgba),
     Linear {
         from: [f32; 2],
         to: [f32; 2],
-        start: LinearRgba,
-        end: LinearRgba,
+        start: PremulRgba,
+        end: PremulRgba,
     },
     /// an ellipse; radius [0.5, 0.5] at center [0.5, 0.5] touches all four sides
     Radial {
         center: [f32; 2],
         radius: [f32; 2],
-        start: LinearRgba,
-        end: LinearRgba,
+        start: PremulRgba,
+        end: PremulRgba,
     },
 }
 
 impl Default for Fill {
     fn default() -> Self {
-        Self::Solid(LinearRgba::TRANSPARENT)
+        Self::Solid(PremulRgba::TRANSPARENT)
     }
 }
 
-impl From<LinearRgba> for Fill {
-    fn from(c: LinearRgba) -> Self {
+impl From<PremulRgba> for Fill {
+    fn from(c: PremulRgba) -> Self {
         Self::Solid(c)
     }
 }
@@ -180,7 +180,7 @@ pub struct Quad {
     pub radii: Corners,
     pub fill: Fill,
     pub border: Edges,
-    pub border_color: LinearRgba,
+    pub border_color: PremulRgba,
     pub clip: Clip,
 }
 
@@ -193,7 +193,7 @@ pub struct Shadow {
     pub offset: [f32; 2],
     pub spread: f32,
     pub blur: f32,
-    pub color: LinearRgba,
+    pub color: PremulRgba,
     pub clip: Clip,
 }
 
@@ -221,13 +221,26 @@ impl Image {
     }
 }
 
+/// one glyph from the renderer's glyph atlas, its pen at whole pixel `x` and
+/// baseline `y`
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Glyph {
+    pub x: i32,
+    pub y: i32,
+    pub key: u128,
+    pub color: PremulRgba,
+    pub clip: Clip,
+}
+
 /// layers draw bottom to top. inside one layer all shadows draw first, then
-/// all quads, then all images, whatever order they were pushed in.
+/// all quads, then all images, then all glyphs, whatever order they were
+/// pushed in.
 #[derive(Clone, Debug, Default)]
 pub struct Scene {
     pub(crate) quads: Vec<Quad>,
     pub(crate) shadows: Vec<Shadow>,
     pub(crate) images: Vec<Image>,
+    pub(crate) glyphs: Vec<Glyph>,
     /// where each layer after the first starts, per kind
     pub(crate) layers: Vec<LayerStart>,
 }
@@ -237,6 +250,7 @@ pub(crate) struct LayerStart {
     pub quads: usize,
     pub shadows: usize,
     pub images: usize,
+    pub glyphs: usize,
 }
 
 impl Scene {
@@ -248,11 +262,15 @@ impl Scene {
         self.quads.clear();
         self.shadows.clear();
         self.images.clear();
+        self.glyphs.clear();
         self.layers.clear();
     }
 
     pub fn is_empty(&self) -> bool {
-        self.quads.is_empty() && self.shadows.is_empty() && self.images.is_empty()
+        self.quads.is_empty()
+            && self.shadows.is_empty()
+            && self.images.is_empty()
+            && self.glyphs.is_empty()
     }
 
     /// everything pushed after this goes on top of everything before
@@ -284,11 +302,17 @@ impl Scene {
         self.images.push(i);
     }
 
+    pub fn glyph(&mut self, g: Glyph) {
+        debug_assert_clip(&g.clip);
+        self.glyphs.push(g);
+    }
+
     fn end(&self) -> LayerStart {
         LayerStart {
             quads: self.quads.len(),
             shadows: self.shadows.len(),
             images: self.images.len(),
+            glyphs: self.glyphs.len(),
         }
     }
 

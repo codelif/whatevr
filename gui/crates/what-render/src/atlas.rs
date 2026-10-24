@@ -4,7 +4,6 @@
 //! bleeds a neighbour in.
 
 use std::collections::HashMap;
-use std::sync::LazyLock;
 
 use etagere::{AllocId, AtlasAllocator, size2};
 use log::debug;
@@ -16,14 +15,14 @@ const PAGE: u32 = 2048;
 const PAGE_MAX: u32 = 4096;
 /// bigger than this on either side and it gets its own texture
 const OWN: u32 = 1024;
-const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
+const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
 /// how the rgba8 bytes handed to `add_image` are encoded. both are srgb.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Alpha {
     /// what decoders give you: colour not multiplied by alpha
     Straight,
-    /// already premultiplied in linear light, then srgb encoded
+    /// already premultiplied, in srgb space like browsers do
     Premultiplied,
 }
 
@@ -359,32 +358,6 @@ fn pad(px: &[u8], w: u32, h: u32) -> Vec<u8> {
     out
 }
 
-static TO_LINEAR: LazyLock<[f32; 256]> = LazyLock::new(|| {
-    std::array::from_fn(|i| {
-        let c = i as f32 / 255.0;
-        if c <= 0.04045 {
-            c / 12.92
-        } else {
-            ((c + 0.055) / 1.055).powf(2.4)
-        }
-    })
-});
-
-/// 4096 steps of linear light is finer than 8 bit srgb anywhere but the very darkest values
-static TO_SRGB: LazyLock<Vec<u8>> = LazyLock::new(|| {
-    (0..=4095)
-        .map(|i| {
-            let l = i as f32 / 4095.0;
-            let c = if l <= 0.0031308 {
-                l * 12.92
-            } else {
-                1.055 * l.powf(1.0 / 2.4) - 0.055
-            };
-            (c * 255.0).round() as u8
-        })
-        .collect()
-});
-
 pub(crate) fn premultiplied(rgba: &[u8], alpha: Alpha) -> Vec<u8> {
     let mut out = rgba.to_vec();
     if alpha == Alpha::Premultiplied {
@@ -395,9 +368,8 @@ pub(crate) fn premultiplied(rgba: &[u8], alpha: Alpha) -> Vec<u8> {
             255 => {}
             0 => px[..3].fill(0),
             a => {
-                let a = a as f32 / 255.0;
                 for c in &mut px[..3] {
-                    *c = TO_SRGB[(TO_LINEAR[*c as usize] * a * 4095.0).round() as usize];
+                    *c = ((*c as u32 * a as u32 + 127) / 255) as u8;
                 }
             }
         }
@@ -410,23 +382,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn premultiply_in_linear() {
+    fn premultiply_in_srgb() {
         let px = premultiplied(
             &[255, 255, 255, 128, 10, 20, 30, 255, 9, 9, 9, 0],
             Alpha::Straight,
         );
-        // half white in linear is 0.502, which srgb encodes as 188
-        assert_eq!(&px[..4], &[188, 188, 188, 128]);
+        assert_eq!(&px[..4], &[128, 128, 128, 128]);
         assert_eq!(&px[4..8], &[10, 20, 30, 255]);
         assert_eq!(&px[8..], &[0, 0, 0, 0]);
-    }
-
-    #[test]
-    fn srgb_round_trips_opaque_values() {
-        for c in 0..=255u8 {
-            let back = TO_SRGB[(TO_LINEAR[c as usize] * 4095.0).round() as usize];
-            assert!(back.abs_diff(c) <= 1, "{c} -> {back}");
-        }
     }
 
     #[test]

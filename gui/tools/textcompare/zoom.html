@@ -1,0 +1,95 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>textcompare zoom</title>
+<style>
+  body { margin: 0; background: #808080; color: #fff; font: 13px sans-serif; }
+  header { position: sticky; top: 0; z-index: 1; display: flex; gap: 12px; align-items: center;
+           padding: 8px 12px; background: #404040; }
+  main { padding: 12px; }
+  .line { margin-bottom: 16px; }
+  .strip { display: flex; align-items: flex-start; margin-bottom: 2px; }
+  .strip span { width: 80px; flex: none; }
+  canvas { display: block; }
+</style>
+<header>
+  <button id="prev">&lt;</button>
+  <select id="case"></select>
+  <button id="next">&gt;</button>
+  <label>zoom <input id="zoom" type="range" min="1" max="12" value="4"> <b id="z"></b>x</label>
+  <span>keys: [ ] case, - = zoom</span>
+</header>
+<main id="lines"></main>
+<script>
+// filled in by textcompare: sides are [name, directory]; lines are physical
+// px [top, bottom, left, right) per sample line, cropped to ink
+const DATA = /*DATA*/null;
+const pick = document.getElementById("case");
+const zoom = document.getElementById("zoom");
+const images = new Map();
+
+function image(dir, name) {
+  const src = `${dir}/${name}.png`;
+  if (!images.has(src)) {
+    images.set(src, new Promise((ok, err) => {
+      const i = new Image();
+      i.onload = () => ok(i);
+      i.onerror = () => err(new Error(src));
+      i.src = src;
+    }));
+  }
+  return images.get(src);
+}
+
+async function draw() {
+  const c = DATA.cases[pick.value];
+  const z = +zoom.value;
+  document.getElementById("z").textContent = z;
+  const dpr = window.devicePixelRatio || 1;
+  const shots = await Promise.all(DATA.sides.map(([, dir]) => image(dir, c.name)));
+  const root = document.getElementById("lines");
+  root.replaceChildren();
+  for (const [top, bottom, left, right] of c.lines) {
+    const group = document.createElement("div");
+    group.className = "line";
+    const [w, h] = [right - left, bottom - top];
+    DATA.sides.forEach(([side], i) => {
+      const row = document.createElement("div");
+      row.className = "strip";
+      const tag = document.createElement("span");
+      tag.textContent = side;
+      // whole device pixels per source pixel, whatever the screen's scale
+      const cv = document.createElement("canvas");
+      cv.width = w * z;
+      cv.height = h * z;
+      cv.style.width = `${(w * z) / dpr}px`;
+      cv.style.height = `${(h * z) / dpr}px`;
+      const ctx = cv.getContext("2d");
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(shots[i], left, top, w, h, 0, 0, w * z, h * z);
+      row.append(tag, cv);
+      group.append(row);
+    });
+    root.append(group);
+  }
+}
+
+function step(d) {
+  pick.value = (+pick.value + d + DATA.cases.length) % DATA.cases.length;
+  draw();
+}
+
+DATA.cases.forEach((c, i) => pick.add(new Option(c.label, i)));
+pick.onchange = draw;
+zoom.oninput = draw;
+document.getElementById("prev").onclick = () => step(-1);
+document.getElementById("next").onclick = () => step(1);
+document.onkeydown = (e) => {
+  if (e.key === "[") step(-1);
+  if (e.key === "]") step(1);
+  if (e.key === "-" || e.key === "=") {
+    zoom.value = +zoom.value + (e.key === "=" ? 1 : -1);
+    draw();
+  }
+};
+draw();
+</script>

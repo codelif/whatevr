@@ -1,14 +1,15 @@
 //! instanced pipelines: one draw per kind per layer, plus one per atlas page
-//! change among a layer's images.
+//! change among a layer's images and glyphs.
 
 use std::borrow::Cow;
 
 use bytemuck::{Pod, Zeroable};
 use log::warn;
-use what_core::{LinearRgba, PhysicalSize};
+use what_core::{PhysicalSize, PremulRgba};
 
 use crate::atlas::{Alpha, Atlas};
 use crate::edge::EdgeCopy;
+use crate::glyphs::{GlyphFormat, GlyphImage, Glyphs};
 use crate::scene::{Clip, Corners, Fill, LayerStart};
 use crate::{Frame, Gpu, ImageId, Scene};
 
@@ -49,6 +50,16 @@ struct ImageInstance {
     uv: [f32; 4],
     radii: [f32; 4],
     params: [f32; 4],
+    clip_rect: [f32; 4],
+    clip_radii: [f32; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct GlyphInstance {
+    rect: [f32; 4],
+    texel: [f32; 4],
+    color: [f32; 4],
     clip_rect: [f32; 4],
     clip_radii: [f32; 4],
 }
@@ -97,7 +108,7 @@ impl<T: Pod> Instances<T> {
     }
 }
 
-/// a stretch of one layer's images that share an atlas page
+/// a stretch of one layer's images or glyphs that share an atlas page
 struct Run {
     layer: usize,
     page: usize,
@@ -111,18 +122,22 @@ pub struct Renderer {
     quad_pipeline: wgpu::RenderPipeline,
     shadow_pipeline: wgpu::RenderPipeline,
     image_pipeline: wgpu::RenderPipeline,
+    glyph_pipeline: wgpu::RenderPipeline,
     quads: Instances<QuadInstance>,
     shadows: Instances<ShadowInstance>,
     images: Instances<ImageInstance>,
+    glyph_instances: Instances<GlyphInstance>,
     runs: Vec<Run>,
+    glyph_runs: Vec<Run>,
     layers: Vec<(LayerStart, LayerStart)>,
     atlas: Atlas,
+    glyphs: Glyphs,
     edge: EdgeCopy,
 }
 
 impl Renderer {
     /// pipelines are built for one target format: the surface's, or
-    /// Rgba8UnormSrgb for headless
+    /// Rgba8Unorm for headless
     pub fn new(gpu: &Gpu, format: wgpu::TextureFormat) -> Self {
         let device = &gpu.device;
         let globals_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -158,6 +173,19 @@ impl Renderer {
                     count: None,
                 },
             ],
+        });
+        let glyph_page_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("glyph page"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            }],
         });
         let globals = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("globals"),
@@ -210,6 +238,17 @@ impl Renderer {
                 3 => Float32x4, 4 => Float32x4, 5 => Float32x4,
             ],
         );
+        let glyph_pipeline = pipeline(
+            gpu,
+            "glyph",
+            include_str!("shaders/glyph.wgsl"),
+            format,
+            &[&globals_layout, &glyph_page_layout],
+            size_of::<GlyphInstance>(),
+            &wgpu::vertex_attr_array![
+                0 => Float32x4, 1 => Float32x4, 2 => Float32x4, 3 => Float32x4, 4 => Float32x4,
+            ],
+        );
 
         Self {
             format,
@@ -218,12 +257,16 @@ impl Renderer {
             quad_pipeline,
             shadow_pipeline,
             image_pipeline,
+            glyph_pipeline,
             quads: Instances::new("quads"),
             shadows: Instances::new("shadows"),
             images: Instances::new("images"),
+            glyph_instances: Instances::new("glyphs"),
             runs: Vec::new(),
+            glyph_runs: Vec::new(),
             layers: Vec::new(),
             atlas: Atlas::new(gpu, page_layout),
+            glyphs: Glyphs::new(glyph_page_layout),
             edge: EdgeCopy::default(),
         }
     }
@@ -247,6 +290,17 @@ impl Renderer {
         self.atlas.remove(id);
     }
 
+    /// whether `key` is in the glyph atlas. also keeps it there for this frame,
+    /// so ask for every glyph you draw.
+    pub fn has_glyph(&self, key: u128) -> bool {
+        self.glyphs.get(key).is_some()
+    }
+
+    /// store a rasterized glyph; [`GlyphImage::EMPTY`] for one with no ink
+    pub fn add_glyph(&mut self, gpu: &Gpu, key: u128, image: GlyphImage<'_>) {
+        self.glyphs.add(gpu, key, image);
+    }
+
     /// clears the whole frame, draws the scene, and repeats the content's
     /// edge past it when the frame is bigger than `content`
     pub fn draw(
@@ -254,7 +308,7 @@ impl Renderer {
         gpu: &Gpu,
         frame: &mut Frame,
         scene: &Scene,
-        clear: LinearRgba,
+        clear: PremulRgba,
         content: PhysicalSize,
     ) {
         let texture = &frame.texture.texture;
@@ -278,7 +332,7 @@ impl Renderer {
         view: &wgpu::TextureView,
         texture: &wgpu::Texture,
         scene: &Scene,
-        clear: LinearRgba,
+        clear: PremulRgba,
         content: PhysicalSize,
         copyable: bool,
     ) {
@@ -286,6 +340,7 @@ impl Renderer {
         self.quads.upload(gpu);
         self.shadows.upload(gpu);
         self.images.upload(gpu);
+        self.glyph_instances.upload(gpu);
         let globals = Globals {
             viewport: [texture.width() as f32, texture.height() as f32],
             _pad: [0.0; 2],
@@ -314,6 +369,7 @@ impl Renderer {
             });
             pass.set_bind_group(0, &self.globals_group, &[]);
             let mut runs = self.runs.iter().peekable();
+            let mut glyph_runs = self.glyph_runs.iter().peekable();
             for (layer, (start, end)) in self.layers.iter().enumerate() {
                 if end.shadows > start.shadows {
                     pass.set_pipeline(&self.shadow_pipeline);
@@ -338,8 +394,20 @@ impl Renderer {
                     pass.set_bind_group(1, &page.bind_group, &[]);
                     pass.draw(0..4, run.instances.clone());
                 }
+                let mut first = true;
+                while let Some(run) = glyph_runs.next_if(|r| r.layer == layer) {
+                    if first {
+                        pass.set_pipeline(&self.glyph_pipeline);
+                        let buffer = self.glyph_instances.gpu.as_ref().unwrap();
+                        pass.set_vertex_buffer(0, buffer.slice(..));
+                        first = false;
+                    }
+                    pass.set_bind_group(1, &self.glyphs.pages[run.page].bind_group, &[]);
+                    pass.draw(0..4, run.instances.clone());
+                }
             }
         }
+        self.glyphs.end_frame();
 
         let past = content.width < texture.width() || content.height < texture.height();
         if past && copyable {
@@ -419,7 +487,9 @@ impl Renderer {
         }));
 
         self.images.cpu.clear();
+        self.glyph_instances.cpu.clear();
         self.runs.clear();
+        self.glyph_runs.clear();
         self.layers.clear();
         for (layer, (start, end)) in scene.layer_ranges().enumerate() {
             for img in &scene.images[start.images..end.images] {
@@ -442,6 +512,38 @@ impl Renderer {
                     uv: slot.uv,
                     radii: img.radii.fit(img.rect.w, img.rect.h),
                     params: [img.opacity.clamp(0.0, 1.0), 0.0, 0.0, 0.0],
+                    clip_rect,
+                    clip_radii,
+                });
+            }
+            for g in &scene.glyphs[start.glyphs..end.glyphs] {
+                let Some(e) = self.glyphs.get(g.key) else {
+                    warn!("drawing glyph {:#x} that isn't in the atlas", g.key);
+                    continue;
+                };
+                let Some(page) = e.page else {
+                    continue;
+                };
+                let i = self.glyph_instances.cpu.len() as u32;
+                match self.glyph_runs.last_mut() {
+                    Some(r) if r.layer == layer && r.page == page => r.instances.end = i + 1,
+                    _ => self.glyph_runs.push(Run {
+                        layer,
+                        page,
+                        instances: i..i + 1,
+                    }),
+                }
+                let (clip_rect, clip_radii) = clip(&g.clip);
+                let color = (e.format == GlyphFormat::Rgba) as u32 as f32;
+                self.glyph_instances.cpu.push(GlyphInstance {
+                    rect: [
+                        (g.x + e.left) as f32,
+                        (g.y - e.top) as f32,
+                        e.w as f32,
+                        e.h as f32,
+                    ],
+                    texel: [e.x as f32, e.y as f32, color, 0.0],
+                    color: rgba(g.color),
                     clip_rect,
                     clip_radii,
                 });
@@ -505,7 +607,7 @@ fn pipeline(
     })
 }
 
-fn rgba(c: LinearRgba) -> [f32; 4] {
+fn rgba(c: PremulRgba) -> [f32; 4] {
     [c.r, c.g, c.b, c.a]
 }
 
@@ -537,6 +639,7 @@ mod tests {
             size_of::<QuadInstance>(),
             size_of::<ShadowInstance>(),
             size_of::<ImageInstance>(),
+            size_of::<GlyphInstance>(),
         ] {
             assert!(size <= 255, "{size}");
         }

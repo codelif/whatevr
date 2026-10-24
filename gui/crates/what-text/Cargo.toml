@@ -9,3 +9,15 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+what-core.workspace = true
+log.workspace = true
+thiserror = { workspace = true, features = ["std"] }
+parley = { workspace = true, features = ["system", "complex-scripts"] }
+i_overlay.workspace = true
+icu_properties = { workspace = true, features = ["compiled_data"] }
+skrifa = { workspace = true, features = ["std", "autohint_shaping"] }
+zune-png = { workspace = true, features = ["std", "sse"] }
+
+[dev-dependencies]
+textcompare = { path = "../../tools/textcompare" }
+what-render = { workspace = true, features = ["png"] }
