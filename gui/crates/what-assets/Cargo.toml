@@ -1,0 +1,12 @@
+[package]
+name = "what-assets"
+version = "0.1.0"
+description = "whatevr's bundled assets: fonts now, icons and sounds later."
+edition.workspace = true
+rust-version.workspace = true
+# the fonts are their own work under the ofl, see fonts/OFL.txt
+license = "BSD-3-Clause AND OFL-1.1"
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]

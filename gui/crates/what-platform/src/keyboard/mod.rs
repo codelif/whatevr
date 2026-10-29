@@ -80,7 +80,7 @@ impl Keyboard {
     }
 }
 
-fn surface_window(surface: &wl_surface::WlSurface) -> Option<WindowId> {
+pub(crate) fn surface_window(surface: &wl_surface::WlSurface) -> Option<WindowId> {
     surface.data::<WindowId>().copied()
 }
 

@@ -1,6 +1,6 @@
 # what-core
 
-Geometry, units, colors, input event types, ids and a tiny logger.
+Geometry, units, colors, input event types, ids, a tiny logger and the global allocator.
 
 Shared vocabulary for every other crate.
 

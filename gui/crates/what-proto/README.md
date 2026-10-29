@@ -7,4 +7,4 @@ Generated protobuf types from proto/ plus the size-delimited frame client for wh
 ## Boundaries
 
 - Depends on no workspace crate.
-- One of the two crates that know whatevr exists (the other is whatgui).
+- One of the crates that know whatevr exists (the others are what-assets and whatgui).

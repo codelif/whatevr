@@ -1,5 +1,7 @@
-//! Geometry, units, colors, input event types, ids and a tiny logger.
+//! Geometry, units, colors, input event types, ids, a tiny logger and the
+//! global allocator.
 
+pub mod alloc;
 pub mod color;
 pub mod geom;
 pub mod ids;
@@ -12,5 +14,7 @@ pub use geom::{
     LogicalPoint, LogicalRect, LogicalSize, PhysicalPoint, PhysicalRect, PhysicalSize, Scale,
 };
 pub use ids::{Token, WindowId};
-pub use input::{KeyEvent, KeyState, Keysym, Modifiers};
+pub use input::{
+    AxisSource, Button, KeyEvent, KeyState, Keysym, Modifiers, PointerEvent, ScrollFrame,
+};
 pub use time::Timestamp;

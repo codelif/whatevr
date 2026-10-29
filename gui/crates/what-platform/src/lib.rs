@@ -1,10 +1,10 @@
 //! Wayland client: windows, frame clock, pointer, keyboard, IME, clipboard, activation, portals.
 
-mod cursor;
 mod event_loop;
 mod globals;
 mod keyboard;
 mod output;
+mod pointer;
 mod presentation;
 mod seat;
 mod window;
@@ -24,7 +24,7 @@ use wayland_backend::client::{Backend, WaylandError};
 use wayland_client::globals::{BindError, GlobalError, registry_queue_init};
 use wayland_client::{ConnectError, Connection, DispatchError, EventQueue, QueueHandle};
 use what_core::{
-    KeyEvent, LogicalSize, Modifiers, PhysicalSize, Scale, Timestamp, Token, WindowId,
+    KeyEvent, LogicalSize, Modifiers, PhysicalSize, PointerEvent, Scale, Timestamp, Token, WindowId,
 };
 
 use event_loop::{EventLoop, Ready};
@@ -86,6 +86,8 @@ pub trait App {
     fn key(&mut self, _: &mut Platform, _: WindowId, _: &KeyEvent) {}
     fn modifiers(&mut self, _: &mut Platform, _: WindowId, _: Modifiers) {}
     fn focus(&mut self, _: &mut Platform, _: WindowId, _: bool) {}
+    /// one wl_pointer frame is several calls in a row, scroll last
+    fn pointer(&mut self, _: &mut Platform, _: WindowId, _: &PointerEvent) {}
     fn fd_ready(&mut self, _: &mut Platform, _: Token) {}
     fn timer(&mut self, _: &mut Platform, _: Token) {}
 }
@@ -96,6 +98,7 @@ pub(crate) enum Event {
     Focus(WindowId, bool),
     Key(WindowId, KeyEvent),
     Modifiers(WindowId, Modifiers),
+    Pointer(WindowId, PointerEvent),
     Presented(WindowId, PresentInfo),
 }
 
@@ -187,6 +190,9 @@ impl Platform {
         let w = self.state.windows.swap_remove(i);
         if let Some(kb) = self.state.seat.keyboard.as_mut() {
             kb.unfocus(id);
+        }
+        if let Some(p) = self.state.seat.pointer.as_mut() {
+            p.unfocus(id);
         }
         self.state.seat.repeat.stop();
         w.destroy();
@@ -364,6 +370,7 @@ impl Platform {
                 Event::Focus(id, on) => app.focus(self, id, on),
                 Event::Key(id, ev) => app.key(self, id, &ev),
                 Event::Modifiers(id, m) => app.modifiers(self, id, m),
+                Event::Pointer(id, ev) => app.pointer(self, id, &ev),
                 Event::Presented(id, info) => app.presented(self, id, info),
             }
             if !self.running {

@@ -1,5 +1,7 @@
 use std::ops::{BitAnd, BitOr, BitOrAssign};
 
+use crate::LogicalPoint;
+
 /// an X11/xkb keysym value
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Keysym(pub u32);
@@ -111,6 +113,64 @@ impl KeyEvent {
         let active = self.mods.difference(consumed) & Modifiers::SHORTCUT;
         active == mods && self.keysym.to_lower() == keysym.to_lower()
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Button {
+    Left,
+    Right,
+    Middle,
+    /// evdev code
+    Other(u32),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum AxisSource {
+    Wheel,
+    Finger,
+    Continuous,
+    WheelTilt,
+}
+
+/// one whole wl_pointer.frame of axis data. wayland's sign: positive dy
+/// scrolls down, the content moves up.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ScrollFrame {
+    pub source: Option<AxisSource>,
+    pub time_ms: u32,
+    /// logical px as the compositor sent them
+    pub delta: [f32; 2],
+    /// high-res wheel clicks, 120 per notch
+    pub value120: [i32; 2],
+    /// axis_stop per axis: fingers lifted
+    pub stop: [bool; 2],
+    /// axis_relative_direction said inverted (natural scrolling)
+    pub inverted: [bool; 2],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PointerEvent {
+    Enter {
+        pos: LogicalPoint,
+    },
+    Leave,
+    Motion {
+        pos: LogicalPoint,
+        time_ms: u32,
+    },
+    Button {
+        button: Button,
+        pressed: bool,
+        pos: LogicalPoint,
+        time_ms: u32,
+    },
+    Scroll(ScrollFrame),
+    /// touchpad hold gesture: fingers down (begin) or up
+    Hold {
+        begin: bool,
+        cancelled: bool,
+        time_ms: u32,
+    },
 }
 
 #[cfg(test)]

@@ -11,6 +11,7 @@ use crate::atlas::{Alpha, Atlas};
 use crate::edge::EdgeCopy;
 use crate::glyphs::{GlyphFormat, GlyphImage, Glyphs};
 use crate::scene::{Clip, Corners, Fill, LayerStart};
+use crate::timing::Timing;
 use crate::{Frame, Gpu, ImageId, Scene};
 
 const COMMON: &str = include_str!("shaders/common.wgsl");
@@ -133,6 +134,7 @@ pub struct Renderer {
     atlas: Atlas,
     glyphs: Glyphs,
     edge: EdgeCopy,
+    timing: Option<Timing>,
 }
 
 impl Renderer {
@@ -268,6 +270,7 @@ impl Renderer {
             atlas: Atlas::new(gpu, page_layout),
             glyphs: Glyphs::new(glyph_page_layout),
             edge: EdgeCopy::default(),
+            timing: None,
         }
     }
 
@@ -299,6 +302,31 @@ impl Renderer {
     /// store a rasterized glyph; [`GlyphImage::EMPTY`] for one with no ink
     pub fn add_glyph(&mut self, gpu: &Gpu, key: u128, image: GlyphImage<'_>) {
         self.glyphs.add(gpu, key, image);
+    }
+
+    /// time the scene pass on the gpu from now on; false when the adapter
+    /// has no timestamp queries
+    pub fn enable_timing(&mut self, gpu: &Gpu) -> bool {
+        if self.timing.is_none() {
+            self.timing = Timing::new(gpu);
+        }
+        self.timing.is_some()
+    }
+
+    /// what the next draws' gpu times are reported under
+    pub fn set_frame_tag(&mut self, tag: u64) {
+        if let Some(t) = &mut self.timing {
+            t.tag = tag;
+        }
+    }
+
+    /// (tag, gpu time) of frames whose results came back, oldest first.
+    /// they land a few frames after the draw.
+    pub fn take_gpu_times(&mut self) -> Vec<(u64, std::time::Duration)> {
+        self.timing
+            .as_mut()
+            .map(|t| std::mem::take(&mut t.done))
+            .unwrap_or_default()
     }
 
     /// clears the whole frame, draws the scene, and repeats the content's
@@ -348,9 +376,11 @@ impl Renderer {
         gpu.queue
             .write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
 
+        let timestamps = self.timing.as_mut().and_then(|t| t.begin(gpu));
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("scene"),
+                timestamp_writes: timestamps,
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view,
                     depth_slice: None,
@@ -406,6 +436,9 @@ impl Renderer {
                     pass.draw(0..4, run.instances.clone());
                 }
             }
+        }
+        if let Some(t) = &mut self.timing {
+            t.end(encoder);
         }
         self.glyphs.end_frame();
 

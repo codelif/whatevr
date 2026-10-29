@@ -17,6 +17,7 @@ what-text = { path = "crates/what-text" }
 what-ui = { path = "crates/what-ui" }
 what-proto = { path = "crates/what-proto" }
 what-media = { path = "crates/what-media" }
+what-assets = { path = "crates/what-assets" }
 
 anyhow = { version = "1.0.104", default-features = false }
 bytemuck = { version = "1.25.2", default-features = false }
@@ -25,10 +26,13 @@ etagere = { version = "0.3.0", default-features = false }
 i_overlay = { version = "9.1.0", default-features = false }
 icu_properties = { version = "2.4.0", default-features = false }
 log = { version = "0.4.34", default-features = false }
+# exact, v2: the cheapest cross-thread frees we measured
+mimalloc = { version = "=0.1.52", default-features = false, features = ["v2"] }
 parley = { version = "0.12.0", default-features = false }
 png = { version = "0.18.1", default-features = false }
 pollster = { version = "1.0.1", default-features = false }
 raw-window-handle = { version = "0.6.2", default-features = false }
+rtrb = { version = "0.4.0", default-features = false }
 rustix = { version = "1.1.5", default-features = false }
 # exact: must be the skrifa parley 0.12 links against
 skrifa = { version = "=0.44.0", default-features = false }

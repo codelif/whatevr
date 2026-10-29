@@ -11,6 +11,7 @@ mod scene;
 pub mod scenes;
 pub mod snap;
 mod surface;
+mod timing;
 
 pub use atlas::Alpha;
 pub use frame::{Frame, Presenter};

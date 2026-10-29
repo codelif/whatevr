@@ -4,6 +4,7 @@ use wayland_client::globals::GlobalList;
 use wayland_client::protocol::{wl_compositor::WlCompositor, wl_seat::WlSeat};
 use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_manager_v1::WpCursorShapeManagerV1;
 use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1;
+use wayland_protocols::wp::pointer_gestures::zv1::client::zwp_pointer_gestures_v1::ZwpPointerGesturesV1;
 use wayland_protocols::wp::presentation_time::client::wp_presentation::WpPresentation;
 use wayland_protocols::wp::viewporter::client::wp_viewporter::WpViewporter;
 use wayland_protocols::xdg::decoration::zv1::client::zxdg_decoration_manager_v1::ZxdgDecorationManagerV1;
@@ -19,6 +20,8 @@ pub(crate) struct Globals {
     pub decoration: Option<ZxdgDecorationManagerV1>,
     pub cursor_shape: Option<WpCursorShapeManagerV1>,
     pub presentation: Option<WpPresentation>,
+    /// v3 for hold gestures: fingers resting on the touchpad stop a fling
+    pub pointer_gestures: Option<ZwpPointerGesturesV1>,
     pub seat: Option<WlSeat>,
 }
 
@@ -39,6 +42,7 @@ impl Globals {
             decoration: list.bind(qh, 1..=1, ()).ok(),
             cursor_shape: list.bind(qh, 1..=1, ()).ok(),
             presentation: list.bind(qh, 1..=2, ()).ok(),
+            pointer_gestures: list.bind(qh, 3..=3, ()).ok(),
             seat: list.bind(qh, 1..=10, ()).ok(),
         };
         let missing: Vec<&str> = [
@@ -47,6 +51,7 @@ impl Globals {
             ("zxdg_decoration_manager_v1", g.decoration.is_some()),
             ("wp_cursor_shape_manager_v1", g.cursor_shape.is_some()),
             ("wp_presentation", g.presentation.is_some()),
+            ("zwp_pointer_gestures_v1 v3", g.pointer_gestures.is_some()),
             ("wl_seat", g.seat.is_some()),
         ]
         .into_iter()

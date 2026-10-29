@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use parley::fontique::{Blob, Collection, CollectionOptions, SourceCache};
 use parley::{
@@ -21,15 +21,30 @@ use crate::raster::{self, Raster};
 use crate::{Error, Family, GlyphKey, Paragraph, Span, Style};
 
 /// fonts, shaping scratch and the hinting state. one per thread that lays
-/// out text; glyph keys only mean something to the system that made them.
+/// out text; glyph keys mean the same to a system and its siblings, and
+/// nothing to anyone else.
 pub struct TextSystem {
-    fcx: FontContext,
+    pub(crate) fcx: FontContext,
     lcx: LayoutContext<PremulRgba>,
-    faces: Vec<FaceData>,
+    registry: Arc<Mutex<Registry>>,
+    /// this thread's copy of the registry, filled on first use of each face
+    faces: Vec<Option<Arc<FaceData>>>,
     face_ids: HashMap<FaceKey, u16>,
     /// (face, size in 1/64 px)
     hinting: HashMap<(u16, u32), Option<HintingInstance>>,
+    /// the last ellipsis shaped, by style and scale
+    pub(crate) ellipsis: Option<(Style, Scale, Paragraph)>,
 }
+
+/// every face any sibling has seen, numbered in order of first sight
+#[derive(Default)]
+struct Registry {
+    faces: Vec<Arc<FaceData>>,
+    ids: HashMap<FaceKey, u16>,
+}
+
+/// face ids stop here; 0xffff is the icons' (see [`GlyphKey::icon`])
+const MAX_FACES: usize = 0xffff;
 
 /// what tells two shaped runs' fonts apart
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -73,14 +88,21 @@ const HINTING_CACHE: usize = 256;
 impl TextSystem {
     /// system fonts and fallback through fontconfig
     pub fn new() -> Self {
-        Self::with_context(FontContext::new())
+        // shared so fonts added later reach siblings too
+        Self::with_context(FontContext {
+            collection: Collection::new(CollectionOptions {
+                shared: true,
+                system_fonts: true,
+            }),
+            source_cache: SourceCache::new_shared(),
+        })
     }
 
     /// only these font files, no system fonts: for tests and comparisons.
     /// every generic family falls back through them in this order.
     pub fn with_fonts(files: &[&Path]) -> Result<Self, Error> {
         let mut collection = Collection::new(CollectionOptions {
-            shared: false,
+            shared: true,
             system_fonts: false,
         });
         let mut families = Vec::new();
@@ -107,7 +129,7 @@ impl TextSystem {
         }
         Ok(Self::with_context(FontContext {
             collection,
-            source_cache: SourceCache::default(),
+            source_cache: SourceCache::new_shared(),
         }))
     }
 
@@ -115,10 +137,44 @@ impl TextSystem {
         Self {
             fcx,
             lcx: LayoutContext::new(),
+            registry: Arc::default(),
             faces: Vec::new(),
             face_ids: HashMap::new(),
             hinting: HashMap::new(),
+            ellipsis: None,
         }
+    }
+
+    /// another system for another thread: same fonts, same face numbering,
+    /// its own shaping scratch and hinting cache
+    pub fn sibling(&self) -> TextSystem {
+        Self {
+            fcx: self.fcx.clone(),
+            lcx: LayoutContext::new(),
+            registry: self.registry.clone(),
+            faces: Vec::new(),
+            face_ids: HashMap::new(),
+            hinting: HashMap::new(),
+            ellipsis: None,
+        }
+    }
+
+    /// a font compiled into the binary; system fonts still back it up per
+    /// character. returns the families it brought.
+    pub fn add_font(&mut self, data: &'static [u8]) -> Vec<String> {
+        let got = self
+            .fcx
+            .collection
+            .register_fonts(Blob::new(Arc::new(data)), None);
+        let mut names: Vec<String> = Vec::new();
+        for (family, _) in got {
+            if let Some(n) = self.fcx.collection.family_name(family)
+                && !names.iter().any(|m| m == n)
+            {
+                names.push(n.to_owned());
+            }
+        }
+        names
     }
 
     /// shape `text`, laid out on one line per hard break; call
@@ -197,6 +253,12 @@ impl TextSystem {
             scale,
             faces,
             placed: Vec::new(),
+            raw_x: Vec::new(),
+            line_glyphs: Vec::new(),
+            clamp: None,
+            text: text.into(),
+            base: base.clone(),
+            spans: spans.into(),
         };
         p.wrap(None);
         p
@@ -205,7 +267,7 @@ impl TextSystem {
     /// None for glyphs with no ink, like a space
     pub fn rasterize(&mut self, key: GlyphKey) -> Option<Raster> {
         let face_id = key.font();
-        let face = self.faces.get(face_id as usize)?;
+        let face = self.face(face_id)?;
         let font = FontRef::from_index(face.blob.as_ref(), face.index).ok()?;
         let glyph = GlyphId::new(key.glyph() as u32);
         let size = key.size();
@@ -251,33 +313,67 @@ impl TextSystem {
         )
     }
 
+    /// the face behind an id, from the local copy or, once, the registry
+    fn face(&mut self, id: u16) -> Option<Arc<FaceData>> {
+        let i = id as usize;
+        if let Some(Some(f)) = self.faces.get(i) {
+            return Some(f.clone());
+        }
+        let f = self.registry.lock().ok()?.faces.get(i)?.clone();
+        if self.faces.len() <= i {
+            self.faces.resize(i + 1, None);
+        }
+        self.faces[i] = Some(f.clone());
+        Some(f)
+    }
+
     fn intern(&mut self, key: FaceKey, run: &Run<'_, PremulRgba>) -> Face {
-        if let Some(&id) = self.face_ids.get(&key) {
+        if let Some(&id) = self.face_ids.get(&key)
+            && let Some(f) = self.face(id)
+        {
             return Face {
                 id,
-                color: self.faces[id as usize].color.clone(),
+                color: f.color.clone(),
             };
         }
-        let font = run.font();
-        let color = FontRef::from_index(font.data.as_ref(), font.index)
-            .ok()
-            .and_then(|f| color_table(&f));
-        // past 65536 faces new ones share the last id; nothing real gets there
-        let id = u16::try_from(self.faces.len()).unwrap_or(u16::MAX);
-        if self.faces.len() <= u16::MAX as usize {
-            self.faces.push(FaceData {
-                blob: font.data.clone(),
-                index: font.index,
-                coords: run
-                    .normalized_coords()
-                    .iter()
-                    .map(|c| NormalizedCoord::from_bits(c.to_bits()))
-                    .collect(),
-                skew: run.synthesis().skew(),
-                color: color.clone(),
-            });
-            self.face_ids.insert(key, id);
+        let mut reg = self.registry.lock().unwrap_or_else(|e| e.into_inner());
+        let id = match reg.ids.get(&key) {
+            Some(&id) => id,
+            None => {
+                let font = run.font();
+                let color = FontRef::from_index(font.data.as_ref(), font.index)
+                    .ok()
+                    .and_then(|f| color_table(&f));
+                let face = Arc::new(FaceData {
+                    blob: font.data.clone(),
+                    index: font.index,
+                    coords: run
+                        .normalized_coords()
+                        .iter()
+                        .map(|c| NormalizedCoord::from_bits(c.to_bits()))
+                        .collect(),
+                    skew: run.synthesis().skew(),
+                    color,
+                });
+                // past MAX_FACES new ones share the last id; nothing real gets there
+                if reg.faces.len() >= MAX_FACES {
+                    (MAX_FACES - 1) as u16
+                } else {
+                    let id = reg.faces.len() as u16;
+                    reg.faces.push(face);
+                    reg.ids.insert(key.clone(), id);
+                    id
+                }
+            }
+        };
+        let face = reg.faces[id as usize].clone();
+        drop(reg);
+        self.face_ids.insert(key, id);
+        let color = face.color.clone();
+        if self.faces.len() <= id as usize {
+            self.faces.resize(id as usize + 1, None);
         }
+        self.faces[id as usize] = Some(face);
         Face { id, color }
     }
 }

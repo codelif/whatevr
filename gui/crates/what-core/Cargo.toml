@@ -1,7 +1,7 @@
 [package]
 name = "what-core"
 version = "0.1.0"
-description = "Geometry, units, colors, input event types, ids and a tiny logger."
+description = "Geometry, units, colors, input event types, ids, a tiny logger and the global allocator."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -10,3 +10,4 @@ authors.workspace = true
 
 [dependencies]
 log.workspace = true
+mimalloc.workspace = true

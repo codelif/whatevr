@@ -9,3 +9,8 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+what-core.workspace = true
+what-render.workspace = true
+what-text.workspace = true
+rtrb.workspace = true
+log.workspace = true

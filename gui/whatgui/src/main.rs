@@ -8,6 +8,9 @@ use what_core::{KeyEvent, Keysym, LogicalSize, Modifiers, Srgba8, WindowId};
 use what_platform::{App, FrameInfo, Platform, PlatformConfig, WindowConfig, WindowSize};
 use what_render::{Gpu, Presenter, Renderer, WindowSurface, scenes};
 
+#[global_allocator]
+static ALLOC: what_core::alloc::Allocator = what_core::alloc::Allocator;
+
 const CLEAR: Srgba8 = Srgba8::hex(0x202020);
 
 struct Whatgui {

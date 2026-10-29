@@ -3,8 +3,8 @@ use wayland_client::protocol::wl_seat;
 use wayland_client::{Connection, Dispatch, QueueHandle, WEnum};
 
 use crate::State;
-use crate::cursor::Pointer;
 use crate::keyboard::{Keyboard, Repeat};
+use crate::pointer::Pointer;
 
 pub(crate) struct Seat {
     pub keyboard: Option<Keyboard>,
@@ -54,7 +54,12 @@ impl Dispatch<wl_seat::WlSeat, ()> for State {
                         .cursor_shape
                         .as_ref()
                         .map(|m| m.get_pointer(&wl, qh, ()));
-                    state.seat.pointer = Some(Pointer { wl, shape });
+                    let hold = state
+                        .globals
+                        .pointer_gestures
+                        .as_ref()
+                        .map(|g| g.get_hold_gesture(&wl, qh, ()));
+                    state.seat.pointer = Some(Pointer::new(wl, shape, hold));
                 } else if !has_ptr && let Some(p) = state.seat.pointer.take() {
                     p.release();
                 }

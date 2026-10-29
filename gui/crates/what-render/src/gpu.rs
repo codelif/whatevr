@@ -87,7 +87,8 @@ impl Gpu {
         let (device, queue) =
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                 label: Some("what-render"),
-                required_features: wgpu::Features::empty(),
+                // free when the adapter has it; frame timing reads it
+                required_features: adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
                 // downlevel so gles works, but take the adapter's real texture size limits
                 required_limits:
                     wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits()),
