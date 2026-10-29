@@ -890,7 +890,7 @@ func (c *Client) Block(ctx context.Context, person string, on bool) error {
 	if on {
 		action = events.BlocklistChangeActionBlock
 	}
-	if _, err := cli.UpdateBlocklist(ctx, j.ToNonAD(), action); err != nil {
+	if _, err := cli.UpdateBlocklist(ctx, j.ToNonAD(), action, ""); err != nil {
 		return Errorf(ErrRejected, "%v", err)
 	}
 	evt := &events.Blocklist{Changes: []events.BlocklistChange{{JID: j.ToNonAD(), Action: action}}}
