@@ -124,6 +124,7 @@ type ChatsView struct {
 	state               protoimpl.MessageState `protogen:"opaque.v1"`
 	xxx_hidden_Filter   ChatFilter             `protobuf:"varint,1,opt,name=filter,enum=whatevr.v2.ChatFilter"`
 	xxx_hidden_Archived bool                   `protobuf:"varint,2,opt,name=archived"`
+	xxx_hidden_Anchor   isChatsView_Anchor     `protobuf_oneof:"anchor"`
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
@@ -167,6 +168,33 @@ func (x *ChatsView) GetArchived() bool {
 	return false
 }
 
+func (x *ChatsView) GetLatest() *Latest {
+	if x != nil {
+		if x, ok := x.xxx_hidden_Anchor.(*chatsView_Latest); ok {
+			return x.Latest
+		}
+	}
+	return nil
+}
+
+func (x *ChatsView) GetIndex() uint64 {
+	if x != nil {
+		if x, ok := x.xxx_hidden_Anchor.(*chatsView_Index); ok {
+			return x.Index
+		}
+	}
+	return 0
+}
+
+func (x *ChatsView) GetSort() []byte {
+	if x != nil {
+		if x, ok := x.xxx_hidden_Anchor.(*chatsView_Sort); ok {
+			return x.Sort
+		}
+	}
+	return nil
+}
+
 func (x *ChatsView) SetFilter(v ChatFilter) {
 	x.xxx_hidden_Filter = v
 }
@@ -175,11 +203,112 @@ func (x *ChatsView) SetArchived(v bool) {
 	x.xxx_hidden_Archived = v
 }
 
+func (x *ChatsView) SetLatest(v *Latest) {
+	if v == nil {
+		x.xxx_hidden_Anchor = nil
+		return
+	}
+	x.xxx_hidden_Anchor = &chatsView_Latest{v}
+}
+
+func (x *ChatsView) SetIndex(v uint64) {
+	x.xxx_hidden_Anchor = &chatsView_Index{v}
+}
+
+func (x *ChatsView) SetSort(v []byte) {
+	if v == nil {
+		v = []byte{}
+	}
+	x.xxx_hidden_Anchor = &chatsView_Sort{v}
+}
+
+func (x *ChatsView) HasAnchor() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Anchor != nil
+}
+
+func (x *ChatsView) HasLatest() bool {
+	if x == nil {
+		return false
+	}
+	_, ok := x.xxx_hidden_Anchor.(*chatsView_Latest)
+	return ok
+}
+
+func (x *ChatsView) HasIndex() bool {
+	if x == nil {
+		return false
+	}
+	_, ok := x.xxx_hidden_Anchor.(*chatsView_Index)
+	return ok
+}
+
+func (x *ChatsView) HasSort() bool {
+	if x == nil {
+		return false
+	}
+	_, ok := x.xxx_hidden_Anchor.(*chatsView_Sort)
+	return ok
+}
+
+func (x *ChatsView) ClearAnchor() {
+	x.xxx_hidden_Anchor = nil
+}
+
+func (x *ChatsView) ClearLatest() {
+	if _, ok := x.xxx_hidden_Anchor.(*chatsView_Latest); ok {
+		x.xxx_hidden_Anchor = nil
+	}
+}
+
+func (x *ChatsView) ClearIndex() {
+	if _, ok := x.xxx_hidden_Anchor.(*chatsView_Index); ok {
+		x.xxx_hidden_Anchor = nil
+	}
+}
+
+func (x *ChatsView) ClearSort() {
+	if _, ok := x.xxx_hidden_Anchor.(*chatsView_Sort); ok {
+		x.xxx_hidden_Anchor = nil
+	}
+}
+
+const ChatsView_Anchor_not_set_case case_ChatsView_Anchor = 0
+const ChatsView_Latest_case case_ChatsView_Anchor = 3
+const ChatsView_Index_case case_ChatsView_Anchor = 4
+const ChatsView_Sort_case case_ChatsView_Anchor = 5
+
+func (x *ChatsView) WhichAnchor() case_ChatsView_Anchor {
+	if x == nil {
+		return ChatsView_Anchor_not_set_case
+	}
+	switch x.xxx_hidden_Anchor.(type) {
+	case *chatsView_Latest:
+		return ChatsView_Latest_case
+	case *chatsView_Index:
+		return ChatsView_Index_case
+	case *chatsView_Sort:
+		return ChatsView_Sort_case
+	default:
+		return ChatsView_Anchor_not_set_case
+	}
+}
+
 type ChatsView_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
 
 	Filter   ChatFilter
 	Archived bool
+	// Fields of oneof xxx_hidden_Anchor:
+	// the top of the list, the default
+	Latest *Latest
+	// around the item this many from the top, clamped to the view
+	Index *uint64
+	// around a row's sort as it came
+	Sort []byte
+	// -- end of xxx_hidden_Anchor
 }
 
 func (b0 ChatsView_builder) Build() *ChatsView {
@@ -188,8 +317,52 @@ func (b0 ChatsView_builder) Build() *ChatsView {
 	_, _ = b, x
 	x.xxx_hidden_Filter = b.Filter
 	x.xxx_hidden_Archived = b.Archived
+	if b.Latest != nil {
+		x.xxx_hidden_Anchor = &chatsView_Latest{b.Latest}
+	}
+	if b.Index != nil {
+		x.xxx_hidden_Anchor = &chatsView_Index{*b.Index}
+	}
+	if b.Sort != nil {
+		x.xxx_hidden_Anchor = &chatsView_Sort{b.Sort}
+	}
 	return m0
 }
+
+type case_ChatsView_Anchor protoreflect.FieldNumber
+
+func (x case_ChatsView_Anchor) String() string {
+	md := file_whatevr_v2_chats_proto_msgTypes[0].Descriptor()
+	if x == 0 {
+		return "not set"
+	}
+	return protoimpl.X.MessageFieldStringOf(md, protoreflect.FieldNumber(x))
+}
+
+type isChatsView_Anchor interface {
+	isChatsView_Anchor()
+}
+
+type chatsView_Latest struct {
+	// the top of the list, the default
+	Latest *Latest `protobuf:"bytes,3,opt,name=latest,oneof"`
+}
+
+type chatsView_Index struct {
+	// around the item this many from the top, clamped to the view
+	Index uint64 `protobuf:"varint,4,opt,name=index,oneof"`
+}
+
+type chatsView_Sort struct {
+	// around a row's sort as it came
+	Sort []byte `protobuf:"bytes,5,opt,name=sort,oneof"`
+}
+
+func (*chatsView_Latest) isChatsView_Anchor() {}
+
+func (*chatsView_Index) isChatsView_Anchor() {}
+
+func (*chatsView_Sort) isChatsView_Anchor() {}
 
 // the same row chats sends, outside any filter or window
 type ChatView struct {
@@ -1252,10 +1425,14 @@ var File_whatevr_v2_chats_proto protoreflect.FileDescriptor
 const file_whatevr_v2_chats_proto_rawDesc = "" +
 	"\n" +
 	"\x16whatevr/v2/chats.proto\x12\n" +
-	"whatevr.v2\x1a\x19whatevr/v2/messages.proto\x1a\x17whatevr/v2/people.proto\"W\n" +
+	"whatevr.v2\x1a\x19whatevr/v2/messages.proto\x1a\x17whatevr/v2/people.proto\"\xbd\x01\n" +
 	"\tChatsView\x12.\n" +
 	"\x06filter\x18\x01 \x01(\x0e2\x16.whatevr.v2.ChatFilterR\x06filter\x12\x1a\n" +
-	"\barchived\x18\x02 \x01(\bR\barchived\"#\n" +
+	"\barchived\x18\x02 \x01(\bR\barchived\x12,\n" +
+	"\x06latest\x18\x03 \x01(\v2\x12.whatevr.v2.LatestH\x00R\x06latest\x12\x16\n" +
+	"\x05index\x18\x04 \x01(\x04H\x00R\x05index\x12\x14\n" +
+	"\x04sort\x18\x05 \x01(\fH\x00R\x04sortB\b\n" +
+	"\x06anchor\"#\n" +
 	"\bChatView\x12\x17\n" +
 	"\achat_id\x18\x01 \x01(\tR\x06chatId\"\x81\x04\n" +
 	"\aChatRow\x12\x0e\n" +
@@ -1344,20 +1521,22 @@ var file_whatevr_v2_chats_proto_goTypes = []any{
 	(*ChatRequestOlderResult)(nil), // 12: whatevr.v2.ChatRequestOlderResult
 	(*ChatEnsureDirect)(nil),       // 13: whatevr.v2.ChatEnsureDirect
 	(*ChatEnsureDirectResult)(nil), // 14: whatevr.v2.ChatEnsureDirectResult
-	(MessageStatus)(0),             // 15: whatevr.v2.MessageStatus
-	(*Address)(nil),                // 16: whatevr.v2.Address
+	(*Latest)(nil),                 // 15: whatevr.v2.Latest
+	(MessageStatus)(0),             // 16: whatevr.v2.MessageStatus
+	(*Address)(nil),                // 17: whatevr.v2.Address
 }
 var file_whatevr_v2_chats_proto_depIdxs = []int32{
 	0,  // 0: whatevr.v2.ChatsView.filter:type_name -> whatevr.v2.ChatFilter
-	1,  // 1: whatevr.v2.ChatRow.type:type_name -> whatevr.v2.ChatType
-	5,  // 2: whatevr.v2.ChatRow.preview:type_name -> whatevr.v2.ChatPreview
-	15, // 3: whatevr.v2.ChatPreview.status:type_name -> whatevr.v2.MessageStatus
-	16, // 4: whatevr.v2.ChatEnsureDirect.person:type_name -> whatevr.v2.Address
-	5,  // [5:5] is the sub-list for method output_type
-	5,  // [5:5] is the sub-list for method input_type
-	5,  // [5:5] is the sub-list for extension type_name
-	5,  // [5:5] is the sub-list for extension extendee
-	0,  // [0:5] is the sub-list for field type_name
+	15, // 1: whatevr.v2.ChatsView.latest:type_name -> whatevr.v2.Latest
+	1,  // 2: whatevr.v2.ChatRow.type:type_name -> whatevr.v2.ChatType
+	5,  // 3: whatevr.v2.ChatRow.preview:type_name -> whatevr.v2.ChatPreview
+	16, // 4: whatevr.v2.ChatPreview.status:type_name -> whatevr.v2.MessageStatus
+	17, // 5: whatevr.v2.ChatEnsureDirect.person:type_name -> whatevr.v2.Address
+	6,  // [6:6] is the sub-list for method output_type
+	6,  // [6:6] is the sub-list for method input_type
+	6,  // [6:6] is the sub-list for extension type_name
+	6,  // [6:6] is the sub-list for extension extendee
+	0,  // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_whatevr_v2_chats_proto_init() }
@@ -1367,6 +1546,11 @@ func file_whatevr_v2_chats_proto_init() {
 	}
 	file_whatevr_v2_messages_proto_init()
 	file_whatevr_v2_people_proto_init()
+	file_whatevr_v2_chats_proto_msgTypes[0].OneofWrappers = []any{
+		(*chatsView_Latest)(nil),
+		(*chatsView_Index)(nil),
+		(*chatsView_Sort)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

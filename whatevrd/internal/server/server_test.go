@@ -78,7 +78,7 @@ type client struct {
 	id uint64
 }
 
-func start(t *testing.T, l *fakeList) (*Server, *client) {
+func start(t *testing.T, l View) (*Server, *client) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "s", "d.sock")
 	s, err := New(Options{SocketPath: path, Version: "test", Log: zerolog.Nop()})

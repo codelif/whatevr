@@ -10,6 +10,15 @@ option features.field_presence = IMPLICIT;
 message ChatsView {
   ChatFilter filter = 1;
   bool archived = 2;
+
+  oneof anchor {
+    // the top of the list, the default
+    Latest latest = 3;
+    // around the item this many from the top, clamped to the view
+    uint64 index = 4;
+    // around a row's sort as it came
+    bytes sort = 5;
+  }
 }
 
 enum ChatFilter {

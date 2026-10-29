@@ -162,18 +162,20 @@ SYSTEM_TYPE_EPHEMERAL: SystemType
 SYSTEM_TYPE_IDENTITY_CHANGE: SystemType
 
 class MessagesView(_message.Message):
-    __slots__ = ("chat_id", "latest", "unread", "message_id", "sort")
+    __slots__ = ("chat_id", "latest", "unread", "message_id", "sort", "index")
     CHAT_ID_FIELD_NUMBER: _ClassVar[int]
     LATEST_FIELD_NUMBER: _ClassVar[int]
     UNREAD_FIELD_NUMBER: _ClassVar[int]
     MESSAGE_ID_FIELD_NUMBER: _ClassVar[int]
     SORT_FIELD_NUMBER: _ClassVar[int]
+    INDEX_FIELD_NUMBER: _ClassVar[int]
     chat_id: str
     latest: Latest
     unread: Unread
     message_id: str
     sort: bytes
-    def __init__(self, chat_id: _Optional[str] = ..., latest: _Optional[_Union[Latest, _Mapping]] = ..., unread: _Optional[_Union[Unread, _Mapping]] = ..., message_id: _Optional[str] = ..., sort: _Optional[bytes] = ...) -> None: ...
+    index: int
+    def __init__(self, chat_id: _Optional[str] = ..., latest: _Optional[_Union[Latest, _Mapping]] = ..., unread: _Optional[_Union[Unread, _Mapping]] = ..., message_id: _Optional[str] = ..., sort: _Optional[bytes] = ..., index: _Optional[int] = ...) -> None: ...
 
 class Latest(_message.Message):
     __slots__ = ()

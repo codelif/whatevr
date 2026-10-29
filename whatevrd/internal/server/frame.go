@@ -16,6 +16,9 @@ const (
 	updateChanges   = 3
 	updateReady     = 4
 	readyExhausted  = 1
+	updatePosition  = 5
+	positionCount   = 1
+	positionOffset  = 2
 	changeUpsert    = 1
 	changeRemove    = 2
 	removeID        = 1
@@ -47,7 +50,7 @@ func removeChange(id, replacedBy string) []byte {
 }
 
 // updateFrame is a whole Frame holding one ViewUpdate.
-func updateFrame(sub uint64, reset bool, changes [][]byte, ready, exhausted bool) []byte {
+func updateFrame(sub uint64, reset bool, changes [][]byte, ready, exhausted bool, pos *Position) []byte {
 	var u []byte
 	u = protowire.AppendTag(u, updateSub, protowire.VarintType)
 	u = protowire.AppendVarint(u, sub)
@@ -67,6 +70,19 @@ func updateFrame(sub uint64, reset bool, changes [][]byte, ready, exhausted bool
 		}
 		u = protowire.AppendTag(u, updateReady, protowire.BytesType)
 		u = protowire.AppendBytes(u, r)
+	}
+	if pos != nil {
+		var p []byte
+		if pos.Count > 0 {
+			p = protowire.AppendTag(p, positionCount, protowire.VarintType)
+			p = protowire.AppendVarint(p, pos.Count)
+		}
+		if pos.Offset > 0 {
+			p = protowire.AppendTag(p, positionOffset, protowire.VarintType)
+			p = protowire.AppendVarint(p, pos.Offset)
+		}
+		u = protowire.AppendTag(u, updatePosition, protowire.BytesType)
+		u = protowire.AppendBytes(u, p)
 	}
 	e := protowire.AppendTag(nil, eventUpdate, protowire.BytesType)
 	e = protowire.AppendBytes(e, u)

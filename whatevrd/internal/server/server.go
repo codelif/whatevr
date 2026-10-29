@@ -142,7 +142,7 @@ func (s *Server) features() []string {
 	for n := range s.methods {
 		out = append(out, methodName(n))
 	}
-	out = append(out, "subscribe", "extend", "unsubscribe")
+	out = append(out, "subscribe", "extend", "unsubscribe", "positions")
 	sort.Strings(out)
 	return out
 }

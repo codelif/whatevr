@@ -42,7 +42,7 @@ const (
 // inside a history conversation).
 var messagesDomain = core.Domain{
 	Name:    "messages",
-	Version: 13,
+	Version: 14,
 	Tables: []string{"msg", "msg_src", "msg_wait", "msg_gone", "f_reaction", "f_edit", "f_revoke", "f_enc",
 		"f_pin", "f_keep", "f_receipt", "f_ephemeral", "sys_msg", "f_seen", "msg_text", "msg_text_q", "live"},
 	Schema: append([]string{
@@ -75,6 +75,8 @@ var messagesDomain = core.Domain{
 		`CREATE INDEX msg_chat_t ON msg (chat, t, ord, id)`,
 		`CREATE INDEX msg_id ON msg (id)`,
 		`CREATE INDEX msg_album ON msg (album) WHERE album != ''`,
+		// the album pictures a transcript hides, counted without the rest
+		`CREATE INDEX msg_album_chat ON msg (chat, t, ord, id, album) WHERE album != ''`,
 		// what unread counts and what moves its horizon, each a seek
 		`CREATE INDEX msg_in ON msg (chat, t, ord) WHERE from_me = 0 AND kind NOT LIKE 'stub:%'`,
 		`CREATE INDEX msg_out ON msg (chat, t, ord) WHERE from_me = 1`,

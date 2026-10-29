@@ -35,12 +35,18 @@ CHAT_TYPE_NEWSLETTER: ChatType
 CHAT_TYPE_BROADCAST: ChatType
 
 class ChatsView(_message.Message):
-    __slots__ = ("filter", "archived")
+    __slots__ = ("filter", "archived", "latest", "index", "sort")
     FILTER_FIELD_NUMBER: _ClassVar[int]
     ARCHIVED_FIELD_NUMBER: _ClassVar[int]
+    LATEST_FIELD_NUMBER: _ClassVar[int]
+    INDEX_FIELD_NUMBER: _ClassVar[int]
+    SORT_FIELD_NUMBER: _ClassVar[int]
     filter: ChatFilter
     archived: bool
-    def __init__(self, filter: _Optional[_Union[ChatFilter, str]] = ..., archived: _Optional[bool] = ...) -> None: ...
+    latest: _messages_pb2.Latest
+    index: int
+    sort: bytes
+    def __init__(self, filter: _Optional[_Union[ChatFilter, str]] = ..., archived: _Optional[bool] = ..., latest: _Optional[_Union[_messages_pb2.Latest, _Mapping]] = ..., index: _Optional[int] = ..., sort: _Optional[bytes] = ...) -> None: ...
 
 class ChatView(_message.Message):
     __slots__ = ("chat_id",)

@@ -267,16 +267,26 @@ class Event(_message.Message):
     def __init__(self, update: _Optional[_Union[ViewUpdate, _Mapping]] = ..., open_chat: _Optional[_Union[OpenChat, _Mapping]] = ..., media_stream_update: _Optional[_Union[_media_pb2.MediaStreamUpdate, _Mapping]] = ..., activate: _Optional[_Union[_frontends_pb2.Activate, _Mapping]] = ...) -> None: ...
 
 class ViewUpdate(_message.Message):
-    __slots__ = ("sub", "reset", "changes", "ready")
+    __slots__ = ("sub", "reset", "changes", "ready", "position")
     SUB_FIELD_NUMBER: _ClassVar[int]
     RESET_FIELD_NUMBER: _ClassVar[int]
     CHANGES_FIELD_NUMBER: _ClassVar[int]
     READY_FIELD_NUMBER: _ClassVar[int]
+    POSITION_FIELD_NUMBER: _ClassVar[int]
     sub: int
     reset: bool
     changes: _containers.RepeatedCompositeFieldContainer[Change]
     ready: Ready
-    def __init__(self, sub: _Optional[int] = ..., reset: _Optional[bool] = ..., changes: _Optional[_Iterable[_Union[Change, _Mapping]]] = ..., ready: _Optional[_Union[Ready, _Mapping]] = ...) -> None: ...
+    position: Position
+    def __init__(self, sub: _Optional[int] = ..., reset: _Optional[bool] = ..., changes: _Optional[_Iterable[_Union[Change, _Mapping]]] = ..., ready: _Optional[_Union[Ready, _Mapping]] = ..., position: _Optional[_Union[Position, _Mapping]] = ...) -> None: ...
+
+class Position(_message.Message):
+    __slots__ = ("count", "offset")
+    COUNT_FIELD_NUMBER: _ClassVar[int]
+    OFFSET_FIELD_NUMBER: _ClassVar[int]
+    count: int
+    offset: int
+    def __init__(self, count: _Optional[int] = ..., offset: _Optional[int] = ...) -> None: ...
 
 class Change(_message.Message):
     __slots__ = ("upsert", "remove")

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"slices"
 	"sort"
 	"strings"
@@ -204,6 +205,67 @@ func byChatArgs(addrs []string, where []any, limit int) []any {
 }
 
 const albumHidden = `NOT (m.album != '' AND EXISTS (SELECT 1 FROM msg p WHERE p.id = m.album AND p.chat = m.chat))`
+
+// MessageCount is how many rows the transcript of addrs shows, those before
+// at only when at is set. a message under two addresses counts twice, which
+// folding would cost a lookup per row to catch.
+func (r *Reader) MessageCount(ctx context.Context, addrs []string, at *Cursor) (int, error) {
+	ph := placeholders(len(addrs))
+	cmp := func(t, ord, id string) string {
+		if at == nil {
+			return `1`
+		}
+		return `(` + t + `, ` + ord + `, ` + id + `) < (?, ?, ?)`
+	}
+	part := func(where []any) []any {
+		args := anys(addrs)
+		if at != nil {
+			args = append(args, at.T, at.Ord, at.ID)
+		}
+		return append(args, where...)
+	}
+	q := `SELECT
+		(SELECT count(*) FROM msg m WHERE m.chat IN (` + ph + `) AND ` + cmp("m.t", "m.ord", "m.id") + `)
+		- (SELECT count(*) FROM msg m WHERE m.chat IN (` + ph + `) AND m.album != '' AND ` + cmp("m.t", "m.ord", "m.id") + `
+			AND EXISTS (SELECT 1 FROM msg p WHERE p.id = m.album AND p.chat = m.chat))
+		+ (SELECT count(*) FROM msg_wait w WHERE w.chat IN (` + ph + `) AND ` + cmp("w.t", "w.ord", "w.id") + `
+			AND NOT EXISTS (SELECT 1 FROM msg m WHERE m.id = w.id AND m.chat IN (` + ph + `)))
+		+ (SELECT count(*) FROM outbox o WHERE o.chat IN (` + ph + `) AND o.queued_t > 0 AND o.cancelled = 0
+			AND ` + cmp("o.queued_t", "o.ord", "o.id") + ` AND NOT EXISTS (SELECT 1 FROM msg_src s WHERE ` + sentCopy + `))
+		+ (SELECT count(*) FROM sys_msg s WHERE s.chat IN (` + ph + `) AND ` + cmp("s.t", "s.ord", "s.id") + `)`
+	var args []any
+	args = append(args, part(nil)...)
+	args = append(args, part(nil)...)
+	args = append(args, part(anys(addrs))...)
+	args = append(args, part(nil)...)
+	args = append(args, part(nil)...)
+	var n int
+	err := r.db.QueryRowContext(ctx, q, args...).Scan(&n)
+	return max(n, 0), err
+}
+
+// MessageAt is the stored message index rows from the oldest of addrs' total,
+// walked from whichever end is nearer and clamped to the transcript. album
+// pictures and rows outside msg are not skipped, so it lands near index,
+// not on it.
+func (r *Reader) MessageAt(ctx context.Context, addrs []string, index, total int) (Cursor, bool, error) {
+	if len(addrs) == 0 || total <= 0 {
+		return Cursor{}, false, nil
+	}
+	index = min(max(index, 0), total-1)
+	order, off := `ASC`, index
+	if index > total/2 {
+		order, off = `DESC`, total-1-index
+	}
+	var c Cursor
+	err := r.db.QueryRowContext(ctx, `SELECT m.t, m.ord, m.id FROM msg m WHERE m.chat IN (`+placeholders(len(addrs))+`)
+		ORDER BY m.t `+order+`, m.ord `+order+`, m.id `+order+` LIMIT 1 OFFSET ?`, append(anys(addrs), off)...).
+		Scan(&c.T, &c.Ord, &c.ID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Cursor{}, false, nil
+	}
+	return c, err == nil, err
+}
 
 // Messages pages through the transcript of addrs from cursor (exclusive;
 // zero for the newest end), newest first unless asc.

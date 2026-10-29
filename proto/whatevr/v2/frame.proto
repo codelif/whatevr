@@ -201,6 +201,16 @@ message ViewUpdate {
   bool reset = 2;
   repeated Change changes = 3;
   Ready ready = 4;
+  // where the window sits in the whole view, when that changed
+  Position position = 5;
+}
+
+// see Positions in PROTOCOL.md
+message Position {
+  // every item the view has now, in the window or not
+  uint64 count = 1;
+  // how many of them sort before the window's first item
+  uint64 offset = 2;
 }
 
 message Change {

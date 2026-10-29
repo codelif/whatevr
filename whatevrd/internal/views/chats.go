@@ -27,14 +27,16 @@ func (rs *Reads) chatsView(ctx context.Context, s *server.Session, req *v2.Subsc
 		f.Kind = "groups"
 	}
 	w := &win{params: req}
-	w.items = func(ctx context.Context, max int) ([]*v2.Upsert, error) {
+	list := &chatList{}
+	// rows from start, max of them (all for 0)
+	read := func(ctx context.Context, start, max int) ([]*v2.Upsert, error) {
 		gen := rs.previews.begin()
 		c, err := rs.begin(ctx)
 		if err != nil {
 			return nil, err
 		}
 		f := f
-		f.Limit = max
+		f.Limit, f.Offset = max, start
 		chats, err := rs.r.ChatsIn(ctx, c.w, f)
 		if err != nil {
 			return nil, err
@@ -47,7 +49,52 @@ func (rs *Reads) chatsView(ctx context.Context, s *server.Session, req *v2.Subsc
 	}
 	w.wake = func(c core.Change) bool { return touches(c, chatKinds...) }
 	w.replaced = rs.replaced
-	return merging{w}, nil, nil
+
+	var index uint64
+	switch p.WhichAnchor() {
+	case v2.ChatsView_Index_case:
+		index = p.GetIndex()
+	case v2.ChatsView_Sort_case:
+		pinned, pinT, lastT, key, ok := chatSortAt(p.GetSort())
+		if !ok {
+			return nil, nil, invalid("malformed sort")
+		}
+		n, err := rs.r.ChatsBefore(ctx, f, pinned, pinT, lastT, key)
+		if err != nil {
+			return nil, nil, err
+		}
+		index = uint64(n)
+	default:
+		w.items = func(ctx context.Context, max int) ([]*v2.Upsert, error) {
+			count, err := rs.r.ChatCount(ctx, f)
+			if err != nil {
+				return nil, err
+			}
+			list.set(count, 0)
+			return read(ctx, 0, max)
+		}
+		return chatsTop{merging{w}, list}, nil, nil
+	}
+	size := int(req.GetLimit())
+	if size <= 0 {
+		size = server.WindowCap(chatBytes)
+	}
+	r := &chatRange{merging: merging{w}, chatList: list, start: around(index, size), size: size}
+	w.items = func(ctx context.Context, _ int) ([]*v2.Upsert, error) {
+		count, err := rs.r.ChatCount(ctx, f)
+		if err != nil {
+			return nil, err
+		}
+		start, size := r.span(count)
+		out, err := read(ctx, start, size)
+		if err != nil {
+			return nil, err
+		}
+		r.read(start, len(out), count)
+		list.set(count, start)
+		return out, nil
+	}
+	return r, nil, nil
 }
 
 func (rs *Reads) chatView(ctx context.Context, s *server.Session, req *v2.Subscribe) (server.Window, *v2.SubscribeResult, error) {

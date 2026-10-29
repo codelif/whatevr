@@ -218,10 +218,10 @@ Collection views take `limit`: the window is the first `limit` items in view
 order, and the daemon keeps the frontend's copy exactly equal to it (items
 pushed out are removed). `extend` grows it in a `direction`.
 
-Every collection view, and a messages view at `latest`, is a **live-edge**
-window: it sits at the newest end, new items arrive there unasked whatever the
-window size, and `extend` with `DIRECTION_OLDER` reaches back into the local
-store. `DIRECTION_NEWER` on a live-edge window is `INVALID_PARAMS`.
+Every collection view at its default anchor, and a messages view at
+`latest`, is a **live-edge** window: it sits at the newest end, new items
+arrive there unasked whatever the window size, and `extend` with
+`DIRECTION_OLDER` reaches back into the local store. `DIRECTION_NEWER` on a live-edge window is `INVALID_PARAMS`.
 
 A messages view anchored at `unread` or at a `message_id` is a **bounded
 window** around that point, with two frontiers that grow on their own:
@@ -232,6 +232,10 @@ follows the live edge by subscribing at `latest`. Once the newer frontier has
 been extended all the way to the present, it stays there: new messages are
 next to it and arrive as ordinary upserts.
 
+A `chats` view at `index` or `sort` is a bounded window over list
+positions: it keeps its place while chats move through it,
+`DIRECTION_NEWER` grows it up the list and `DIRECTION_OLDER` down.
+
 A bounded window that reached the present keeps growing as messages arrive;
 past its cap the oldest messages leave it, and the older frontier moves up
 with them.
@@ -240,6 +244,27 @@ An anchor can also be a `sort`: a row's sort bytes as the frontend got them.
 The window sits where that row is or was, whether or not the message still
 exists. A window whose anchor message goes away while subscribed stays where
 it was the same way.
+
+### Positions
+
+A window can say where it sits in its whole view. An update carries
+`position` whenever that place changed: on the first update of a
+subscription, and after anything that grows or shrinks the view or moves
+the window.
+
+- `count`: every item the view has now, in the window or not. For
+  `messages` that is the chat's local store, not the phone's whole history.
+- `offset`: how many of them sort before the window's first item.
+
+A frontend draws its scrollbar over all of `count` with the window inside
+it, and opens a window anywhere with the `index` anchor: around the item
+that many from the start of view order, clamped to the view. An index is a
+place as of now; if the view changes before the subscribe lands, the
+window opens near it, and its own `position` says where it really is.
+
+`chats` takes the same anchors as `messages` (`latest`, the default, then
+`index` and `sort`), so a list longer than its cap pages the same way. A
+daemon that serves all of this lists `positions` in its features.
 
 ### Caps
 
@@ -297,7 +322,7 @@ Object views send one item with an empty id.
 | `login` | none | object | subscribing starts the qr pairing when logged out, or joins it; `state`, the `qr` code and when it expires |
 | `sync` | none | object | history sync type, phase (`STALLED` included), percent and counts |
 | `problems` | none | one per live problem | `kind`, `since_ms`, `next_retry_ms` (0 for never), a finished `text`; most severe first. A healthy daemon has none |
-| `chats` | `filter`, `archived` | chat rows | name, type, avatar, preview, unread and marked unread, pin, archive, mute, `history_exhausted`, `loading_older`, timer, `read_only` |
+| `chats` | `filter`, `archived`, `anchor` | chat rows | name, type, avatar, preview, unread and marked unread, pin, archive, mute, `history_exhausted`, `loading_older`, timer, `read_only` |
 | `chat` | `chat_id` | object | the same row `chats` sends, outside any filter or window |
 | `messages` | `chat_id`, `anchor` | message rows | see *Messages*; delete for me removes; a revoke is an upsert with `revoked` |
 | `typing` | none | one per chat with anyone composing | id is the chat id; who, and whether they are recording; removed when the last one stops |

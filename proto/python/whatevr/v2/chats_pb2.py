@@ -26,7 +26,7 @@ from whatevr.v2 import messages_pb2 as whatevr_dot_v2_dot_messages__pb2
 from whatevr.v2 import people_pb2 as whatevr_dot_v2_dot_people__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x16whatevr/v2/chats.proto\x12\nwhatevr.v2\x1a\x19whatevr/v2/messages.proto\x1a\x17whatevr/v2/people.proto\"W\n\tChatsView\x12.\n\x06\x66ilter\x18\x01 \x01(\x0e\x32\x16.whatevr.v2.ChatFilterR\x06\x66ilter\x12\x1a\n\x08\x61rchived\x18\x02 \x01(\x08R\x08\x61rchived\"#\n\x08\x43hatView\x12\x17\n\x07\x63hat_id\x18\x01 \x01(\tR\x06\x63hatId\"\x81\x04\n\x07\x43hatRow\x12\x0e\n\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n\x04name\x18\x02 \x01(\tR\x04name\x12(\n\x04type\x18\x03 \x01(\x0e\x32\x14.whatevr.v2.ChatTypeR\x04type\x12\x1f\n\x0b\x61vatar_path\x18\x04 \x01(\tR\navatarPath\x12\x31\n\x07preview\x18\x05 \x01(\x0b\x32\x17.whatevr.v2.ChatPreviewR\x07preview\x12\x17\n\x07last_ms\x18\x06 \x01(\x03R\x06lastMs\x12\x16\n\x06unread\x18\x07 \x01(\rR\x06unread\x12#\n\rmarked_unread\x18\x08 \x01(\x08R\x0cmarkedUnread\x12\x16\n\x06pinned\x18\t \x01(\x08R\x06pinned\x12\x1a\n\x08\x61rchived\x18\n \x01(\x08R\x08\x61rchived\x12\x14\n\x05muted\x18\x0b \x01(\x08R\x05muted\x12\x1e\n\x0bmute_end_ms\x18\x0c \x01(\x03R\tmuteEndMs\x12+\n\x11history_exhausted\x18\r \x01(\x08R\x10historyExhausted\x12%\n\x0e\x65phemeral_secs\x18\x0e \x01(\rR\rephemeralSecs\x12\x1b\n\tread_only\x18\x0f \x01(\x08R\x08readOnly\x12#\n\rloading_older\x18\x10 \x01(\x08R\x0cloadingOlder\"m\n\x0b\x43hatPreview\x12\x12\n\x04text\x18\x01 \x01(\tR\x04text\x12\x17\n\x07\x66rom_me\x18\x02 \x01(\x08R\x06\x66romMe\x12\x31\n\x06status\x18\x03 \x01(\x0e\x32\x19.whatevr.v2.MessageStatusR\x06status\"P\n\x0c\x43hatMarkRead\x12\x17\n\x07\x63hat_id\x18\x01 \x01(\tR\x06\x63hatId\x12\'\n\x10up_to_message_id\x18\x02 \x01(\tR\rupToMessageId\":\n\x07\x43hatPin\x12\x17\n\x07\x63hat_id\x18\x01 \x01(\tR\x06\x63hatId\x12\x16\n\x06pinned\x18\x02 \x01(\x08R\x06pinned\"B\n\x0b\x43hatArchive\x12\x17\n\x07\x63hat_id\x18\x01 \x01(\tR\x06\x63hatId\x12\x1a\n\x08\x61rchived\x18\x02 \x01(\x08R\x08\x61rchived\"Z\n\x08\x43hatMute\x12\x17\n\x07\x63hat_id\x18\x01 \x01(\tR\x06\x63hatId\x12\x14\n\x05muted\x18\x02 \x01(\x08R\x05muted\x12\x1f\n\x0b\x64uration_ms\x18\x03 \x01(\x03R\ndurationMs\"a\n\nChatTyping\x12\x17\n\x07\x63hat_id\x18\x01 \x01(\tR\x06\x63hatId\x12\x1c\n\tcomposing\x18\x02 \x01(\x08R\tcomposing\x12\x1c\n\trecording\x18\x03 \x01(\x08R\trecording\"+\n\x10\x43hatRequestOlder\x12\x17\n\x07\x63hat_id\x18\x01 \x01(\tR\x06\x63hatId\"6\n\x16\x43hatRequestOlderResult\x12\x1c\n\trequested\x18\x01 \x01(\x08R\trequested\"?\n\x10\x43hatEnsureDirect\x12+\n\x06person\x18\x01 \x01(\x0b\x32\x13.whatevr.v2.AddressR\x06person\"1\n\x16\x43hatEnsureDirectResult\x12\x17\n\x07\x63hat_id\x18\x01 \x01(\tR\x06\x63hatId*n\n\nChatFilter\x12\x1b\n\x17\x43HAT_FILTER_UNSPECIFIED\x10\x00\x12\x13\n\x0f\x43HAT_FILTER_ALL\x10\x01\x12\x16\n\x12\x43HAT_FILTER_DIRECT\x10\x02\x12\x16\n\x12\x43HAT_FILTER_GROUPS\x10\x03*\x9c\x01\n\x08\x43hatType\x12\x19\n\x15\x43HAT_TYPE_UNSPECIFIED\x10\x00\x12\x14\n\x10\x43HAT_TYPE_DIRECT\x10\x01\x12\x13\n\x0f\x43HAT_TYPE_GROUP\x10\x02\x12\x17\n\x13\x43HAT_TYPE_COMMUNITY\x10\x03\x12\x18\n\x14\x43HAT_TYPE_NEWSLETTER\x10\x04\x12\x17\n\x13\x43HAT_TYPE_BROADCAST\x10\x05\x42\x9f\x01\n\x0e\x63om.whatevr.v2B\nChatsProtoZ5github.com/codelif/whatevr/proto/whatevr/v2;whatevrv2\xa2\x02\x03WXX\xaa\x02\nWhatevr.V2\xca\x02\nWhatevr\\V2\xe2\x02\x16Whatevr\\V2\\GPBMetadata\xea\x02\x0bWhatevr::V2\x92\x03\x02\x08\x02\x62\x08\x65\x64itionsp\xe9\x07')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x16whatevr/v2/chats.proto\x12\nwhatevr.v2\x1a\x19whatevr/v2/messages.proto\x1a\x17whatevr/v2/people.proto\"\xbd\x01\n\tChatsView\x12.\n\x06\x66ilter\x18\x01 \x01(\x0e\x32\x16.whatevr.v2.ChatFilterR\x06\x66ilter\x12\x1a\n\x08\x61rchived\x18\x02 \x01(\x08R\x08\x61rchived\x12,\n\x06latest\x18\x03 \x01(\x0b\x32\x12.whatevr.v2.LatestH\x00R\x06latest\x12\x16\n\x05index\x18\x04 \x01(\x04H\x00R\x05index\x12\x14\n\x04sort\x18\x05 \x01(\x0cH\x00R\x04sortB\x08\n\x06\x61nchor\"#\n\x08\x43hatView\x12\x17\n\x07\x63hat_id\x18\x01 \x01(\tR\x06\x63hatId\"\x81\x04\n\x07\x43hatRow\x12\x0e\n\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n\x04name\x18\x02 \x01(\tR\x04name\x12(\n\x04type\x18\x03 \x01(\x0e\x32\x14.whatevr.v2.ChatTypeR\x04type\x12\x1f\n\x0b\x61vatar_path\x18\x04 \x01(\tR\navatarPath\x12\x31\n\x07preview\x18\x05 \x01(\x0b\x32\x17.whatevr.v2.ChatPreviewR\x07preview\x12\x17\n\x07last_ms\x18\x06 \x01(\x03R\x06lastMs\x12\x16\n\x06unread\x18\x07 \x01(\rR\x06unread\x12#\n\rmarked_unread\x18\x08 \x01(\x08R\x0cmarkedUnread\x12\x16\n\x06pinned\x18\t \x01(\x08R\x06pinned\x12\x1a\n\x08\x61rchived\x18\n \x01(\x08R\x08\x61rchived\x12\x14\n\x05muted\x18\x0b \x01(\x08R\x05muted\x12\x1e\n\x0bmute_end_ms\x18\x0c \x01(\x03R\tmuteEndMs\x12+\n\x11history_exhausted\x18\r \x01(\x08R\x10historyExhausted\x12%\n\x0e\x65phemeral_secs\x18\x0e \x01(\rR\rephemeralSecs\x12\x1b\n\tread_only\x18\x0f \x01(\x08R\x08readOnly\x12#\n\rloading_older\x18\x10 \x01(\x08R\x0cloadingOlder\"m\n\x0b\x43hatPreview\x12\x12\n\x04text\x18\x01 \x01(\tR\x04text\x12\x17\n\x07\x66rom_me\x18\x02 \x01(\x08R\x06\x66romMe\x12\x31\n\x06status\x18\x03 \x01(\x0e\x32\x19.whatevr.v2.MessageStatusR\x06status\"P\n\x0c\x43hatMarkRead\x12\x17\n\x07\x63hat_id\x18\x01 \x01(\tR\x06\x63hatId\x12\'\n\x10up_to_message_id\x18\x02 \x01(\tR\rupToMessageId\":\n\x07\x43hatPin\x12\x17\n\x07\x63hat_id\x18\x01 \x01(\tR\x06\x63hatId\x12\x16\n\x06pinned\x18\x02 \x01(\x08R\x06pinned\"B\n\x0b\x43hatArchive\x12\x17\n\x07\x63hat_id\x18\x01 \x01(\tR\x06\x63hatId\x12\x1a\n\x08\x61rchived\x18\x02 \x01(\x08R\x08\x61rchived\"Z\n\x08\x43hatMute\x12\x17\n\x07\x63hat_id\x18\x01 \x01(\tR\x06\x63hatId\x12\x14\n\x05muted\x18\x02 \x01(\x08R\x05muted\x12\x1f\n\x0b\x64uration_ms\x18\x03 \x01(\x03R\ndurationMs\"a\n\nChatTyping\x12\x17\n\x07\x63hat_id\x18\x01 \x01(\tR\x06\x63hatId\x12\x1c\n\tcomposing\x18\x02 \x01(\x08R\tcomposing\x12\x1c\n\trecording\x18\x03 \x01(\x08R\trecording\"+\n\x10\x43hatRequestOlder\x12\x17\n\x07\x63hat_id\x18\x01 \x01(\tR\x06\x63hatId\"6\n\x16\x43hatRequestOlderResult\x12\x1c\n\trequested\x18\x01 \x01(\x08R\trequested\"?\n\x10\x43hatEnsureDirect\x12+\n\x06person\x18\x01 \x01(\x0b\x32\x13.whatevr.v2.AddressR\x06person\"1\n\x16\x43hatEnsureDirectResult\x12\x17\n\x07\x63hat_id\x18\x01 \x01(\tR\x06\x63hatId*n\n\nChatFilter\x12\x1b\n\x17\x43HAT_FILTER_UNSPECIFIED\x10\x00\x12\x13\n\x0f\x43HAT_FILTER_ALL\x10\x01\x12\x16\n\x12\x43HAT_FILTER_DIRECT\x10\x02\x12\x16\n\x12\x43HAT_FILTER_GROUPS\x10\x03*\x9c\x01\n\x08\x43hatType\x12\x19\n\x15\x43HAT_TYPE_UNSPECIFIED\x10\x00\x12\x14\n\x10\x43HAT_TYPE_DIRECT\x10\x01\x12\x13\n\x0f\x43HAT_TYPE_GROUP\x10\x02\x12\x17\n\x13\x43HAT_TYPE_COMMUNITY\x10\x03\x12\x18\n\x14\x43HAT_TYPE_NEWSLETTER\x10\x04\x12\x17\n\x13\x43HAT_TYPE_BROADCAST\x10\x05\x42\x9f\x01\n\x0e\x63om.whatevr.v2B\nChatsProtoZ5github.com/codelif/whatevr/proto/whatevr/v2;whatevrv2\xa2\x02\x03WXX\xaa\x02\nWhatevr.V2\xca\x02\nWhatevr\\V2\xe2\x02\x16Whatevr\\V2\\GPBMetadata\xea\x02\x0bWhatevr::V2\x92\x03\x02\x08\x02\x62\x08\x65\x64itionsp\xe9\x07')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -34,34 +34,34 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'whatevr.v2.chats_pb2', _glo
 if not _descriptor._USE_C_DESCRIPTORS:
   _globals['DESCRIPTOR']._loaded_options = None
   _globals['DESCRIPTOR']._serialized_options = b'\n\016com.whatevr.v2B\nChatsProtoZ5github.com/codelif/whatevr/proto/whatevr/v2;whatevrv2\242\002\003WXX\252\002\nWhatevr.V2\312\002\nWhatevr\\V2\342\002\026Whatevr\\V2\\GPBMetadata\352\002\013Whatevr::V2\222\003\002\010\002'
-  _globals['_CHATFILTER']._serialized_start=1461
-  _globals['_CHATFILTER']._serialized_end=1571
-  _globals['_CHATTYPE']._serialized_start=1574
-  _globals['_CHATTYPE']._serialized_end=1730
-  _globals['_CHATSVIEW']._serialized_start=90
-  _globals['_CHATSVIEW']._serialized_end=177
-  _globals['_CHATVIEW']._serialized_start=179
-  _globals['_CHATVIEW']._serialized_end=214
-  _globals['_CHATROW']._serialized_start=217
-  _globals['_CHATROW']._serialized_end=730
-  _globals['_CHATPREVIEW']._serialized_start=732
-  _globals['_CHATPREVIEW']._serialized_end=841
-  _globals['_CHATMARKREAD']._serialized_start=843
-  _globals['_CHATMARKREAD']._serialized_end=923
-  _globals['_CHATPIN']._serialized_start=925
-  _globals['_CHATPIN']._serialized_end=983
-  _globals['_CHATARCHIVE']._serialized_start=985
-  _globals['_CHATARCHIVE']._serialized_end=1051
-  _globals['_CHATMUTE']._serialized_start=1053
-  _globals['_CHATMUTE']._serialized_end=1143
-  _globals['_CHATTYPING']._serialized_start=1145
-  _globals['_CHATTYPING']._serialized_end=1242
-  _globals['_CHATREQUESTOLDER']._serialized_start=1244
-  _globals['_CHATREQUESTOLDER']._serialized_end=1287
-  _globals['_CHATREQUESTOLDERRESULT']._serialized_start=1289
-  _globals['_CHATREQUESTOLDERRESULT']._serialized_end=1343
-  _globals['_CHATENSUREDIRECT']._serialized_start=1345
-  _globals['_CHATENSUREDIRECT']._serialized_end=1408
-  _globals['_CHATENSUREDIRECTRESULT']._serialized_start=1410
-  _globals['_CHATENSUREDIRECTRESULT']._serialized_end=1459
+  _globals['_CHATFILTER']._serialized_start=1564
+  _globals['_CHATFILTER']._serialized_end=1674
+  _globals['_CHATTYPE']._serialized_start=1677
+  _globals['_CHATTYPE']._serialized_end=1833
+  _globals['_CHATSVIEW']._serialized_start=91
+  _globals['_CHATSVIEW']._serialized_end=280
+  _globals['_CHATVIEW']._serialized_start=282
+  _globals['_CHATVIEW']._serialized_end=317
+  _globals['_CHATROW']._serialized_start=320
+  _globals['_CHATROW']._serialized_end=833
+  _globals['_CHATPREVIEW']._serialized_start=835
+  _globals['_CHATPREVIEW']._serialized_end=944
+  _globals['_CHATMARKREAD']._serialized_start=946
+  _globals['_CHATMARKREAD']._serialized_end=1026
+  _globals['_CHATPIN']._serialized_start=1028
+  _globals['_CHATPIN']._serialized_end=1086
+  _globals['_CHATARCHIVE']._serialized_start=1088
+  _globals['_CHATARCHIVE']._serialized_end=1154
+  _globals['_CHATMUTE']._serialized_start=1156
+  _globals['_CHATMUTE']._serialized_end=1246
+  _globals['_CHATTYPING']._serialized_start=1248
+  _globals['_CHATTYPING']._serialized_end=1345
+  _globals['_CHATREQUESTOLDER']._serialized_start=1347
+  _globals['_CHATREQUESTOLDER']._serialized_end=1390
+  _globals['_CHATREQUESTOLDERRESULT']._serialized_start=1392
+  _globals['_CHATREQUESTOLDERRESULT']._serialized_end=1446
+  _globals['_CHATENSUREDIRECT']._serialized_start=1448
+  _globals['_CHATENSUREDIRECT']._serialized_end=1511
+  _globals['_CHATENSUREDIRECTRESULT']._serialized_start=1513
+  _globals['_CHATENSUREDIRECTRESULT']._serialized_end=1562
 # @@protoc_insertion_point(module_scope)

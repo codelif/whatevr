@@ -604,6 +604,15 @@ func (x *MessagesView) GetSort() []byte {
 	return nil
 }
 
+func (x *MessagesView) GetIndex() uint64 {
+	if x != nil {
+		if x, ok := x.xxx_hidden_Anchor.(*messagesView_Index); ok {
+			return x.Index
+		}
+	}
+	return 0
+}
+
 func (x *MessagesView) SetChatId(v string) {
 	x.xxx_hidden_ChatId = v
 }
@@ -633,6 +642,10 @@ func (x *MessagesView) SetSort(v []byte) {
 		v = []byte{}
 	}
 	x.xxx_hidden_Anchor = &messagesView_Sort{v}
+}
+
+func (x *MessagesView) SetIndex(v uint64) {
+	x.xxx_hidden_Anchor = &messagesView_Index{v}
 }
 
 func (x *MessagesView) HasAnchor() bool {
@@ -674,6 +687,14 @@ func (x *MessagesView) HasSort() bool {
 	return ok
 }
 
+func (x *MessagesView) HasIndex() bool {
+	if x == nil {
+		return false
+	}
+	_, ok := x.xxx_hidden_Anchor.(*messagesView_Index)
+	return ok
+}
+
 func (x *MessagesView) ClearAnchor() {
 	x.xxx_hidden_Anchor = nil
 }
@@ -702,11 +723,18 @@ func (x *MessagesView) ClearSort() {
 	}
 }
 
+func (x *MessagesView) ClearIndex() {
+	if _, ok := x.xxx_hidden_Anchor.(*messagesView_Index); ok {
+		x.xxx_hidden_Anchor = nil
+	}
+}
+
 const MessagesView_Anchor_not_set_case case_MessagesView_Anchor = 0
 const MessagesView_Latest_case case_MessagesView_Anchor = 2
 const MessagesView_Unread_case case_MessagesView_Anchor = 3
 const MessagesView_MessageId_case case_MessagesView_Anchor = 4
 const MessagesView_Sort_case case_MessagesView_Anchor = 5
+const MessagesView_Index_case case_MessagesView_Anchor = 6
 
 func (x *MessagesView) WhichAnchor() case_MessagesView_Anchor {
 	if x == nil {
@@ -721,6 +749,8 @@ func (x *MessagesView) WhichAnchor() case_MessagesView_Anchor {
 		return MessagesView_MessageId_case
 	case *messagesView_Sort:
 		return MessagesView_Sort_case
+	case *messagesView_Index:
+		return MessagesView_Index_case
 	default:
 		return MessagesView_Anchor_not_set_case
 	}
@@ -740,6 +770,8 @@ type MessagesView_builder struct {
 	// around a position: a row's sort as it came, which still works when
 	// that message is gone
 	Sort []byte
+	// around the item this many from the oldest, clamped to the view
+	Index *uint64
 	// -- end of xxx_hidden_Anchor
 }
 
@@ -759,6 +791,9 @@ func (b0 MessagesView_builder) Build() *MessagesView {
 	}
 	if b.Sort != nil {
 		x.xxx_hidden_Anchor = &messagesView_Sort{b.Sort}
+	}
+	if b.Index != nil {
+		x.xxx_hidden_Anchor = &messagesView_Index{*b.Index}
 	}
 	return m0
 }
@@ -798,6 +833,11 @@ type messagesView_Sort struct {
 	Sort []byte `protobuf:"bytes,5,opt,name=sort,oneof"`
 }
 
+type messagesView_Index struct {
+	// around the item this many from the oldest, clamped to the view
+	Index uint64 `protobuf:"varint,6,opt,name=index,oneof"`
+}
+
 func (*messagesView_Latest) isMessagesView_Anchor() {}
 
 func (*messagesView_Unread) isMessagesView_Anchor() {}
@@ -805,6 +845,8 @@ func (*messagesView_Unread) isMessagesView_Anchor() {}
 func (*messagesView_MessageId) isMessagesView_Anchor() {}
 
 func (*messagesView_Sort) isMessagesView_Anchor() {}
+
+func (*messagesView_Index) isMessagesView_Anchor() {}
 
 type Latest struct {
 	state         protoimpl.MessageState `protogen:"opaque.v1"`
@@ -9744,14 +9786,15 @@ var File_whatevr_v2_messages_proto protoreflect.FileDescriptor
 const file_whatevr_v2_messages_proto_rawDesc = "" +
 	"\n" +
 	"\x19whatevr/v2/messages.proto\x12\n" +
-	"whatevr.v2\x1a\x17whatevr/v2/people.proto\"\xc4\x01\n" +
+	"whatevr.v2\x1a\x17whatevr/v2/people.proto\"\xdc\x01\n" +
 	"\fMessagesView\x12\x17\n" +
 	"\achat_id\x18\x01 \x01(\tR\x06chatId\x12,\n" +
 	"\x06latest\x18\x02 \x01(\v2\x12.whatevr.v2.LatestH\x00R\x06latest\x12,\n" +
 	"\x06unread\x18\x03 \x01(\v2\x12.whatevr.v2.UnreadH\x00R\x06unread\x12\x1f\n" +
 	"\n" +
 	"message_id\x18\x04 \x01(\tH\x00R\tmessageId\x12\x14\n" +
-	"\x04sort\x18\x05 \x01(\fH\x00R\x04sortB\b\n" +
+	"\x04sort\x18\x05 \x01(\fH\x00R\x04sort\x12\x16\n" +
+	"\x05index\x18\x06 \x01(\x04H\x00R\x05indexB\b\n" +
 	"\x06anchor\"\b\n" +
 	"\x06Latest\"\b\n" +
 	"\x06Unread\"&\n" +
@@ -10495,6 +10538,7 @@ func file_whatevr_v2_messages_proto_init() {
 		(*messagesView_Unread)(nil),
 		(*messagesView_MessageId)(nil),
 		(*messagesView_Sort)(nil),
+		(*messagesView_Index)(nil),
 	}
 	file_whatevr_v2_messages_proto_msgTypes[14].OneofWrappers = []any{
 		(*messageRow_TextBody)(nil),

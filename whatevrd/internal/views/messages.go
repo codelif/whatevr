@@ -2,6 +2,7 @@ package views
 
 import (
 	"context"
+	"math"
 	"slices"
 	"strings"
 	"sync"
@@ -68,6 +69,13 @@ func (w *watch) saw(ch model.Chat, c *rc) {
 		shown = map[string]bool{}
 	}
 	w.shown.Store(&shown)
+}
+
+// moved marks pl stale when c could have moved its count.
+func (w *watch) moved(c core.Change, pl *place) {
+	if a := w.addrs.Load(); a != nil {
+		pl.moved(c, *a)
+	}
 }
 
 func (w *watch) wake(c core.Change) bool {
@@ -137,6 +145,18 @@ func (rs *Reads) messagesView(ctx context.Context, s *server.Session, req *v2.Su
 			return nil, nil, invalid("malformed sort")
 		}
 		return rs.anchored(req, id, ch, at), nil, nil
+	case v2.MessagesView_Index_case:
+		total, err := rs.r.MessageCount(ctx, ch.Addrs, nil)
+		if err != nil {
+			return nil, nil, err
+		}
+		at, ok, err := rs.r.MessageAt(ctx, ch.Addrs, int(min(p.GetIndex(), math.MaxInt32)), total)
+		if err != nil {
+			return nil, nil, err
+		}
+		if ok {
+			return rs.anchored(req, id, ch, at), nil, nil
+		}
 	}
 	return rs.latest(req, id, ch), nil, nil
 }
@@ -177,7 +197,11 @@ func (rs *Reads) unreadAnchor(ctx context.Context, ch model.Chat) (model.Message
 func (rs *Reads) latest(req *v2.Subscribe, id string, ch model.Chat) server.Window {
 	wt := &watch{}
 	wt.saw(ch, &rc{})
-	w := &win{params: req, limit: messagesLimit, wake: wt.wake}
+	pl := &place{edge: true}
+	w := &win{params: req, limit: messagesLimit, wake: func(c core.Change) bool {
+		wt.moved(c, pl)
+		return wt.wake(c)
+	}}
 	w.items = func(ctx context.Context, max int) ([]*v2.Upsert, error) {
 		c, err := rs.begin(ctx)
 		if err != nil {
@@ -191,6 +215,9 @@ func (rs *Reads) latest(req *v2.Subscribe, id string, ch model.Chat) server.Wind
 		if err != nil {
 			return nil, err
 		}
+		if err := pl.count(ctx, rs.r, ch.Addrs, model.Cursor{}, false); err != nil {
+			return nil, err
+		}
 		out := c.messageItems(chatOf(ch), ms)
 		if err := c.finish(); err != nil {
 			return nil, err
@@ -198,7 +225,7 @@ func (rs *Reads) latest(req *v2.Subscribe, id string, ch model.Chat) server.Wind
 		wt.saw(ch, c)
 		return out, nil
 	}
-	return w
+	return placed{w, pl}
 }
 
 // anchoredWin is a window around one message with two frontiers of its own.
@@ -207,6 +234,7 @@ type anchoredWin struct {
 	params *v2.Subscribe
 	chatID string
 	watch
+	place
 
 	mu sync.Mutex
 	// at is the anchor's position, its id found under any of the chat's
@@ -236,7 +264,10 @@ func (rs *Reads) anchored(req *v2.Subscribe, id string, ch model.Chat, at model.
 func (a *anchoredWin) Params() *v2.Subscribe { return a.params }
 func (a *anchoredWin) Close()                {}
 
-func (a *anchoredWin) Wake(c core.Change) bool { return a.wake(c) }
+func (a *anchoredWin) Wake(c core.Change) bool {
+	a.watch.moved(c, &a.place)
+	return a.wake(c)
+}
 
 func (a *anchoredWin) Extend(d v2.Direction, count int) {
 	a.mu.Lock()
@@ -343,6 +374,13 @@ func (a *anchoredWin) Items(ctx context.Context, _ int) ([]*v2.Upsert, error) {
 	}
 	a.mu.Unlock()
 
+	var first model.Cursor
+	if len(window) > 0 {
+		first = cursorOf(window[0])
+	}
+	if err := a.count(ctx, a.rs.r, ch.Addrs, first, len(window) > 0); err != nil {
+		return nil, err
+	}
 	out := c.messageItems(chatOf(ch), window)
 	if err := c.finish(); err != nil {
 		return nil, err

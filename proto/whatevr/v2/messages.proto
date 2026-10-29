@@ -20,6 +20,8 @@ message MessagesView {
     // around a position: a row's sort as it came, which still works when
     // that message is gone
     bytes sort = 5;
+    // around the item this many from the oldest, clamped to the view
+    uint64 index = 6;
   }
 }
 

@@ -41,6 +41,16 @@ type Bounded interface {
 	Size() int
 }
 
+// Position is where a window sits in its whole view: how many items the view
+// has and how many sort before the window's first.
+type Position struct{ Count, Offset uint64 }
+
+// Positioned is a window that knows its Position as of its last Items, of
+// which the engine kept the first kept.
+type Positioned interface {
+	Position(kept int) Position
+}
+
 // Sized is a window with a size of its own for a subscribe that gave none.
 type Sized interface {
 	DefaultLimit() int
@@ -79,8 +89,9 @@ type subscription struct {
 	closed    bool
 	resetting bool
 
-	// only the running pass touches it
-	sent map[string]sent
+	// only the running pass touches these
+	sent    map[string]sent
+	sentPos *Position
 }
 
 func (s *subscription) kick() {
@@ -154,7 +165,7 @@ func (s *subscription) run() {
 		s.mu.Lock()
 		if !ok {
 			// the queue dropped this subscription's updates: start over
-			s.sent = nil
+			s.sent, s.sentPos = nil, nil
 			s.dirty, s.ready, s.resetting = true, true, true
 		}
 	}
@@ -251,11 +262,16 @@ func (s *subscription) pass(limit int, ready, reset bool) bool {
 		u.changes[id] = removeChange(id, by)
 	}
 	s.sent = next
+	if p, ok := s.win.(Positioned); ok {
+		if pos := p.Position(len(items)); reset || s.sentPos == nil || *s.sentPos != pos {
+			u.pos, s.sentPos = &pos, &pos
+		}
+	}
 	if !reset && u.bytes() > maxFrameBytes {
 		// more change than one frame holds: send the window whole instead
 		return false
 	}
-	if len(u.order) > 0 || ready || reset {
+	if len(u.order) > 0 || ready || reset || u.pos != nil {
 		if !s.conn.q.pushUpdate(u) {
 			return false
 		}

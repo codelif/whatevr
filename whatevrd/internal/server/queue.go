@@ -29,6 +29,8 @@ type update struct {
 	changes   map[string][]byte
 	ready     bool
 	exhausted bool
+	// set when the window's place in its view changed
+	pos *Position
 }
 
 type entry struct {
@@ -124,6 +126,9 @@ func (q *queue) pushUpdate(u *update) bool {
 		q.bytes += q.sizes[u.sub] - before
 		if u.ready {
 			w.ready, w.exhausted = true, u.exhausted
+		}
+		if u.pos != nil {
+			w.pos = u.pos
 		}
 		if q.counts[u.sub] > maxQueuedChanges || q.sizes[u.sub] > maxFrameBytes-frameHeadBudget {
 			q.purgeLocked(u.sub)
@@ -229,5 +234,5 @@ func (u *update) frame() []byte {
 	for _, id := range u.order {
 		changes = append(changes, u.changes[id])
 	}
-	return updateFrame(u.sub, u.reset, changes, u.ready, u.exhausted)
+	return updateFrame(u.sub, u.reset, changes, u.ready, u.exhausted, u.pos)
 }

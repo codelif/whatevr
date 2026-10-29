@@ -530,6 +530,8 @@ type ChatFilter struct {
 	// Any takes archived and unarchived alike
 	Any   bool
 	Limit int
+	// Offset skips that many rows first
+	Offset int
 	// Ties goes on past Limit through the rows in the same second as the
 	// last, for a caller that orders by the second and cuts after
 	Ties bool
@@ -572,23 +574,16 @@ func (r *Reader) Chats(ctx context.Context, f ChatFilter) ([]Chat, error) {
 
 // ChatsIn is Chats as w has it, for a caller that keeps its world.
 func (r *Reader) ChatsIn(ctx context.Context, w *World, f ChatFilter) ([]Chat, error) {
-	q := `SELECT ` + rowCols + ` FROM chat_row WHERE deleted = 0`
-	var args []any
-	if !f.Any {
-		q += ` AND archived = ?`
-		args = append(args, f.Archived)
-	}
-	switch f.Kind {
-	case "direct":
-		q += ` AND grp = 0`
-	case "groups":
-		q += ` AND grp = 1`
-	}
-	q += ` ORDER BY pinned DESC, pin_t DESC, last_t DESC, key`
+	where, args := f.where()
+	q := `SELECT ` + rowCols + ` FROM chat_row WHERE ` + where + ` ORDER BY pinned DESC, pin_t DESC, last_t DESC, key`
 	name := strings.ToLower(strings.TrimSpace(f.Name))
-	if f.Limit > 0 && name == "" && !f.Ties {
-		q += ` LIMIT ?`
-		args = append(args, f.Limit)
+	switch {
+	case f.Limit > 0 && name == "" && !f.Ties:
+		q += ` LIMIT ? OFFSET ?`
+		args = append(args, f.Limit, f.Offset)
+	case f.Offset > 0:
+		q += ` LIMIT -1 OFFSET ?`
+		args = append(args, f.Offset)
 	}
 	rows, err := r.db.QueryContext(ctx, q, args...)
 	if err != nil {
@@ -612,6 +607,42 @@ func (r *Reader) ChatsIn(ctx context.Context, w *World, f ChatFilter) ([]Chat, e
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+// where is the filter as a WHERE clause on chat_row, without Name.
+func (f ChatFilter) where() (string, []any) {
+	q := `deleted = 0`
+	var args []any
+	if !f.Any {
+		q += ` AND archived = ?`
+		args = append(args, f.Archived)
+	}
+	switch f.Kind {
+	case "direct":
+		q += ` AND grp = 0`
+	case "groups":
+		q += ` AND grp = 1`
+	}
+	return q, args
+}
+
+// ChatCount is how many chats f takes, Name and Limit aside.
+func (r *Reader) ChatCount(ctx context.Context, f ChatFilter) (int, error) {
+	where, args := f.where()
+	var n int
+	err := r.db.QueryRowContext(ctx, `SELECT count(*) FROM chat_row WHERE `+where, args...).Scan(&n)
+	return n, err
+}
+
+// ChatsBefore is how many chats f takes that the list shows above the
+// position (pinned, pinT, lastT, key).
+func (r *Reader) ChatsBefore(ctx context.Context, f ChatFilter, pinned bool, pinT, lastT int64, key string) (int, error) {
+	where, args := f.where()
+	var n int
+	err := r.db.QueryRowContext(ctx, `SELECT count(*) FROM chat_row WHERE `+where+`
+		AND (pinned > ? OR pinned = ? AND (pin_t > ? OR pin_t = ? AND (last_t > ? OR last_t = ? AND key < ?)))`,
+		append(args, pinned, pinned, pinT, pinT, lastT, lastT, key)...).Scan(&n)
+	return n, err
 }
 
 // second is where a chat sorts to the second.
