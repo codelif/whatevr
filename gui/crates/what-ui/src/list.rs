@@ -49,6 +49,12 @@ pub trait ListSource {
     type Content: Send + 'static;
     fn newest(&self) -> Option<Self::Key>;
     fn neighbour(&self, key: Self::Key, dir: Dir) -> Option<Self::Key>;
+    /// the source still has the row. rows can leave (deleted, or another
+    /// chat opened); the list stops asking about them once this says so
+    fn contains(&self, key: Self::Key) -> bool;
+    /// rows go on past this end key but aren't loaded yet. the list holds
+    /// there without ending a fling, and goes on once they land
+    fn more(&self, key: Self::Key, dir: Dir) -> bool;
     /// bumps when the row's content changes
     fn revision(&self, key: Self::Key) -> u64;
     fn content(&self, key: Self::Key) -> Self::Content;
@@ -143,6 +149,9 @@ struct Span<K> {
     rows: Vec<(K, i32, u32)>,
     oldest: bool,
     newest: bool,
+    /// the end found is only the end of what's loaded
+    soft_old: bool,
+    soft_new: bool,
 }
 
 impl<K> Span<K> {
@@ -276,6 +285,7 @@ impl<S: ListSource> List<S> {
             self.measured = None;
         }
 
+        self.heal(src);
         // the anchor is bottom based; a top list keeps its top still instead
         if self.gravity == Gravity::Top
             && let (Some(old), Some(a)) = (self.vh, self.anchor.as_mut())
@@ -354,14 +364,15 @@ impl<S: ListSource> List<S> {
             .walk(src, (key, offset), vt, vb, &mut cx, true)
             .expect("sync walks finish");
         for _ in 0..3 {
-            let shift = self.clamp(&span, vt, vb);
+            let (shift, soft) = self.clamp(&span, vt, vb);
             if shift == 0 {
                 break;
             }
             offset -= shift;
             self.frac = 0.0;
-            // the edge pushed back against this frame's movement
-            if d != 0 && shift.signum() == d.signum() {
+            // the edge pushed back against this frame's movement; a soft
+            // one only holds it until the rows land
+            if d != 0 && shift.signum() == d.signum() && !soft {
                 report.hit_edge = true;
             }
             span = self
@@ -370,8 +381,8 @@ impl<S: ListSource> List<S> {
         }
         report.moved = if report.jumped { 0 } else { offset - before };
         self.stuck = match self.gravity {
-            Gravity::Bottom => span.newest && span.bottom() == vb,
-            Gravity::Top => span.oldest && span.top() == vt,
+            Gravity::Bottom => span.newest && !span.soft_new && span.bottom() == vb,
+            Gravity::Top => span.oldest && !span.soft_old && span.top() == vt,
         };
 
         // re-anchor on the row at the viewport bottom; the rows are exact so
@@ -452,6 +463,40 @@ impl<S: ListSource> List<S> {
         report
     }
 
+    /// the anchor row left the source: hold the nearest row still on screen
+    /// exactly where it was, or open fresh at the gravity edge when none is
+    /// left. jumps to rows that left are dropped
+    fn heal(&mut self, src: &S) {
+        let gone =
+            |t: &Option<Target<S::Key>>| matches!(t, Some(Target::Key(k, _)) if !src.contains(*k));
+        if gone(&self.jump) {
+            self.jump = None;
+        }
+        if gone(&self.tried) {
+            self.tried = None;
+        }
+        let Some((k, _)) = self.anchor else {
+            return;
+        };
+        if src.contains(k) {
+            return;
+        }
+        self.measured = None;
+        self.frac = 0.0;
+        let vb = self
+            .last
+            .map(|(vp, ..)| vp.origin.y + vp.size.height as i32);
+        // the anchor is the bottom row, so its nearest survivor is the
+        // lowest one left
+        self.anchor = vb.and_then(|vb| {
+            self.visible
+                .iter()
+                .rev()
+                .find(|r| src.contains(r.0))
+                .map(|&(k, top, h)| (k, vb - (top + h as i32)))
+        });
+    }
+
     /// the rows the last frame() put on screen, top to bottom: key, top and
     /// height in physical px
     pub fn visible(&self) -> &[(S::Key, i32, u32)] {
@@ -500,6 +545,21 @@ impl<S: ListSource> List<S> {
         if self.gravity == Gravity::Top && self.stuck && self.jump.is_none() {
             self.anchor = None;
         }
+    }
+
+    /// the source now holds something else (another chat): the next frame
+    /// opens at the gravity edge, never at a key the two happen to share.
+    /// laid out rows stay cached
+    pub fn reset(&mut self) {
+        self.anchor = None;
+        self.frac = 0.0;
+        self.stuck = true;
+        self.jump = None;
+        self.tried = None;
+        self.measured = None;
+        self.last = None;
+        self.last_bottom = None;
+        self.worker.set_waiting(false);
     }
 
     /// lands once the target screen is laid out; the old position keeps
@@ -573,27 +633,29 @@ impl<S: ListSource> List<S> {
 
     /// how far to move the span (+ = down) to settle it on the edges; the
     /// gravity edge wins when the content is shorter than the viewport
-    fn clamp(&self, span: &Span<S::Key>, vt: i32, vb: i32) -> i32 {
+    /// how far to shift back inside the ends, and whether the end that
+    /// pushed is soft
+    fn clamp(&self, span: &Span<S::Key>, vt: i32, vb: i32) -> (i32, bool) {
         let (top, bottom) = (span.top(), span.bottom());
         match self.gravity {
             Gravity::Bottom => {
                 if span.newest && bottom < vb {
-                    vb - bottom
+                    (vb - bottom, span.soft_new)
                 } else if span.oldest && top > vt {
                     let room = if span.newest { bottom - vb } else { i32::MAX };
-                    -(top - vt).min(room)
+                    (-(top - vt).min(room), span.soft_old)
                 } else {
-                    0
+                    (0, false)
                 }
             }
             Gravity::Top => {
                 if span.oldest && top > vt {
-                    vt - top
+                    (vt - top, span.soft_old)
                 } else if span.newest && bottom < vb {
                     let room = if span.oldest { vt - top } else { i32::MAX };
-                    (vb - bottom).min(room)
+                    ((vb - bottom).min(room), span.soft_new)
                 } else {
-                    0
+                    (0, false)
                 }
             }
         }
@@ -663,6 +725,7 @@ impl<S: ListSource> List<S> {
             k = p;
         }
         oldest = oldest || src.neighbour(k, Dir::Older).is_none();
+        let soft_old = oldest && src.more(k, Dir::Older);
         up.reverse();
         let mut newest = false;
         let (mut k, mut b) = (key, bottom);
@@ -677,10 +740,13 @@ impl<S: ListSource> List<S> {
             k = n;
         }
         newest = newest || src.neighbour(k, Dir::Newer).is_none();
+        let soft_new = newest && src.more(k, Dir::Newer);
         Some(Span {
             rows: up,
             oldest,
             newest,
+            soft_old,
+            soft_new,
         })
     }
 
@@ -1007,19 +1073,29 @@ mod tests {
 
     use super::*;
 
-    /// rows 0 (oldest) ..n, heights 20..83 px
-    struct Src(u32);
+    /// rows 0 (oldest) ..n, heights 20..83 px, less any taken out, loaded
+    /// from .2 to .3 only
+    struct Src(u32, HashSet<u32>, u32, u32);
 
     impl ListSource for Src {
         type Key = u32;
         type Content = u32;
         fn newest(&self) -> Option<u32> {
-            self.0.checked_sub(1)
+            (self.2..self.3).rev().find(|k| !self.1.contains(k))
         }
         fn neighbour(&self, k: u32, dir: Dir) -> Option<u32> {
             match dir {
-                Dir::Older => k.checked_sub(1),
-                Dir::Newer => (k + 1 < self.0).then_some(k + 1),
+                Dir::Older => (self.2..k).rev().find(|k| !self.1.contains(k)),
+                Dir::Newer => (k + 1..self.3).find(|k| !self.1.contains(k)),
+            }
+        }
+        fn contains(&self, k: u32) -> bool {
+            (self.2..self.3).contains(&k) && !self.1.contains(&k)
+        }
+        fn more(&self, k: u32, dir: Dir) -> bool {
+            match dir {
+                Dir::Older => k == self.2 && k > 0,
+                Dir::Newer => k + 1 == self.3 && self.3 < self.0,
             }
         }
         fn revision(&self, _: u32) -> u64 {
@@ -1081,7 +1157,7 @@ mod tests {
             let text = TextSystem::with_fonts(&[]).unwrap();
             Self {
                 list: List::new(Rows, &text, Box::new(|| {}), 1 << 20, gravity),
-                src: Src(n),
+                src: Src(n, HashSet::new(), 0, n),
                 text,
                 sink: Sink::default(),
                 vp: PhysicalRect::new(PhysicalPoint::new(0, 10), PhysicalSize::new(300, 400)),
@@ -1235,5 +1311,100 @@ mod tests {
         assert_eq!(r.rows[0], (hash(&0u32), h.vp.origin.y));
         assert_eq!(r.moved, 0);
         assert!(h.list.stick_to_bottom());
+    }
+
+    #[test]
+    fn a_row_leaving_moves_nothing_else() {
+        let mut h = Harness::new(10_000);
+        h.frame(0.0, 0.0);
+        h.wait();
+        let before = h.frame(-1234.0, 0.0);
+        h.wait();
+        let shown: Vec<u32> = h.list.visible().iter().map(|r| r.0).collect();
+        // the anchor (bottom row) and the one above it go
+        let gone = [shown[shown.len() - 1], shown[shown.len() - 2]];
+        h.src.1.extend(gone);
+        let r = h.frame(0.0, 0.0);
+        assert!(!r.jumped && r.moved == 0);
+        let tops: HashMap<u64, i32> = before.rows.iter().copied().collect();
+        // rows above the gap stay; the list fills the gap from below
+        let k = shown[shown.len() - 3];
+        assert_eq!(
+            r.rows.iter().find(|x| x.0 == hash(&k)).map(|x| x.1),
+            tops.get(&hash(&k)).copied()
+        );
+        assert!(!h.list.visible().iter().any(|x| gone.contains(&x.0)));
+    }
+
+    #[test]
+    fn a_source_with_nothing_left_on_screen_opens_fresh() {
+        let mut h = Harness::new(1_000);
+        h.frame(0.0, 0.0);
+        h.frame(-5000.0, 0.0);
+        let shown: Vec<u32> = h.list.visible().iter().map(|r| r.0).collect();
+        h.src.1.extend(shown);
+        h.list.jump_to(1, Align::Top);
+        h.src.1.insert(1);
+        let r = h.frame(0.0, 0.0);
+        assert!(r.jumped && h.list.stick_to_bottom() && !h.list.waiting());
+        assert_eq!(r.rows.last().unwrap().0, hash(&999u32));
+    }
+
+    #[test]
+    fn a_reset_opens_at_the_bottom_even_on_rows_still_there() {
+        let mut h = Harness::new(1_000);
+        h.frame(0.0, 0.0);
+        h.wait();
+        h.frame(-5000.0, 0.0);
+        h.list.jump_to(1, Align::Top);
+        h.list.reset();
+        let r = h.frame(0.0, 0.0);
+        assert!(r.jumped && h.list.stick_to_bottom() && !h.list.waiting());
+        assert_eq!(r.rows.last().unwrap().0, hash(&999u32));
+    }
+
+    #[test]
+    fn a_fling_into_unloaded_rows_holds_then_goes_on() {
+        let mut h = Harness::new(10_000);
+        h.src.2 = 9_900;
+        h.frame(0.0, 0.0);
+        h.wait();
+        let mut held = 0;
+        for _ in 0..200 {
+            let r = h.frame(-500.0, 0.0);
+            assert!(!r.hit_edge, "a soft end stops nothing");
+            if r.moved == 0 {
+                held += 1;
+            }
+            h.wait();
+        }
+        assert!(held > 0, "never reached the loaded end");
+        let before = h.frame(0.0, 0.0);
+        h.src.2 = 9_000;
+        h.list.prepended();
+        h.wait();
+        let r = h.frame(-500.0, 0.0);
+        assert_eq!(r.moved, -500);
+        continuous(&before, &r);
+        // the real end still stops
+        h.src.2 = 0;
+        let r = h.frame(-1e7, 0.0);
+        assert!(r.hit_edge);
+    }
+
+    #[test]
+    fn an_unloaded_newer_end_isnt_the_bottom() {
+        let mut h = Harness::new(10_000);
+        h.src.3 = 5_000;
+        let r = h.frame(0.0, 0.0);
+        assert!(r.jumped && !h.list.stick_to_bottom());
+        let r = h.frame(500.0, 0.0);
+        assert!(!r.hit_edge && r.moved == 0);
+        // so a new row past the window isn't followed
+        assert!(!h.list.appended(&h.src));
+        h.src.3 = 10_000;
+        h.frame(0.0, 0.0);
+        let r = h.frame(500.0, 0.0);
+        assert_eq!(r.moved, 500);
     }
 }

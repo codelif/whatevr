@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use parley::fontique::{Blob, Collection, CollectionOptions, SourceCache};
 use parley::{
     FontContext, FontFamily, FontFamilyName, FontStyle, FontWeight, GenericFamily, LayoutContext,
-    LineHeight, PositionedLayoutItem, Run, StyleProperty,
+    LineHeight, OverflowWrap, PositionedLayoutItem, Run, StyleProperty,
 };
 use skrifa::bitmap::{BitmapFormat, BitmapStrikes};
 use skrifa::color::ColorGlyphCollection;
@@ -198,6 +198,8 @@ impl TextSystem {
         b.push_default(StyleProperty::LineHeight(LineHeight::FontSizeRelative(
             base.line_height,
         )));
+        // a word wider than the line (a long link) splits rather than spill
+        b.push_default(StyleProperty::OverflowWrap(OverflowWrap::Anywhere));
         for s in spans {
             let r = s.range.clone();
             debug_assert!(text.is_char_boundary(r.start) && text.is_char_boundary(r.end));

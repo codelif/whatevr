@@ -10,6 +10,7 @@ authors.workspace = true
 
 [dependencies]
 what-assets.workspace = true
+what-chat.workspace = true
 what-core.workspace = true
 what-platform.workspace = true
 what-render.workspace = true

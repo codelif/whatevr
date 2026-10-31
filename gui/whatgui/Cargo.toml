@@ -9,8 +9,15 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+what-chat.workspace = true
 what-core.workspace = true
 what-platform.workspace = true
+what-proto.workspace = true
 what-render.workspace = true
+what-text.workspace = true
+what-ui.workspace = true
 anyhow = { workspace = true, features = ["std"] }
+clap = { workspace = true, features = ["std", "derive", "help", "usage", "error-context"] }
+jiff = { workspace = true, features = ["std", "tz-system", "tzdb-zoneinfo"] }
 log.workspace = true
+rustix = { workspace = true, features = ["std", "event"] }

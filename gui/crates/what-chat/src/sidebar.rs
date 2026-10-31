@@ -1,6 +1,6 @@
 //! chat list rows as picked: 64 px, 40 px round avatar, time by the name,
 //! accent count pill, one line preview with the sender or your ticks.
-//! hover and selection fills are the lab's, drawn under the rows.
+//! hover and selection fills are the shell's, drawn under the rows.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -9,8 +9,9 @@ use what_core::Scale;
 use what_text::{GlyphKey, Span, TextSystem};
 use what_ui::{Row, RowBuilder};
 
-use crate::fake::{ChatInfo, initials};
-use crate::{Pen, Theme, mix, style, ticks};
+use crate::content::{ChatInfo, initials};
+use crate::pen::Pen;
+use crate::theme::{Theme, mix, style, ticks};
 
 pub const ROW: f32 = 64.0;
 const LOOSE: f32 = 1.45;
@@ -42,7 +43,7 @@ impl RowBuilder<Arc<ChatInfo>> for SideRows {
             40.0,
             40.0,
             [20.0; 4],
-            mix(t.bg, t.ids[c.color as usize], 0.45),
+            mix(t.bg, t.id(c.color), 0.45),
         );
         let ini = pen.para(
             &initials(&c.name),

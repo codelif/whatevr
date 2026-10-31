@@ -357,6 +357,27 @@ mod tests {
     }
 
     #[test]
+    fn only_a_word_wider_than_the_line_splits() {
+        let mut ts = system();
+        // no break opportunity anywhere inside it, like the tail of a link
+        let word = "lb=yRvSl6VI&utm_medium=Share&utm_source=whatevr";
+        let mut p = ts.paragraph(
+            &format!("see {word}"),
+            &Style::default(),
+            &[],
+            Scale::from_120ths(120),
+        );
+        p.wrap(Some(150.0));
+        let lines: Vec<_> = p.lines().collect();
+        assert!(lines.len() > 2, "{lines:?}");
+        assert!(lines.iter().all(|l| l.width <= 150.0 + 1e-3), "{lines:?}");
+        // "see" fits but the word doesn't, so the first break is the space
+        let mut q = ts.paragraph("see ", &Style::default(), &[], Scale::from_120ths(120));
+        q.wrap(None);
+        assert!((lines[0].width - q.width()).abs() < 0.5, "{lines:?}");
+    }
+
+    #[test]
     fn arabic_mid_word_reshapes() {
         let mut ts = system();
         let text = "سأصلبعدعشردقائقتقريباًمرحبابكمجميعاسأصلبعدعشردقائق";

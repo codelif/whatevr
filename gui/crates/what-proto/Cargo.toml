@@ -9,3 +9,11 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+buffa = { workspace = true, features = ["std", "fast-utf8"] }
+log.workspace = true
+rtrb.workspace = true
+rustix = { workspace = true, features = ["std", "process"] }
+thiserror.workspace = true
+
+[build-dependencies]
+buffa-build.workspace = true

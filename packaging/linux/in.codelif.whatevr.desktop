@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Whatevr
+Comment=Native Wayland frontend for whatevrd
+Exec=whatgui
+Icon=whatevr
+Terminal=false
+NoDisplay=true
+StartupWMClass=in.codelif.whatevr
+X-Whatevr-Frontend=in.codelif.whatevr

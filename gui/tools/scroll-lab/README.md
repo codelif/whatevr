@@ -12,3 +12,4 @@ Exercises both virtual lists (bottom and top gravity) with multilingual bubbles,
 ## Boundaries
 
 - Never talks to whatevrd.
+- Its look and panes are what-chat's; only the fake data lives here.

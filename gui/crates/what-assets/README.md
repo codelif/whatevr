@@ -13,4 +13,4 @@ Files are compiled into the binary, so nothing is looked up at run time.
 ## Boundaries
 
 - Depends on no workspace crate.
-- One of the crates that know whatevr exists (the others are what-proto and whatgui).
+- One of the crates that know whatevr exists (the others are what-chat, what-proto and whatgui).

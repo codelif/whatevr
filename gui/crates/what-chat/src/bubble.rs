@@ -10,8 +10,9 @@ use what_core::{Scale, Srgba8};
 use what_text::{GlyphKey, Paragraph, Span, TextSystem};
 use what_ui::{Row, RowBuilder};
 
-use crate::fake::{Body, Entry, Item, Msg, PEOPLE, initials};
-use crate::{Pen, Theme, hsl, mix, style, ticks};
+use crate::content::{Body, Entry, Item, Msg, initials};
+use crate::pen::Pen;
+use crate::theme::{Theme, hsl, mix, style, ticks};
 
 const R: f32 = 8.0;
 const TIGHT: f32 = 4.0;
@@ -160,12 +161,11 @@ fn msg_row(pen: &mut Pen<'_>, t: &Theme, m: &Msg, w: f32) -> f32 {
 
     // run start: avatar and name above the run, outside the bubbles
     let mut name_w = 0.0;
-    let name = match m.from {
-        Some(f) if m.first => {
-            let who = &PEOPLE[f as usize];
+    let name = match &m.from {
+        Some(who) if m.first => {
             let mut p = pen.para(
-                who.name,
-                &style(12.5, 12.5 * LOOSE, 600.0, t.ids[who.color as usize]),
+                &who.name,
+                &style(12.5, 12.5 * LOOSE, 600.0, t.id(who.color)),
                 &[],
             );
             pen.text.clamp(&mut p, colmax - 1.0, 1);
@@ -247,7 +247,7 @@ fn msg_row(pen: &mut Pen<'_>, t: &Theme, m: &Msg, w: f32) -> f32 {
 
     // the peeking quote card above the bubble
     let quote = m.quote.as_ref().map(|q| {
-        let who = q.from.map_or("You", |f| PEOPLE[f as usize].name);
+        let who = q.from.as_ref().map_or("You", |f| &*f.name);
         let qf = if q.from.is_none() { t.out } else { t.inc };
         let wp = pen.para(who, &style(13.0, 17.0, 600.0, mix(t.bg, t.text, 0.7)), &[]);
         let tp = pen.para(
@@ -275,10 +275,10 @@ fn msg_row(pen: &mut Pen<'_>, t: &Theme, m: &Msg, w: f32) -> f32 {
             26.0,
             26.0,
             [13.0; 4],
-            mix(t.bg, t.ids[who.color as usize], 0.45),
+            mix(t.bg, t.id(who.color), 0.45),
         );
         let ini = pen.para(
-            &initials(who.name),
+            &initials(&who.name),
             &style(10.5, 10.5 * LOOSE, 600.0, t.text),
             &[],
         );

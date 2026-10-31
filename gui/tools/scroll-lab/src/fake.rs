@@ -3,6 +3,8 @@
 
 use std::sync::Arc;
 
+use what_chat::content::{Body, ChatInfo, Entry, Item, Msg, Quote, Sender};
+use what_chat::shell::{ChatList, Conversation};
 use what_ui::{Dir, ListSource};
 
 /// splitmix64
@@ -72,70 +74,6 @@ pub const PEOPLE: [Person; 6] = [
         color: 0,
     },
 ];
-
-pub fn initials(name: &str) -> String {
-    name.split_whitespace()
-        .filter_map(|w| w.chars().next())
-        .take(2)
-        .collect()
-}
-
-#[derive(Clone)]
-pub enum Body {
-    Text,
-    /// width / height
-    Photo {
-        ratio: f32,
-        hue: f32,
-    },
-    Link {
-        title: String,
-        host: String,
-        hue: f32,
-        /// the site's image is wide: big preview, else a side thumb
-        wide: bool,
-    },
-}
-
-#[derive(Clone)]
-pub struct Quote {
-    /// None is you
-    pub from: Option<u8>,
-    pub text: String,
-}
-
-#[derive(Clone)]
-pub struct Msg {
-    /// into PEOPLE; None is you
-    pub from: Option<u8>,
-    /// the caption for a photo
-    pub text: String,
-    pub body: Body,
-    pub quote: Option<Quote>,
-    pub reactions: Vec<(&'static str, u32)>,
-    pub time: String,
-    /// 1 sent, 2 delivered, 3 read
-    pub state: u8,
-    /// first and last of a run from one sender
-    pub first: bool,
-    pub last: bool,
-}
-
-pub enum Entry {
-    Day { day: String, date: String },
-    System(String),
-    Msg(Msg),
-}
-
-/// what a chat row is built from
-#[derive(Clone)]
-pub enum Item {
-    Entry(Arc<Entry>),
-    /// the chat's top padding, above the very first message
-    Top,
-    /// the chat's bottom padding, under the newest message
-    Bottom,
-}
 
 pub const TOP: u32 = u32::MAX - 1;
 pub const BOTTOM: u32 = u32::MAX;
@@ -266,9 +204,14 @@ struct Gen {
     clock: i64,
     last_day: i64,
     last_from: Option<Option<u8>>,
+    people: Vec<Sender>,
 }
 
 impl Gen {
+    fn who(&self, i: Option<u8>) -> Option<Sender> {
+        i.map(|i| self.people[i as usize].clone())
+    }
+
     fn text(&mut self) -> String {
         let r = self.rng.f();
         if r < 0.45 {
@@ -353,21 +296,24 @@ impl Gen {
         } else {
             (Body::Text, self.text())
         };
-        let quote = self.rng.chance(0.1).then(|| Quote {
-            from: if self.rng.chance(0.3) {
+        let quote = self.rng.chance(0.1).then(|| {
+            let from = if self.rng.chance(0.3) {
                 None
             } else {
                 Some(self.rng.below(PEOPLE.len()) as u8)
-            },
-            text: self.text(),
+            };
+            Quote {
+                from: self.who(from),
+                text: self.text(),
+            }
         });
         let reactions = if self.rng.chance(0.12) {
             let n = 1 + self.rng.below(3);
-            let mut v: Vec<(&'static str, u32)> = Vec::new();
+            let mut v: Vec<(String, u32)> = Vec::new();
             for _ in 0..n {
                 let e = *self.rng.pick(REACTIONS);
-                if !v.iter().any(|(x, _)| *x == e) {
-                    v.push((e, 1 + self.rng.below(4) as u32));
+                if !v.iter().any(|(x, _)| x == e) {
+                    v.push((e.to_string(), 1 + self.rng.below(4) as u32));
                 }
             }
             v
@@ -376,6 +322,7 @@ impl Gen {
         };
         let first = self.last_from != Some(from);
         self.last_from = Some(from);
+        let from = self.who(from);
         let m = self.clock.rem_euclid(1440);
         out.push(Entry::Msg(Msg {
             from,
@@ -401,7 +348,13 @@ fn close_runs(v: &mut [Entry]) {
     }
 }
 
+/// rows of history loaded per prepend, and how close to the oldest loaded
+/// row the view gets before the next batch is asked for
+const PREPEND: usize = 500;
+const PREPEND_AT: u32 = 200;
+
 pub struct Chat {
+    pub auto_prepend: bool,
     entries: Vec<Arc<Entry>>,
     revs: Vec<u64>,
     /// first loaded entry; older ones arrive through prepend
@@ -419,6 +372,13 @@ impl Chat {
             clock: 18_687 * 1440 + 8 * 60,
             last_day: 0,
             last_from: None,
+            people: PEOPLE
+                .iter()
+                .map(|p| Sender {
+                    name: p.name.into(),
+                    color: p.color,
+                })
+                .collect(),
         };
         let mut v = Vec::with_capacity(history + 64);
         while v.len() < history {
@@ -440,6 +400,7 @@ impl Chat {
         }
         let n = v.len();
         Self {
+            auto_prepend: true,
             entries: v.into_iter().map(Arc::new).collect(),
             revs: vec![0; n],
             lo: unloaded.min(n),
@@ -530,6 +491,18 @@ impl ListSource for Chat {
         }
     }
 
+    fn contains(&self, k: u32) -> bool {
+        match k {
+            BOTTOM => true,
+            TOP => self.lo == 0,
+            k => (self.lo..self.entries.len()).contains(&(k as usize)),
+        }
+    }
+
+    fn more(&self, k: u32, dir: Dir) -> bool {
+        dir == Dir::Older && k as usize == self.lo && self.lo > 0
+    }
+
     fn revision(&self, k: u32) -> u64 {
         self.revs.get(k as usize).copied().unwrap_or(0)
     }
@@ -564,20 +537,6 @@ impl ListSource for Chat {
     fn total(&self) -> Option<usize> {
         None
     }
-}
-
-/// one chat in the sidebar
-pub struct ChatInfo {
-    pub name: String,
-    pub group: bool,
-    pub color: u8,
-    /// None: they sent it (or nobody in a group, a 1:1); Some("") is you
-    pub from: Option<String>,
-    pub preview: String,
-    /// your last message's ticks, when `from` is you
-    pub state: u8,
-    pub time: String,
-    pub unread: u32,
 }
 
 const FIRST: &[&str] = &[
@@ -716,6 +675,14 @@ impl ListSource for Chats {
         }
     }
 
+    fn contains(&self, k: u32) -> bool {
+        (k as usize) < self.chats.len()
+    }
+
+    fn more(&self, _: u32, _: Dir) -> bool {
+        false
+    }
+
     fn revision(&self, _: u32) -> u64 {
         0
     }
@@ -735,6 +702,34 @@ impl ListSource for Chats {
 
     fn total(&self) -> Option<usize> {
         None
+    }
+}
+
+impl Conversation for Chat {
+    fn title(&self) -> (&str, &str) {
+        ("Weekend plans", "6 people")
+    }
+
+    fn newest_message(&self) -> Option<u32> {
+        self.oldest_loaded().map(|lo| lo + self.len() as u32 - 1)
+    }
+
+    fn showing(&mut self, first: u32, _: u32) -> bool {
+        if !self.auto_prepend || !self.has_more() || first == BOTTOM {
+            return false;
+        }
+        let lo = self.lo as u32;
+        first.saturating_sub(lo) < PREPEND_AT && self.prepend(PREPEND) > 0
+    }
+}
+
+impl ChatList for Chats {
+    fn count(&self) -> usize {
+        self.chats.len()
+    }
+
+    fn showing(&mut self, _: u32, _: u32) -> bool {
+        false
     }
 }
 

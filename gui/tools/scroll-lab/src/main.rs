@@ -265,7 +265,7 @@ impl App for Window {
         if token == INCOMING
             && let Some(every) = self.incoming
         {
-            self.lab.incoming();
+            scroll_lab::incoming(&mut self.lab);
             if let Some(id) = self.id {
                 platform.request_redraw(id);
             }
@@ -304,7 +304,7 @@ fn main() -> anyhow::Result<()> {
         platform.set_timer(INCOMING, every)?;
     }
     let w = wake.clone();
-    let lab = Lab::new(TextSystem::new(), move || {
+    let lab = scroll_lab::lab(TextSystem::new(), move || {
         let _ = rustix::io::write(w.as_fd(), &1u64.to_ne_bytes());
     });
     platform.create_window(&WindowConfig {

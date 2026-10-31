@@ -1,0 +1,16 @@
+[package]
+name = "what-chat"
+version = "0.1.0"
+description = "whatevr's chat look and app shell: theme, row builders and the two panes."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+what-assets.workspace = true
+what-core.workspace = true
+what-render.workspace = true
+what-text.workspace = true
+what-ui.workspace = true

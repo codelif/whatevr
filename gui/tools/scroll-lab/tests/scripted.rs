@@ -39,7 +39,7 @@ impl Rig {
     fn new() -> Self {
         let gpu = Gpu::headless(Adapter::Lavapipe).expect("lavapipe");
         let renderer = Renderer::new(&gpu, TextureFormat::Rgba8Unorm);
-        let mut lab = Lab::new(TextSystem::new(), || {});
+        let mut lab = scroll_lab::lab(TextSystem::new(), || {});
         let size = (LogicalSize::new(960.0, 640.0), Scale::ONE);
         lab.resize(size.0, size.1);
         Self {
@@ -313,7 +313,7 @@ fn hard_scrolling_never_jumps_or_stalls() {
         r.frames(12);
         i += 1;
         if i == 4 {
-            r.lab.incoming();
+            scroll_lab::incoming(&mut r.lab);
             r.resize(960.0, 720.0);
         }
         if i == 8 {
@@ -336,7 +336,7 @@ fn hard_scrolling_never_jumps_or_stalls() {
             }
         }
         if i % 7 == 0 {
-            r.lab.incoming();
+            scroll_lab::incoming(&mut r.lab);
         }
     }
     r.frames(60);
