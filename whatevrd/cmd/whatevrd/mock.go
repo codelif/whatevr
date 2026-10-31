@@ -28,6 +28,7 @@ type mockRun struct {
 	dir      string
 	opts     wamock.Options
 	notify   bool
+	faults   []string
 }
 
 // mockSilencesNotifications reports whether this run should keep its hands off
@@ -42,6 +43,7 @@ func mockSilencesNotifications(run *mockRun) bool {
 type mockFlagSet struct {
 	scenario, dir, phone, control, now, capture *string
 	list, keep, notify                          *bool
+	faults                                      *[]string
 	seed                                        *int64
 	scanDelay, histDelay, olderDelay, gate      *time.Duration
 	segment                                     *int
@@ -52,6 +54,7 @@ func mockFlags() (*mockFlagSet, []cli.Flag) {
 	f := &mockFlagSet{
 		scenario: new(string), dir: new(string), phone: new(string), control: new(string), now: new(string), capture: new(string),
 		list: new(bool), keep: new(bool), notify: new(bool),
+		faults:    new([]string),
 		seed:      new(int64),
 		scanDelay: new(time.Duration), histDelay: new(time.Duration), olderDelay: new(time.Duration), gate: new(time.Duration),
 		segment: new(int),
@@ -70,6 +73,7 @@ func mockFlags() (*mockFlagSet, []cli.Flag) {
 		&cli.StringFlag{Name: "mock-control", Destination: f.control, Usage: "bind a control socket here for the quiescence barrier"},
 		&cli.StringFlag{Name: "mock-now", Destination: f.now, Usage: "pin the clock scenario timestamps hang off, as RFC3339, for reproducible frames"},
 		&cli.BoolFlag{Name: "mock-notify", Destination: f.notify, Usage: "let a mock run raise desktop notifications"},
+		&cli.StringSliceFlag{Name: "mock-fault", Destination: f.faults, Usage: "a network fault in place before the first dial, as the control socket's fault takes them; refuse with --mock-keep serves a copied account offline, untouched"},
 		&cli.StringFlag{Name: "mock-capture", Destination: f.capture, Usage: "replay this capture (a name or a path) instead of a scenario"},
 		&cli.IntFlag{Name: "mock-segment", Value: 1, Destination: f.segment, Usage: "which segment of --mock-capture this run plays"},
 		&cli.FloatFlag{Name: "mock-speed", Destination: f.speed, Usage: "replay pace against the recorded clock, 1 is real time, 0 as fast as the gates allow"},
@@ -189,7 +193,7 @@ func mockPrepare(log zerolog.Logger, f *mockFlagSet) *mockRun {
 		}
 		opts.Now = at
 	}
-	return &mockRun{scenario: found, dir: root, opts: opts, notify: *notify}
+	return &mockRun{scenario: found, dir: root, opts: opts, notify: *notify, faults: *f.faults}
 }
 
 // prepareMockDir makes root exist and, unless asked to keep it, empty. It only
@@ -236,6 +240,12 @@ func mockStart(ctx context.Context, run *mockRun, login qrSource, socket string)
 	}
 	if err := srv.Start(ctx); err != nil {
 		return nil, err
+	}
+	for _, f := range run.faults {
+		if err := srv.Fault(wamock.Fault(f), 0); err != nil {
+			_ = srv.Close()
+			return nil, err
+		}
 	}
 	if err := srv.StartControl(ctx, run.opts.Control); err != nil {
 		return nil, err

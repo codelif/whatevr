@@ -63,6 +63,8 @@ func debugFlags(flags ...cli.Flag) []cli.Flag {
 			f.Local, f.Category = true, "debug"
 		case *cli.FloatFlag:
 			f.Local, f.Category = true, "debug"
+		case *cli.StringSliceFlag:
+			f.Local, f.Category = true, "debug"
 		default:
 			panic(fmt.Sprintf("debugFlags: %T", f))
 		}
