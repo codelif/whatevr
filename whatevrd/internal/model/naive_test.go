@@ -388,10 +388,10 @@ func (r *Reader) naiveUnread(ctx context.Context, w *World, c *Chat, states map[
 		}
 	}
 	from, base := horizon, 0
-	if hist != nil {
-		if h := (Cursor{T: hist.t, Ord: math.MaxInt64}); h.after(horizon) {
-			from, base = h, hist.unread
-		}
+	// a read in history's own millisecond is of the message it was cut at,
+	// so it ends history's count
+	if hist != nil && hist.t > horizon.T {
+		from, base = Cursor{T: hist.t, Ord: math.MaxInt64}, hist.unread
 	}
 	var n int
 	// a message deleted for everyone before it was read is not waiting on anyone

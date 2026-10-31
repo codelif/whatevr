@@ -98,6 +98,20 @@ func TestOwnReadReceiptClearsUnread(t *testing.T) {
 	}
 }
 
+// reading the message history was cut at ends history's count, the cut
+// shares its millisecond
+func TestReadAtTheHistoryCutClearsItsCount(t *testing.T) {
+	db := openModel(t)
+	feed(t, db, []core.Input{
+		historyConv(ashaPN, webMsg("H1", ashaPN, false, "", 0, text("the last before the cut"))),
+		in(core.KindReceipt, core.ReceiptHead{Source: core.Source{Chat: ashaPN, Sender: meLID, FromMe: true}, IDs: []string{"H1"}, Type: "read-self", T: at(60).Unix()}, nil, at(60)),
+	})
+	c, ok, err := NewReader(db.Read()).Chat(context.Background(), ashaPN)
+	if err != nil || !ok || c.Unread != 0 {
+		t.Fatalf("unread %d (%v %v), want 0: the message history counted is read", c.Unread, ok, err)
+	}
+}
+
 // a group change is a transcript row; one that names this account brings
 // the chat up and counts as unread, one that does not stays quiet
 func TestGroupChangesAreRows(t *testing.T) {
